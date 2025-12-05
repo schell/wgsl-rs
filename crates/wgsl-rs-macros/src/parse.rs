@@ -5,6 +5,7 @@
 //! time it's constructed.
 //!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
+use proc_macro::Span;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
 use syn::{Ident, Token, spanned::Spanned};
@@ -87,13 +88,56 @@ mod util {
     }
 }
 
-/// Concrete scalar types.
-/// * i32
-/// * u32
-/// * f32
-/// * bool
-pub struct Type {
-    pub ident: Ident,
+pub enum ScalarType {
+    I32,
+    U32,
+    F32,
+    Bool,
+}
+
+impl TryFrom<&syn::Ident> for ScalarType {
+    type Error = Error;
+
+    fn try_from(value: &syn::Ident) -> Result<Self, Self::Error> {
+        Ok(match value.to_string().as_str() {
+            "i32" => Self::I32,
+            "u32" => Self::U32,
+            "f32" => Self::F32,
+            "bool" => Self::Bool,
+            other => UnsupportedSnafu {
+                span: value.span(),
+                note: format!("Expected i32, u32, f32, or bool.\nSaw '{other}'"),
+            }
+            .fail()?,
+        })
+    }
+}
+
+/// Types.
+pub enum Type {
+    /// Concrete scalar types:
+    /// * i32
+    /// * u32
+    /// * f32
+    /// * bool
+    Scalar { ty: ScalarType, ident: Ident },
+
+    /// Vector types:
+    /// vec{N}<{T}>
+    ///   where T is a scalar type
+    Vector {
+        elements: u8,
+        scalar_ty: ScalarType,
+        ident: Ident,
+        scalar: Option<(Token![<], Ident, Token![>])>,
+    },
+}
+
+fn split_as_vec(s: &str) -> Option<(&str, &str)> {
+    let (_vec, n_prefix) = s.split_once("Vec")?;
+    (n_prefix.len() == 2).then_some(())?;
+    let split = n_prefix.split_at(1);
+    Some(split)
 }
 
 impl TryFrom<&syn::Type> for Type {
@@ -106,26 +150,128 @@ impl TryFrom<&syn::Type> for Type {
                 type_path.qself.as_ref(),
                 "QSelf not allowed in scalar type",
             )?;
-            let ident = type_path
-                .path
-                .get_ident()
-                .context(UnsupportedSnafu {
-                    span: type_path.span(),
-                    note: "Not an identifier for a scalar type",
-                })?
-                .clone();
-            Ok(match ident.to_string().as_str() {
-                "i32" => Type { ident },
-                "u32" => Type { ident },
-                "f32" => Type { ident },
-                "bool" => Type { ident },
-                other => UnsupportedSnafu {
-                    span,
-                    note: format!("Unknown type '{other}'."),
+            let segment = type_path.path.segments.first().context(UnsupportedSnafu {
+                span: type_path.path.segments.span(),
+                note: "Unexpected type path",
+            })?;
+            let ident = &segment.ident;
+            match &segment.arguments {
+                syn::PathArguments::None => {
+                    // Expect this to be a vector alias, a scalar type, or a struct
+                    Ok(match ident.to_string().as_str() {
+                        "i32" | "u32" | "f32" | "bool" => Type::Scalar {
+                            ty: ScalarType::try_from(ident)?,
+                            ident: ident.clone(),
+                        },
+                        other => {
+                            if let Some((n, prefix)) = split_as_vec(other) {
+                                let elements = match n {
+                                    "2" => 2,
+                                    "3" => 3,
+                                    "4" => 4,
+                                    other_n => UnsupportedSnafu {
+                                        span: ident.span(),
+                                        note: format!("Unsupported vector type '{other}'. `{other_n}` must be one of 2, 3, or 4"),
+                                    }
+                                    .fail()?,
+                                };
+                                let scalar_ty = match prefix {
+                                    "i" => ScalarType::I32,
+                                    "u" => ScalarType::U32,
+                                    "f" => ScalarType::F32,
+                                    "b" => ScalarType::Bool,
+                                    other_prefix => UnsupportedSnafu {
+                                        span: ident.span(),
+                                        note: format!("Unsupported vectory type '{other}'. `{other_prefix}` must be one of i, u, f or b")
+                                    }.fail()?
+                                };
+                                Type::Vector {
+                                    elements,
+                                    scalar_ty,
+                                    ident: ident.clone(),
+                                    scalar: None,
+                                }
+                            } else {
+                                UnsupportedSnafu {
+                                    span,
+                                    note: format!("Unknown type '{other}'"),
+                                }
+                                .fail()?
+                            }
+                        }
+                    })
                 }
-                .fail()?,
-            })
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                    colon2_token,
+                    lt_token,
+                    args,
+                    gt_token,
+                }) => {
+                    // Expect this to be a vector of the form `Vec{N}<{scalar}>`
+                    util::some_is_unsupported(
+                        colon2_token.as_ref(),
+                        "Prefix path syntax unsupported in WGSL",
+                    )?;
+
+                    snafu::ensure!(
+                        args.len() == 1,
+                        UnsupportedSnafu {
+                            span: args.span(),
+                            note: "Unsupported generics"
+                        }
+                    );
+
+                    let elements = match ident.to_string().as_str() {
+                        "Vec2" => 2,
+                        "Vec3" => 3,
+                        "Vec4" => 4,
+                        _other => UnsupportedSnafu {
+                            span: ident.span(),
+                            note: "Unsupported vector elements, must be one of 2, 3 or 4",
+                        }
+                        .fail()?,
+                    };
+
+                    let arg = args.first().expect("checked that len was 1");
+                    match arg {
+                        syn::GenericArgument::Type(ty) => {
+                            if let Type::Scalar {
+                                ty: scalar_ty,
+                                ident: scalar_ident,
+                            } = Type::try_from(ty)?
+                            {
+                                Ok(Type::Vector {
+                                    elements,
+                                    scalar_ty,
+                                    ident: ident.clone(),
+                                    scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                })
+                            } else {
+                                UnsupportedSnafu {
+                                    span: ty.span(),
+                                    note: format!(
+                                        "Expected concrete scalar type. Saw '{}'",
+                                        ty.into_token_stream()
+                                    ),
+                                }
+                                .fail()
+                            }
+                        }
+                        other => UnsupportedSnafu {
+                            span: other.span(),
+                            note: format!("'{}' is unsupported", other.into_token_stream()),
+                        }
+                        .fail(),
+                    }
+                }
+                other => UnsupportedSnafu {
+                    span: other.span(),
+                    note: "Unsupported type",
+                }
+                .fail(),
+            }
         } else {
+            util::in_progress(ty)?;
             UnsupportedSnafu {
                 span,
                 note: format!("Type is not a path: '{}'", ty.into_token_stream()),
@@ -137,7 +283,25 @@ impl TryFrom<&syn::Type> for Type {
 
 impl ToTokens for Type {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        self.ident.to_tokens(tokens);
+        match self {
+            Type::Scalar { ty: _, ident } => {
+                ident.to_tokens(tokens);
+            }
+            Type::Vector {
+                elements: _,
+                scalar_ty: _,
+                ident,
+                scalar,
+            } => {
+                let ident = quote::format_ident!("{}", ident.to_string().to_lowercase());
+                ident.to_tokens(tokens);
+                if let Some((lt, scalar, rt)) = scalar {
+                    lt.to_tokens(tokens);
+                    scalar.to_tokens(tokens);
+                    rt.to_tokens(tokens);
+                }
+            }
+        }
     }
 }
 
@@ -843,11 +1007,34 @@ impl ToTokens for ItemMod {
 }
 
 impl ItemMod {
-    pub fn imports(&self) -> Vec<proc_macro2::TokenStream> {
+    pub fn imports(&self, wgsl_rs_crate_path: &syn::Path) -> Vec<proc_macro2::TokenStream> {
+        fn is_wgsl_std(wgsl_rs_crate_path: &syn::Path, path: &syn::Path) -> bool {
+            let wgsl_std = {
+                let mut std = wgsl_rs_crate_path.clone();
+                if !std.segments.empty_or_trailing() {
+                    std.segments.push_punct(syn::token::PathSep::default());
+                }
+                std.segments.push_value(syn::PathSegment {
+                    ident: quote::format_ident!("std"),
+                    arguments: syn::PathArguments::None,
+                });
+                std
+            };
+            let wgsl_std = wgsl_std.into_token_stream().to_string();
+            let path = path.into_token_stream().to_string();
+            wgsl_std == path
+        }
+
         let mut imports = vec![];
         for item in self.content.iter() {
             if let Item::Use(use_item) = item {
                 for path in use_item.modules.iter() {
+                    // If this import is `use wgsl_rs::std::*;`, skip any importing
+                    // on the WGSL side.
+                    if is_wgsl_std(wgsl_rs_crate_path, path) {
+                        continue;
+                    }
+
                     imports.push(quote! {
                         #path::WGSL_MODULE
                     });
@@ -1022,5 +1209,12 @@ mod test {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
         assert_eq!("333 + TIMES", &expr.into_token_stream().to_string());
+    }
+
+    #[test]
+    fn parse_vec4_f32_type() {
+        let ty: syn::Type = syn::parse_str("Vec4<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("vec4 < f32 >", &ty.into_token_stream().to_string());
     }
 }

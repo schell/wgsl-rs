@@ -11,11 +11,14 @@ use syn::{Ident, Token, spanned::Spanned};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Unsupported 'use' statement. Only glob imports of modules are supported."))]
-    UnsupportedUse { span: proc_macro2::Span },
-
-    #[snafu(display("Encountered unsupported Rust syntax."))]
-    Unsupported { span: proc_macro2::Span },
+    #[snafu(
+        display("Encountered unsupported Rust syntax{}",
+        if note.is_empty() { ".".into() } else { format!(":\n{note}.")})
+    )]
+    Unsupported {
+        span: proc_macro2::Span,
+        note: String,
+    },
 
     #[snafu(display("Encountered currently unsupported Rust syntax.\n  {note}"))]
     CurrentlyUnsupported {
@@ -41,8 +44,7 @@ pub enum Error {
 impl Error {
     pub fn span(&self) -> &proc_macro2::Span {
         match self {
-            Error::UnsupportedUse { span } => span,
-            Error::Unsupported { span } => span,
+            Error::Unsupported { span, .. } => span,
             Error::CurrentlyUnsupported { span, .. } => span,
             Error::UnsupportedIfThen { span } => span,
             Error::InProgress { span, message: _ } => span,
@@ -61,9 +63,16 @@ impl From<Error> for syn::Error {
 mod util {
     use super::*;
 
-    pub fn some_is_unsupported<T: syn::spanned::Spanned>(maybe: Option<&T>) -> Result<(), Error> {
+    pub fn some_is_unsupported<T: syn::spanned::Spanned>(
+        maybe: Option<&T>,
+        note: &'static str,
+    ) -> Result<(), Error> {
         if let Some(inner) = maybe {
-            UnsupportedSnafu { span: inner.span() }.fail()
+            UnsupportedSnafu {
+                span: inner.span(),
+                note,
+            }
+            .fail()
         } else {
             Ok(())
         }
@@ -79,58 +88,56 @@ mod util {
 }
 
 /// Concrete scalar types.
-pub enum ConcreteScalarType {
-    I32,
-    U32,
-    F32,
-    Bool,
+/// * i32
+/// * u32
+/// * f32
+/// * bool
+pub struct Type {
+    pub ident: Ident,
 }
 
-impl TryFrom<&syn::Type> for ConcreteScalarType {
+impl TryFrom<&syn::Type> for Type {
     type Error = Error;
 
     fn try_from(ty: &syn::Type) -> Result<Self, Self::Error> {
         let span = ty.span();
         if let syn::Type::Path(type_path) = ty {
-            if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
-                let ident = &type_path.path.segments[0].ident;
-                match ident.to_string().as_str() {
-                    "i32" => Ok(ConcreteScalarType::I32),
-                    "u32" => Ok(ConcreteScalarType::U32),
-                    "f32" => Ok(ConcreteScalarType::F32),
-                    "bool" => Ok(ConcreteScalarType::Bool),
-                    _ => UnsupportedSnafu { span }.fail(),
+            util::some_is_unsupported(
+                type_path.qself.as_ref(),
+                "QSelf not allowed in scalar type",
+            )?;
+            let ident = type_path
+                .path
+                .get_ident()
+                .context(UnsupportedSnafu {
+                    span: type_path.span(),
+                    note: "Not an identifier for a scalar type",
+                })?
+                .clone();
+            Ok(match ident.to_string().as_str() {
+                "i32" => Type { ident },
+                "u32" => Type { ident },
+                "f32" => Type { ident },
+                "bool" => Type { ident },
+                other => UnsupportedSnafu {
+                    span,
+                    note: format!("Unknown type '{other}'."),
                 }
-            } else {
-                UnsupportedSnafu { span }.fail()
-            }
+                .fail()?,
+            })
         } else {
-            UnsupportedSnafu { span }.fail()
+            UnsupportedSnafu {
+                span,
+                note: format!("Type is not a path: '{}'", ty.into_token_stream()),
+            }
+            .fail()
         }
     }
 }
 
-impl std::fmt::Display for ConcreteScalarType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            ConcreteScalarType::I32 => "i32",
-            ConcreteScalarType::U32 => "u32",
-            ConcreteScalarType::F32 => "f32",
-            ConcreteScalarType::Bool => "bool",
-        };
-        f.write_str(s)
-    }
-}
-
-impl ToTokens for ConcreteScalarType {
+impl ToTokens for Type {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            ConcreteScalarType::I32 => quote! { i32 },
-            ConcreteScalarType::U32 => quote! { u32 },
-            ConcreteScalarType::F32 => quote! { f32 },
-            ConcreteScalarType::Bool => quote! { bool },
-        };
-        ident.to_tokens(tokens);
+        self.ident.to_tokens(tokens);
     }
 }
 
@@ -146,12 +153,15 @@ impl TryFrom<&syn::Lit> for Lit {
     type Error = Error;
 
     fn try_from(value: &syn::Lit) -> Result<Self, Self::Error> {
-        let span = value.span();
         match value {
             syn::Lit::Int(lit_int) => Ok(Lit::Int(lit_int.clone())),
             syn::Lit::Float(lit_float) => Ok(Lit::Float(lit_float.clone())),
             syn::Lit::Bool(lit_bool) => Ok(Lit::Bool(lit_bool.clone())),
-            _ => UnsupportedSnafu { span }.fail(),
+            other => UnsupportedSnafu {
+                span: other.span(),
+                note: format!("{} is not a literal", other.into_token_stream()),
+            }
+            .fail(),
         }
     }
 }
@@ -189,13 +199,19 @@ impl TryFrom<&syn::BinOp> for BinOp {
     type Error = Error;
 
     fn try_from(value: &syn::BinOp) -> Result<Self, Self::Error> {
-        let span = value.span();
         Ok(match value {
             syn::BinOp::Add(t) => Self::Add(*t),
             syn::BinOp::Sub(t) => Self::Sub(*t),
             syn::BinOp::Mul(t) => Self::Mul(*t),
             syn::BinOp::Div(t) => Self::Div(*t),
-            _ => UnsupportedSnafu { span }.fail()?,
+            other => UnsupportedSnafu {
+                span: other.span(),
+                note: format!(
+                    "'{}' is not a supported binary operation.",
+                    other.into_token_stream()
+                ),
+            }
+            .fail()?,
         })
     }
 }
@@ -267,10 +283,11 @@ impl TryFrom<&syn::Expr> for Expr {
                 qself,
                 path,
             }) => {
-                util::some_is_unsupported(qself.as_ref())?;
-                let ident = path
-                    .get_ident()
-                    .context(UnsupportedSnafu { span: path.span() })?;
+                util::some_is_unsupported(qself.as_ref(), "QSelf is unsupported")?;
+                let ident = path.get_ident().context(UnsupportedSnafu {
+                    span: path.span(),
+                    note: format!("Expected an identifier, saw '{}'", path.into_token_stream()),
+                })?;
                 Self::Ident(ident.clone())
             }
             syn::Expr::Paren(syn::ExprParen {
@@ -301,12 +318,13 @@ impl TryFrom<&syn::Expr> for Expr {
                 args,
             }) => match func.as_ref() {
                 syn::Expr::Path(expr_path) => {
-                    util::some_is_unsupported(expr_path.qself.as_ref())?;
+                    util::some_is_unsupported(expr_path.qself.as_ref(), "QSelf unsupported")?;
                     let lhs = expr_path
                         .path
                         .get_ident()
                         .context(UnsupportedSnafu {
                             span: expr_path.path.span(),
+                            note: "Expected an identifier",
                         })?
                         .clone();
                     let paren_token = *paren_token;
@@ -325,7 +343,14 @@ impl TryFrom<&syn::Expr> for Expr {
                         params,
                     }
                 }
-                other => UnsupportedSnafu { span: other.span() }.fail()?,
+                other => UnsupportedSnafu {
+                    span: other.span(),
+                    note: format!(
+                        "Unsupported function call syntax: '{}'",
+                        other.into_token_stream()
+                    ),
+                }
+                .fail()?,
             },
             other => InProgressSnafu {
                 span,
@@ -382,7 +407,7 @@ impl ToTokens for Expr {
 
 pub enum ReturnType {
     Default,
-    Type(Token![->], ConcreteScalarType),
+    Type(Token![->], Type),
 }
 
 impl TryFrom<&syn::ReturnType> for ReturnType {
@@ -392,7 +417,7 @@ impl TryFrom<&syn::ReturnType> for ReturnType {
         match ret {
             syn::ReturnType::Default => Ok(ReturnType::Default),
             syn::ReturnType::Type(arrow, ty) => {
-                let scalar = ConcreteScalarType::try_from(ty.as_ref())?;
+                let scalar = Type::try_from(ty.as_ref())?;
                 Ok(ReturnType::Type(*arrow, scalar))
             }
         }
@@ -438,7 +463,7 @@ pub struct Local {
     /// If `mutability` is `Some`, this is a `var` binding, otherwise this is a `let` binding.
     pub mutability: Option<Token![mut]>,
     pub ident: Ident,
-    pub ty: Option<(Token![:], ConcreteScalarType)>,
+    pub ty: Option<(Token![:], Type)>,
     pub init: Option<LocalInit>,
     pub semi_token: Token![;],
 }
@@ -450,11 +475,7 @@ impl TryFrom<&syn::Local> for Local {
         let let_token = value.let_token;
         let semi_token = value.semi_token;
 
-        struct IdentMutTy(
-            Ident,
-            Option<Token![mut]>,
-            Option<(Token![:], ConcreteScalarType)>,
-        );
+        struct IdentMutTy(Ident, Option<Token![mut]>, Option<(Token![:], Type)>);
 
         fn ident_mut_ty(pat: &syn::Pat) -> Result<IdentMutTy, Error> {
             match pat {
@@ -469,6 +490,7 @@ impl TryFrom<&syn::Local> for Local {
                         // WGSL doesn't support `let ref thing = ...;`
                         UnsupportedSnafu {
                             span: by_ref.span(),
+                            note: "WGSL does not support 'let ref ...' bindings.",
                         }
                         .fail()?;
                     }
@@ -476,7 +498,11 @@ impl TryFrom<&syn::Local> for Local {
                     if let Some((at, subpat)) = subpat.as_ref() {
                         // WGSL doesn' support `let thing@(...) = ...`
                         let span = at.span().join(subpat.span()).unwrap();
-                        UnsupportedSnafu { span }.fail()?;
+                        UnsupportedSnafu {
+                            span,
+                            note: "WGSL does not support 'let ... @ ...' bindings.",
+                        }
+                        .fail()?;
                     }
 
                     Ok(IdentMutTy(ident.clone(), *mutability, None))
@@ -488,10 +514,17 @@ impl TryFrom<&syn::Local> for Local {
                     ty,
                 }) => {
                     let mut output = ident_mut_ty(pat.as_ref())?;
-                    output.2 = Some((*colon_token, ConcreteScalarType::try_from(ty.as_ref())?));
+                    output.2 = Some((*colon_token, Type::try_from(ty.as_ref())?));
                     Ok(output)
                 }
-                _ => UnsupportedSnafu { span: pat.span() }.fail(),
+                _ => UnsupportedSnafu {
+                    span: pat.span(),
+                    note: format!(
+                        "Unsupported pattern in let binding: '{}'",
+                        pat.into_token_stream()
+                    ),
+                }
+                .fail(),
             }
         }
 
@@ -553,7 +586,11 @@ impl TryFrom<&syn::Stmt> for Stmt {
                 expr: Expr::try_from(expr)?,
                 semi_token: *semi_token,
             }),
-            _ => UnsupportedSnafu { span: value.span() }.fail(),
+            _ => UnsupportedSnafu {
+                span: value.span(),
+                note: format!("Unsupported statement: '{}'", value.into_token_stream()),
+            }
+            .fail(),
         }
     }
 }
@@ -610,7 +647,7 @@ impl ToTokens for Block {
 pub struct FnArg {
     pub ident: Ident,
     pub colon_token: Token![:],
-    pub ty: ConcreteScalarType,
+    pub ty: Type,
 }
 
 impl TryFrom<&syn::FnArg> for FnArg {
@@ -636,7 +673,7 @@ impl TryFrom<&syn::FnArg> for FnArg {
                         }
                     );
                     let ident = pat_ident.ident.clone();
-                    let ty = ConcreteScalarType::try_from(pat_type.ty.as_ref())?;
+                    let ty = Type::try_from(pat_type.ty.as_ref())?;
 
                     Ok(FnArg {
                         ident,
@@ -644,7 +681,14 @@ impl TryFrom<&syn::FnArg> for FnArg {
                         ty,
                     })
                 }
-                other => UnsupportedSnafu { span: other.span() }.fail(),
+                other => UnsupportedSnafu {
+                    span: other.span(),
+                    note: format!(
+                        "Unsupported pattern in function argument: '{}'",
+                        other.into_token_stream()
+                    ),
+                }
+                .fail(),
             },
         }
     }
@@ -732,8 +776,7 @@ pub struct ItemConst {
     pub const_token: Token![const],
     pub ident: Ident,
     pub colon_token: Token![:],
-    // TODO: expand on this
-    pub ty: ConcreteScalarType,
+    pub ty: Type,
     pub eq_token: Token![=],
     pub expr: Expr,
     pub semi_token: Token![;],
@@ -784,6 +827,7 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
             // For now, error on modules without inline content
             UnsupportedSnafu {
                 span: item_mod.span(),
+                note: "Modules without inline content are not supported.",
             }
             .fail()
         }
@@ -852,17 +896,20 @@ impl TryFrom<&syn::UseTree> for ItemUse {
 
                 item_use
             }
-            syn::UseTree::Name(use_name) => UnsupportedUseSnafu {
+            syn::UseTree::Name(use_name) => UnsupportedSnafu {
                 span: use_name.span(),
+                note: "Only glob imports of modules are supported (e.g. use foo::*;).",
             }
             .fail()?,
-            syn::UseTree::Rename(use_rename) => UnsupportedUseSnafu {
+            syn::UseTree::Rename(use_rename) => UnsupportedSnafu {
                 span: use_rename.span(),
+                note: "Renaming in use statements is not supported.",
             }
             .fail()?,
             syn::UseTree::Glob(_) => Self { modules: vec![] },
-            syn::UseTree::Group(use_group) => UnsupportedUseSnafu {
+            syn::UseTree::Group(use_group) => UnsupportedSnafu {
                 span: use_group.span(),
+                note: "Grouped use statements are not supported.",
             }
             .fail()?,
         })
@@ -898,7 +945,7 @@ impl TryFrom<&syn::Item> for Item {
                 const_token: *const_token,
                 ident: ident.clone(),
                 colon_token: *colon_token,
-                ty: ConcreteScalarType::try_from(ty.as_ref())?,
+                ty: Type::try_from(ty.as_ref())?,
                 eq_token: *eq_token,
                 expr: Expr::try_from(expr.as_ref())?,
                 semi_token: *semi_token,
@@ -912,7 +959,11 @@ impl TryFrom<&syn::Item> for Item {
                 tree,
                 semi_token: _,
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
-            _ => UnsupportedSnafu { span: value.span() }.fail(),
+            _ => UnsupportedSnafu {
+                span: value.span(),
+                note: format!("Unsupported item: '{}'", value.into_token_stream()),
+            }
+            .fail(),
         }
     }
 }

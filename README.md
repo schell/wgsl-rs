@@ -21,6 +21,13 @@ Procedural macros are provided by `wgsl-rs-macros`.
 No, `wgsl-rs` is not hello-world-able yet.
 Specifically, the shader at <https://google.github.io/tour-of-wgsl/> cannot be transpiled.
 
+## pro/cons vs rust-gpu
+
+### pros  
+
+* no rustc backend necessary, which means
+  * no provisioning rustc_codegen
+
 ## getting involved
 
 The project is divided into a few parts:

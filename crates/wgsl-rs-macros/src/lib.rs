@@ -32,14 +32,14 @@ impl Attrs {
 fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream, syn::Error> {
     // Parse Attrs from attr TokenStream
     let attrs: Attrs = syn::parse(attr)?;
+    let crate_path = attrs.crate_path();
 
     let item = parse::ItemMod::try_from(&input_mod)?;
     // Get the modules imported into this one
-    let imports = item.imports();
+    let imports = item.imports(&crate_path);
     // Emit both Rust code and WGSL stuff (code + linkage, etc)
     let wgsl = item.into_token_stream();
 
-    let crate_path = attrs.crate_path();
     let fragment = quote! {
         pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {
             imports: &[

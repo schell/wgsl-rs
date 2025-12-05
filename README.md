@@ -10,9 +10,21 @@ Procedural macros are provided by `wgsl-rs-macros`.
 
 - [x] module-level wgsl macro 
   - [x] translates a subset of Rust into WGSL
+    - [x] types
+      - [x] concrete scalars
+      - [x] vec{N}<{scalar}>
+      - [x] vec aliases
+      - [ ] arrays
+      - [ ] matrices
+      - [ ] structs
+      - [ ] textures
+      - [ ] atomics
     - [ ] descriptor sets, bindings, etc
     - [ ] make this more extensive until all WGSL syntax is handled
   - [x] allows glob-importing other `wgsl-rs` modules
+  - [x] WGSL std for Rust
+    - [x] vector constructors `vec2f`, `vec3f`, etc.
+    - [ ] binary ops (+, -, *, /, etc)
   - [ ] generates linkage info
   - [ ] generates linkage in `wgpu`, maybe through another crate like `wgsl-rs-wgpu` 
 

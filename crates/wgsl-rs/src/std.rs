@@ -33,19 +33,20 @@ wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [r, g]);
 wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [x, y]);
 
 macro_rules! vector {
-    ($n:literal, $t:ident, ty:type) => {
+    // Example: vector!(2, f, ty:f32, x, y);
+    ($n:literal, $t:ident, ty:$ty:ty, $($field:ident),+) => {
         #[repr(transparent)]
         pub struct Vec$n<T: IsScalar> {
             inner: T::Vector$n,
         }
         pub type Vec$n$t = Vec$n<$ty>;
-        pub const fn vec$n$t(x: $ty, y: $ty) -> Vec$n$t {
+        pub const fn vec$n$t($($field: $ty),+) -> Vec$n$t {
             Vec$n {
-                inner: glam::Vec$n::new(x, y),
+                inner: glam::Vec$n::new($($field),+),
             }
         }
-        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [x, y], [r, g]);
-        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [x, y], [x, y]);
+        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [r, g]);
+        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [$($field),+]);
     }
 }
 

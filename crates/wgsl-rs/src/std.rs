@@ -33,8 +33,8 @@ wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [r, g]);
 wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [x, y]);
 
 macro_rules! vector {
-    // Example: vector!(2, f, ty:f32, x, y);
-    ($n:literal, $t:ident, ty:$ty:ty, $($field:ident),+) => {
+    // Example: vector!(2, f, ty:f32, [x, y], [r, g]);
+    ($n:literal, $t:ident, ty:$ty:ty, [$($field:ident),+], [$($swizzle:ident),+]) => {
         #[repr(transparent)]
         pub struct Vec$n<T: IsScalar> {
             inner: T::Vector$n,
@@ -45,7 +45,7 @@ macro_rules! vector {
                 inner: glam::Vec$n::new($($field),+),
             }
         }
-        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [r, g]);
+        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [$($swizzle),+]);
         wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [$($field),+]);
     }
 }

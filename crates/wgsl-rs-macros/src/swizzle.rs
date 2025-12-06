@@ -45,7 +45,28 @@ impl Parse for Swizzling {
 
 impl ToTokens for Swizzling {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        todo!()
+        let ty = &self.ty;
+        let fields = &self.fields;
+        let swizzles = &self.swizzles;
+
+        // For each swizzle accessor (e.g. x, y, r, g), generate a method
+        // For simplicity, only generate single-field accessors here
+        let mut methods = Vec::new();
+        for (i, swizzle) in swizzles.iter().enumerate() {
+            let field = &fields[i];
+            methods.push(quote::quote! {
+                impl #ty {
+                    pub fn #swizzle(&self) -> &Self {
+                        // This is a placeholder; real implementation would return the field
+                        self
+                    }
+                }
+            });
+        }
+
+        tokens.extend(quote::quote! {
+            #(#methods)*
+        });
     }
 }
 

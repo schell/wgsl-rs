@@ -19,39 +19,52 @@ pub trait IsScalar: Sized {
     fn vec4(x: Self, y: Self, z: Self, w: Self) -> Vec4<Self>;
 }
 
-macro_rules! impl_swizzles {
-    // Usage: impl_swizzles!(Vec2, x y);
-    ($VecN:ident, $($c:ident)+) => {
-        // Collect the identifiers into a vector we can iterate over
-        let idents = [$(stringify!($c)),+];
-    };
-}
-
 #[repr(transparent)]
 pub struct Vec2<T: IsScalar> {
     inner: T::Vector2,
+}
+pub type Vec2f = Vec2<f32>;
+pub const fn vec2f(x: f32, y: f32) -> Vec2f {
+    Vec2 {
+        inner: glam::Vec2::new(x, y),
+    }
+}
+wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [r, g]);
+wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [x, y]);
+
+macro_rules! vector {
+    ($n:literal, $t:ident, ty:type) => {
+        #[repr(transparent)]
+        pub struct Vec$n<T: IsScalar> {
+            inner: T::Vector$n,
+        }
+        pub type Vec$n$t = Vec$n<$ty>;
+        pub const fn vec$n$t(x: $ty, y: $ty) -> Vec$n$t {
+            Vec$n {
+                inner: glam::Vec$n::new(x, y),
+            }
+        }
+        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [x, y], [r, g]);
+        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [x, y], [x, y]);
+    }
 }
 
 #[repr(transparent)]
 pub struct Vec3<T: IsScalar> {
     inner: T::Vector3,
 }
+pub type Vec3f = Vec3<f32>;
+pub const fn vec3f(x: f32, y: f32, z: f32) -> Vec3f {
+    Vec3 {
+        inner: glam::Vec3::new(x, y, z),
+    }
+}
 
 #[repr(transparent)]
 pub struct Vec4<T: IsScalar> {
     inner: T::Vector4,
 }
-
-pub type Vec2f = Vec2<f32>;
-pub type Vec3f = Vec3<f32>;
 pub type Vec4f = Vec4<f32>;
-
-pub const fn vec2f(x: f32, y: f32) -> Vec2f {
-    Vec2 {
-        inner: glam::Vec2::new(x, y),
-    }
-}
-
 pub const fn vec4f(x: f32, y: f32, z: f32, w: f32) -> Vec4f {
     Vec4 {
         inner: glam::Vec4::new(x, y, z, w),
@@ -85,7 +98,6 @@ macro_rules! impl_is_scalar {
         }
     };
 }
-
 impl_is_scalar!(f32, glam::Vec2, glam::Vec3, glam::Vec4);
 impl_is_scalar!(i32, glam::IVec2, glam::IVec3, glam::IVec4);
 impl_is_scalar!(u32, glam::UVec2, glam::UVec3, glam::UVec4);

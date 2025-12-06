@@ -33,22 +33,24 @@ pub trait IsScalar: Sized {
 // wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [x, y]);
 
 macro_rules! vector {
-    // Example: vector!(2, f, ty:f32, [x, y], [r, g]);
+    // Example: vector!(2, f, f32, [x, y], [r, g]);
     ($n:literal, $t:ident, $ty:ty, [$($field:ident),+], [$($swizzle:ident),+]) => {
-        /// A vector in N dimensions.
-        #[repr(transparent)]
-        pub struct Vec$n<T: IsScalar> {
-            inner: T::Vector$n,
-        }
-        pub type Vec$n$t = Vec$n<$ty>;
-        /// Vector constructor
-        pub const fn vec$n$t($($field: $ty),+) -> Vec$n$t {
-            Vec$n {
-                inner: glam::Vec$n::new($($field),+),
+        paste::paste! {
+            /// A vector in N dimensions.
+            #[repr(transparent)]
+            pub struct [<Vec $n>]<T: IsScalar> {
+                inner: T::[<Vector $n>],
             }
+            pub type [<Vec $n $t>] = [<Vec $n>]<$ty>;
+            /// Vector constructor
+            pub const [<vec $n $t>]($($field: $ty),+) -> [<Vec $n $t>] {
+                [<Vec $n>] {
+                    inner: glam::[<Vec $n>]::new($($field),+),
+                }
+            }
+            wgsl_rs_macros::swizzle!([<Vec $n $t>], [$ty, [<Vec $n $t>]], [[<vec $n $t>]], [$($field),+], [$($swizzle),+]);
+            wgsl_rs_macros::swizzle!([<Vec $n $t>], [$ty, [<Vec $n $t>]], [[<vec $n $t>]], [$($field),+], [$($field),+]);
         }
-        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [$($swizzle),+]);
-        wgsl_rs_macros::swizzle!(Vec$n$t, [$ty, Vec$n$t], [vec$n$t], [$($field),+], [$($field),+]);
     }
 }
 

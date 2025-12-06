@@ -23,7 +23,7 @@ macro_rules! impl_swizzles {
     // Usage: impl_swizzles!(Vec2, x y);
     ($VecN:ident, $($c:ident)+) => {
         // Collect the identifiers into a vector we can iterate over
-        let idents = todo!();
+        let idents = [$(stringify!($c)),+];
     };
 }
 

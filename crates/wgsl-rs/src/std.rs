@@ -9,13 +9,26 @@
 //! These types include (but are not limited to) vector types like `Vec2f`, `Vec3f`, etc.
 //! and constructors like `vec2`, `vec2f` and `vec3i`, etc.
 
+use std::{
+    marker::PhantomData,
+    sync::{Arc, LazyLock, Mutex, RwLock},
+};
+
+pub use wgsl_rs_macros::{binding, fragment, group, vertex};
+
+/// Trait identifying WGSL's concrete scalar types.
 pub trait IsScalar: Sized {
     type Vector2;
     type Vector3;
     type Vector4;
 
+    /// Constructs a two dimensional vector.
     fn vec2(x: Self, y: Self) -> Vec2<Self>;
+
+    /// Constructs a three dimensional vector.
     fn vec3(x: Self, y: Self, z: Self) -> Vec3<Self>;
+
+    /// Constructs a four dimensional vector.
     fn vec4(x: Self, y: Self, z: Self, w: Self) -> Vec4<Self>;
 }
 
@@ -223,11 +236,45 @@ impl_is_scalar!(f32, glam::Vec2, glam::Vec3, glam::Vec4);
 impl_is_scalar!(i32, glam::IVec2, glam::IVec3, glam::IVec4);
 impl_is_scalar!(u32, glam::UVec2, glam::UVec3, glam::UVec4);
 impl_is_scalar!(bool, glam::BVec2, glam::BVec3, glam::BVec4);
-/// In Rust, use `const` for compile-time constant values that are inlined wherever used.
-/// Use `static` for global variables with a fixed memory address, which may have interior mutability.
-/// 
-/// - Prefer `const` for simple values, especially primitives and when you want zero runtime overhead.
-/// - Use `static` for values that need a stable address, or for global state (including with `Mutex`, `Atomic*`, etc).
-/// - `static mut` is unsafe and should be avoided; prefer safe wrappers like `Mutex` or `Atomic*`.
-/// - `const` can be used in patterns, types, and generics; `static` cannot.
-/// - Both can be used for sharing data between threads, but only `static` can be mutable (with synchronization).
+
+/// Trait used to "read" a value out of a type.
+///
+/// This is used for conversion, so far.
+/// Eg, `f32(value)`.
+pub trait CanRead<T> {
+    fn read_value(&self) -> T;
+}
+
+pub fn f32<T: CanRead<f32>>(t: T) -> f32 {
+    t.read_value()
+}
+
+/// A shader uniform, backed by a storage buffer on the CPU.
+pub struct UniformVariable<T> {
+    group: u32,
+    binding: u32,
+    value: Option<T>,
+}
+
+pub type Uniform<T> = LazyLock<Arc<RwLock<UniformVariable<T>>>>;
+
+impl<T: Clone> CanRead<T> for &'static Uniform<T> {
+    fn read_value(&self) -> T {
+        let guard = self.read().expect("could not read value");
+        let maybe = guard.value.as_ref();
+        maybe.cloned().expect("uniform value has not been set")
+    }
+}
+
+/// Create a new uniform.
+///
+/// This is a noop in WGSL and exists soley to appease Rust.
+pub const fn uniform<T>() -> Uniform<T> {
+    LazyLock::new(|| {
+        Arc::new(RwLock::new(UniformVariable {
+            group: 0,
+            binding: 0,
+            value: None,
+        }))
+    })
+}

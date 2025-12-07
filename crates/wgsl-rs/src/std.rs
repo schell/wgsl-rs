@@ -223,3 +223,11 @@ impl_is_scalar!(f32, glam::Vec2, glam::Vec3, glam::Vec4);
 impl_is_scalar!(i32, glam::IVec2, glam::IVec3, glam::IVec4);
 impl_is_scalar!(u32, glam::UVec2, glam::UVec3, glam::UVec4);
 impl_is_scalar!(bool, glam::BVec2, glam::BVec3, glam::BVec4);
+/// In Rust, use `const` for compile-time constant values that are inlined wherever used.
+/// Use `static` for global variables with a fixed memory address, which may have interior mutability.
+/// 
+/// - Prefer `const` for simple values, especially primitives and when you want zero runtime overhead.
+/// - Use `static` for values that need a stable address, or for global state (including with `Mutex`, `Atomic*`, etc).
+/// - `static mut` is unsafe and should be avoided; prefer safe wrappers like `Mutex` or `Atomic*`.
+/// - `const` can be used in patterns, types, and generics; `static` cannot.
+/// - Both can be used for sharing data between threads, but only `static` can be mutable (with synchronization).

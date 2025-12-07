@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 glam.workspace = true
+paste = "1"
 wgsl-rs-macros = { version = "0.1.0", path = "../wgsl-rs-macros" }
 
 [dev-dependencies]

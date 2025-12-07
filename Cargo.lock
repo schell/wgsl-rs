@@ -37,6 +37,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
 name = "example"
 version = "0.1.0"
 dependencies = [
@@ -61,6 +67,21 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "proc-macro2"
@@ -129,6 +150,7 @@ name = "wgsl-rs"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "paste",
  "wgsl-rs-macros",
 ]
 
@@ -137,6 +159,7 @@ name = "wgsl-rs-macros"
 version = "0.1.0"
 dependencies = [
  "darling",
+ "itertools",
  "proc-macro2",
  "quote",
  "snafu",

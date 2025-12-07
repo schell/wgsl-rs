@@ -9,6 +9,7 @@ resolver = "2"
 
 [workspace.dependencies]
 glam = "0.30.9"
+itertools = "0.14.0"
 naga_oil = "0.20.0"
 proc-macro2 = "1.0"
 quote = "1.0"

@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
 
 mod parse;
+mod swizzle;
 
 #[derive(Default, FromMeta)]
 #[darling(derive_syn_parse)]
@@ -65,4 +66,9 @@ pub fn wgsl(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         Ok(tokens) => tokens,
         Err(e) => e.into_compile_error().into(),
     }
+}
+
+#[proc_macro]
+pub fn swizzle(token_stream: TokenStream) -> TokenStream {
+    swizzle::swizzle(token_stream)
 }

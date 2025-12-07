@@ -278,3 +278,11 @@ pub const fn uniform<T>() -> Uniform<T> {
         }))
     })
 }
+/// In WGSL, both `@group(N)` and `@binding(N)` are used together to specify the location of a resource (such as a uniform or storage buffer) in the bind group layout.
+/// They are not used individually; both are required to fully specify a resource binding.
+/// For example:
+/// ```wgsl
+/// @group(0) @binding(1)
+/// var<uniform> my_uniform: MyUniformType;
+/// ```
+/// Using only one of them is invalid and will result in a shader compilation error.

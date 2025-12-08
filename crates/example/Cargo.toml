@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 glam.workspace = true
+naga.workspace = true
 wgsl-rs = { path = "../wgsl-rs" }

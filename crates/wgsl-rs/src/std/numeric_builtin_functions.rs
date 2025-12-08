@@ -14,7 +14,7 @@
 //! | | fn atan2(y: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns an angle, in radians, in the interval [-π, π] whose tangent is y÷x. <br>       The quadrant selected by the result depends on the signs of y and x.<br>    For example, the function may be implemented as:<br>       <br>        <br>         atan(y/x) when x > 0<br>        <br>         atan(y/x) + π when (x < 0) and (y > 0)<br>        <br>         atan(y/x) - π when (x < 0) and (y < 0)<br>       <br>       Note: atan2 is ill-defined when y/x is ill-defined, at the origin (x,y) = (0,0), and when y is non-normal or infinite.<br>       Component-wise when T is a vector. |
 //! | | fn ceil(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the ceiling of e. Component-wise when T is a vector. |
 //! | | fn clamp(e: T, low: T, high: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Restricts the value of e within a range. <br>       If T is an integer type, then the result is min(max(e, low), high).<br>       If T is a floating-point type, then the result is either min(max(e, low), high), or the median of the three values e, low, high.<br>       Component-wise when T is a vector.<br>       If low is greater than high, then:<br>       <br>        <br>         It is a shader-creation error if low and high are const-expressions.<br>        <br>         It is a pipeline-creation error if low and high are override-expressions. |
-#! |x| fn cos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the cosine of e, where e is in radians. Component-wise when T is a vector. |
+//! |x| fn cos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the cosine of e, where e is in radians. Component-wise when T is a vector. |
 //! |x| fn cosh(arg: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic cosine of arg, where arg is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function (earg + e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector |
 //! | | fn countLeadingZeros(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of consecutive 0 bits starting from the most significant bit<br>        of e, when T is a scalar type. Component-wise when T is a vector. Also known as "clz" in some languages. |
 //! | | fn countOneBits(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of 1 bits in the representation of e. Also known as "population count". Component-wise when T is a vector. |
@@ -36,13 +36,13 @@
 //! | | fn fma(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 * e2 + e3. Component-wise when T is a vector. <br>       Note: The name fma is short for "fused multiply add".<br>       Note: The IEEE-754 fusedMultiplyAdd operation computes the intermediate results<br>    as if with unbounded range and precision, and only the final result is rounded<br>    to the destination type.<br>    However, the § 14.6.1 Floating Point Accuracy rule for fma allows an implementation<br>    which performs an ordinary multiply to the target type followed by an ordinary addition.<br>    In this case the intermediate values may overflow or lose accuracy, and the overall<br>    operation is not "fused" at all. |
 //! | | fn fract(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: Valid results are in the closed interval [0, 1.0].<br>For example, if e is a very small negative number, then fract(e) may be 1.0. |
 //! | | fn insertBits(e: T, newbits: T, offset: u32, count: u32) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | Sets bits in an integer. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is e if c is 0. <br>        Otherwise,<br>       bits o..o + c - 1 of the result are copied from bits 0..c - 1 of newbits.<br>       Other bits of the result are copied from e. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
-//! | | fn inverseSqrt(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e ≤ 0. |
+//! |x| fn inverseSqrt(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e ≤ 0. |
 //! | | fn ldexp(e1: T, e2: I) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> I is AbstractInt, i32, vecN<AbstractInt>, or vecN<i32> I is a vector if and only if T is a vector I is concrete if and only if T is a concrete | Returns e1 * 2e2, except: <br>       <br>        <br>         The result may be zero if e2 + bias ≤ 0.<br>        <br>         If e2 > bias + 1<br>         <br>          <br>           It is a shader-creation error if e2 is a const-expression.<br>          <br>           It is a pipeline-creation error if e2 is an override-expression.<br>          <br>           Otherwise the result is an indeterminate value for T.<br>         <br>       <br>       Here, bias is the exponent bias of the floating point format:<br>       <br>        <br>         15 for f16<br>        <br>         127 for f32<br>        <br>         1023 for AbstractFloat, when AbstractFloat is IEEE-754 binary64<br>       <br>       If x is zero or a finite normal value for its type, then:<br>        x = ldexp(frexp(x).fract, frexp(x).exp) <br>       Component-wise when T is a vector.<br>       Note: A mnemonic for the name ldexp is "load exponent".<br>    The name may have been taken from the corresponding instruction in the floating point unit of<br>    the PDP-11. |
 //! | | fn length(e: T) -> S | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the length of e. Evaluates to the absolute value of e if T is scalar. Evaluates to sqrt(e[0]2 + e[1]2 + ...) if T is a vector type. <br>       Note: The scalar case may be evaluated as sqrt(e * e),<br>        which may unnecessarily overflow or lose accuracy. |
-//! | | fn log(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
-//! | | fn log2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
-//! | | fn max(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e1 is less than e2, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
-//! | | fn min(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e2 is less than e1, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
+//! |x| fn log(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
+//! |x| fn log2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
+//! |x| fn max(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e1 is less than e2, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
+//! |x| fn min(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e2 is less than e1, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
 //! | | fn mix(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the linear blend of e1 and e2 (e.g. e1 * (1 - e3) + e2 * e3). Component-wise when T is a vector. |
 //! | | fn mix(e1: T2, e2: T2, e3: T) -> T2 | T is AbstractFloat, f32, or f16 T2 is vecN<T> | Returns the component-wise linear blend of e1 and e2,<br>        using scalar blending factor e3 for each component. Same as mix(e1, e2, T2(e3)). |
 //! | | fn modf(e: T) -> __modf_result_f32 | T is f32 | Note: A value cannot be explicitly declared with the type __modf_result_f32,<br>but a value may infer the type. |
@@ -52,14 +52,14 @@
 //! | | fn modf(e: T) -> __modf_result_vecN_f16 | T is vecN<f16> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_f16,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_vecN_abstract | T is vecN<AbstractFloat> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_abstract,<br>but a value may infer the type. |
 //! | | fn normalize(e: vecN<T> ) -> vecN<T> | T is AbstractFloat, f32, or f16 | Returns a unit vector in the same direction as e. |
-//! | | fn pow(e1: T, e2: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 raised to the power e2. Component-wise when T is a vector. |
+//! |x| fn pow(e1: T, e2: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 raised to the power e2. Component-wise when T is a vector. |
 //! | | fn quantizeToF16(e: T) -> T | T is f32 or vecN<f32> | Note: The vec2<f32> case is the same as unpack2x16float(pack2x16float(e)). |
 //! | | fn radians(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts degrees to radians, approximating e1 × π ÷ 180. Component-wise when T is a vector |
 //! | | fn reflect(e1: T, e2: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | For the incident vector e1 and surface orientation e2, returns the reflection direction e1 - 2 * dot(e2, e1) * e2. |
 //! | | fn refract(e1: T, e2: T, e3: I) -> T | T is vecN<I> I is AbstractFloat, f32, or f16 | For the incident vector e1 and surface normal e2, and the ratio of<br>    indices of refraction e3,<br>    let k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1)).<br>    If k < 0.0, returns the refraction vector 0.0, otherwise return the refraction vector e3 * e1 - (e3 * dot(e2, e1) + sqrt(k)) * e2. |
 //! | | fn reverseBits(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | Reverses the bits in e:  The bit at position k of the result equals the<br>        bit at position 31 -k of e. Component-wise when T is a vector. |
-//! | | fn round(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Result is the integer k nearest to e, as a floating point value. When e lies halfway between integers k and k + 1,<br>        the result is k when k is even, and k + 1 when k is odd. Component-wise when T is a vector. |
-//! | | fn saturate(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns clamp(e, 0.0, 1.0). Component-wise when T is a vector. |
+//! |x| fn round(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Result is the integer k nearest to e, as a floating point value. When e lies halfway between integers k and k + 1,<br>        the result is k when k is even, and k + 1 when k is odd. Component-wise when T is a vector. |
+//! |x| fn saturate(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns clamp(e, 0.0, 1.0). Component-wise when T is a vector. |
 //! | | fn sign(e: T) -> T | S is AbstractInt, AbstractFloat, i32, f32, or f16. T is S, or vecN<S> | Result is: <br>       <br>         1 when e > 0 <br>         0 when e = 0 <br>         -1 when e < 0 <br>       <br>       Component-wise when T is a vector. |
 //! |x| fn sin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the sine of e, where e is in radians. Component-wise when T is a vector. |
 //! | | fn sinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic sine of e, where e is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function<br>    (earg − e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector. |
@@ -72,7 +72,6 @@
 //! | | fn trunc(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns truncate(e), the nearest whole number whose absolute value<br>    is less than or equal to the absolute value of e. Component-wise when T is a vector. |
 
 use crate::std::*;
-use std::ops::{Add, Sub, Mul, Div};
 
 /// Provides the numeric built-in function `abs`.
 pub trait NumericBuiltinAbs {
@@ -469,17 +468,17 @@ mod length {
     }
     impl NumericBuiltinLength for Vec2f {
         fn length(self) -> f32 {
-            (self.x * self.x + self.y * self.y).sqrt()
+            self.inner.length()
         }
     }
     impl NumericBuiltinLength for Vec3f {
         fn length(self) -> f32 {
-            (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+            self.inner.length()
         }
     }
     impl NumericBuiltinLength for Vec4f {
         fn length(self) -> f32 {
-            (self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w).sqrt()
+            self.inner.length()
         }
     }
 }
@@ -555,13 +554,21 @@ mod max {
             self.max(other)
         }
     }
+    impl NumericBuiltinMax for u32 {
+        fn max(self, other: Self) -> Self {
+            std::cmp::Ord::max(self, other)
+        }
+    }
+    impl NumericBuiltinMax for i32 {
+        fn max(self, other: Self) -> Self {
+            std::cmp::Ord::max(self, other)
+        }
+    }
     macro_rules! impl_max_vec {
         ($ty:ty) => {
             impl NumericBuiltinMax for $ty {
                 fn max(self, other: Self) -> Self {
-                    Self {
-                        inner: self.inner.zip(other.inner, |a, b| a.max(b)),
-                    }
+                    self.inner.max(other.inner).into()
                 }
             }
         };
@@ -584,13 +591,21 @@ mod min {
             self.min(other)
         }
     }
+    impl NumericBuiltinMin for u32 {
+        fn min(self, other: Self) -> Self {
+            std::cmp::Ord::min(self, other)
+        }
+    }
+    impl NumericBuiltinMin for i32 {
+        fn min(self, other: Self) -> Self {
+            std::cmp::Ord::min(self, other)
+        }
+    }
     macro_rules! impl_min_vec {
         ($ty:ty) => {
             impl NumericBuiltinMin for $ty {
                 fn min(self, other: Self) -> Self {
-                    Self {
-                        inner: self.inner.zip(other.inner, |a, b| a.min(b)),
-                    }
+                    self.inner.min(other.inner).into()
                 }
             }
         };
@@ -617,8 +632,13 @@ mod pow {
         ($ty:ty) => {
             impl NumericBuiltinPow for $ty {
                 fn pow(self, other: Self) -> Self {
+                    let mut array = self.inner.to_array();
+                    let exps = other.inner.to_array();
+                    for i in 0..array.len() {
+                        array[i] = array[i].powf(exps[i]);
+                    }
                     Self {
-                        inner: self.inner.zip(other.inner, |a, b| a.powf(b)),
+                        inner: array.into(),
                     }
                 }
             }
@@ -697,7 +717,7 @@ mod saturate {
     use super::*;
     impl NumericBuiltinSaturate for f32 {
         fn saturate(self) -> Self {
-            self.max(0.0).min(1.0)
+            self.clamp(0.0, 1.0)
         }
     }
     macro_rules! impl_saturate_vec {
@@ -705,7 +725,7 @@ mod saturate {
             impl NumericBuiltinSaturate for $ty {
                 fn saturate(self) -> Self {
                     Self {
-                        inner: self.inner.map(|t| t.max(0.0).min(1.0)),
+                        inner: self.inner.map(|t| t.clamp(0.0, 1.0)),
                     }
                 }
             }
@@ -798,19 +818,20 @@ mod step {
     use super::*;
     impl NumericBuiltinStep for f32 {
         fn step(self, x: Self) -> Self {
-            if x >= self {
-                1.0
-            } else {
-                0.0
-            }
+            if x >= self { 1.0 } else { 0.0 }
         }
     }
     macro_rules! impl_step_vec {
         ($ty:ty) => {
             impl NumericBuiltinStep for $ty {
-                fn step(self, x: Self) -> Self {
+                fn step(self, other: Self) -> Self {
+                    let mut array = self.inner.to_array();
+                    let other = other.inner.to_array();
+                    for i in 0..array.len() {
+                        array[i] = array[i].step(other[i]);
+                    }
                     Self {
-                        inner: self.inner.zip(x.inner, |e, v| if v >= e { 1.0 } else { 0.0 }),
+                        inner: array.into(),
                     }
                 }
             }

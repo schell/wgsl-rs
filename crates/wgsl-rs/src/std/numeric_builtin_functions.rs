@@ -61,7 +61,7 @@
 //! |     | fn round(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Result is the integer k nearest to e, as a floating point value. When e lies halfway between integers k and k + 1,<br>        the result is k when k is even, and k + 1 when k is odd. Component-wise when T is a vector. |
 //! |     | fn saturate(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns clamp(e, 0.0, 1.0). Component-wise when T is a vector. |
 //! |     | fn sign(e: T) -> T | S is AbstractInt, AbstractFloat, i32, f32, or f16. T is S, or vecN<S> | Result is: <br>       <br>         1 when e > 0 <br>         0 when e = 0 <br>         -1 when e < 0 <br>       <br>       Component-wise when T is a vector. |
-//! |     | fn sin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the sine of e, where e is in radians. Component-wise when T is a vector. |
+//! |  ✔️ | fn sin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the sine of e, where e is in radians. Component-wise when T is a vector. |
 //! |     | fn sinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic sine of e, where e is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function<br>    (earg − e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector. |
 //! |     | fn smoothstep(low: T, high: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the smooth Hermite interpolation between 0 and 1. Component-wise when T is a vector. <br>       For scalar T, the result is t * t * (3.0 - 2.0 * t),<br>    where t = clamp((x - low) / (high - low), 0.0, 1.0). |
 //! |     | fn sqrt(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the square root of e. Component-wise when T is a vector. |
@@ -88,6 +88,32 @@ pub trait NumericBuiltinAbs {
 /// * If e is a signed integer scalar type and evaluates to the largest negative value, then the result is e.
 pub fn abs<T: NumericBuiltinAbs>(e: T) -> T {
     <T as NumericBuiltinAbs>::abs(e)
+}
+
+/// Provides the numeric built-in function `acos`.
+pub trait NumericBuiltinAcos {
+    /// Returns the principal value, in radians, of the inverse cosine (cos⁻¹) of e.
+    /// Component-wise when T is a vector.
+    /// Note: The result is not mathematically meaningful when abs(e) > 1.
+    fn acos(self) -> Self;
+}
+
+/// Returns the principal value, in radians, of the inverse cosine (cos⁻¹) of e.
+/// Component-wise when T is a vector.
+/// Note: The result is not mathematically meaningful when abs(e) > 1.
+pub fn acos<T: NumericBuiltinAcos>(e: T) -> T {
+    <T as NumericBuiltinAcos>::acos(e)
+}
+
+/// Provides the numeric built-in function `sin`.
+pub trait NumericBuiltinSin {
+    /// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
+    fn sin(self) -> Self;
+}
+
+/// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
+pub fn sin<T: NumericBuiltinSin>(e: T) -> T {
+    <T as NumericBuiltinSin>::sin(e)
 }
 
 mod abs {
@@ -135,32 +161,6 @@ mod abs {
     impl_abs_vec!(Vec2i);
     impl_abs_vec!(Vec3i);
     impl_abs_vec!(Vec4i);
-}
-
-/// Provides the numeric built-in function `acos`.
-pub trait NumericBuiltinAcos {
-    /// Returns the principal value, in radians, of the inverse cosine (cos⁻¹) of e.
-    /// Component-wise when T is a vector.
-    /// Note: The result is not mathematically meaningful when abs(e) > 1.
-    fn acos(self) -> Self;
-}
-
-/// Returns the principal value, in radians, of the inverse cosine (cos⁻¹) of e.
-/// Component-wise when T is a vector.
-/// Note: The result is not mathematically meaningful when abs(e) > 1.
-pub fn acos<T: NumericBuiltinAcos>(e: T) -> T {
-    <T as NumericBuiltinAcos>::acos(e)
-}
-
-/// Provides the numeric built-in function `sin`.
-pub trait NumericBuiltinSin {
-    /// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
-    fn sin(self) -> Self;
-}
-
-/// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
-pub fn sin<T: NumericBuiltinSin>(e: T) -> T {
-    <T as NumericBuiltinSin>::sin(e)
 }
 
 mod acos {

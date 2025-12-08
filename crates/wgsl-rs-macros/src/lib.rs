@@ -4,6 +4,7 @@ use quote::{ToTokens, quote};
 
 mod parse;
 mod swizzle;
+mod uniform;
 
 #[derive(Default, FromMeta)]
 #[darling(derive_syn_parse)]
@@ -71,4 +72,19 @@ pub fn wgsl(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn swizzle(token_stream: TokenStream) -> TokenStream {
     swizzle::swizzle(token_stream)
+}
+
+#[proc_macro_attribute]
+pub fn vertex(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    token_stream
+}
+
+#[proc_macro_attribute]
+pub fn fragment(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    token_stream
+}
+
+#[proc_macro]
+pub fn uniform(input: TokenStream) -> TokenStream {
+    uniform::uniform(input)
 }

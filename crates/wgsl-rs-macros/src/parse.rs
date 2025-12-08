@@ -15,7 +15,7 @@
 // on grammar for help implementing this module.
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
-use syn::{Ident, Token, spanned::Spanned};
+use syn::{Ident, Token, parenthesized, spanned::Spanned};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -137,6 +137,7 @@ pub enum Type {
     /// Vector types:
     /// vec{N}<{T}>
     ///   where T is a scalar type
+    #[allow(dead_code)]
     Vector {
         elements: u8,
         scalar_ty: ScalarType,
@@ -188,11 +189,16 @@ impl TryFrom<&syn::Type> for Type {
                 syn::PathArguments::None => {
                     // Expect this to be a vector alias, a scalar type, or a struct
                     Ok(match ident.to_string().as_str() {
-                        "i32" | "u32" | "f32" | "bool" | "usize" => Type::Scalar {
+                        "i32" | "u32" | "f32" | "bool" => Type::Scalar {
                             ty: ScalarType::try_from(ident)?,
                             ident: ident.clone(),
                         },
+                        "usize" => Type::Scalar {
+                            ty: ScalarType::U32,
+                            ident: Ident::new("u32", ident.span()),
+                        },
                         other => {
+                            // Check for vec
                             if let Some((n, prefix)) = split_as_vec(other) {
                                 let elements = match n {
                                     "2" => 2,
@@ -330,17 +336,11 @@ impl ToTokens for Type {
                 }
             }
             Type::Array {
-                bracket_token,
+                bracket_token: _,
                 elem,
-                semi_token,
+                semi_token: _,
                 len,
-            } => {
-                bracket_token.surround(tokens, |inner| {
-                    elem.to_tokens(inner);
-                    semi_token.to_tokens(inner);
-                    len.to_tokens(inner);
-                });
-            }
+            } => quote! { array<#elem, #len> }.to_tokens(tokens),
         }
     }
 }
@@ -443,6 +443,37 @@ impl ToTokens for BinOp {
     }
 }
 
+/// A unary operator: "!" or "-"
+pub enum UnOp {
+    Not(Token![!]),
+    Neg(Token![-]),
+}
+
+impl TryFrom<&syn::UnOp> for UnOp {
+    type Error = Error;
+
+    fn try_from(value: &syn::UnOp) -> Result<Self, Self::Error> {
+        Ok(match value {
+            syn::UnOp::Not(t) => UnOp::Not(*t),
+            syn::UnOp::Neg(t) => UnOp::Neg(*t),
+            other => UnsupportedSnafu {
+                span: other.span(),
+                note: format!("Unsupported unary operator '{}'", other.into_token_stream()),
+            }
+            .fail()?,
+        })
+    }
+}
+
+impl ToTokens for UnOp {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            UnOp::Not(t) => t.to_tokens(tokens),
+            UnOp::Neg(t) => t.to_tokens(tokens),
+        }
+    }
+}
+
 /// WGSL expressions.
 pub enum Expr {
     /// A literal value.
@@ -487,7 +518,7 @@ pub enum Expr {
     ///
     /// This needs special help because we want to support indexing with u32 and i32
     /// sinc WGSL supports this.
-    TypeAs {
+    Cast {
         lhs: Box<Expr>,
         as_token: Token![as],
         ty: Box<Type>,
@@ -498,37 +529,6 @@ pub enum Expr {
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
     },
-}
-
-/// A unary operator: "!" or "-"
-pub enum UnOp {
-    Not(Token![!]),
-    Neg(Token![-]),
-}
-
-impl TryFrom<&syn::UnOp> for UnOp {
-    type Error = Error;
-
-    fn try_from(value: &syn::UnOp) -> Result<Self, Self::Error> {
-        Ok(match value {
-            syn::UnOp::Not(t) => UnOp::Not(*t),
-            syn::UnOp::Neg(t) => UnOp::Neg(*t),
-            other => UnsupportedSnafu {
-                span: other.span(),
-                note: format!("Unsupported unary operator '{}'", other.into_token_stream()),
-            }
-            .fail()?,
-        })
-    }
-}
-
-impl ToTokens for UnOp {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            UnOp::Not(t) => t.to_tokens(tokens),
-            UnOp::Neg(t) => t.to_tokens(tokens),
-        }
-    }
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -638,7 +638,7 @@ impl TryFrom<&syn::Expr> for Expr {
             }) => {
                 let lhs = Box::new(Expr::try_from(lhs.as_ref())?);
                 let ty = Box::new(Type::try_from(ty.as_ref())?);
-                Self::TypeAs {
+                Self::Cast {
                     lhs,
                     as_token: *as_token,
                     ty,
@@ -700,10 +700,12 @@ impl ToTokens for Expr {
             Expr::Lit(lit) => lit.to_tokens(tokens),
             Expr::Ident(id) => id.to_tokens(tokens),
             Expr::Array {
-                bracket_token,
+                bracket_token: _,
                 elems,
             } => {
-                bracket_token.surround(tokens, |inner| {
+                quote! { array }.to_tokens(tokens);
+                let paren = syn::token::Paren::default();
+                paren.surround(tokens, |inner| {
                     for pair in elems.pairs() {
                         let expr = pair.value();
                         expr.to_tokens(inner);
@@ -744,11 +746,11 @@ impl ToTokens for Expr {
                 dot_token.to_tokens(tokens);
                 swizzle.to_tokens(tokens);
             }
-            Expr::TypeAs { lhs, as_token, ty } => {
-                lhs.to_tokens(tokens);
-                as_token.to_tokens(tokens);
-                ty.to_tokens(tokens);
-            }
+            Expr::Cast {
+                lhs,
+                as_token: _,
+                ty,
+            } => quote! { #ty(#lhs) }.to_tokens(tokens),
             Expr::FnCall {
                 lhs,
                 paren_token,
@@ -1354,9 +1356,131 @@ impl TryFrom<&syn::UseTree> for ItemUse {
     }
 }
 
+// pub struct ItemStatic {}
+
+// impl TryFrom<&syn::ItemStatic> for ItemStatic {
+//     type Error = Error;
+
+//     fn try_from(value: &syn::ItemStatic) -> Result<Self, Self::Error> {
+//         let syn::ItemStatic {
+//             attrs,
+//             vis,
+//             static_token,
+//             mutability,
+//             ident,
+//             colon_token,
+//             ty,
+//             eq_token,
+//             expr,
+//             semi_token,
+//         } = value;
+
+//         Ok(ItemStatic {})
+//     }
+// }
+
+// impl ToTokens for ItemStatic {
+//     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {}
+// }
+// Use a custom parser for the macro arguments: `group($group), binding($binding), $name : $ty`
+pub(crate) struct UniformArgs {
+    pub group: syn::Expr,
+    pub binding: syn::Expr,
+
+    pub name: syn::Ident,
+    pub ty: syn::Type,
+}
+
+impl syn::parse::Parse for UniformArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // group
+        let _group_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let _group_paren_token = parenthesized!(content in input);
+        let group = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        // binding
+        let _binding_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let _binding_paren_token = parenthesized!(content in input);
+        let binding = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        let name: syn::Ident = input.parse()?;
+        let _colon_token: syn::Token![:] = input.parse()?;
+        let ty: syn::Type = input.parse()?;
+
+        Ok(UniformArgs {
+            group,
+            binding,
+            name,
+            ty,
+        })
+    }
+}
+
+pub struct ItemUniform {
+    pub group: syn::Expr,
+    pub binding: syn::Expr,
+    pub name: syn::Ident,
+    pub ty: Type,
+}
+
+impl TryFrom<&syn::ItemMacro> for ItemUniform {
+    type Error = Error;
+
+    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
+        // Ensure it's the "uniform" macro
+        if item_macro
+            .mac
+            .path
+            .get_ident()
+            .map(|id| id != "uniform")
+            .unwrap_or(true)
+        {
+            return UnsupportedSnafu {
+                span: item_macro.span(),
+                note: "Only 'uniform!' macro is supported as a uniform declaration.",
+            }
+            .fail();
+        }
+
+        let args = syn::parse2::<UniformArgs>(item_macro.mac.tokens.clone()).map_err(|e| {
+            Error::Unsupported {
+                span: item_macro.span(),
+                note: format!("{e}"),
+            }
+        })?;
+
+        Ok(ItemUniform {
+            group: args.group,
+            binding: args.binding,
+            name: args.name,
+            ty: Type::try_from(&args.ty)?,
+        })
+    }
+}
+
+impl ToTokens for ItemUniform {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let group = &self.group;
+        let binding = &self.binding;
+        let name = &self.name;
+        let ty = &self.ty;
+
+        // WGSL uniform declaration (example, adjust as needed for your codegen)
+        quote! {
+            @group(#group) @binding(#binding) var<uniform> #name: #ty;
+        }
+        .to_tokens(tokens);
+    }
+}
+
 /// WGSL items that may appear in a "module" or scope.
 pub enum Item {
     Const(ItemConst),
+    Uniform(Box<ItemUniform>),
     Fn(ItemFn),
     Mod(ItemMod),
     Use(ItemUse),
@@ -1368,6 +1492,23 @@ impl TryFrom<&syn::Item> for Item {
     fn try_from(value: &syn::Item) -> Result<Self, Self::Error> {
         match value {
             syn::Item::Mod(item_mod) => Ok(Item::Mod(ItemMod::try_from(item_mod)?)),
+            syn::Item::Macro(item_macro) => {
+                // Check the macro ident to key which parser to use
+                let maybe_ident = item_macro.mac.path.get_ident().map(|id| id.to_string());
+                match maybe_ident.as_deref() {
+                    Some("uniform") => {
+                        Ok(Item::Uniform(Box::new(ItemUniform::try_from(item_macro)?)))
+                    }
+                    other => UnsupportedSnafu {
+                        span: item_macro.ident.span(),
+                        note: format!(
+                            "Unknown macro '{other:?}' doesn't expand into WGSL\n\
+                            Seen as '{item_macro:#?}'",
+                        ),
+                    }
+                    .fail()?,
+                }
+            }
             syn::Item::Const(item_const) => Ok(Item::Const(ItemConst::try_from(item_const)?)),
             syn::Item::Fn(item_fn) => Ok(Item::Fn(item_fn.try_into()?)),
             syn::Item::Use(syn::ItemUse {
@@ -1380,7 +1521,17 @@ impl TryFrom<&syn::Item> for Item {
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
             _ => UnsupportedSnafu {
                 span: value.span(),
-                note: format!("Unsupported item: '{}'", value.into_token_stream()),
+                note: format!(
+                    "Unsupported item: '{}'\nSeen as '{}...'",
+                    value.into_token_stream(),
+                    format!("{value:?}")
+                        .split('(')
+                        .next()
+                        .expect("split always returns at least one on a non-empty string")
+                        .split('{')
+                        .next()
+                        .expect("same")
+                ),
             }
             .fail(),
         }
@@ -1392,6 +1543,7 @@ impl ToTokens for Item {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
             Item::Mod(item_mod) => item_mod.to_tokens(tokens),
+            Item::Uniform(item_uniform) => item_uniform.to_tokens(tokens),
             Item::Const(item_const) => item_const.to_tokens(tokens),
             Item::Fn(item_fn) => item_fn.to_tokens(tokens),
             Item::Use(_item_use) => {

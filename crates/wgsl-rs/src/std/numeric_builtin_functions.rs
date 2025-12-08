@@ -72,6 +72,7 @@
 //! | | fn trunc(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns truncate(e), the nearest whole number whose absolute value<br>    is less than or equal to the absolute value of e. Component-wise when T is a vector. |
 
 use crate::std::*;
+use std::ops::{Add, Sub, Mul, Div};
 
 /// Provides the numeric built-in function `abs`.
 pub trait NumericBuiltinAbs {
@@ -393,6 +394,493 @@ mod tan {
     impl_tan_vec!(Vec4f);
 }
 
+// --- Additional Numeric Builtin Implementations ---
+
+pub trait NumericBuiltinFract {
+    fn fract(self) -> Self;
+}
+pub fn fract<T: NumericBuiltinFract>(e: T) -> T {
+    <T as NumericBuiltinFract>::fract(e)
+}
+mod fract {
+    use super::*;
+    impl NumericBuiltinFract for f32 {
+        fn fract(self) -> Self {
+            self.fract()
+        }
+    }
+    macro_rules! impl_fract_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinFract for $ty {
+                fn fract(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.fract()),
+                    }
+                }
+            }
+        };
+    }
+    impl_fract_vec!(Vec2f);
+    impl_fract_vec!(Vec3f);
+    impl_fract_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinInverseSqrt {
+    fn inverse_sqrt(self) -> Self;
+}
+pub fn inverse_sqrt<T: NumericBuiltinInverseSqrt>(e: T) -> T {
+    <T as NumericBuiltinInverseSqrt>::inverse_sqrt(e)
+}
+mod inverse_sqrt {
+    use super::*;
+    impl NumericBuiltinInverseSqrt for f32 {
+        fn inverse_sqrt(self) -> Self {
+            1.0 / self.sqrt()
+        }
+    }
+    macro_rules! impl_inverse_sqrt_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinInverseSqrt for $ty {
+                fn inverse_sqrt(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| 1.0 / t.sqrt()),
+                    }
+                }
+            }
+        };
+    }
+    impl_inverse_sqrt_vec!(Vec2f);
+    impl_inverse_sqrt_vec!(Vec3f);
+    impl_inverse_sqrt_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinLength {
+    fn length(self) -> f32;
+}
+pub fn length<T: NumericBuiltinLength>(e: T) -> f32 {
+    <T as NumericBuiltinLength>::length(e)
+}
+mod length {
+    use super::*;
+    impl NumericBuiltinLength for f32 {
+        fn length(self) -> f32 {
+            self.abs()
+        }
+    }
+    impl NumericBuiltinLength for Vec2f {
+        fn length(self) -> f32 {
+            (self.x * self.x + self.y * self.y).sqrt()
+        }
+    }
+    impl NumericBuiltinLength for Vec3f {
+        fn length(self) -> f32 {
+            (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+        }
+    }
+    impl NumericBuiltinLength for Vec4f {
+        fn length(self) -> f32 {
+            (self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w).sqrt()
+        }
+    }
+}
+
+pub trait NumericBuiltinLog {
+    fn log(self) -> Self;
+}
+pub fn log<T: NumericBuiltinLog>(e: T) -> T {
+    <T as NumericBuiltinLog>::log(e)
+}
+mod log {
+    use super::*;
+    impl NumericBuiltinLog for f32 {
+        fn log(self) -> Self {
+            self.ln()
+        }
+    }
+    macro_rules! impl_log_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinLog for $ty {
+                fn log(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.ln()),
+                    }
+                }
+            }
+        };
+    }
+    impl_log_vec!(Vec2f);
+    impl_log_vec!(Vec3f);
+    impl_log_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinLog2 {
+    fn log2(self) -> Self;
+}
+pub fn log2<T: NumericBuiltinLog2>(e: T) -> T {
+    <T as NumericBuiltinLog2>::log2(e)
+}
+mod log2 {
+    use super::*;
+    impl NumericBuiltinLog2 for f32 {
+        fn log2(self) -> Self {
+            self.log2()
+        }
+    }
+    macro_rules! impl_log2_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinLog2 for $ty {
+                fn log2(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.log2()),
+                    }
+                }
+            }
+        };
+    }
+    impl_log2_vec!(Vec2f);
+    impl_log2_vec!(Vec3f);
+    impl_log2_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinMax {
+    fn max(self, other: Self) -> Self;
+}
+pub fn max<T: NumericBuiltinMax>(a: T, b: T) -> T {
+    <T as NumericBuiltinMax>::max(a, b)
+}
+mod max {
+    use super::*;
+    impl NumericBuiltinMax for f32 {
+        fn max(self, other: Self) -> Self {
+            self.max(other)
+        }
+    }
+    macro_rules! impl_max_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinMax for $ty {
+                fn max(self, other: Self) -> Self {
+                    Self {
+                        inner: self.inner.zip(other.inner, |a, b| a.max(b)),
+                    }
+                }
+            }
+        };
+    }
+    impl_max_vec!(Vec2f);
+    impl_max_vec!(Vec3f);
+    impl_max_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinMin {
+    fn min(self, other: Self) -> Self;
+}
+pub fn min<T: NumericBuiltinMin>(a: T, b: T) -> T {
+    <T as NumericBuiltinMin>::min(a, b)
+}
+mod min {
+    use super::*;
+    impl NumericBuiltinMin for f32 {
+        fn min(self, other: Self) -> Self {
+            self.min(other)
+        }
+    }
+    macro_rules! impl_min_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinMin for $ty {
+                fn min(self, other: Self) -> Self {
+                    Self {
+                        inner: self.inner.zip(other.inner, |a, b| a.min(b)),
+                    }
+                }
+            }
+        };
+    }
+    impl_min_vec!(Vec2f);
+    impl_min_vec!(Vec3f);
+    impl_min_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinPow {
+    fn pow(self, other: Self) -> Self;
+}
+pub fn pow<T: NumericBuiltinPow>(a: T, b: T) -> T {
+    <T as NumericBuiltinPow>::pow(a, b)
+}
+mod pow {
+    use super::*;
+    impl NumericBuiltinPow for f32 {
+        fn pow(self, other: Self) -> Self {
+            self.powf(other)
+        }
+    }
+    macro_rules! impl_pow_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinPow for $ty {
+                fn pow(self, other: Self) -> Self {
+                    Self {
+                        inner: self.inner.zip(other.inner, |a, b| a.powf(b)),
+                    }
+                }
+            }
+        };
+    }
+    impl_pow_vec!(Vec2f);
+    impl_pow_vec!(Vec3f);
+    impl_pow_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinRadians {
+    fn radians(self) -> Self;
+}
+pub fn radians<T: NumericBuiltinRadians>(e: T) -> T {
+    <T as NumericBuiltinRadians>::radians(e)
+}
+mod radians {
+    use super::*;
+    impl NumericBuiltinRadians for f32 {
+        fn radians(self) -> Self {
+            self * std::f32::consts::PI / 180.0
+        }
+    }
+    macro_rules! impl_radians_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinRadians for $ty {
+                fn radians(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t * std::f32::consts::PI / 180.0),
+                    }
+                }
+            }
+        };
+    }
+    impl_radians_vec!(Vec2f);
+    impl_radians_vec!(Vec3f);
+    impl_radians_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinRound {
+    fn round(self) -> Self;
+}
+pub fn round<T: NumericBuiltinRound>(e: T) -> T {
+    <T as NumericBuiltinRound>::round(e)
+}
+mod round {
+    use super::*;
+    impl NumericBuiltinRound for f32 {
+        fn round(self) -> Self {
+            self.round()
+        }
+    }
+    macro_rules! impl_round_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinRound for $ty {
+                fn round(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.round()),
+                    }
+                }
+            }
+        };
+    }
+    impl_round_vec!(Vec2f);
+    impl_round_vec!(Vec3f);
+    impl_round_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinSaturate {
+    fn saturate(self) -> Self;
+}
+pub fn saturate<T: NumericBuiltinSaturate>(e: T) -> T {
+    <T as NumericBuiltinSaturate>::saturate(e)
+}
+mod saturate {
+    use super::*;
+    impl NumericBuiltinSaturate for f32 {
+        fn saturate(self) -> Self {
+            self.max(0.0).min(1.0)
+        }
+    }
+    macro_rules! impl_saturate_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinSaturate for $ty {
+                fn saturate(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.max(0.0).min(1.0)),
+                    }
+                }
+            }
+        };
+    }
+    impl_saturate_vec!(Vec2f);
+    impl_saturate_vec!(Vec3f);
+    impl_saturate_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinSign {
+    fn sign(self) -> Self;
+}
+pub fn sign<T: NumericBuiltinSign>(e: T) -> T {
+    <T as NumericBuiltinSign>::sign(e)
+}
+mod sign {
+    use super::*;
+    impl NumericBuiltinSign for f32 {
+        fn sign(self) -> Self {
+            if self > 0.0 {
+                1.0
+            } else if self < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }
+        }
+    }
+    macro_rules! impl_sign_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinSign for $ty {
+                fn sign(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| {
+                            if t > 0.0 {
+                                1.0
+                            } else if t < 0.0 {
+                                -1.0
+                            } else {
+                                0.0
+                            }
+                        }),
+                    }
+                }
+            }
+        };
+    }
+    impl_sign_vec!(Vec2f);
+    impl_sign_vec!(Vec3f);
+    impl_sign_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinSqrt {
+    fn sqrt(self) -> Self;
+}
+pub fn sqrt<T: NumericBuiltinSqrt>(e: T) -> T {
+    <T as NumericBuiltinSqrt>::sqrt(e)
+}
+mod sqrt {
+    use super::*;
+    impl NumericBuiltinSqrt for f32 {
+        fn sqrt(self) -> Self {
+            self.sqrt()
+        }
+    }
+    macro_rules! impl_sqrt_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinSqrt for $ty {
+                fn sqrt(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.sqrt()),
+                    }
+                }
+            }
+        };
+    }
+    impl_sqrt_vec!(Vec2f);
+    impl_sqrt_vec!(Vec3f);
+    impl_sqrt_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinStep {
+    fn step(self, x: Self) -> Self;
+}
+pub fn step<T: NumericBuiltinStep>(edge: T, x: T) -> T {
+    <T as NumericBuiltinStep>::step(edge, x)
+}
+mod step {
+    use super::*;
+    impl NumericBuiltinStep for f32 {
+        fn step(self, x: Self) -> Self {
+            if x >= self {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+    macro_rules! impl_step_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinStep for $ty {
+                fn step(self, x: Self) -> Self {
+                    Self {
+                        inner: self.inner.zip(x.inner, |e, v| if v >= e { 1.0 } else { 0.0 }),
+                    }
+                }
+            }
+        };
+    }
+    impl_step_vec!(Vec2f);
+    impl_step_vec!(Vec3f);
+    impl_step_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinTanh {
+    fn tanh(self) -> Self;
+}
+pub fn tanh<T: NumericBuiltinTanh>(e: T) -> T {
+    <T as NumericBuiltinTanh>::tanh(e)
+}
+mod tanh {
+    use super::*;
+    impl NumericBuiltinTanh for f32 {
+        fn tanh(self) -> Self {
+            self.tanh()
+        }
+    }
+    macro_rules! impl_tanh_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinTanh for $ty {
+                fn tanh(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.tanh()),
+                    }
+                }
+            }
+        };
+    }
+    impl_tanh_vec!(Vec2f);
+    impl_tanh_vec!(Vec3f);
+    impl_tanh_vec!(Vec4f);
+}
+
+pub trait NumericBuiltinTrunc {
+    fn trunc(self) -> Self;
+}
+pub fn trunc<T: NumericBuiltinTrunc>(e: T) -> T {
+    <T as NumericBuiltinTrunc>::trunc(e)
+}
+mod trunc {
+    use super::*;
+    impl NumericBuiltinTrunc for f32 {
+        fn trunc(self) -> Self {
+            self.trunc()
+        }
+    }
+    macro_rules! impl_trunc_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinTrunc for $ty {
+                fn trunc(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.trunc()),
+                    }
+                }
+            }
+        };
+    }
+    impl_trunc_vec!(Vec2f);
+    impl_trunc_vec!(Vec3f);
+    impl_trunc_vec!(Vec4f);
+}
+
+// --- End Additional Numeric Builtin Implementations ---
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -444,5 +932,121 @@ mod test {
         let t = 0.0f32;
         let tan_t = tan(t);
         assert_eq!(0.0, tan_t);
+    }
+
+    #[test]
+    fn sanity_fract() {
+        let t = 1.5f32;
+        let fract_t = fract(t);
+        assert_eq!(0.5, fract_t);
+    }
+
+    #[test]
+    fn sanity_inverse_sqrt() {
+        let t = 4.0f32;
+        let inv_sqrt_t = inverse_sqrt(t);
+        assert!((inv_sqrt_t - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_length() {
+        let t = 3.0f32;
+        let len_t = length(t);
+        assert_eq!(3.0, len_t);
+    }
+
+    #[test]
+    fn sanity_log() {
+        let t = std::f32::consts::E;
+        let log_t = log(t);
+        assert!((log_t - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_log2() {
+        let t = 8.0f32;
+        let log2_t = log2(t);
+        assert_eq!(3.0, log2_t);
+    }
+
+    #[test]
+    fn sanity_max() {
+        let a = 2.0f32;
+        let b = 3.0f32;
+        let max_ab = max(a, b);
+        assert_eq!(3.0, max_ab);
+    }
+
+    #[test]
+    fn sanity_min() {
+        let a = 2.0f32;
+        let b = 3.0f32;
+        let min_ab = min(a, b);
+        assert_eq!(2.0, min_ab);
+    }
+
+    #[test]
+    fn sanity_pow() {
+        let a = 2.0f32;
+        let b = 3.0f32;
+        let pow_ab = pow(a, b);
+        assert_eq!(8.0, pow_ab);
+    }
+
+    #[test]
+    fn sanity_radians() {
+        let deg = 180.0f32;
+        let rad = radians(deg);
+        assert!((rad - std::f32::consts::PI).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_round() {
+        let t = 2.7f32;
+        let round_t = round(t);
+        assert_eq!(3.0, round_t);
+    }
+
+    #[test]
+    fn sanity_saturate() {
+        let t = 1.5f32;
+        let sat_t = saturate(t);
+        assert_eq!(1.0, sat_t);
+    }
+
+    #[test]
+    fn sanity_sign() {
+        let t = -3.0f32;
+        let sign_t = sign(t);
+        assert_eq!(-1.0, sign_t);
+    }
+
+    #[test]
+    fn sanity_sqrt() {
+        let t = 4.0f32;
+        let sqrt_t = sqrt(t);
+        assert_eq!(2.0, sqrt_t);
+    }
+
+    #[test]
+    fn sanity_step() {
+        let edge = 1.0f32;
+        let x = 2.0f32;
+        let step_val = step(edge, x);
+        assert_eq!(1.0, step_val);
+    }
+
+    #[test]
+    fn sanity_tanh() {
+        let t = 0.0f32;
+        let tanh_t = tanh(t);
+        assert_eq!(0.0, tanh_t);
+    }
+
+    #[test]
+    fn sanity_trunc() {
+        let t = 2.7f32;
+        let trunc_t = trunc(t);
+        assert_eq!(2.0, trunc_t);
     }
 }

@@ -268,10 +268,60 @@ impl<T: Clone> CanRead<T> for &'static Uniform<T> {
 /// See <https://gpuweb.github.io/gpuweb/wgsl/#numeric-builtin-functions>.
 ///
 /// ## NOTE: This is a WIP.
-/// Here is a table of the remaining functions to be implemented.
-/// When one is completed, remove it from the table.
+/// Here is a table of the numeric builtin functions from the WGSL spec:
 ///
-/// TODO: insert the table of numeric-builtin-functions
+/// | Function         | Description                                                                 |
+/// |------------------|-----------------------------------------------------------------------------|
+/// | abs              | Returns the absolute value of each component.                               |
+/// | acos             | Returns the arccosine of each component.                                    |
+/// | acosh            | Returns the inverse hyperbolic cosine of each component.                    |
+/// | asin             | Returns the arcsine of each component.                                      |
+/// | asinh            | Returns the inverse hyperbolic sine of each component.                      |
+/// | atan             | Returns the arctangent of each component.                                   |
+/// | atanh            | Returns the inverse hyperbolic tangent of each component.                   |
+/// | atan2            | Returns the arctangent of y/x for each component.                           |
+/// | ceil             | Returns the smallest integer greater than or equal to each component.        |
+/// | clamp            | Returns each component clamped between min and max.                         |
+/// | cos              | Returns the cosine of each component.                                       |
+/// | cosh             | Returns the hyperbolic cosine of each component.                            |
+/// | countLeadingZeros| Returns the number of leading zero bits in each component.                  |
+/// | countOneBits     | Returns the number of one bits in each component.                           |
+/// | countTrailingZeros| Returns the number of trailing zero bits in each component.                |
+/// | degrees          | Converts radians to degrees for each component.                             |
+/// | distance         | Returns the distance between two points.                                    |
+/// | exp              | Returns the natural exponent of each component.                             |
+/// | exp2             | Returns 2 raised to the power of each component.                            |
+/// | extractBits      | Extracts bits from each component.                                          |
+/// | floor            | Returns the largest integer less than or equal to each component.           |
+/// | fma              | Returns the fused multiply-add of the components.                           |
+/// | fract            | Returns the fractional part of each component.                              |
+/// | frexp            | Returns the mantissa and exponent of each component.                        |
+/// | insertBits       | Inserts bits into each component.                                           |
+/// | length           | Returns the length of a vector.                                             |
+/// | log              | Returns the natural logarithm of each component.                            |
+/// | log2             | Returns the base-2 logarithm of each component.                             |
+/// | max              | Returns the maximum of each component and the corresponding value in y.     |
+/// | min              | Returns the minimum of each component and the corresponding value in y.     |
+/// | mix              | Returns the linear interpolation of x and y by a.                           |
+/// | modf             | Returns the integer and fractional parts of each component.                 |
+/// | normalize        | Returns the normalized vector.                                              |
+/// | pow              | Returns x raised to the power of y for each component.                      |
+/// | quantizeToF16    | Quantizes each component to f16 precision.                                  |
+/// | radians          | Converts degrees to radians for each component.                             |
+/// | reflect          | Returns the reflection direction for an incident vector.                    |
+/// | reverseBits      | Returns the bits of each component reversed.                                |
+/// | round            | Returns the nearest integer to each component.                              |
+/// | sign             | Returns the sign of each component.                                         |
+/// | sin              | Returns the sine of each component.                                         |
+/// | sinh             | Returns the hyperbolic sine of each component.                              |
+/// | smoothstep       | Returns smooth Hermite interpolation between 0 and 1.                       |
+/// | sqrt             | Returns the square root of each component.                                  |
+/// | step             | Returns 0.0 or 1.0 based on comparison with edge.                           |
+/// | tan              | Returns the tangent of each component.                                      |
+/// | tanh             | Returns the hyperbolic tangent of each component.                           |
+/// | trunc            | Returns the integer part of each component.                                 |
+///
+/// See <https://gpuweb.github.io/gpuweb/wgsl/#numeric-builtin-functions>.
 pub trait IsNumericBuiltin {
     /// Returns the sine of `e`, where `e` is in radians. Component-wise when type `T` is a vector.
     fn sin(self) -> Self;

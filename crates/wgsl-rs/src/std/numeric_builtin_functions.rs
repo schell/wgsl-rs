@@ -152,6 +152,17 @@ pub fn acos<T: NumericBuiltinAcos>(e: T) -> T {
     <T as NumericBuiltinAcos>::acos(e)
 }
 
+/// Provides the numeric built-in function `sin`.
+pub trait NumericBuiltinSin {
+    /// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
+    fn sin(self) -> Self;
+}
+
+/// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
+pub fn sin<T: NumericBuiltinSin>(e: T) -> T {
+    <T as NumericBuiltinSin>::sin(e)
+}
+
 mod acos {
     use super::*;
 
@@ -182,6 +193,36 @@ mod acos {
     impl_acos_vec!(Vec4f);
 }
 
+mod sin {
+    use super::*;
+
+    macro_rules! impl_sin_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinSin for $ty {
+                fn sin(self) -> Self {
+                    self.sin()
+                }
+            }
+        };
+    }
+    impl_sin_scalar!(f32);
+
+    macro_rules! impl_sin_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinSin for $ty {
+                fn sin(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.sin()),
+                    }
+                }
+            }
+        };
+    }
+    impl_sin_vec!(Vec2f);
+    impl_sin_vec!(Vec3f);
+    impl_sin_vec!(Vec4f);
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -198,5 +239,12 @@ mod test {
         let t = 1.0f32;
         let acos_t = acos(t);
         assert_eq!(0.0, acos_t);
+    }
+
+    #[test]
+    fn sanity_sin() {
+        let t = 0.0f32;
+        let sin_t = sin(t);
+        assert_eq!(0.0, sin_t);
     }
 }

@@ -116,6 +116,56 @@ pub fn sin<T: NumericBuiltinSin>(e: T) -> T {
     <T as NumericBuiltinSin>::sin(e)
 }
 
+/// Provides the numeric built-in function `asin`.
+pub trait NumericBuiltinAsin {
+    /// Returns the principal value, in radians, of the inverse sine (sin⁻¹) of e.
+    /// Component-wise when T is a vector.
+    /// Note: The result is not mathematically meaningful when abs(e) > 1.
+    fn asin(self) -> Self;
+}
+
+/// Returns the principal value, in radians, of the inverse sine (sin⁻¹) of e.
+/// Component-wise when T is a vector.
+/// Note: The result is not mathematically meaningful when abs(e) > 1.
+pub fn asin<T: NumericBuiltinAsin>(e: T) -> T {
+    <T as NumericBuiltinAsin>::asin(e)
+}
+
+/// Provides the numeric built-in function `atan`.
+pub trait NumericBuiltinAtan {
+    /// Returns the principal value, in radians, of the inverse tangent (tan⁻¹) of e.
+    /// Component-wise when T is a vector.
+    fn atan(self) -> Self;
+}
+
+/// Returns the principal value, in radians, of the inverse tangent (tan⁻¹) of e.
+/// Component-wise when T is a vector.
+pub fn atan<T: NumericBuiltinAtan>(e: T) -> T {
+    <T as NumericBuiltinAtan>::atan(e)
+}
+
+/// Provides the numeric built-in function `cos`.
+pub trait NumericBuiltinCos {
+    /// Returns the cosine of e, where e is in radians. Component-wise when T is a vector.
+    fn cos(self) -> Self;
+}
+
+/// Returns the cosine of e, where e is in radians. Component-wise when T is a vector.
+pub fn cos<T: NumericBuiltinCos>(e: T) -> T {
+    <T as NumericBuiltinCos>::cos(e)
+}
+
+/// Provides the numeric built-in function `tan`.
+pub trait NumericBuiltinTan {
+    /// Returns the tangent of e, where e is in radians. Component-wise when T is a vector.
+    fn tan(self) -> Self;
+}
+
+/// Returns the tangent of e, where e is in radians. Component-wise when T is a vector.
+pub fn tan<T: NumericBuiltinTan>(e: T) -> T {
+    <T as NumericBuiltinTan>::tan(e)
+}
+
 mod abs {
     use super::*;
     macro_rules! impl_abs_scalar {
@@ -223,6 +273,126 @@ mod sin {
     impl_sin_vec!(Vec4f);
 }
 
+mod asin {
+    use super::*;
+
+    macro_rules! impl_asin_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinAsin for $ty {
+                fn asin(self) -> Self {
+                    self.asin()
+                }
+            }
+        };
+    }
+    impl_asin_scalar!(f32);
+
+    macro_rules! impl_asin_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAsin for $ty {
+                fn asin(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.asin()),
+                    }
+                }
+            }
+        };
+    }
+    impl_asin_vec!(Vec2f);
+    impl_asin_vec!(Vec3f);
+    impl_asin_vec!(Vec4f);
+}
+
+mod atan {
+    use super::*;
+
+    macro_rules! impl_atan_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinAtan for $ty {
+                fn atan(self) -> Self {
+                    self.atan()
+                }
+            }
+        };
+    }
+    impl_atan_scalar!(f32);
+
+    macro_rules! impl_atan_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAtan for $ty {
+                fn atan(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.atan()),
+                    }
+                }
+            }
+        };
+    }
+    impl_atan_vec!(Vec2f);
+    impl_atan_vec!(Vec3f);
+    impl_atan_vec!(Vec4f);
+}
+
+mod cos {
+    use super::*;
+
+    macro_rules! impl_cos_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinCos for $ty {
+                fn cos(self) -> Self {
+                    self.cos()
+                }
+            }
+        };
+    }
+    impl_cos_scalar!(f32);
+
+    macro_rules! impl_cos_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinCos for $ty {
+                fn cos(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.cos()),
+                    }
+                }
+            }
+        };
+    }
+    impl_cos_vec!(Vec2f);
+    impl_cos_vec!(Vec3f);
+    impl_cos_vec!(Vec4f);
+}
+
+mod tan {
+    use super::*;
+
+    macro_rules! impl_tan_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinTan for $ty {
+                fn tan(self) -> Self {
+                    self.tan()
+                }
+            }
+        };
+    }
+    impl_tan_scalar!(f32);
+
+    macro_rules! impl_tan_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinTan for $ty {
+                fn tan(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.tan()),
+                    }
+                }
+            }
+        };
+    }
+    impl_tan_vec!(Vec2f);
+    impl_tan_vec!(Vec3f);
+    impl_tan_vec!(Vec4f);
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -246,5 +416,33 @@ mod test {
         let t = 0.0f32;
         let sin_t = sin(t);
         assert_eq!(0.0, sin_t);
+    }
+
+    #[test]
+    fn sanity_asin() {
+        let t = 0.0f32;
+        let asin_t = asin(t);
+        assert_eq!(0.0, asin_t);
+    }
+
+    #[test]
+    fn sanity_atan() {
+        let t = 0.0f32;
+        let atan_t = atan(t);
+        assert_eq!(0.0, atan_t);
+    }
+
+    #[test]
+    fn sanity_cos() {
+        let t = 0.0f32;
+        let cos_t = cos(t);
+        assert_eq!(1.0, cos_t);
+    }
+
+    #[test]
+    fn sanity_tan() {
+        let t = 0.0f32;
+        let tan_t = tan(t);
+        assert_eq!(0.0, tan_t);
     }
 }

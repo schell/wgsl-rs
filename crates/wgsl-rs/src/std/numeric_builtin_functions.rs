@@ -4,8 +4,8 @@
 //!
 //! | Status ✔️/❌ | Function | Parameter Types | Description |
 //! | --- | --- | --- | --- |
-//! |  ✔️  | fn abs(e: T ) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | The absolute value of e. Component-wise when T is a vector. <br>       If e is a floating-point type, then the result is e with a positive sign bit.<br>    If e is an unsigned integer scalar type, then the result is e.<br>    If e is a signed integer scalar type and evaluates to the largest<br>    negative value, then the result is e. |
-//! |     | fn acos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) > 1. |
+//! |  ✔️ | fn abs(e: T ) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | The absolute value of e. Component-wise when T is a vector. <br>       If e is a floating-point type, then the result is e with a positive sign bit.<br>    If e is an unsigned integer scalar type, then the result is e.<br>    If e is a signed integer scalar type and evaluates to the largest<br>    negative value, then the result is e. |
+//! |  ✔️ | fn acos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) > 1. |
 //! |     | fn acosh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when e < 1. |
 //! |     | fn asin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) > 1. |
 //! |     | fn asinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the inverse hyperbolic sine (sinh-1) of e, as a hyperbolic angle in radians. That is, approximates x such that sinh(x) = e. <br>       Component-wise when T is a vector. |
@@ -90,6 +90,53 @@ pub fn abs<T: NumericBuiltinAbs>(e: T) -> T {
     <T as NumericBuiltinAbs>::abs(e)
 }
 
+mod abs {
+    use super::*;
+    macro_rules! impl_abs_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinAbs for $ty {
+                fn abs(self) -> Self {
+                    self.abs()
+                }
+            }
+        };
+    }
+    impl_abs_scalar!(f32);
+    impl_abs_scalar!(i32);
+
+    macro_rules! impl_abs_uself {
+        ($ty:ty) => {
+            impl NumericBuiltinAbs for $ty {
+                fn abs(self) -> Self {
+                    self
+                }
+            }
+        };
+    }
+    impl_abs_uself!(u32);
+    impl_abs_uself!(Vec2u);
+    impl_abs_uself!(Vec3u);
+    impl_abs_uself!(Vec4u);
+
+    macro_rules! impl_abs_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAbs for $ty {
+                fn abs(self) -> Self {
+                    Self {
+                        inner: self.inner.abs(),
+                    }
+                }
+            }
+        };
+    }
+    impl_abs_vec!(Vec2f);
+    impl_abs_vec!(Vec3f);
+    impl_abs_vec!(Vec4f);
+    impl_abs_vec!(Vec2i);
+    impl_abs_vec!(Vec3i);
+    impl_abs_vec!(Vec4i);
+}
+
 /// Provides the numeric built-in function `acos`.
 pub trait NumericBuiltinAcos {
     /// Returns the principal value, in radians, of the inverse cosine (cos⁻¹) of e.
@@ -105,75 +152,35 @@ pub fn acos<T: NumericBuiltinAcos>(e: T) -> T {
     <T as NumericBuiltinAcos>::acos(e)
 }
 
-macro_rules! impl_abs_scalar {
-    ($ty:ty) => {
-        impl NumericBuiltinAbs for $ty {
-            fn abs(self) -> Self {
-                self.abs()
-            }
-        }
-    };
-}
-impl_abs_scalar!(f32);
-impl_abs_scalar!(i32);
+mod acos {
+    use super::*;
 
-macro_rules! impl_acos_scalar {
-    ($ty:ty) => {
-        impl NumericBuiltinAcos for $ty {
-            fn acos(self) -> Self {
-                self.acos()
-            }
-        }
-    };
-}
-impl_acos_scalar!(f32);
-
-macro_rules! impl_abs_uself {
-    ($ty:ty) => {
-        impl NumericBuiltinAbs for $ty {
-            fn abs(self) -> Self {
-                self
-            }
-        }
-    };
-}
-impl_abs_uself!(u32);
-impl_abs_uself!(Vec2u);
-impl_abs_uself!(Vec3u);
-impl_abs_uself!(Vec4u);
-
-macro_rules! impl_abs_vec {
-    ($ty:ty) => {
-        impl NumericBuiltinAbs for $ty {
-            fn abs(self) -> Self {
-                Self {
-                    inner: self.inner.abs(),
+    macro_rules! impl_acos_scalar {
+        ($ty:ty) => {
+            impl NumericBuiltinAcos for $ty {
+                fn acos(self) -> Self {
+                    self.acos()
                 }
             }
-        }
-    };
-}
-impl_abs_vec!(Vec2f);
-impl_abs_vec!(Vec3f);
-impl_abs_vec!(Vec4f);
-impl_abs_vec!(Vec2i);
-impl_abs_vec!(Vec3i);
-impl_abs_vec!(Vec4i);
+        };
+    }
+    impl_acos_scalar!(f32);
 
-macro_rules! impl_acos_vec {
-    ($ty:ty) => {
-        impl NumericBuiltinAcos for $ty {
-            fn acos(self) -> Self {
-                Self {
-                    inner: self.inner.acos(),
+    macro_rules! impl_acos_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAcos for $ty {
+                fn acos(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.acos()),
+                    }
                 }
             }
-        }
-    };
+        };
+    }
+    impl_acos_vec!(Vec2f);
+    impl_acos_vec!(Vec3f);
+    impl_acos_vec!(Vec4f);
 }
-impl_acos_vec!(Vec2f);
-impl_acos_vec!(Vec3f);
-impl_acos_vec!(Vec4f);
 
 #[cfg(test)]
 mod test {

@@ -9,12 +9,9 @@
 //! These types include (but are not limited to) vector types like `Vec2f`, `Vec3f`, etc.
 //! and constructors like `vec2`, `vec2f` and `vec3i`, etc.
 
-use std::{
-    marker::PhantomData,
-    sync::{Arc, LazyLock, Mutex, RwLock},
-};
+use std::sync::{Arc, LazyLock, RwLock};
 
-pub use wgsl_rs_macros::{binding, fragment, group, vertex};
+pub use wgsl_rs_macros::{fragment, uniform, vertex};
 
 /// Trait identifying WGSL's concrete scalar types.
 pub trait IsScalar: Sized {
@@ -251,38 +248,42 @@ pub fn f32<T: CanRead<f32>>(t: T) -> f32 {
 
 /// A shader uniform, backed by a storage buffer on the CPU.
 pub struct UniformVariable<T> {
-    group: u32,
-    binding: u32,
-    value: Option<T>,
+    pub group: u32,
+    pub binding: u32,
+    pub value: Arc<RwLock<Option<T>>>,
 }
 
-pub type Uniform<T> = LazyLock<Arc<RwLock<UniformVariable<T>>>>;
+pub type Uniform<T> = LazyLock<UniformVariable<T>>;
 
 impl<T: Clone> CanRead<T> for &'static Uniform<T> {
     fn read_value(&self) -> T {
-        let guard = self.read().expect("could not read value");
-        let maybe = guard.value.as_ref();
+        let guard = self.value.read().expect("could not read value");
+        let maybe = guard.as_ref();
         maybe.cloned().expect("uniform value has not been set")
     }
 }
 
-/// Create a new uniform.
+/// Trait that provides numeric builtin functions.
 ///
-/// This is a noop in WGSL and exists soley to appease Rust.
-pub const fn uniform<T>() -> Uniform<T> {
-    LazyLock::new(|| {
-        Arc::new(RwLock::new(UniformVariable {
-            group: 0,
-            binding: 0,
-            value: None,
-        }))
-    })
+/// See <https://gpuweb.github.io/gpuweb/wgsl/#numeric-builtin-functions>.
+///
+/// ## NOTE: This is a WIP.
+/// Here is a table of the remaining functions to be implemented.
+/// When one is completed, remove it from the table.
+///
+/// TODO: insert the table of numeric-builtin-functions
+pub trait IsNumericBuiltin {
+    /// Returns the sine of `e`, where `e` is in radians. Component-wise when type `T` is a vector.
+    fn sin(self) -> Self;
 }
-/// In WGSL, both `@group(N)` and `@binding(N)` are used together to specify the location of a resource (such as a uniform or storage buffer) in the bind group layout.
-/// They are not used individually; both are required to fully specify a resource binding.
-/// For example:
-/// ```wgsl
-/// @group(0) @binding(1)
-/// var<uniform> my_uniform: MyUniformType;
-/// ```
-/// Using only one of them is invalid and will result in a shader compilation error.
+
+/// Returns the sine of `e`, where `e` is in radians. Component-wise when type `T` is a vector.
+pub fn sin<T: IsNumericBuiltin>(e: T) -> T {
+    T::sin(e)
+}
+
+impl IsNumericBuiltin for f32 {
+    fn sin(self) -> Self {
+        self.sin()
+    }
+}

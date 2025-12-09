@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 
 pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
     fn format_inner(tt: TokenStream, indent: usize) -> Vec<String> {
-        let mut lines = vec![String::new()];
+        let mut lines = Vec::new();
         let mut line = String::new();
         let mut last_was_ident = false;
         let mut last_was_literal = false;
@@ -20,13 +20,10 @@ pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
                         proc_macro2::Delimiter::None => ("", ""),
                     };
                     if open == "{" {
-                        lines.last_mut().unwrap().push(' ');
-                        lines.last_mut().unwrap().push_str(open);
-                        lines.push("".to_string());
-                        lines
-                            .last_mut()
-                            .unwrap()
-                            .push_str(&"    ".repeat(indent + 1));
+                        line.push(' ');
+                        line.push_str(open);
+                        lines.push(std::mem::replace(&mut line, String::new()));
+                        line.push_str(&"    ".repeat(indent + 1));
                         let inner = format_inner(group.stream(), indent + 1);
                         for l in inner {
                             if !l.is_empty() {
@@ -39,52 +36,55 @@ pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
                         }
                         lines.push(format!("{}{}", "    ".repeat(indent), close));
                     } else {
-                        lines.last_mut().unwrap().push_str(open);
+                        line.push_str(open);
                         let inner = format_inner(group.stream(), indent);
                         for l in inner {
-                            lines.last_mut().unwrap().push_str(&l);
+                            line.push_str(&l);
                         }
-                        lines.last_mut().unwrap().push_str(close);
+                        line.push_str(close);
                     }
                     last_was_ident = false;
                     last_was_literal = false;
                 }
                 proc_macro2::TokenTree::Ident(ident) => {
                     if last_was_ident || last_was_literal {
-                        lines.last_mut().unwrap().push(' ');
+                        line.push(' ');
                     }
-                    lines.last_mut().unwrap().push_str(&ident.to_string());
+                    line.push_str(&ident.to_string());
                     last_was_ident = true;
                     last_was_literal = false;
                 }
                 proc_macro2::TokenTree::Punct(punct) => {
                     let ch = punct.as_char();
                     if ch == ';' {
-                        lines.last_mut().unwrap().push(ch);
-                        lines.push("".to_string());
-                        lines.last_mut().unwrap().push_str(&"    ".repeat(indent));
+                        line.push(ch);
+                        lines.push(std::mem::replace(&mut line, String::new()));
+                        line.push_str(&"    ".repeat(indent));
                     } else if ch == ',' {
-                        lines.last_mut().unwrap().push(ch);
-                        lines.last_mut().unwrap().push(' ');
+                        line.push(ch);
+                        line.push(' ');
                     } else if ch == '=' {
-                        lines.last_mut().unwrap().push(' ');
-                        lines.last_mut().unwrap().push(ch);
-                        lines.last_mut().unwrap().push(' ');
+                        line.push(' ');
+                        line.push(ch);
+                        line.push(' ');
                     } else {
-                        lines.last_mut().unwrap().push(ch);
+                        line.push(ch);
                     }
                     last_was_ident = false;
                     last_was_literal = false;
                 }
                 proc_macro2::TokenTree::Literal(literal) => {
                     if last_was_ident || last_was_literal {
-                        lines.last_mut().unwrap().push(' ');
+                        line.push(' ');
                     }
-                    lines.last_mut().unwrap().push_str(&literal.to_string());
+                    line.push_str(&literal.to_string());
                     last_was_ident = false;
                     last_was_literal = true;
                 }
             }
+        }
+        if !line.is_empty() {
+            lines.push(line);
         }
         lines
     }

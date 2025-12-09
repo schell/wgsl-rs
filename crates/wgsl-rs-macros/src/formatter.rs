@@ -5,7 +5,6 @@ use proc_macro2::TokenStream;
 pub fn format_wgsl(tt: TokenStream) -> String {
     fn format_inner(tt: TokenStream, indent: usize) -> String {
         let mut out = String::new();
-        let mut need_space = false;
         let mut last_was_ident = false;
         let mut last_was_literal = false;
 
@@ -20,12 +19,12 @@ pub fn format_wgsl(tt: TokenStream) -> String {
                         proc_macro2::Delimiter::None => ("", ""),
                     };
                     if open == "{" {
-                        out.push_str(" ");
+                        out.push(' ');
                         out.push_str(open);
                         out.push('\n');
                         out.push_str(&"    ".repeat(indent + 1));
                         let inner = format_inner(group.stream(), indent + 1);
-                        out.push_str(&inner.trim_end());
+                        out.push_str(inner.trim_end());
                         out.push('\n');
                         out.push_str(&"    ".repeat(indent));
                         out.push_str(close);
@@ -34,7 +33,6 @@ pub fn format_wgsl(tt: TokenStream) -> String {
                         out.push_str(&format_inner(group.stream(), indent));
                         out.push_str(close);
                     }
-                    need_space = true;
                     last_was_ident = false;
                     last_was_literal = false;
                 }
@@ -43,7 +41,6 @@ pub fn format_wgsl(tt: TokenStream) -> String {
                         out.push(' ');
                     }
                     out.push_str(&ident.to_string());
-                    need_space = true;
                     last_was_ident = true;
                     last_was_literal = false;
                 }
@@ -53,19 +50,15 @@ pub fn format_wgsl(tt: TokenStream) -> String {
                         out.push(ch);
                         out.push('\n');
                         out.push_str(&"    ".repeat(indent));
-                        need_space = false;
                     } else if ch == ',' {
                         out.push(ch);
                         out.push(' ');
-                        need_space = false;
                     } else if ch == '=' {
                         out.push(' ');
                         out.push(ch);
                         out.push(' ');
-                        need_space = false;
                     } else {
                         out.push(ch);
-                        need_space = false;
                     }
                     last_was_ident = false;
                     last_was_literal = false;
@@ -75,7 +68,6 @@ pub fn format_wgsl(tt: TokenStream) -> String {
                         out.push(' ');
                     }
                     out.push_str(&literal.to_string());
-                    need_space = true;
                     last_was_ident = false;
                     last_was_literal = true;
                 }

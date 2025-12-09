@@ -2,9 +2,9 @@
 
 use proc_macro2::TokenStream;
 
-pub fn format_wgsl(tt: TokenStream) -> String {
-    fn format_inner(tt: TokenStream, indent: usize) -> String {
-        let mut out = String::new();
+pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
+    fn format_inner(tt: TokenStream, indent: usize) -> Vec<String> {
+        let mut lines = vec![String::new()];
         let mut last_was_ident = false;
         let mut last_was_literal = false;
 
@@ -19,62 +19,72 @@ pub fn format_wgsl(tt: TokenStream) -> String {
                         proc_macro2::Delimiter::None => ("", ""),
                     };
                     if open == "{" {
-                        out.push(' ');
-                        out.push_str(open);
-                        out.push('\n');
-                        out.push_str(&"    ".repeat(indent + 1));
+                        lines.last_mut().unwrap().push(' ');
+                        lines.last_mut().unwrap().push_str(open);
+                        lines.push("".to_string());
+                        lines.last_mut().unwrap().push_str(&"    ".repeat(indent + 1));
                         let inner = format_inner(group.stream(), indent + 1);
-                        out.push_str(inner.trim_end());
-                        out.push('\n');
-                        out.push_str(&"    ".repeat(indent));
-                        out.push_str(close);
+                        for l in inner {
+                            if !l.is_empty() {
+                                lines.push(format!("{}{}", "    ".repeat(indent + 1), l.trim_end()));
+                            }
+                        }
+                        lines.push(format!("{}{}", "    ".repeat(indent), close));
                     } else {
-                        out.push_str(open);
-                        out.push_str(&format_inner(group.stream(), indent));
-                        out.push_str(close);
+                        lines.last_mut().unwrap().push_str(open);
+                        let inner = format_inner(group.stream(), indent);
+                        for l in inner {
+                            lines.last_mut().unwrap().push_str(&l);
+                        }
+                        lines.last_mut().unwrap().push_str(close);
                     }
                     last_was_ident = false;
                     last_was_literal = false;
                 }
                 proc_macro2::TokenTree::Ident(ident) => {
                     if last_was_ident || last_was_literal {
-                        out.push(' ');
+                        lines.last_mut().unwrap().push(' ');
                     }
-                    out.push_str(&ident.to_string());
+                    lines.last_mut().unwrap().push_str(&ident.to_string());
                     last_was_ident = true;
                     last_was_literal = false;
                 }
                 proc_macro2::TokenTree::Punct(punct) => {
                     let ch = punct.as_char();
                     if ch == ';' {
-                        out.push(ch);
-                        out.push('\n');
-                        out.push_str(&"    ".repeat(indent));
+                        lines.last_mut().unwrap().push(ch);
+                        lines.push("".to_string());
+                        lines.last_mut().unwrap().push_str(&"    ".repeat(indent));
                     } else if ch == ',' {
-                        out.push(ch);
-                        out.push(' ');
+                        lines.last_mut().unwrap().push(ch);
+                        lines.last_mut().unwrap().push(' ');
                     } else if ch == '=' {
-                        out.push(' ');
-                        out.push(ch);
-                        out.push(' ');
+                        lines.last_mut().unwrap().push(' ');
+                        lines.last_mut().unwrap().push(ch);
+                        lines.last_mut().unwrap().push(' ');
                     } else {
-                        out.push(ch);
+                        lines.last_mut().unwrap().push(ch);
                     }
                     last_was_ident = false;
                     last_was_literal = false;
                 }
                 proc_macro2::TokenTree::Literal(literal) => {
                     if last_was_ident || last_was_literal {
-                        out.push(' ');
+                        lines.last_mut().unwrap().push(' ');
                     }
-                    out.push_str(&literal.to_string());
+                    lines.last_mut().unwrap().push_str(&literal.to_string());
                     last_was_ident = false;
                     last_was_literal = true;
                 }
             }
         }
-        out
+        lines
     }
 
-    format_inner(tt, 0)
+    let mut lines = format_inner(tt, 0);
+    // Remove any empty trailing lines
+    while lines.last().map_or(false, |l| l.trim().is_empty()) {
+        lines.pop();
+    }
+    lines
 }

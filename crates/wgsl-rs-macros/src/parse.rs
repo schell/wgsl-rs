@@ -6,6 +6,7 @@
 //!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
 //!
+use darling::FromMeta;
 // HEY!
 //
 // This module is incomplete at best.
@@ -17,6 +18,9 @@ use quote::{ToTokens, quote};
 use snafu::prelude::*;
 use syn::{Ident, Token, parenthesized, spanned::Spanned};
 
+#[allow(unused_imports)]
+use crate::parse::util::in_progress;
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(
@@ -27,6 +31,9 @@ pub enum Error {
         span: proc_macro2::Span,
         note: String,
     },
+
+    #[snafu(display(""))]
+    Darling { source: darling::Error },
 
     #[snafu(display("Encountered currently unsupported Rust syntax.\n  {note}"))]
     CurrentlyUnsupported {
@@ -50,20 +57,21 @@ pub enum Error {
 }
 
 impl Error {
-    pub fn span(&self) -> &proc_macro2::Span {
+    pub fn span(&self) -> proc_macro2::Span {
         match self {
-            Error::Unsupported { span, .. } => span,
-            Error::CurrentlyUnsupported { span, .. } => span,
-            Error::UnsupportedIfThen { span } => span,
-            Error::InProgress { span, message: _ } => span,
-            Error::FnVisibility { span } => span,
+            Error::Unsupported { span, .. } => *span,
+            Error::Darling { source } => source.span(),
+            Error::CurrentlyUnsupported { span, .. } => *span,
+            Error::UnsupportedIfThen { span } => *span,
+            Error::InProgress { span, message: _ } => *span,
+            Error::FnVisibility { span } => *span,
         }
     }
 }
 
 impl From<Error> for syn::Error {
     fn from(e: Error) -> Self {
-        syn::Error::new(*e.span(), format!("{e}"))
+        syn::Error::new(e.span(), format!("{e}"))
     }
 }
 
@@ -146,12 +154,7 @@ pub enum Type {
     },
 
     /// Array type: [T; N]
-    Array {
-        bracket_token: syn::token::Bracket,
-        elem: Box<Type>,
-        semi_token: Token![;],
-        len: syn::Expr,
-    },
+    Array { elem: Box<Type>, len: syn::Expr },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -170,9 +173,7 @@ impl TryFrom<&syn::Type> for Type {
             // Parse [T; N]
             let elem = Type::try_from(type_array.elem.as_ref())?;
             Ok(Type::Array {
-                bracket_token: type_array.bracket_token,
                 elem: Box::new(elem),
-                semi_token: type_array.semi_token,
                 len: type_array.len.clone(),
             })
         } else if let syn::Type::Path(type_path) = ty {
@@ -335,12 +336,7 @@ impl ToTokens for Type {
                     rt.to_tokens(tokens);
                 }
             }
-            Type::Array {
-                bracket_token: _,
-                elem,
-                semi_token: _,
-                len,
-            } => quote! { array<#elem, #len> }.to_tokens(tokens),
+            Type::Array { elem, len } => quote! { array<#elem, #len> }.to_tokens(tokens),
         }
     }
 }
@@ -483,10 +479,7 @@ pub enum Expr {
     /// Eg. `a` or `foo`
     Ident(syn::Ident),
     /// An array literal: `[expr1, expr2, ...]`
-    Array {
-        bracket_token: syn::token::Bracket,
-        elems: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
-    },
+    Array(syn::punctuated::Punctuated<Expr, syn::Token![,]>),
     /// An expression enclosed in parentheses.
     ///
     /// `(a + b)`
@@ -518,11 +511,7 @@ pub enum Expr {
     ///
     /// This needs special help because we want to support indexing with u32 and i32
     /// sinc WGSL supports this.
-    Cast {
-        lhs: Box<Expr>,
-        as_token: Token![as],
-        ty: Box<Type>,
-    },
+    Cast { lhs: Box<Expr>, ty: Box<Type> },
     /// A function call
     FnCall {
         lhs: Ident,
@@ -567,7 +556,7 @@ impl TryFrom<&syn::Expr> for Expr {
             }
             syn::Expr::Array(syn::ExprArray {
                 attrs: _,
-                bracket_token,
+                bracket_token: _,
                 elems,
             }) => {
                 let mut expr_elems = syn::punctuated::Punctuated::new();
@@ -579,10 +568,7 @@ impl TryFrom<&syn::Expr> for Expr {
                         expr_elems.push_punct(**comma);
                     }
                 }
-                Self::Array {
-                    bracket_token: *bracket_token,
-                    elems: expr_elems,
-                }
+                Self::Array(expr_elems)
             }
             syn::Expr::Index(syn::ExprIndex {
                 attrs: _,
@@ -633,16 +619,12 @@ impl TryFrom<&syn::Expr> for Expr {
             syn::Expr::Cast(syn::ExprCast {
                 attrs: _,
                 expr: lhs,
-                as_token,
+                as_token: _,
                 ty,
             }) => {
                 let lhs = Box::new(Expr::try_from(lhs.as_ref())?);
                 let ty = Box::new(Type::try_from(ty.as_ref())?);
-                Self::Cast {
-                    lhs,
-                    as_token: *as_token,
-                    ty,
-                }
+                Self::Cast { lhs, ty }
             }
             syn::Expr::Call(syn::ExprCall {
                 attrs: _,
@@ -699,10 +681,7 @@ impl ToTokens for Expr {
         match self {
             Expr::Lit(lit) => lit.to_tokens(tokens),
             Expr::Ident(id) => id.to_tokens(tokens),
-            Expr::Array {
-                bracket_token: _,
-                elems,
-            } => {
+            Expr::Array(elems) => {
                 quote! { array }.to_tokens(tokens);
                 let paren = syn::token::Paren::default();
                 paren.surround(tokens, |inner| {
@@ -746,11 +725,7 @@ impl ToTokens for Expr {
                 dot_token.to_tokens(tokens);
                 swizzle.to_tokens(tokens);
             }
-            Expr::Cast {
-                lhs,
-                as_token: _,
-                ty,
-            } => quote! { #ty(#lhs) }.to_tokens(tokens),
+            Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.to_tokens(tokens),
             Expr::FnCall {
                 lhs,
                 paren_token,
@@ -771,20 +746,29 @@ impl ToTokens for Expr {
     }
 }
 
-// /// A WGSL statement.
-// pub struct Stmt {
+pub enum ReturnTypeAnnotation {
+    None,
+    BuiltIn(Ident),
+    Location(Lit),
+}
 
-// }
-
-// pub struct FnArg {
-//     pub ident: syn::Ident,
-//     pub colon: syn::Token![:],
-//     pub ty: Type,
-// }
+impl ToTokens for ReturnTypeAnnotation {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            ReturnTypeAnnotation::None => {}
+            ReturnTypeAnnotation::BuiltIn(ident) => quote! { @builtin(#ident) }.to_tokens(tokens),
+            ReturnTypeAnnotation::Location(lit) => quote! { @location(#lit) }.to_tokens(tokens),
+        }
+    }
+}
 
 pub enum ReturnType {
     Default,
-    Type(Token![->], Box<Type>),
+    Type {
+        arrow: Token![->],
+        annotation: ReturnTypeAnnotation,
+        ty: Box<Type>,
+    },
 }
 
 impl TryFrom<&syn::ReturnType> for ReturnType {
@@ -795,7 +779,11 @@ impl TryFrom<&syn::ReturnType> for ReturnType {
             syn::ReturnType::Default => Ok(ReturnType::Default),
             syn::ReturnType::Type(arrow, ty) => {
                 let scalar = Type::try_from(ty.as_ref())?;
-                Ok(ReturnType::Type(*arrow, Box::new(scalar)))
+                Ok(ReturnType::Type {
+                    arrow: *arrow,
+                    ty: Box::new(scalar),
+                    annotation: ReturnTypeAnnotation::None,
+                })
             }
         }
     }
@@ -805,8 +793,13 @@ impl ToTokens for ReturnType {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
             ReturnType::Default => {}
-            ReturnType::Type(arrow, ty) => {
+            ReturnType::Type {
+                arrow,
+                annotation,
+                ty,
+            } => {
                 arrow.to_tokens(tokens);
+                annotation.to_tokens(tokens);
                 ty.to_tokens(tokens);
             }
         }
@@ -1033,7 +1026,21 @@ impl ToTokens for Block {
     }
 }
 
+#[derive(FromMeta)]
+#[darling(derive_syn_parse)]
+pub enum BuiltIn {
+    VertexIndex,
+}
+
+impl ToTokens for BuiltIn {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let builtin = quote! { vertex_index };
+        quote! { @builtin(#builtin) }.to_tokens(tokens)
+    }
+}
+
 pub struct FnArg {
+    pub builtin: Option<BuiltIn>,
     pub ident: Ident,
     pub colon_token: Token![:],
     pub ty: Type,
@@ -1061,10 +1068,33 @@ impl TryFrom<&syn::FnArg> for FnArg {
                             note: "wgsl-rs does not yet support mutable fn args."
                         }
                     );
+
                     let ident = pat_ident.ident.clone();
-                    let ty = Type::try_from(pat_type.ty.as_ref())?;
+
+                    let syn::PatType {
+                        attrs,
+                        pat: _,
+                        colon_token: _,
+                        ty,
+                    } = pat_type;
+
+                    snafu::ensure!(
+                        attrs.len() <= 1,
+                        UnsupportedSnafu {
+                            span: attrs[1].span(),
+                            note: "WGSL only supports a single annotation on function parameters."
+                        }
+                    );
+                    let builtin = if let Some(attr) = attrs.first() {
+                        Some(BuiltIn::from_meta(&attr.meta).context(DarlingSnafu)?)
+                    } else {
+                        None
+                    };
+
+                    let ty = Type::try_from(ty.as_ref())?;
 
                     Ok(FnArg {
+                        builtin,
                         ident,
                         colon_token: pat_type.colon_token,
                         ty,
@@ -1086,17 +1116,69 @@ impl TryFrom<&syn::FnArg> for FnArg {
 impl ToTokens for FnArg {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let Self {
+            builtin,
             ident,
             colon_token,
             ty,
         } = self;
+        builtin.to_tokens(tokens);
         ident.to_tokens(tokens);
         colon_token.to_tokens(tokens);
         ty.to_tokens(tokens);
     }
 }
 
+#[derive(Default)]
+pub enum FnAttrs {
+    #[default]
+    None,
+    Vertex,
+    Fragment,
+}
+
+impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
+    type Error = Error;
+
+    fn try_from(value: &Vec<syn::Attribute>) -> Result<Self, Self::Error> {
+        for syn::Attribute {
+            pound_token: _,
+            style,
+            bracket_token: _,
+            meta,
+        } in value.iter()
+        {
+            if matches!(style, syn::AttrStyle::Inner(_)) {
+                continue;
+            }
+
+            if let Some(ident) = meta.path().get_ident() {
+                match ident.to_string().as_str() {
+                    "vertex" => return Ok(FnAttrs::Vertex),
+                    "fragment" => return Ok(FnAttrs::Fragment),
+                    other => UnsupportedSnafu {
+                        span: ident.span(),
+                        note: format!("'{other}' is not a supported annotation"),
+                    }
+                    .fail()?,
+                }
+            }
+        }
+        Ok(FnAttrs::None)
+    }
+}
+
+impl ToTokens for FnAttrs {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            FnAttrs::None => {}
+            FnAttrs::Vertex => quote! { @vertex }.to_tokens(tokens),
+            FnAttrs::Fragment => quote! { @fragment }.to_tokens(tokens),
+        }
+    }
+}
+
 pub struct ItemFn {
+    pub fn_attrs: FnAttrs,
     pub fn_token: Token![fn],
     pub ident: Ident,
     pub paren_token: syn::token::Paren,
@@ -1110,7 +1192,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 
     fn try_from(value: &syn::ItemFn) -> Result<Self, Self::Error> {
         let syn::ItemFn {
-            attrs: _,
+            attrs,
             vis,
             sig,
             block,
@@ -1119,7 +1201,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             matches!(vis, syn::Visibility::Public(_)),
             FnVisibilitySnafu { span: sig.span() }
         );
-
+        let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
@@ -1130,12 +1212,41 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             }
         }
 
+        let mut return_type = ReturnType::try_from(&sig.output)?;
+        match &mut return_type {
+            ReturnType::Default => {}
+            ReturnType::Type {
+                arrow: _,
+                annotation,
+                ty,
+            } => {
+                if let Type::Vector {
+                    elements: 4,
+                    scalar_ty: ScalarType::F32,
+                    ident,
+                    ..
+                } = ty.as_ref()
+                {
+                    *annotation = match fn_attrs {
+                        FnAttrs::Vertex => {
+                            ReturnTypeAnnotation::BuiltIn(Ident::new("position", ident.span()))
+                        }
+                        FnAttrs::Fragment => ReturnTypeAnnotation::Location(Lit::Int(
+                            syn::LitInt::new("0", ident.span()),
+                        )),
+                        _ => ReturnTypeAnnotation::None,
+                    }
+                }
+            }
+        }
+
         Ok(ItemFn {
+            fn_attrs,
             fn_token: sig.fn_token,
             ident: sig.ident.clone(),
             paren_token: sig.paren_token,
             inputs,
-            return_type: ReturnType::try_from(&sig.output)?,
+            return_type,
             block: Block::try_from(block.as_ref())?,
         })
     }
@@ -1144,6 +1255,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 impl ToTokens for ItemFn {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let ItemFn {
+            fn_attrs,
             fn_token,
             ident,
             paren_token,
@@ -1151,6 +1263,7 @@ impl ToTokens for ItemFn {
             return_type,
             block,
         } = self;
+        fn_attrs.to_tokens(tokens);
         fn_token.to_tokens(tokens);
         ident.to_tokens(tokens);
         paren_token.surround(tokens, |tokens| {
@@ -1479,7 +1592,7 @@ impl ToTokens for ItemUniform {
 
 /// WGSL items that may appear in a "module" or scope.
 pub enum Item {
-    Const(ItemConst),
+    Const(Box<ItemConst>),
     Uniform(Box<ItemUniform>),
     Fn(ItemFn),
     Mod(ItemMod),
@@ -1509,7 +1622,9 @@ impl TryFrom<&syn::Item> for Item {
                     .fail()?,
                 }
             }
-            syn::Item::Const(item_const) => Ok(Item::Const(ItemConst::try_from(item_const)?)),
+            syn::Item::Const(item_const) => {
+                Ok(Item::Const(Box::new(ItemConst::try_from(item_const)?)))
+            }
             syn::Item::Fn(item_fn) => Ok(Item::Fn(item_fn.try_into()?)),
             syn::Item::Use(syn::ItemUse {
                 attrs: _,
@@ -1606,6 +1721,6 @@ mod test {
     fn parse_array_type() {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("[f32 ; 4]", &ty.into_token_stream().to_string());
+        assert_eq!("array <f32 , 4 >", &ty.into_token_stream().to_string());
     }
 }

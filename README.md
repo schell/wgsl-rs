@@ -1,53 +1,79 @@
 # wgsl-rs
 
-`wgsl-rs` allows you to write a subset of Rust and have it automatically
-generate WGSL code and `wgpu` runtime linkage. Rust code written with `wgsl-rs`
-can then be run on the CPU, and the generated WGSL can be run on the GPU.
+**wgsl-rs** lets you write a subset of Rust code and automatically generate WGSL shaders and `wgpu` runtime linkage. With
+`wgsl-rs`, you can run your code on the CPU in Rust, and use the generated WGSL on the GPU.
 
-Procedural macros are provided by `wgsl-rs-macros`.
+Procedural macros are provided by the [`wgsl-rs-macros`](./crates/wgsl-rs-macros) crate.
 
-## roadmap
+---
 
-- [x] module-level wgsl macro 
-  - [x] translates a subset of Rust into WGSL
-    - [x] types
-      - [x] concrete scalars
-      - [x] vec{N}<{scalar}>
-      - [x] vec aliases
-      - [ ] arrays
-      - [ ] matrices
-      - [ ] structs
-      - [ ] textures
-      - [ ] atomics
-    - [ ] descriptor sets, bindings, etc
-    - [ ] make this more extensive until all WGSL syntax is handled
-  - [x] allows glob-importing other `wgsl-rs` modules
-  - [x] WGSL std for Rust
-    - [x] vector constructors `vec2f`, `vec3f`, etc.
-    - [ ] binary ops (+, -, *, /, etc)
-  - [ ] generates linkage info
-  - [ ] generates linkage in `wgpu`, maybe through another crate like `wgsl-rs-wgpu` 
+## Roadmap
 
-### can it hello-world?
+- [x] `wgsl` macro for modules
+  - [x] Translate a subset of Rust into WGSL
+    - [x] Types
+      - [x] Concrete scalars
+      - [x] `vec{N}<{scalar}>`
+      - [x] Vector aliases
+      - [x] Arrays
+      - [ ] Matrices
+      - [ ] Structs
+      - [ ] Textures
+      - [ ] Atomics
+    - [x] Descriptor sets, bindings, etc.
+    - [ ] Expand support for all WGSL syntax
+  - [x] Glob-importing other `wgsl-rs` modules
+  - [x] WGSL standard library for Rust
+    - [x] Vector constructors (`vec2f`, `vec3f`, etc.)
+    - [x] Binary operators (`+`, `-`, `*`, `/`, etc.)
+  - [ ] Generate linkage info
+  - [ ] Generate `wgpu` linkage (possibly via a separate crate like `wgsl-rs-wgpu`)
 
-No, `wgsl-rs` is not hello-world-able yet.
-Specifically, the shader at <https://google.github.io/tour-of-wgsl/> cannot be transpiled.
+### Can it Hello World?
 
-## pro/cons vs rust-gpu
+Yes! See the [example](crates/example/src/main.rs), which transpiles the shader from
+[Tour of WGSL](https://google.github.io/tour-of-wgsl/).
 
-### pros  
+---
 
-* no rustc backend necessary, which means
-  * no provisioning rustc_codegen
+## Should I use Rust-GPU instead?
 
-## getting involved
+**Maybe — it depends on your needs.**
 
-The project is divided into a few parts:
+### Pros of wgsl-rs
+
+- **Lower barrier to entry:** No custom Rust compiler backend required.
+- **Works with stable Rust:** No need for nightly or custom toolchains.
+- **Editor support:** The `#[wgsl]` macro makes supported syntax explicit, so
+  your editor (via rust-analyzer) can help you write valid code.
+- **Immediate WGSL output:** Use, inspect, and debug the generated WGSL anywhere
+  WGSL is supported, including browsers and non-Rust projects.
+- **Easy interop:** Generated WGSL can be used in any WebGPU environment.
+
+### Cons of wgsl-rs
+
+- **WGSL only:** Only works on platforms that support WGSL.
+- **Limited to WebGPU features:** No support for features not present in WGSL (e.g., bindless resources).
+- **Subset of Rust:** Only a strict subset of Rust is supported.
+
+> **Note:** wgsl-rs and Rust-GPU are not mutually exclusive!
+  You can use both in the same project, and switch to Rust-GPU when you need more advanced features.
+
+---
+
+## Getting Involved
+
+The project is split into a few parts:
 
 - **`wgsl-rs-macros`**
-  Provides the `wgsl` proc-macro that allows writing WGSL modules within Rust source files.
-  This crate contains parsing from `syn` types into a strict subset of Rust.
-  This crate also performs the "code gen", if you can call it that. It's just an implementation
-  of `quote::ToTokens` for the subset AST. 
+  Provides the `wgsl` procedural macro for writing WGSL modules in Rust. Handles
+  parsing and code generation for the supported Rust subset.
 - **`wgsl-rs`**
-  Provides `Module`, exports the `wgsl` proc-macro
+  Provides the `Module` type, `wgsl::std`, and exports the `wgsl` macro.
+
+There's also a [devlog](DEVLOG) that explains some of the decisions and tradeoffs made during the making
+of this library.
+
+---
+
+Contributions, feedback, and questions are welcome!

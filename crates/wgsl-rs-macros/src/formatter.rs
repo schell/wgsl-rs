@@ -2,97 +2,135 @@
 
 use proc_macro2::TokenStream;
 
-pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
-    fn format_inner(tt: TokenStream, indent: usize) -> Vec<String> {
-        let mut lines = Vec::new();
-        let mut line = String::new();
-        let mut last_was_ident = false;
-        let mut last_was_literal = false;
+enum Line {
+    IndentInc,
+    IndentDec,
+    String(String),
+}
 
-        for token in tt.into_iter() {
-            match token {
-                proc_macro2::TokenTree::Group(group) => {
-                    let delim = group.delimiter();
-                    let (open, close) = match delim {
-                        proc_macro2::Delimiter::Parenthesis => ("(", ")"),
-                        proc_macro2::Delimiter::Brace => ("{", "}"),
-                        proc_macro2::Delimiter::Bracket => ("[", "]"),
-                        proc_macro2::Delimiter::None => ("", ""),
-                    };
-                    if open == "{" {
-                        line.push(' ');
-                        line.push_str(open);
-                        lines.push(std::mem::replace(&mut line, String::new()));
-                        line.push_str(&"    ".repeat(indent + 1));
-                        let inner = format_inner(group.stream(), indent + 1);
-                        for l in inner {
-                            if !l.is_empty() {
-                                lines.push(format!(
-                                    "{}{}",
-                                    "    ".repeat(indent + 1),
-                                    l.trim_end()
-                                ));
-                            }
-                        }
-                        lines.push(format!("{}{}", "    ".repeat(indent), close));
-                    } else {
-                        line.push_str(open);
-                        let inner = format_inner(group.stream(), indent);
-                        for l in inner {
-                            line.push_str(&l);
-                        }
-                        line.push_str(close);
-                    }
-                    last_was_ident = false;
-                    last_was_literal = false;
+#[derive(Default)]
+struct Formatter {
+    lines: Vec<Line>,
+    line: String,
+    last_token: Option<proc_macro2::TokenTree>,
+}
+
+impl Formatter {
+    fn write_end_of_line(&mut self, ending: &str) {
+        self.line.push_str(ending);
+        self.lines
+            .push(Line::String(std::mem::take(&mut self.line)));
+    }
+
+    fn last_was_ident(&self) -> bool {
+        matches!(self.last_token, Some(proc_macro2::TokenTree::Ident(_)))
+    }
+    fn last_was_lit(&self) -> bool {
+        matches!(self.last_token, Some(proc_macro2::TokenTree::Literal(_)))
+    }
+    fn last_was_closing_punc(&self) -> bool {
+        match self.last_token.as_ref() {
+            Some(proc_macro2::TokenTree::Punct(p)) => matches!(p.as_char(), ':' | '>'),
+            Some(proc_macro2::TokenTree::Group(g)) => match g.delimiter() {
+                proc_macro2::Delimiter::Parenthesis => true,
+                proc_macro2::Delimiter::Brace => false,
+                proc_macro2::Delimiter::Bracket => false,
+                proc_macro2::Delimiter::None => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn indent(&mut self) {
+        self.lines.push(Line::IndentInc);
+    }
+
+    fn outdent(&mut self) {
+        self.lines.push(Line::IndentDec);
+    }
+
+    fn add_token(&mut self, tt: proc_macro2::TokenTree) {
+        match &tt {
+            proc_macro2::TokenTree::Group(group) => {
+                let delim = group.delimiter();
+                let (open, close, is_indented) = match delim {
+                    proc_macro2::Delimiter::Parenthesis => ("(", ")", false),
+                    proc_macro2::Delimiter::Brace => (" {", "}", true),
+                    proc_macro2::Delimiter::Bracket => ("[", "]", false),
+                    proc_macro2::Delimiter::None => ("", "", false),
+                };
+
+                if is_indented {
+                    self.write_end_of_line(open);
+                    self.indent();
+                } else {
+                    self.line.push_str(open);
                 }
-                proc_macro2::TokenTree::Ident(ident) => {
-                    if last_was_ident || last_was_literal {
-                        line.push(' ');
-                    }
-                    line.push_str(&ident.to_string());
-                    last_was_ident = true;
-                    last_was_literal = false;
+                self.last_token = None;
+                for group_tt in group.stream() {
+                    self.add_token(group_tt);
                 }
-                proc_macro2::TokenTree::Punct(punct) => {
-                    let ch = punct.as_char();
-                    if ch == ';' {
-                        line.push(ch);
-                        lines.push(std::mem::replace(&mut line, String::new()));
-                        line.push_str(&"    ".repeat(indent));
-                    } else if ch == ',' {
-                        line.push(ch);
-                        line.push(' ');
-                    } else if ch == '=' {
-                        line.push(' ');
-                        line.push(ch);
-                        line.push(' ');
-                    } else {
-                        line.push(ch);
-                    }
-                    last_was_ident = false;
-                    last_was_literal = false;
-                }
-                proc_macro2::TokenTree::Literal(literal) => {
-                    if last_was_ident || last_was_literal {
-                        line.push(' ');
-                    }
-                    line.push_str(&literal.to_string());
-                    last_was_ident = false;
-                    last_was_literal = true;
+                if is_indented {
+                    self.outdent();
+                    self.write_end_of_line(close);
+                } else {
+                    self.line.push_str(close);
                 }
             }
+            proc_macro2::TokenTree::Ident(ident) => {
+                if self.last_was_ident() || self.last_was_lit() || self.last_was_closing_punc() {
+                    self.line.push(' ');
+                }
+                self.line.push_str(&ident.to_string());
+            }
+            proc_macro2::TokenTree::Punct(punct) => {
+                let ch = punct.as_char();
+                if ch == ';' {
+                    self.write_end_of_line(";");
+                } else if ch == ',' {
+                    self.line.push_str(", ");
+                } else if ch == '=' {
+                    self.line.push_str(" = ");
+                } else if matches!(ch, '@' | '-') {
+                    if self.last_was_closing_punc() {
+                        self.line.push(' ');
+                    }
+                    self.line.push(ch);
+                } else {
+                    self.line.push(ch);
+                }
+            }
+            proc_macro2::TokenTree::Literal(literal) => {
+                self.line.push_str(&literal.to_string());
+            }
         }
-        if !line.is_empty() {
-            lines.push(line);
-        }
-        lines
+        self.last_token = Some(tt);
+    }
+}
+
+pub fn format_wgsl(token_stream: TokenStream) -> Vec<String> {
+    let mut fmt = Formatter::default();
+    for tt in token_stream {
+        fmt.add_token(tt);
     }
 
-    let mut lines = format_inner(tt, 0);
-    // Remove any empty trailing lines
-    while lines.last().is_some_and(|l| l.trim().is_empty()) {
-        lines.pop();
-    }
-    lines
+    let mut indent = 0;
+    fmt.lines
+        .into_iter()
+        .flat_map(|line| match line {
+            Line::IndentInc => {
+                indent += 1;
+                None
+            }
+
+            Line::IndentDec => {
+                indent -= 1;
+                None
+            }
+            Line::String(line) => {
+                let padding = "    ".repeat(indent);
+                Some(format!("{padding}{line}"))
+            }
+        })
+        .collect()
 }

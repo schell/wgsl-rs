@@ -20,17 +20,20 @@ pub use wgsl_rs_macros::wgsl;
 ///     }
 /// }
 pub struct Module {
+    /// Imports of other WGSL modules.
     pub imports: &'static [&'static Module],
-    pub source: &'static str,
+
+    /// Source of the module, by line.
+    pub source: &'static [&'static str],
 }
 
 impl Module {
-    pub fn wgsl_source(&self) -> String {
-        let mut src = String::new();
+    pub fn wgsl_source(&self) -> Vec<&'static str> {
+        let mut src = vec![];
         for module in self.imports.iter() {
-            src.push_str(&module.wgsl_source());
+            src.extend(module.wgsl_source());
         }
-        src.push_str(self.source);
+        src.extend(self.source);
         src
     }
 }
@@ -76,10 +79,16 @@ mod test {
     fn module_source() {
         let source = c::WGSL_MODULE.wgsl_source();
         c::main();
-        assert_eq!(
-            "const THREE : u32 = 3;fn add_three_to_x_minus_y(x : u32, y : u32) -> u32
-{ let i : u32 = (x - y) + THREE; return i; }fn main() { let _u = add_three_to_x_minus_y(1337, 666); }",
-            &source
-        );
+        let expected = vec![
+            "const THREE : u32 = 3;",
+            "fn add_three_to_x_minus_y(x : u32, y : u32) -> u32 {",
+            "    let i : u32 = (x - y) + THREE;",
+            "    return i;",
+            "}",
+            "fn main() {",
+            "    let _u = add_three_to_x_minus_y(1337, 666);",
+            "}",
+        ];
+        assert_eq!(&expected, &source);
     }
 }

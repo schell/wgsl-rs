@@ -9,10 +9,10 @@ pub mod hello_triangle {
     use wgsl_rs::std::*;
 
     // Define a uniform in both Rust and WGSL using the uniform! macro.
-    uniform!(group(0), binding(0), FRAME: f32);
+    uniform!(group(0), binding(0), FRAME: u32);
 
     #[vertex]
-    pub fn vertex(vertex_index: u32) -> Vec4f {
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
 
         let position = POS[vertex_index as usize];
@@ -20,27 +20,34 @@ pub mod hello_triangle {
     }
 
     #[fragment]
-    pub fn fragment() -> Vec4f {
+    pub fn frag_main() -> Vec4f {
         vec4(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0)
     }
 }
 
 pub fn main() {
-    let source = hello_triangle::WGSL_MODULE.wgsl_source();
+    let source = hello_triangle::WGSL_MODULE.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
+
     // Parse the source into a Module.
     let module: naga::Module = naga::front::wgsl::parse_str(&source).unwrap();
 
     // Validate the module.
     // Validation can be made less restrictive by changing the ValidationFlags.
-    let info: naga::valid::ModuleInfo = naga::valid::Validator::new(
+    let result = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
     .subgroup_stages(naga::valid::ShaderStages::all())
     .subgroup_operations(naga::valid::SubgroupOperationSet::all())
-    .validate(&module)
-    .unwrap();
+    .validate(&module);
+
+    let info = match result {
+        Err(e) => {
+            panic!("{}", e.emit_to_string(&source));
+        }
+        Ok(i) => i,
+    };
 
     let wgsl =
         naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())

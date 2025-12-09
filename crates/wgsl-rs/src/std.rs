@@ -237,17 +237,28 @@ impl_is_scalar!(i32, glam::IVec2, glam::IVec3, glam::IVec4);
 impl_is_scalar!(u32, glam::UVec2, glam::UVec3, glam::UVec4);
 impl_is_scalar!(bool, glam::BVec2, glam::BVec3, glam::BVec4);
 
-/// Trait used to "read" a value out of a type.
-///
-/// This is used for conversion, so far.
-/// Eg, `f32(value)`.
-pub trait CanRead<T> {
-    fn read_value(&self) -> T;
+/// From<glam::VecN> for VecN<T>...
+macro_rules! impl_from_vec {
+    ($from:ty, $to:ident) => {
+        impl From<$from> for $to {
+            fn from(value: $from) -> Self {
+                $to { inner: value }
+            }
+        }
+    };
 }
-
-pub fn f32<T: CanRead<f32>>(t: T) -> f32 {
-    t.read_value()
-}
+impl_from_vec!(glam::Vec2, Vec2f);
+impl_from_vec!(glam::Vec3, Vec3f);
+impl_from_vec!(glam::Vec4, Vec4f);
+impl_from_vec!(glam::IVec2, Vec2i);
+impl_from_vec!(glam::IVec3, Vec3i);
+impl_from_vec!(glam::IVec4, Vec4i);
+impl_from_vec!(glam::UVec2, Vec2u);
+impl_from_vec!(glam::UVec3, Vec3u);
+impl_from_vec!(glam::UVec4, Vec4u);
+impl_from_vec!(glam::BVec2, Vec2b);
+impl_from_vec!(glam::BVec3, Vec3b);
+impl_from_vec!(glam::BVec4, Vec4b);
 
 /// A shader uniform, backed by a storage buffer on the CPU.
 pub struct UniformVariable<T> {
@@ -258,10 +269,47 @@ pub struct UniformVariable<T> {
 
 pub type Uniform<T> = LazyLock<UniformVariable<T>>;
 
-impl<T: Clone> CanRead<T> for &'static Uniform<T> {
-    fn read_value(&self) -> T {
+/// Used to provide WGSL type conversion functions like `f32(...)`, etc.
+pub trait Convert<T> {
+    fn convert(self) -> T;
+}
+
+impl<A: Clone + Convert<B>, B> Convert<B> for &Uniform<A> {
+    fn convert(self) -> B {
         let guard = self.value.read().expect("could not read value");
         let maybe = guard.as_ref();
-        maybe.cloned().expect("uniform value has not been set")
+        let a = maybe.cloned().expect("uniform value has not been set");
+        a.convert()
     }
+}
+
+macro_rules! impl_convert_as {
+    ($from:ty, $to:ty) => {
+        impl Convert<$to> for $from {
+            fn convert(self) -> $to {
+                self as $to
+            }
+        }
+    };
+}
+impl_convert_as!(f32, u32);
+impl_convert_as!(f32, i32);
+impl_convert_as!(i32, f32);
+impl_convert_as!(i32, u32);
+impl_convert_as!(u32, f32);
+impl_convert_as!(u32, i32);
+
+/// Returns the input cast to f32.
+pub fn f32(t: impl Convert<f32>) -> f32 {
+    t.convert()
+}
+
+/// Returns the input cast to u32.
+pub fn u32(t: impl Convert<u32>) -> u32 {
+    t.convert()
+}
+
+/// Returns the input cast to i32.
+pub fn i32(t: impl Convert<i32>) -> i32 {
+    t.convert()
 }

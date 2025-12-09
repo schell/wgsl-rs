@@ -5,6 +5,7 @@ use proc_macro2::TokenStream;
 pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
     fn format_inner(tt: TokenStream, indent: usize) -> Vec<String> {
         let mut lines = vec![String::new()];
+        let mut line = String::new();
         let mut last_was_ident = false;
         let mut last_was_literal = false;
 
@@ -22,11 +23,18 @@ pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
                         lines.last_mut().unwrap().push(' ');
                         lines.last_mut().unwrap().push_str(open);
                         lines.push("".to_string());
-                        lines.last_mut().unwrap().push_str(&"    ".repeat(indent + 1));
+                        lines
+                            .last_mut()
+                            .unwrap()
+                            .push_str(&"    ".repeat(indent + 1));
                         let inner = format_inner(group.stream(), indent + 1);
                         for l in inner {
                             if !l.is_empty() {
-                                lines.push(format!("{}{}", "    ".repeat(indent + 1), l.trim_end()));
+                                lines.push(format!(
+                                    "{}{}",
+                                    "    ".repeat(indent + 1),
+                                    l.trim_end()
+                                ));
                             }
                         }
                         lines.push(format!("{}{}", "    ".repeat(indent), close));
@@ -83,7 +91,7 @@ pub fn format_wgsl(tt: TokenStream) -> Vec<String> {
 
     let mut lines = format_inner(tt, 0);
     // Remove any empty trailing lines
-    while lines.last().map_or(false, |l| l.trim().is_empty()) {
+    while lines.last().is_some_and(|l| l.trim().is_empty()) {
         lines.pop();
     }
     lines

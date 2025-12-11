@@ -46,8 +46,11 @@ pub enum Error {
     ))]
     UnsupportedIfThen { span: proc_macro2::Span },
 
-    #[snafu(display("All WGSL functions must be public"))]
-    FnVisibility { span: proc_macro2::Span },
+    #[snafu(display("Non-public item.\n{item} must be public"))]
+    Visibility {
+        span: proc_macro2::Span,
+        item: &'static str,
+    },
 
     #[snafu(display("In progress:\n{message}"))]
     InProgress {
@@ -64,7 +67,7 @@ impl Error {
             Error::CurrentlyUnsupported { span, .. } => *span,
             Error::UnsupportedIfThen { span } => *span,
             Error::InProgress { span, message: _ } => *span,
-            Error::FnVisibility { span } => *span,
+            Error::Visibility { span, .. } => *span,
         }
     }
 }
@@ -155,6 +158,9 @@ pub enum Type {
 
     /// Array type: [T; N]
     Array { elem: Box<Type>, len: syn::Expr },
+
+    /// Struct type: eg. MyStruct
+    Struct { ident: Ident },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -228,11 +234,10 @@ impl TryFrom<&syn::Type> for Type {
                                     scalar: None,
                                 }
                             } else {
-                                UnsupportedSnafu {
-                                    span,
-                                    note: format!("Unknown type '{other}'"),
+                                // We assume this is a struct
+                                Type::Struct {
+                                    ident: ident.clone(),
                                 }
-                                .fail()?
                             }
                         }
                     })
@@ -263,7 +268,7 @@ impl TryFrom<&syn::Type> for Type {
                         "Vec4" => 4,
                         _other => UnsupportedSnafu {
                             span: ident.span(),
-                            note: "Unsupported vector elements, must be one of 2, 3 or 4",
+                            note: "Unsupported vector, must be one of Vec2, Vec3 or Vec4",
                         }
                         .fail()?,
                     };
@@ -337,6 +342,7 @@ impl ToTokens for Type {
                 }
             }
             Type::Array { elem, len } => quote! { array<#elem, #len> }.to_tokens(tokens),
+            Type::Struct { ident } => ident.to_tokens(tokens),
         }
     }
 }
@@ -470,6 +476,41 @@ impl ToTokens for UnOp {
     }
 }
 
+pub struct FieldValue {
+    pub member: Ident,
+    pub colon_token: Option<Token![:]>,
+    pub expr: Expr,
+}
+
+impl TryFrom<&syn::FieldValue> for FieldValue {
+    type Error = Error;
+
+    fn try_from(value: &syn::FieldValue) -> Result<Self, Self::Error> {
+        Ok(FieldValue {
+            member: match &value.member {
+                syn::Member::Named(ident) => ident.clone(),
+                unnamed => UnsupportedSnafu {
+                    span: unnamed.span(),
+                    note: "Unnamed field",
+                }
+                .fail()?,
+            },
+            colon_token: value.colon_token,
+            expr: Expr::try_from(&value.expr)?,
+        })
+    }
+}
+
+impl ToTokens for FieldValue {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.member.to_tokens(tokens);
+        if let Some(colon_token) = &self.colon_token {
+            colon_token.to_tokens(tokens);
+        }
+        self.expr.to_tokens(tokens);
+    }
+}
+
 /// WGSL expressions.
 pub enum Expr {
     /// A literal value.
@@ -517,6 +558,18 @@ pub enum Expr {
         lhs: Ident,
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
+    },
+    /// Struct constructor
+    Struct {
+        ident: Ident,
+        brace_token: syn::token::Brace,
+        fields: syn::punctuated::Punctuated<FieldValue, syn::Token![,]>,
+    },
+    /// Struct field access, e.g. `foo.bar`
+    FieldAccess {
+        base: Box<Expr>,
+        dot_token: Token![.],
+        field: Ident,
     },
 }
 
@@ -582,6 +635,27 @@ impl TryFrom<&syn::Expr> for Expr {
                     lhs,
                     bracket_token: *bracket_token,
                     index,
+                }
+            }
+            syn::Expr::Field(syn::ExprField {
+                attrs: _,
+                base,
+                dot_token,
+                member,
+            }) => {
+                let base = Box::new(Expr::try_from(base.as_ref())?);
+                let field = match member {
+                    syn::Member::Named(ident) => ident.clone(),
+                    unnamed => UnsupportedSnafu {
+                        span: unnamed.span(),
+                        note: "Unnamed field access is not supported in WGSL struct field access",
+                    }
+                    .fail()?,
+                };
+                Self::FieldAccess {
+                    base,
+                    dot_token: *dot_token,
+                    field,
                 }
             }
             syn::Expr::MethodCall(syn::ExprMethodCall {
@@ -667,6 +741,39 @@ impl TryFrom<&syn::Expr> for Expr {
                 }
                 .fail()?,
             },
+            syn::Expr::Struct(syn::ExprStruct {
+                attrs: _,
+                qself,
+                path,
+                brace_token,
+                fields,
+                dot2_token,
+                rest,
+            }) => {
+                util::some_is_unsupported(qself.as_ref(), "")?;
+                let ident = path.get_ident().context(UnsupportedSnafu {
+                    span: path.span(),
+                    note: "Struct name cannot be a path",
+                })?;
+                util::some_is_unsupported(dot2_token.as_ref(), "Default struct construction")?;
+                util::some_is_unsupported(rest.as_ref(), "Default struct construction")?;
+
+                let mut parsed_fields = syn::punctuated::Punctuated::new();
+                for pair in fields.pairs() {
+                    let field = pair.value();
+                    let parsed = FieldValue::try_from(*field)?;
+                    parsed_fields.push_value(parsed);
+                    if let Some(comma) = pair.punct() {
+                        parsed_fields.push_punct(**comma);
+                    }
+                }
+
+                Expr::Struct {
+                    ident: ident.clone(),
+                    brace_token: *brace_token,
+                    fields: parsed_fields,
+                }
+            }
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!("Unexpected expression '{}'", other.into_token_stream()),
@@ -725,6 +832,15 @@ impl ToTokens for Expr {
                 dot_token.to_tokens(tokens);
                 swizzle.to_tokens(tokens);
             }
+            Expr::FieldAccess {
+                base,
+                dot_token,
+                field,
+            } => {
+                base.to_tokens(tokens);
+                dot_token.to_tokens(tokens);
+                field.to_tokens(tokens);
+            }
             Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.to_tokens(tokens),
             Expr::FnCall {
                 lhs,
@@ -740,6 +856,16 @@ impl ToTokens for Expr {
                             comma.to_tokens(tokens);
                         }
                     }
+                });
+            }
+            Expr::Struct {
+                ident,
+                brace_token,
+                fields,
+            } => {
+                ident.to_tokens(tokens);
+                brace_token.surround(tokens, |inner| {
+                    fields.to_tokens(inner);
                 });
             }
         }
@@ -1199,7 +1325,10 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
         } = value;
         snafu::ensure!(
             matches!(vis, syn::Visibility::Public(_)),
-            FnVisibilitySnafu { span: sig.span() }
+            VisibilitySnafu {
+                span: sig.span(),
+                item: "Functions"
+            }
         );
         let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
@@ -1590,6 +1719,145 @@ impl ToTokens for ItemUniform {
     }
 }
 
+pub struct Field {
+    pub ident: Ident,
+    pub colon_token: Option<Token![:]>,
+    pub ty: Type,
+}
+
+impl TryFrom<&syn::Field> for Field {
+    type Error = Error;
+
+    fn try_from(value: &syn::Field) -> Result<Self, Self::Error> {
+        let ident = value
+            .ident
+            .clone()
+            .expect("only named fields are supported, and we checked for that before parsing this");
+        let colon_token = value.colon_token;
+        let ty = Type::try_from(&value.ty)?;
+        Ok(Field {
+            ident,
+            colon_token,
+            ty,
+        })
+    }
+}
+
+impl ToTokens for Field {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        self.ident.to_tokens(tokens);
+        if let Some(colon_token) = &self.colon_token {
+            colon_token.to_tokens(tokens);
+        }
+        self.ty.to_tokens(tokens);
+    }
+}
+
+pub struct FieldsNamed {
+    pub brace_token: syn::token::Brace,
+    pub named: syn::punctuated::Punctuated<Field, Token![,]>,
+}
+
+impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
+    type Error = Error;
+
+    fn try_from(value: &syn::FieldsNamed) -> Result<Self, Self::Error> {
+        let brace_token = value.brace_token;
+        let mut named = syn::punctuated::Punctuated::new();
+        for pair in value.named.pairs() {
+            let field = pair.value();
+            let parsed = Field::try_from(*field)?;
+            named.push_value(parsed);
+            if let Some(comma) = pair.punct() {
+                named.push_punct(**comma);
+            }
+        }
+        Ok(FieldsNamed { brace_token, named })
+    }
+}
+
+impl ToTokens for FieldsNamed {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let brace_token = &self.brace_token;
+        let named = &self.named;
+        brace_token.surround(tokens, |inner| {
+            named.to_tokens(inner);
+        });
+    }
+}
+
+pub struct ItemStruct {
+    pub struct_token: Token![struct],
+    pub ident: Ident,
+    pub fields: FieldsNamed,
+}
+
+impl TryFrom<&syn::ItemStruct> for ItemStruct {
+    type Error = Error;
+
+    fn try_from(value: &syn::ItemStruct) -> Result<Self, Self::Error> {
+        let syn::ItemStruct {
+            attrs,
+            vis,
+            struct_token,
+            ident,
+            generics,
+            fields,
+            semi_token: _,
+        } = value;
+
+        util::some_is_unsupported(attrs.first(), "struct annotations are unsupported")?;
+        snafu::ensure!(
+            matches!(vis, syn::Visibility::Public(_)),
+            VisibilitySnafu {
+                span: struct_token.span(),
+                item: "Structs"
+            }
+        );
+        snafu::ensure!(
+            generics.lt_token.is_none(),
+            UnsupportedSnafu {
+                span: generics.span(),
+                note: "Generics are not supported"
+            }
+        );
+        let fields = match fields {
+            syn::Fields::Named(fields_named) => fields_named,
+            syn::Fields::Unnamed(fields_unnamed) => UnsupportedSnafu {
+                span: fields_unnamed.span(),
+                note: "WGSL only supports named fields",
+            }
+            .fail()?,
+            syn::Fields::Unit => UnsupportedSnafu {
+                span: ident.span(),
+                note: "WGSL only supports named fields",
+            }
+            .fail()?,
+        };
+        let fields = FieldsNamed::try_from(fields)?;
+        Ok(ItemStruct {
+            struct_token: *struct_token,
+            ident: ident.clone(),
+            fields,
+        })
+    }
+}
+
+impl ToTokens for ItemStruct {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let ItemStruct {
+            struct_token,
+            ident,
+            fields,
+        } = self;
+        struct_token.to_tokens(tokens);
+        ident.to_tokens(tokens);
+        fields.brace_token.surround(tokens, |tokens| {
+            fields.named.to_tokens(tokens);
+        });
+    }
+}
+
 /// WGSL items that may appear in a "module" or scope.
 pub enum Item {
     Const(Box<ItemConst>),
@@ -1597,6 +1865,7 @@ pub enum Item {
     Fn(ItemFn),
     Mod(ItemMod),
     Use(ItemUse),
+    Struct(ItemStruct),
 }
 
 impl TryFrom<&syn::Item> for Item {
@@ -1634,6 +1903,7 @@ impl TryFrom<&syn::Item> for Item {
                 tree,
                 semi_token: _,
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
+            syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
             _ => UnsupportedSnafu {
                 span: value.span(),
                 note: format!(
@@ -1667,6 +1937,7 @@ impl ToTokens for Item {
                 // Instead "use" is used by the `wgsl` macro to include
                 // imports of other WGSL code.
             }
+            Item::Struct(item_struct) => item_struct.to_tokens(tokens),
         }
     }
 }

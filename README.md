@@ -48,6 +48,8 @@ Yes! See the [example](crates/example/src/main.rs), which transpiles the shader 
   your editor (via rust-analyzer) can help you write valid code.
 - **Immediate WGSL output:** Use, inspect, and debug the generated WGSL anywhere
   WGSL is supported, including browsers and non-Rust projects.
+- **Human readable WGSL output:** The WGSL that `wgsl-rs` produces is very close
+  in structure to the Rust code you write, including binding names and types.
 - **Easy interop:** Generated WGSL can be used in any WebGPU environment.
 
 ### Cons of wgsl-rs
@@ -55,9 +57,13 @@ Yes! See the [example](crates/example/src/main.rs), which transpiles the shader 
 - **WGSL only:** Only works on platforms that support WGSL.
 - **Limited to WebGPU features:** No support for features not present in WGSL (e.g., bindless resources).
 - **Subset of Rust:** Only a strict subset of Rust is supported.
+  - No traits
+  - No borrowing
+  - Very restricted module support
 
 > **Note:** wgsl-rs and Rust-GPU are not mutually exclusive!
-  You can use both in the same project, and switch to Rust-GPU when you need more advanced features.
+  You can start with wgsl-rs and switch to Rust-GPU when you need more advanced features.
+  I'm working on making them co-habitable.
 
 ---
 

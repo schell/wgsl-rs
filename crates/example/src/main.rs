@@ -25,12 +25,58 @@ pub mod hello_triangle {
     }
 }
 
-pub fn main() {
-    let source = hello_triangle::WGSL_MODULE.wgsl_source().join("\n");
+#[wgsl]
+pub mod structs {
+    use wgsl_rs::std::*;
+
+    pub struct A {
+        pub inner: f32,
+    }
+
+    pub struct B {
+        pub a: A,
+    }
+
+    pub struct C {
+        pub b: B,
+    }
+
+    pub fn f32_from_c(c: C) -> f32 {
+        c.b.a.inner
+    }
+
+    // Mixed builtins and user-defined inputs.
+    // pub struct MyInputs {
+    //     #[location(0)]
+    //     pub x: Vec4<f32>,
+
+    //     #[builtin(front_facing)]
+    //     pub y: bool,
+
+    //     #[location(1)]
+    //     #[interpolate(flat)]
+    //     pub z: u32,
+    // }
+
+    // pub struct MyOutputs {
+    //     #[builtin(frag_depth)]
+    //     pub x: f32,
+
+    //     #[location(0)]
+    //     pub y: Vec4<f32>,
+    // }
+
+    // #[fragment]
+    // pub fn fragShader(in1: MyInputs) -> MyOutputs {
+    //     MyOutputs { x: 0.0, y: in1.x }
+    // }
+}
+
+fn validate_and_print_source(source: &str) {
     println!("raw source:\n\n{source}\n\n");
 
     // Parse the source into a Module.
-    let module: naga::Module = naga::front::wgsl::parse_str(&source).unwrap();
+    let module: naga::Module = naga::front::wgsl::parse_str(source).unwrap();
 
     // Validate the module.
     // Validation can be made less restrictive by changing the ValidationFlags.
@@ -44,7 +90,7 @@ pub fn main() {
 
     let info = match result {
         Err(e) => {
-            panic!("{}", e.emit_to_string(&source));
+            panic!("{}", e.emit_to_string(source));
         }
         Ok(i) => i,
     };
@@ -53,4 +99,17 @@ pub fn main() {
         naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty())
             .unwrap();
     println!("naga source:\n\n{wgsl}");
+}
+
+pub fn main() {
+    {
+        // hello_triangle
+        let source = hello_triangle::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
+    {
+        // structs
+        let source = structs::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
 }

@@ -29,42 +29,46 @@ pub mod hello_triangle {
 pub mod structs {
     use wgsl_rs::std::*;
 
-    pub struct A {
-        pub inner: f32,
-    }
+    // pub struct A {
+    //     pub inner: f32,
+    // }
 
-    pub struct B {
-        pub a: A,
-    }
+    // pub struct B {
+    //     pub a: A,
+    // }
 
-    pub struct C {
-        pub b: B,
-    }
+    // pub struct C {
+    //     pub b: B,
+    // }
 
-    pub fn f32_from_c(c: C) -> f32 {
-        c.b.a.inner
-    }
+    // pub fn f32_from_c(c: C) -> f32 {
+    //     c.b.a.inner
+    // }
 
     // Mixed builtins and user-defined inputs.
-    // pub struct MyInputs {
-    //     #[location(0)]
-    //     pub x: Vec4<f32>,
+    #[input]
+    pub struct MyInputs {
+        #[location(0)]
+        pub x: Vec4<f32>,
 
-    //     #[builtin(front_facing)]
-    //     pub y: bool,
+        #[builtin(front_facing)]
+        pub y: bool,
 
-    //     #[location(1)]
-    //     #[interpolate(flat)]
-    //     pub z: u32,
-    // }
+        #[location(1)]
+        #[interpolate(flat)]
+        #[blend_src(69)]
+        #[invariant]
+        pub z: u32,
+    }
 
-    // pub struct MyOutputs {
-    //     #[builtin(frag_depth)]
-    //     pub x: f32,
+    #[output]
+    pub struct MyOutputs {
+        #[builtin(frag_depth)]
+        pub x: f32,
 
-    //     #[location(0)]
-    //     pub y: Vec4<f32>,
-    // }
+        #[location(0)]
+        pub y: Vec4<f32>,
+    }
 
     // #[fragment]
     // pub fn fragShader(in1: MyInputs) -> MyOutputs {

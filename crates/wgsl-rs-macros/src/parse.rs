@@ -16,7 +16,7 @@ use darling::FromMeta;
 // on grammar for help implementing this module.
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
-use syn::{Ident, Token, parenthesized, spanned::Spanned};
+use syn::{Ident, Token, parenthesized, parse::Parse, spanned::Spanned};
 
 #[allow(unused_imports)]
 use crate::parse::util::in_progress;
@@ -59,6 +59,22 @@ pub enum Error {
     },
 }
 
+impl From<darling::Error> for Error {
+    fn from(source: darling::Error) -> Self {
+        Self::Darling { source }
+    }
+}
+
+impl From<syn::Error> for Error {
+    fn from(value: syn::Error) -> Self {
+        UnsupportedSnafu {
+            span: value.span(),
+            note: value.to_string(),
+        }
+        .build()
+    }
+}
+
 impl Error {
     pub fn span(&self) -> proc_macro2::Span {
         match self {
@@ -74,7 +90,7 @@ impl Error {
 
 impl From<Error> for syn::Error {
     fn from(e: Error) -> Self {
-        syn::Error::new(e.span(), format!("{e}"))
+        syn::Error::new(e.span(), format!("Parsing error: '{e}'"))
     }
 }
 
@@ -1156,17 +1172,266 @@ impl ToTokens for Block {
 #[darling(derive_syn_parse)]
 pub enum BuiltIn {
     VertexIndex,
+    InstanceIndex,
+    Position,
+    FrontFacing,
+    FragDepth,
+    SampleIndex,
+    SampleMask,
+    LocalInvocationId,
+    LocalInvocationIndex,
+    GlobalInvocationId,
+    WorkgroupId,
+    NumWorkgroups,
+    SubgroupInvocationId,
+    SubgroupSize,
+    PrimitiveIndex,
+    SubgroupId,
+    NumSubgroups,
 }
 
 impl ToTokens for BuiltIn {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let builtin = quote! { vertex_index };
-        quote! { @builtin(#builtin) }.to_tokens(tokens)
+        let ident = match self {
+            BuiltIn::VertexIndex => "vertex_index",
+            BuiltIn::InstanceIndex => "instance_index",
+            BuiltIn::Position => "position",
+            BuiltIn::FrontFacing => "front_facing",
+            BuiltIn::FragDepth => "frag_depth",
+            BuiltIn::SampleIndex => "sample_index",
+            BuiltIn::SampleMask => "sample_mask",
+            BuiltIn::LocalInvocationId => "local_invocation_id",
+            BuiltIn::LocalInvocationIndex => "local_invocation_index",
+            BuiltIn::GlobalInvocationId => "global_invocation_id",
+            BuiltIn::WorkgroupId => "workgroup_id",
+            BuiltIn::NumWorkgroups => "num_workgroups",
+            BuiltIn::SubgroupInvocationId => "subgroup_invocation_id",
+            BuiltIn::SubgroupSize => "subgroup_size",
+            BuiltIn::PrimitiveIndex => "primitive_index",
+            BuiltIn::SubgroupId => "subgroup_id",
+            BuiltIn::NumSubgroups => "num_subgroups",
+        };
+        let ident = quote::format_ident!("{ident}");
+        ident.to_tokens(tokens);
+    }
+}
+
+pub enum InterpolationType {
+    Perspective(syn::Ident),
+    Linear(syn::Ident),
+    Flat(syn::Ident),
+}
+
+impl Parse for InterpolationType {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        Ok(match ident.to_string().as_str() {
+            "perspective" => Self::Perspective(ident),
+            "linear" => Self::Linear(ident),
+            "flat" => Self::Flat(ident),
+            other => Err(syn::Error::new(
+                ident.span(),
+                format!("Unexpected interpolation type '{other}'"),
+            ))?,
+        })
+    }
+}
+
+impl ToTokens for InterpolationType {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let ident = match self {
+            InterpolationType::Perspective(ident) => ident,
+            InterpolationType::Linear(ident) => ident,
+            InterpolationType::Flat(ident) => ident,
+        };
+        ident.to_tokens(tokens)
+    }
+}
+
+pub enum InterpolationSampling {
+    Center(syn::Ident),
+    Centroid(syn::Ident),
+    Sample(syn::Ident),
+    First(syn::Ident),
+    Either(syn::Ident),
+}
+
+impl Parse for InterpolationSampling {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let ident: Ident = input.parse()?;
+        Ok(match ident.to_string().as_str() {
+            "center" => Self::Center(ident),
+            "centroid" => Self::Centroid(ident),
+            "sample" => Self::Sample(ident),
+            "first" => Self::First(ident),
+            "either" => Self::Either(ident),
+            other => Err(syn::Error::new(
+                ident.span(),
+                format!("Unexpected interpolation sampling '{other}'"),
+            ))?,
+        })
+    }
+}
+
+impl ToTokens for InterpolationSampling {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let ident = match self {
+            InterpolationSampling::Center(ident) => ident,
+            InterpolationSampling::Centroid(ident) => ident,
+            InterpolationSampling::Sample(ident) => ident,
+            InterpolationSampling::First(ident) => ident,
+            InterpolationSampling::Either(ident) => ident,
+        };
+        ident.to_tokens(tokens)
+    }
+}
+
+/// <https://gpuweb.github.io/gpuweb/wgsl/#interpolation>
+pub struct Interpolate {
+    ty: InterpolationType,
+    comma_token: Option<Token![,]>,
+    sampling: Option<InterpolationSampling>,
+}
+
+/// Parse the _arguments_ of #[interpolate(type, sampling)].
+impl Parse for Interpolate {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let ty = input.parse()?;
+        let comma_token: Option<Token![,]> = input.parse()?;
+        let sampling = if comma_token.is_some() {
+            Some(input.parse()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            ty,
+            comma_token,
+            sampling,
+        })
+    }
+}
+
+impl ToTokens for Interpolate {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let Self {
+            ty,
+            comma_token,
+            sampling,
+        } = self;
+        quote! { @interpolate }.to_tokens(tokens);
+        syn::token::Paren::default().surround(tokens, |tokens| {
+            ty.to_tokens(tokens);
+            comma_token.to_tokens(tokens);
+            sampling.to_tokens(tokens);
+        });
+    }
+}
+
+/// A shader stage input is a datum provided to the shader stage from upstream in the pipeline.
+///
+/// Each datum is either a built-in input value, or a user-defined input.
+///
+/// A shader stage output is a datum the shader provides for further processing
+/// downstream in the pipeline. Each datum is either a built-in output value, or
+/// a user-defined output.
+/// IO attributes are used to establish an object as a shader stage input or a
+/// shader stage output, or to further describe the properties of an input or
+/// output. The IO attributes are:
+///
+/// * builtin
+///
+/// * location
+///
+/// * blend_src
+///
+/// * interpolate
+///
+/// * invariant
+///
+/// See <https://gpuweb.github.io/gpuweb/wgsl/#stage-inputs-outputs>.
+pub enum InterStageIo {
+    BuiltIn(BuiltIn),
+    /// <https://gpuweb.github.io/gpuweb/wgsl/#location-attr>
+    Location(syn::LitInt),
+    /// <https://gpuweb.github.io/gpuweb/wgsl/#blend-src-attr>
+    /// Strictly output
+    ///
+    /// Contains a literal value of 0 or 1.
+    BlendSrc(syn::LitInt),
+    Interpolate(Interpolate),
+    /// Strictly output, placed in addition to a `@builtin(position)` output.
+    Invariant,
+}
+
+impl TryFrom<&syn::Attribute> for InterStageIo {
+    type Error = Error;
+
+    fn try_from(value: &syn::Attribute) -> Result<Self, Self::Error> {
+        // Only handle outer attributes
+        if matches!(value.style, syn::AttrStyle::Inner(_)) {
+            return UnsupportedSnafu {
+                span: value.span(),
+                note: "Inner attributes are not supported for WGSL IO",
+            }
+            .fail();
+        }
+
+        let ident = value.path().get_ident().ok_or_else(|| Error::Unsupported {
+            span: value.span(),
+            note: "Expected a simple identifier for attribute".to_string(),
+        })?;
+
+        match ident.to_string().as_str() {
+            "builtin" => {
+                let built_in = BuiltIn::from_meta(&value.meta)?;
+                Ok(InterStageIo::BuiltIn(built_in))
+            }
+            "location" => {
+                let list = value.meta.require_list()?;
+                let lit: syn::LitInt = syn::parse2(list.tokens.clone())?;
+                Ok(InterStageIo::Location(lit))
+            }
+            "blend_src" => {
+                // #[blend_source()]
+                let list = value.meta.require_list()?;
+                let lit: syn::LitInt = syn::parse2(list.tokens.clone())?;
+                Ok(InterStageIo::BlendSrc(lit))
+            }
+            "interpolate" => {
+                // #[interpolate(ty, sampling?)]
+                let list = value.meta.require_list()?;
+                let tokens = list.tokens.clone();
+                let interpolate = syn::parse2(tokens)?;
+                Ok(InterStageIo::Interpolate(interpolate))
+            }
+            "invariant" => {
+                // #[invariant]
+                Ok(InterStageIo::Invariant)
+            }
+            other => UnsupportedSnafu {
+                span: value.span(),
+                note: format!("Unknown IO attribute '{other}'"),
+            }
+            .fail(),
+        }
+    }
+}
+
+impl ToTokens for InterStageIo {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            InterStageIo::BuiltIn(built_in) => quote! { @builtin(#built_in) },
+            InterStageIo::Location(loc) => quote! { @location(#loc) },
+            InterStageIo::BlendSrc(src) => quote! { @blend_src(#src) },
+            InterStageIo::Interpolate(lerp) => quote! { #lerp },
+            InterStageIo::Invariant => quote! { @invariant },
+        }
+        .to_tokens(tokens)
     }
 }
 
 pub struct FnArg {
-    pub builtin: Option<BuiltIn>,
+    pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
     pub colon_token: Token![:],
     pub ty: Type,
@@ -1211,16 +1476,15 @@ impl TryFrom<&syn::FnArg> for FnArg {
                             note: "WGSL only supports a single annotation on function parameters."
                         }
                     );
-                    let builtin = if let Some(attr) = attrs.first() {
-                        Some(BuiltIn::from_meta(&attr.meta).context(DarlingSnafu)?)
-                    } else {
-                        None
-                    };
+                    let mut inter_stage_io = vec![];
+                    for attr in attrs.iter() {
+                        inter_stage_io.push(InterStageIo::try_from(attr)?);
+                    }
 
                     let ty = Type::try_from(ty.as_ref())?;
 
                     Ok(FnArg {
-                        builtin,
+                        inter_stage_io,
                         ident,
                         colon_token: pat_type.colon_token,
                         ty,
@@ -1242,12 +1506,14 @@ impl TryFrom<&syn::FnArg> for FnArg {
 impl ToTokens for FnArg {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         let Self {
-            builtin,
+            inter_stage_io,
             ident,
             colon_token,
             ty,
         } = self;
-        builtin.to_tokens(tokens);
+        for inter_stage_io in inter_stage_io.iter() {
+            inter_stage_io.to_tokens(tokens);
+        }
         ident.to_tokens(tokens);
         colon_token.to_tokens(tokens);
         ty.to_tokens(tokens);
@@ -1493,14 +1759,6 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
     }
 }
 
-impl ToTokens for ItemMod {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        for item in &self.content {
-            item.to_tokens(tokens);
-        }
-    }
-}
-
 impl ItemMod {
     pub fn imports(&self, wgsl_rs_crate_path: &syn::Path) -> Vec<proc_macro2::TokenStream> {
         fn is_wgsl_std(wgsl_rs_crate_path: &syn::Path, path: &syn::Path) -> bool {
@@ -1588,7 +1846,7 @@ impl TryFrom<&syn::UseTree> for ItemUse {
                 note: "Renaming in use statements is not supported.",
             }
             .fail()?,
-            syn::UseTree::Glob(_) => Self { modules: vec![] },
+            syn::UseTree::Glob(use_glob) => Self { modules: vec![] },
             syn::UseTree::Group(use_group) => UnsupportedSnafu {
                 span: use_group.span(),
                 note: "Grouped use statements are not supported.",
@@ -1720,6 +1978,7 @@ impl ToTokens for ItemUniform {
 }
 
 pub struct Field {
+    pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
     pub colon_token: Option<Token![:]>,
     pub ty: Type,
@@ -1735,7 +1994,12 @@ impl TryFrom<&syn::Field> for Field {
             .expect("only named fields are supported, and we checked for that before parsing this");
         let colon_token = value.colon_token;
         let ty = Type::try_from(&value.ty)?;
+        let mut inter_stage_io = vec![];
+        for attr in value.attrs.iter() {
+            inter_stage_io.push(InterStageIo::try_from(attr)?);
+        }
         Ok(Field {
+            inter_stage_io,
             ident,
             colon_token,
             ty,
@@ -1745,6 +2009,9 @@ impl TryFrom<&syn::Field> for Field {
 
 impl ToTokens for Field {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        for io in self.inter_stage_io.iter() {
+            io.to_tokens(tokens);
+        }
         self.ident.to_tokens(tokens);
         if let Some(colon_token) = &self.colon_token {
             colon_token.to_tokens(tokens);
@@ -1797,7 +2064,7 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
 
     fn try_from(value: &syn::ItemStruct) -> Result<Self, Self::Error> {
         let syn::ItemStruct {
-            attrs,
+            attrs: _,
             vis,
             struct_token,
             ident,
@@ -1806,7 +2073,6 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             semi_token: _,
         } = value;
 
-        util::some_is_unsupported(attrs.first(), "struct annotations are unsupported")?;
         snafu::ensure!(
             matches!(vis, syn::Visibility::Public(_)),
             VisibilitySnafu {
@@ -1840,21 +2106,6 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             ident: ident.clone(),
             fields,
         })
-    }
-}
-
-impl ToTokens for ItemStruct {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ItemStruct {
-            struct_token,
-            ident,
-            fields,
-        } = self;
-        struct_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        fields.brace_token.surround(tokens, |tokens| {
-            fields.named.to_tokens(tokens);
-        });
     }
 }
 
@@ -1919,25 +2170,6 @@ impl TryFrom<&syn::Item> for Item {
                 ),
             }
             .fail(),
-        }
-    }
-}
-
-/// Converts to WGSL tokens.
-impl ToTokens for Item {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Item::Mod(item_mod) => item_mod.to_tokens(tokens),
-            Item::Uniform(item_uniform) => item_uniform.to_tokens(tokens),
-            Item::Const(item_const) => item_const.to_tokens(tokens),
-            Item::Fn(item_fn) => item_fn.to_tokens(tokens),
-            Item::Use(_item_use) => {
-                // Skip as "use" does not produce WGSL.
-                //
-                // Instead "use" is used by the `wgsl` macro to include
-                // imports of other WGSL code.
-            }
-            Item::Struct(item_struct) => item_struct.to_tokens(tokens),
         }
     }
 }

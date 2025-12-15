@@ -959,6 +959,7 @@ dependencies = [
  "darling 0.23.0",
  "genemichaels-lib",
  "itertools",
+ "naga",
  "proc-macro2 1.0.103",
  "quote 1.0.42",
  "snafu",

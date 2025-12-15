@@ -11,7 +11,7 @@
 
 use std::sync::{Arc, LazyLock, RwLock};
 
-pub use wgsl_rs_macros::{fragment, uniform, vertex};
+pub use wgsl_rs_macros::{fragment, input, output, uniform, vertex};
 
 mod numeric_builtin_functions;
 pub use numeric_builtin_functions::*;

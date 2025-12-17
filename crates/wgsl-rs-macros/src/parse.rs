@@ -6,7 +6,6 @@
 //!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
 //!
-use darling::FromMeta;
 // HEY!
 //
 // This module is incomplete at best.
@@ -32,9 +31,6 @@ pub enum Error {
         note: String,
     },
 
-    #[snafu(display(""))]
-    Darling { source: darling::Error },
-
     #[snafu(display("Encountered currently unsupported Rust syntax.\n  {note}"))]
     CurrentlyUnsupported {
         span: proc_macro2::Span,
@@ -59,12 +55,6 @@ pub enum Error {
     },
 }
 
-impl From<darling::Error> for Error {
-    fn from(source: darling::Error) -> Self {
-        Self::Darling { source }
-    }
-}
-
 impl From<syn::Error> for Error {
     fn from(value: syn::Error) -> Self {
         UnsupportedSnafu {
@@ -79,7 +69,6 @@ impl Error {
     pub fn span(&self) -> proc_macro2::Span {
         match self {
             Error::Unsupported { span, .. } => *span,
-            Error::Darling { source } => source.span(),
             Error::CurrentlyUnsupported { span, .. } => *span,
             Error::UnsupportedIfThen { span } => *span,
             Error::InProgress { span, message: _ } => *span,
@@ -95,7 +84,7 @@ impl From<Error> for syn::Error {
 }
 
 #[allow(dead_code)]
-mod util {
+pub(crate) mod util {
     use super::*;
 
     pub fn some_is_unsupported<T: syn::spanned::Spanned>(
@@ -173,7 +162,12 @@ pub enum Type {
     },
 
     /// Array type: [T; N]
-    Array { elem: Box<Type>, len: syn::Expr },
+    Array {
+        bracket_token: syn::token::Bracket,
+        elem: Box<Type>,
+        semi_token: Token![;],
+        len: Expr,
+    },
 
     /// Struct type: eg. MyStruct
     Struct { ident: Ident },
@@ -191,12 +185,20 @@ impl TryFrom<&syn::Type> for Type {
 
     fn try_from(ty: &syn::Type) -> Result<Self, Self::Error> {
         let span = ty.span();
-        if let syn::Type::Array(type_array) = ty {
+        if let syn::Type::Array(syn::TypeArray {
+            bracket_token,
+            elem,
+            semi_token,
+            len,
+        }) = ty
+        {
             // Parse [T; N]
-            let elem = Type::try_from(type_array.elem.as_ref())?;
+            let elem = Type::try_from(elem.as_ref())?;
             Ok(Type::Array {
+                bracket_token: *bracket_token,
                 elem: Box::new(elem),
-                len: type_array.len.clone(),
+                semi_token: *semi_token,
+                len: Expr::try_from(len)?,
             })
         } else if let syn::Type::Path(type_path) = ty {
             util::some_is_unsupported(
@@ -337,32 +339,6 @@ impl TryFrom<&syn::Type> for Type {
     }
 }
 
-impl ToTokens for Type {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Type::Scalar { ty: _, ident } => {
-                ident.to_tokens(tokens);
-            }
-            Type::Vector {
-                elements: _,
-                scalar_ty: _,
-                ident,
-                scalar,
-            } => {
-                let ident = quote::format_ident!("{}", ident.to_string().to_lowercase());
-                ident.to_tokens(tokens);
-                if let Some((lt, scalar, rt)) = scalar {
-                    lt.to_tokens(tokens);
-                    scalar.to_tokens(tokens);
-                    rt.to_tokens(tokens);
-                }
-            }
-            Type::Array { elem, len } => quote! { array<#elem, #len> }.to_tokens(tokens),
-            Type::Struct { ident } => ident.to_tokens(tokens),
-        }
-    }
-}
-
 /// A literal value.
 #[derive(Debug, PartialEq)]
 pub enum Lit {
@@ -396,16 +372,6 @@ impl std::fmt::Display for Lit {
             Lit::Int(lit_int) => lit_int.to_token_stream(),
         };
         tokens.fmt(f)
-    }
-}
-
-impl ToTokens for Lit {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Lit::Bool(lit_bool) => lit_bool.to_tokens(tokens),
-            Lit::Float(lit_float) => lit_float.to_tokens(tokens),
-            Lit::Int(lit_int) => lit_int.to_tokens(tokens),
-        }
     }
 }
 
@@ -450,17 +416,6 @@ impl std::fmt::Display for BinOp {
     }
 }
 
-impl ToTokens for BinOp {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            BinOp::Add(t) => t.to_tokens(tokens),
-            BinOp::Sub(t) => t.to_tokens(tokens),
-            BinOp::Mul(t) => t.to_tokens(tokens),
-            BinOp::Div(t) => t.to_tokens(tokens),
-        }
-    }
-}
-
 /// A unary operator: "!" or "-"
 pub enum UnOp {
     Not(Token![!]),
@@ -480,15 +435,6 @@ impl TryFrom<&syn::UnOp> for UnOp {
             }
             .fail()?,
         })
-    }
-}
-
-impl ToTokens for UnOp {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            UnOp::Not(t) => t.to_tokens(tokens),
-            UnOp::Neg(t) => t.to_tokens(tokens),
-        }
     }
 }
 
@@ -517,16 +463,6 @@ impl TryFrom<&syn::FieldValue> for FieldValue {
     }
 }
 
-impl ToTokens for FieldValue {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        self.member.to_tokens(tokens);
-        if let Some(colon_token) = &self.colon_token {
-            colon_token.to_tokens(tokens);
-        }
-        self.expr.to_tokens(tokens);
-    }
-}
-
 /// WGSL expressions.
 pub enum Expr {
     /// A literal value.
@@ -536,7 +472,10 @@ pub enum Expr {
     /// Eg. `a` or `foo`
     Ident(syn::Ident),
     /// An array literal: `[expr1, expr2, ...]`
-    Array(syn::punctuated::Punctuated<Expr, syn::Token![,]>),
+    Array {
+        bracket_token: syn::token::Bracket,
+        elems: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
+    },
     /// An expression enclosed in parentheses.
     ///
     /// `(a + b)`
@@ -625,7 +564,7 @@ impl TryFrom<&syn::Expr> for Expr {
             }
             syn::Expr::Array(syn::ExprArray {
                 attrs: _,
-                bracket_token: _,
+                bracket_token,
                 elems,
             }) => {
                 let mut expr_elems = syn::punctuated::Punctuated::new();
@@ -637,7 +576,10 @@ impl TryFrom<&syn::Expr> for Expr {
                         expr_elems.push_punct(**comma);
                     }
                 }
-                Self::Array(expr_elems)
+                Self::Array {
+                    bracket_token: *bracket_token,
+                    elems: expr_elems,
+                }
             }
             syn::Expr::Index(syn::ExprIndex {
                 attrs: _,
@@ -799,109 +741,12 @@ impl TryFrom<&syn::Expr> for Expr {
     }
 }
 
-impl ToTokens for Expr {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Expr::Lit(lit) => lit.to_tokens(tokens),
-            Expr::Ident(id) => id.to_tokens(tokens),
-            Expr::Array(elems) => {
-                quote! { array }.to_tokens(tokens);
-                let paren = syn::token::Paren::default();
-                paren.surround(tokens, |inner| {
-                    for pair in elems.pairs() {
-                        let expr = pair.value();
-                        expr.to_tokens(inner);
-                        if let Some(comma) = pair.punct() {
-                            comma.to_tokens(inner);
-                        }
-                    }
-                });
-            }
-            Expr::Paren { paren_token, inner } => {
-                paren_token.surround(tokens, |tokens| inner.to_tokens(tokens));
-            }
-            Expr::Binary { lhs, op, rhs } => {
-                lhs.to_tokens(tokens);
-                op.to_tokens(tokens);
-                rhs.to_tokens(tokens);
-            }
-            Expr::Unary { op, expr } => {
-                op.to_tokens(tokens);
-                expr.to_tokens(tokens);
-            }
-            Expr::ArrayIndexing {
-                lhs,
-                bracket_token,
-                index,
-            } => {
-                lhs.to_tokens(tokens);
-                bracket_token.surround(tokens, |inner| {
-                    index.to_tokens(inner);
-                });
-            }
-            Expr::Swizzle {
-                lhs,
-                dot_token,
-                swizzle,
-            } => {
-                lhs.to_tokens(tokens);
-                dot_token.to_tokens(tokens);
-                swizzle.to_tokens(tokens);
-            }
-            Expr::FieldAccess {
-                base,
-                dot_token,
-                field,
-            } => {
-                base.to_tokens(tokens);
-                dot_token.to_tokens(tokens);
-                field.to_tokens(tokens);
-            }
-            Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.to_tokens(tokens),
-            Expr::FnCall {
-                lhs,
-                paren_token,
-                params,
-            } => {
-                lhs.to_tokens(tokens);
-                paren_token.surround(tokens, |tokens| {
-                    for pair in params.pairs() {
-                        let expr = pair.value();
-                        expr.to_tokens(tokens);
-                        if let Some(comma) = pair.punct() {
-                            comma.to_tokens(tokens);
-                        }
-                    }
-                });
-            }
-            Expr::Struct {
-                ident,
-                brace_token,
-                fields,
-            } => {
-                ident.to_tokens(tokens);
-                brace_token.surround(tokens, |inner| {
-                    fields.to_tokens(inner);
-                });
-            }
-        }
-    }
-}
-
 pub enum ReturnTypeAnnotation {
     None,
     BuiltIn(Ident),
-    Location(Lit),
-}
-
-impl ToTokens for ReturnTypeAnnotation {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            ReturnTypeAnnotation::None => {}
-            ReturnTypeAnnotation::BuiltIn(ident) => quote! { @builtin(#ident) }.to_tokens(tokens),
-            ReturnTypeAnnotation::Location(lit) => quote! { @location(#lit) }.to_tokens(tokens),
-        }
-    }
+    DefaultBuiltInPosition,
+    Location { ident: Ident, lit: Lit },
+    DefaultLocation,
 }
 
 pub enum ReturnType {
@@ -926,23 +771,6 @@ impl TryFrom<&syn::ReturnType> for ReturnType {
                     ty: Box::new(scalar),
                     annotation: ReturnTypeAnnotation::None,
                 })
-            }
-        }
-    }
-}
-
-impl ToTokens for ReturnType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            ReturnType::Default => {}
-            ReturnType::Type {
-                arrow,
-                annotation,
-                ty,
-            } => {
-                arrow.to_tokens(tokens);
-                annotation.to_tokens(tokens);
-                ty.to_tokens(tokens);
             }
         }
     }
@@ -1009,7 +837,7 @@ impl TryFrom<&syn::Local> for Local {
 
                     if let Some((at, subpat)) = subpat.as_ref() {
                         // WGSL doesn' support `let thing@(...) = ...`
-                        let span = at.span().join(subpat.span()).unwrap();
+                        let span = at.span().join(subpat.span()).expect("same file");
                         UnsupportedSnafu {
                             span,
                             note: "WGSL does not support 'let ... @ ...' bindings.",
@@ -1057,28 +885,6 @@ impl TryFrom<&syn::Local> for Local {
     }
 }
 
-impl ToTokens for Local {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        // let or var
-        if self.mutability.is_some() {
-            // This is a "var"
-            quote! { var }.to_tokens(tokens);
-        } else {
-            self.let_token.to_tokens(tokens);
-        }
-        self.ident.to_tokens(tokens);
-        if let Some((colon_token, ty)) = &self.ty {
-            colon_token.to_tokens(tokens);
-            ty.to_tokens(tokens);
-        }
-        if let Some(init) = &self.init {
-            init.eq_token.to_tokens(tokens);
-            init.expr.to_tokens(tokens);
-        }
-        self.semi_token.to_tokens(tokens);
-    }
-}
-
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
@@ -1118,23 +924,6 @@ impl TryFrom<&syn::Stmt> for Stmt {
     }
 }
 
-impl ToTokens for Stmt {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Stmt::Local(local) => local.to_tokens(tokens),
-            Stmt::Const(item_const) => item_const.to_tokens(tokens),
-            Stmt::Expr { expr, semi_token } => {
-                if let Some(semi) = semi_token {
-                    expr.to_tokens(tokens);
-                    semi.to_tokens(tokens);
-                } else {
-                    quote! { return #expr; }.to_tokens(tokens);
-                }
-            }
-        }
-    }
-}
-
 pub struct Block {
     pub brace_token: syn::token::Brace,
     pub stmt: Vec<Stmt>,
@@ -1156,63 +945,55 @@ impl TryFrom<&syn::Block> for Block {
     }
 }
 
-impl ToTokens for Block {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let brace_token = &self.brace_token;
-        let stmts = &self.stmt;
-        brace_token.surround(tokens, |inner| {
-            for stmt in stmts {
-                stmt.to_tokens(inner);
-            }
-        });
-    }
-}
-
-#[derive(FromMeta)]
-#[darling(derive_syn_parse)]
+// TODO: These enums should hold a reference to their Rust span for better error reporting
 pub enum BuiltIn {
-    VertexIndex,
-    InstanceIndex,
-    Position,
-    FrontFacing,
-    FragDepth,
-    SampleIndex,
-    SampleMask,
-    LocalInvocationId,
-    LocalInvocationIndex,
-    GlobalInvocationId,
-    WorkgroupId,
-    NumWorkgroups,
-    SubgroupInvocationId,
-    SubgroupSize,
-    PrimitiveIndex,
-    SubgroupId,
-    NumSubgroups,
+    VertexIndex(Ident),
+    InstanceIndex(Ident),
+    Position(Ident),
+    FrontFacing(Ident),
+    FragDepth(Ident),
+    SampleIndex(Ident),
+    SampleMask(Ident),
+    LocalInvocationId(Ident),
+    LocalInvocationIndex(Ident),
+    GlobalInvocationId(Ident),
+    WorkgroupId(Ident),
+    NumWorkgroups(Ident),
+    SubgroupInvocationId(Ident),
+    SubgroupSize(Ident),
+    PrimitiveIndex(Ident),
+    SubgroupId(Ident),
+    NumSubgroups(Ident),
 }
 
-impl ToTokens for BuiltIn {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            BuiltIn::VertexIndex => "vertex_index",
-            BuiltIn::InstanceIndex => "instance_index",
-            BuiltIn::Position => "position",
-            BuiltIn::FrontFacing => "front_facing",
-            BuiltIn::FragDepth => "frag_depth",
-            BuiltIn::SampleIndex => "sample_index",
-            BuiltIn::SampleMask => "sample_mask",
-            BuiltIn::LocalInvocationId => "local_invocation_id",
-            BuiltIn::LocalInvocationIndex => "local_invocation_index",
-            BuiltIn::GlobalInvocationId => "global_invocation_id",
-            BuiltIn::WorkgroupId => "workgroup_id",
-            BuiltIn::NumWorkgroups => "num_workgroups",
-            BuiltIn::SubgroupInvocationId => "subgroup_invocation_id",
-            BuiltIn::SubgroupSize => "subgroup_size",
-            BuiltIn::PrimitiveIndex => "primitive_index",
-            BuiltIn::SubgroupId => "subgroup_id",
-            BuiltIn::NumSubgroups => "num_subgroups",
-        };
-        let ident = quote::format_ident!("{ident}");
-        ident.to_tokens(tokens);
+impl TryFrom<&Ident> for BuiltIn {
+    type Error = Error;
+
+    fn try_from(ident: &Ident) -> Result<Self, Self::Error> {
+        Ok(match ident.to_string().as_str() {
+            "vertex_index" => BuiltIn::VertexIndex(ident.clone()),
+            "instance_index" => BuiltIn::InstanceIndex(ident.clone()),
+            "position" => BuiltIn::Position(ident.clone()),
+            "front_facing" => BuiltIn::FrontFacing(ident.clone()),
+            "frag_depth" => BuiltIn::FragDepth(ident.clone()),
+            "sample_index" => BuiltIn::SampleIndex(ident.clone()),
+            "sample_mask" => BuiltIn::SampleMask(ident.clone()),
+            "local_invocation_id" => BuiltIn::LocalInvocationId(ident.clone()),
+            "local_invocation_index" => BuiltIn::LocalInvocationIndex(ident.clone()),
+            "global_invocation_id" => BuiltIn::GlobalInvocationId(ident.clone()),
+            "workgroup_id" => BuiltIn::WorkgroupId(ident.clone()),
+            "num_workgroups" => BuiltIn::NumWorkgroups(ident.clone()),
+            "subgroup_invocation_id" => BuiltIn::SubgroupInvocationId(ident.clone()),
+            "subgroup_size" => BuiltIn::SubgroupSize(ident.clone()),
+            "primitive_index" => BuiltIn::PrimitiveIndex(ident.clone()),
+            "subgroup_id" => BuiltIn::SubgroupId(ident.clone()),
+            "num_subgroups" => BuiltIn::NumSubgroups(ident.clone()),
+            other => UnsupportedSnafu {
+                span: ident.span(),
+                note: format!("'{other}' is not a known builtin"),
+            }
+            .fail()?,
+        })
     }
 }
 
@@ -1234,17 +1015,6 @@ impl Parse for InterpolationType {
                 format!("Unexpected interpolation type '{other}'"),
             ))?,
         })
-    }
-}
-
-impl ToTokens for InterpolationType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            InterpolationType::Perspective(ident) => ident,
-            InterpolationType::Linear(ident) => ident,
-            InterpolationType::Flat(ident) => ident,
-        };
-        ident.to_tokens(tokens)
     }
 }
 
@@ -1273,24 +1043,11 @@ impl Parse for InterpolationSampling {
     }
 }
 
-impl ToTokens for InterpolationSampling {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            InterpolationSampling::Center(ident) => ident,
-            InterpolationSampling::Centroid(ident) => ident,
-            InterpolationSampling::Sample(ident) => ident,
-            InterpolationSampling::First(ident) => ident,
-            InterpolationSampling::Either(ident) => ident,
-        };
-        ident.to_tokens(tokens)
-    }
-}
-
 /// <https://gpuweb.github.io/gpuweb/wgsl/#interpolation>
 pub struct Interpolate {
-    ty: InterpolationType,
-    comma_token: Option<Token![,]>,
-    sampling: Option<InterpolationSampling>,
+    pub ty: InterpolationType,
+    pub comma_token: Option<Token![,]>,
+    pub sampling: Option<InterpolationSampling>,
 }
 
 /// Parse the _arguments_ of #[interpolate(type, sampling)].
@@ -1308,22 +1065,6 @@ impl Parse for Interpolate {
             comma_token,
             sampling,
         })
-    }
-}
-
-impl ToTokens for Interpolate {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let Self {
-            ty,
-            comma_token,
-            sampling,
-        } = self;
-        quote! { @interpolate }.to_tokens(tokens);
-        syn::token::Paren::default().surround(tokens, |tokens| {
-            ty.to_tokens(tokens);
-            comma_token.to_tokens(tokens);
-            sampling.to_tokens(tokens);
-        });
     }
 }
 
@@ -1350,17 +1091,35 @@ impl ToTokens for Interpolate {
 ///
 /// See <https://gpuweb.github.io/gpuweb/wgsl/#stage-inputs-outputs>.
 pub enum InterStageIo {
-    BuiltIn(BuiltIn),
+    BuiltIn {
+        ident: Ident,
+        paren_token: syn::token::Paren,
+        inner: BuiltIn,
+    },
     /// <https://gpuweb.github.io/gpuweb/wgsl/#location-attr>
-    Location(syn::LitInt),
+    Location {
+        ident: Ident,
+        paren_token: syn::token::Paren,
+        inner: syn::LitInt,
+    },
     /// <https://gpuweb.github.io/gpuweb/wgsl/#blend-src-attr>
     /// Strictly output
     ///
     /// Contains a literal value of 0 or 1.
-    BlendSrc(syn::LitInt),
-    Interpolate(Interpolate),
+    BlendSrc {
+        // "blend_src"
+        ident: Ident,
+        paren_token: syn::token::Paren,
+        // 0 or 1
+        lit: syn::LitInt,
+    },
+    Interpolate {
+        ident: Ident,
+        paren_token: syn::token::Paren,
+        inner: Interpolate,
+    },
     /// Strictly output, placed in addition to a `@builtin(position)` output.
-    Invariant,
+    Invariant(Ident),
 }
 
 impl TryFrom<&syn::Attribute> for InterStageIo {
@@ -1381,32 +1140,62 @@ impl TryFrom<&syn::Attribute> for InterStageIo {
             note: "Expected a simple identifier for attribute".to_string(),
         })?;
 
+        fn as_paren(delim: &syn::MacroDelimiter) -> Result<syn::token::Paren, Error> {
+            if let syn::MacroDelimiter::Paren(p) = delim {
+                Ok(*p)
+            } else {
+                UnsupportedSnafu {
+                    span: delim.span().open(),
+                    note: "Wrong delimiter",
+                }
+                .fail()?
+            }
+        }
+
         match ident.to_string().as_str() {
             "builtin" => {
-                let built_in = BuiltIn::from_meta(&value.meta)?;
-                Ok(InterStageIo::BuiltIn(built_in))
+                let list = value.meta.require_list()?;
+                let inner_ident: Ident = syn::parse2(list.tokens.clone())?;
+                let built_in = BuiltIn::try_from(&inner_ident)?;
+                Ok(InterStageIo::BuiltIn {
+                    ident: ident.clone(),
+                    paren_token: as_paren(&list.delimiter)?,
+                    inner: built_in,
+                })
             }
             "location" => {
                 let list = value.meta.require_list()?;
                 let lit: syn::LitInt = syn::parse2(list.tokens.clone())?;
-                Ok(InterStageIo::Location(lit))
+                Ok(InterStageIo::Location {
+                    ident: ident.clone(),
+                    paren_token: as_paren(&list.delimiter)?,
+                    inner: lit,
+                })
             }
             "blend_src" => {
                 // #[blend_source()]
                 let list = value.meta.require_list()?;
                 let lit: syn::LitInt = syn::parse2(list.tokens.clone())?;
-                Ok(InterStageIo::BlendSrc(lit))
+                Ok(InterStageIo::BlendSrc {
+                    ident: ident.clone(),
+                    paren_token: as_paren(&list.delimiter)?,
+                    lit,
+                })
             }
             "interpolate" => {
                 // #[interpolate(ty, sampling?)]
                 let list = value.meta.require_list()?;
                 let tokens = list.tokens.clone();
                 let interpolate = syn::parse2(tokens)?;
-                Ok(InterStageIo::Interpolate(interpolate))
+                Ok(InterStageIo::Interpolate {
+                    ident: ident.clone(),
+                    paren_token: as_paren(&list.delimiter)?,
+                    inner: interpolate,
+                })
             }
             "invariant" => {
                 // #[invariant]
-                Ok(InterStageIo::Invariant)
+                Ok(InterStageIo::Invariant(ident.clone()))
             }
             other => UnsupportedSnafu {
                 span: value.span(),
@@ -1414,19 +1203,6 @@ impl TryFrom<&syn::Attribute> for InterStageIo {
             }
             .fail(),
         }
-    }
-}
-
-impl ToTokens for InterStageIo {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            InterStageIo::BuiltIn(built_in) => quote! { @builtin(#built_in) },
-            InterStageIo::Location(loc) => quote! { @location(#loc) },
-            InterStageIo::BlendSrc(src) => quote! { @blend_src(#src) },
-            InterStageIo::Interpolate(lerp) => quote! { #lerp },
-            InterStageIo::Invariant => quote! { @invariant },
-        }
-        .to_tokens(tokens)
     }
 }
 
@@ -1503,29 +1279,12 @@ impl TryFrom<&syn::FnArg> for FnArg {
     }
 }
 
-impl ToTokens for FnArg {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let Self {
-            inter_stage_io,
-            ident,
-            colon_token,
-            ty,
-        } = self;
-        for inter_stage_io in inter_stage_io.iter() {
-            inter_stage_io.to_tokens(tokens);
-        }
-        ident.to_tokens(tokens);
-        colon_token.to_tokens(tokens);
-        ty.to_tokens(tokens);
-    }
-}
-
 #[derive(Default)]
 pub enum FnAttrs {
     #[default]
     None,
-    Vertex,
-    Fragment,
+    Vertex(Ident),
+    Fragment(Ident),
 }
 
 impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
@@ -1545,8 +1304,8 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
 
             if let Some(ident) = meta.path().get_ident() {
                 match ident.to_string().as_str() {
-                    "vertex" => return Ok(FnAttrs::Vertex),
-                    "fragment" => return Ok(FnAttrs::Fragment),
+                    "vertex" => return Ok(FnAttrs::Vertex(ident.clone())),
+                    "fragment" => return Ok(FnAttrs::Fragment(ident.clone())),
                     other => UnsupportedSnafu {
                         span: ident.span(),
                         note: format!("'{other}' is not a supported annotation"),
@@ -1556,16 +1315,6 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
             }
         }
         Ok(FnAttrs::None)
-    }
-}
-
-impl ToTokens for FnAttrs {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            FnAttrs::None => {}
-            FnAttrs::Vertex => quote! { @vertex }.to_tokens(tokens),
-            FnAttrs::Fragment => quote! { @fragment }.to_tokens(tokens),
-        }
     }
 }
 
@@ -1618,17 +1367,12 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
                 if let Type::Vector {
                     elements: 4,
                     scalar_ty: ScalarType::F32,
-                    ident,
                     ..
                 } = ty.as_ref()
                 {
                     *annotation = match fn_attrs {
-                        FnAttrs::Vertex => {
-                            ReturnTypeAnnotation::BuiltIn(Ident::new("position", ident.span()))
-                        }
-                        FnAttrs::Fragment => ReturnTypeAnnotation::Location(Lit::Int(
-                            syn::LitInt::new("0", ident.span()),
-                        )),
+                        FnAttrs::Vertex(_) => ReturnTypeAnnotation::DefaultBuiltInPosition,
+                        FnAttrs::Fragment(_) => ReturnTypeAnnotation::DefaultLocation,
                         _ => ReturnTypeAnnotation::None,
                     }
                 }
@@ -1644,28 +1388,6 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             return_type,
             block: Block::try_from(block.as_ref())?,
         })
-    }
-}
-
-impl ToTokens for ItemFn {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ItemFn {
-            fn_attrs,
-            fn_token,
-            ident,
-            paren_token,
-            inputs,
-            return_type,
-            block,
-        } = self;
-        fn_attrs.to_tokens(tokens);
-        fn_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        paren_token.surround(tokens, |tokens| {
-            inputs.to_tokens(tokens);
-        });
-        return_type.to_tokens(tokens);
-        block.to_tokens(tokens);
     }
 }
 
@@ -1704,27 +1426,6 @@ impl TryFrom<&syn::ItemConst> for ItemConst {
             expr: Expr::try_from(expr.as_ref())?,
             semi_token: *semi_token,
         })
-    }
-}
-
-impl ToTokens for ItemConst {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ItemConst {
-            const_token,
-            ident,
-            colon_token,
-            ty,
-            eq_token,
-            expr,
-            semi_token,
-        } = self;
-        const_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        colon_token.to_tokens(tokens);
-        ty.to_tokens(tokens);
-        eq_token.to_tokens(tokens);
-        expr.to_tokens(tokens);
-        semi_token.to_tokens(tokens);
     }
 }
 
@@ -1846,7 +1547,7 @@ impl TryFrom<&syn::UseTree> for ItemUse {
                 note: "Renaming in use statements is not supported.",
             }
             .fail()?,
-            syn::UseTree::Glob(use_glob) => Self { modules: vec![] },
+            syn::UseTree::Glob(_use_glob) => Self { modules: vec![] },
             syn::UseTree::Group(use_group) => UnsupportedSnafu {
                 span: use_group.span(),
                 note: "Grouped use statements are not supported.",
@@ -1856,75 +1557,66 @@ impl TryFrom<&syn::UseTree> for ItemUse {
     }
 }
 
-// pub struct ItemStatic {}
+/// A uniform declaration.
+///
+/// ```rust
+/// uniform!(group(0), binding(0), FRAME: u32);
+/// ```
+///
+/// ```wgsl
+/// @group(0) @binding(0) var<uniform> FRAME: u32;
+/// ```
+pub(crate) struct ItemUniform {
+    pub group_ident: Ident,
+    pub group_paren_token: syn::token::Paren,
+    pub group: syn::LitInt,
 
-// impl TryFrom<&syn::ItemStatic> for ItemStatic {
-//     type Error = Error;
-
-//     fn try_from(value: &syn::ItemStatic) -> Result<Self, Self::Error> {
-//         let syn::ItemStatic {
-//             attrs,
-//             vis,
-//             static_token,
-//             mutability,
-//             ident,
-//             colon_token,
-//             ty,
-//             eq_token,
-//             expr,
-//             semi_token,
-//         } = value;
-
-//         Ok(ItemStatic {})
-//     }
-// }
-
-// impl ToTokens for ItemStatic {
-//     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {}
-// }
-// Use a custom parser for the macro arguments: `group($group), binding($binding), $name : $ty`
-pub(crate) struct UniformArgs {
-    pub group: syn::Expr,
-    pub binding: syn::Expr,
+    pub binding_ident: Ident,
+    pub binding_paren_token: syn::token::Paren,
+    pub binding: syn::LitInt,
 
     pub name: syn::Ident,
-    pub ty: syn::Type,
+    pub colon_token: Token![:],
+    pub ty: Type,
+
+    // We keep the Rust type around
+    pub rust_ty: syn::Type,
 }
 
-impl syn::parse::Parse for UniformArgs {
+impl syn::parse::Parse for ItemUniform {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         // group
-        let _group_ident = input.parse::<syn::Ident>()?;
+        let group_ident = input.parse::<syn::Ident>()?;
         let content;
-        let _group_paren_token = parenthesized!(content in input);
+        let group_paren_token = parenthesized!(content in input);
         let group = content.parse()?;
         input.parse::<syn::Token![,]>()?;
 
         // binding
-        let _binding_ident = input.parse::<syn::Ident>()?;
+        let binding_ident = input.parse::<syn::Ident>()?;
         let content;
-        let _binding_paren_token = parenthesized!(content in input);
+        let binding_paren_token = parenthesized!(content in input);
         let binding = content.parse()?;
         input.parse::<syn::Token![,]>()?;
 
         let name: syn::Ident = input.parse()?;
-        let _colon_token: syn::Token![:] = input.parse()?;
-        let ty: syn::Type = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
+        let rust_ty: syn::Type = input.parse()?;
+        let ty = Type::try_from(&rust_ty)?;
 
-        Ok(UniformArgs {
+        Ok(ItemUniform {
             group,
             binding,
             name,
+            colon_token,
             ty,
+            rust_ty,
+            group_ident,
+            group_paren_token,
+            binding_ident,
+            binding_paren_token,
         })
     }
-}
-
-pub struct ItemUniform {
-    pub group: syn::Expr,
-    pub binding: syn::Expr,
-    pub name: syn::Ident,
-    pub ty: Type,
 }
 
 impl TryFrom<&syn::ItemMacro> for ItemUniform {
@@ -1946,34 +1638,10 @@ impl TryFrom<&syn::ItemMacro> for ItemUniform {
             .fail();
         }
 
-        let args = syn::parse2::<UniformArgs>(item_macro.mac.tokens.clone()).map_err(|e| {
-            Error::Unsupported {
-                span: item_macro.span(),
-                note: format!("{e}"),
-            }
-        })?;
-
-        Ok(ItemUniform {
-            group: args.group,
-            binding: args.binding,
-            name: args.name,
-            ty: Type::try_from(&args.ty)?,
+        syn::parse2::<ItemUniform>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
+            span: item_macro.span(),
+            note: format!("{e}"),
         })
-    }
-}
-
-impl ToTokens for ItemUniform {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let group = &self.group;
-        let binding = &self.binding;
-        let name = &self.name;
-        let ty = &self.ty;
-
-        // WGSL uniform declaration (example, adjust as needed for your codegen)
-        quote! {
-            @group(#group) @binding(#binding) var<uniform> #name: #ty;
-        }
-        .to_tokens(tokens);
     }
 }
 
@@ -2007,19 +1675,6 @@ impl TryFrom<&syn::Field> for Field {
     }
 }
 
-impl ToTokens for Field {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        for io in self.inter_stage_io.iter() {
-            io.to_tokens(tokens);
-        }
-        self.ident.to_tokens(tokens);
-        if let Some(colon_token) = &self.colon_token {
-            colon_token.to_tokens(tokens);
-        }
-        self.ty.to_tokens(tokens);
-    }
-}
-
 pub struct FieldsNamed {
     pub brace_token: syn::token::Brace,
     pub named: syn::punctuated::Punctuated<Field, Token![,]>,
@@ -2040,16 +1695,6 @@ impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
             }
         }
         Ok(FieldsNamed { brace_token, named })
-    }
-}
-
-impl ToTokens for FieldsNamed {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let brace_token = &self.brace_token;
-        let named = &self.named;
-        brace_token.surround(tokens, |inner| {
-            named.to_tokens(inner);
-        });
     }
 }
 
@@ -2177,6 +1822,7 @@ impl TryFrom<&syn::Item> for Item {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::code_gen::GenerateCode;
 
     #[test]
     fn parse_lit_bool() {
@@ -2203,27 +1849,27 @@ mod test {
     fn parse_expr_binary() {
         let expr: syn::Expr = syn::parse_str("333 +  333").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + 333", &expr.into_token_stream().to_string());
+        assert_eq!("333 + 333", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ident() {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + TIMES", &expr.into_token_stream().to_string());
+        assert_eq!("333 + TIMES", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_vec4_f32_type() {
         let ty: syn::Type = syn::parse_str("Vec4<f32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("vec4 < f32 >", &ty.into_token_stream().to_string());
+        assert_eq!("vec4 < f32 >", &ty.to_wgsl());
     }
 
     #[test]
     fn parse_array_type() {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("array <f32 , 4 >", &ty.into_token_stream().to_string());
+        assert_eq!("array <f32 , 4 >", &ty.to_wgsl());
     }
 }

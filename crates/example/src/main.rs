@@ -56,24 +56,25 @@ pub mod structs {
 
         #[location(1)]
         #[interpolate(flat)]
-        #[blend_src(69)]
-        #[invariant]
         pub z: u32,
+
+        pub other: f32,
     }
 
     #[output]
     pub struct MyOutputs {
-        #[builtin(frag_depth)]
+        #[builtin(position)]
+        #[invariant]
         pub x: f32,
 
         #[location(0)]
         pub y: Vec4<f32>,
     }
 
-    // #[fragment]
-    // pub fn fragShader(in1: MyInputs) -> MyOutputs {
-    //     MyOutputs { x: 0.0, y: in1.x }
-    // }
+    #[fragment]
+    pub fn frag_shader(in1: MyInputs) -> MyOutputs {
+        MyOutputs { x: 0.0, y: in1.x }
+    }
 }
 
 fn validate_and_print_source(source: &str) {

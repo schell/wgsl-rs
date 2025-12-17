@@ -173,7 +173,12 @@ pub enum Type {
     },
 
     /// Array type: [T; N]
-    Array { elem: Box<Type>, len: syn::Expr },
+    Array {
+        bracket_token: syn::token::Bracket,
+        elem: Box<Type>,
+        semi_token: Token![;],
+        len: syn::Expr,
+    },
 
     /// Struct type: eg. MyStruct
     Struct { ident: Ident },
@@ -191,12 +196,20 @@ impl TryFrom<&syn::Type> for Type {
 
     fn try_from(ty: &syn::Type) -> Result<Self, Self::Error> {
         let span = ty.span();
-        if let syn::Type::Array(type_array) = ty {
+        if let syn::Type::Array(syn::TypeArray {
+            bracket_token,
+            elem,
+            semi_token,
+            len,
+        }) = ty
+        {
             // Parse [T; N]
-            let elem = Type::try_from(type_array.elem.as_ref())?;
+            let elem = Type::try_from(elem.as_ref())?;
             Ok(Type::Array {
+                bracket_token: *bracket_token,
                 elem: Box::new(elem),
-                len: type_array.len.clone(),
+                semi_token: *semi_token,
+                len: len.clone(),
             })
         } else if let syn::Type::Path(type_path) = ty {
             util::some_is_unsupported(
@@ -337,32 +350,6 @@ impl TryFrom<&syn::Type> for Type {
     }
 }
 
-impl ToTokens for Type {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Type::Scalar { ty: _, ident } => {
-                ident.to_tokens(tokens);
-            }
-            Type::Vector {
-                elements: _,
-                scalar_ty: _,
-                ident,
-                scalar,
-            } => {
-                let ident = quote::format_ident!("{}", ident.to_string().to_lowercase());
-                ident.to_tokens(tokens);
-                if let Some((lt, scalar, rt)) = scalar {
-                    lt.to_tokens(tokens);
-                    scalar.to_tokens(tokens);
-                    rt.to_tokens(tokens);
-                }
-            }
-            Type::Array { elem, len } => quote! { array<#elem, #len> }.to_tokens(tokens),
-            Type::Struct { ident } => ident.to_tokens(tokens),
-        }
-    }
-}
-
 /// A literal value.
 #[derive(Debug, PartialEq)]
 pub enum Lit {
@@ -396,16 +383,6 @@ impl std::fmt::Display for Lit {
             Lit::Int(lit_int) => lit_int.to_token_stream(),
         };
         tokens.fmt(f)
-    }
-}
-
-impl ToTokens for Lit {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Lit::Bool(lit_bool) => lit_bool.to_tokens(tokens),
-            Lit::Float(lit_float) => lit_float.to_tokens(tokens),
-            Lit::Int(lit_int) => lit_int.to_tokens(tokens),
-        }
     }
 }
 
@@ -450,17 +427,6 @@ impl std::fmt::Display for BinOp {
     }
 }
 
-impl ToTokens for BinOp {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            BinOp::Add(t) => t.to_tokens(tokens),
-            BinOp::Sub(t) => t.to_tokens(tokens),
-            BinOp::Mul(t) => t.to_tokens(tokens),
-            BinOp::Div(t) => t.to_tokens(tokens),
-        }
-    }
-}
-
 /// A unary operator: "!" or "-"
 pub enum UnOp {
     Not(Token![!]),
@@ -480,15 +446,6 @@ impl TryFrom<&syn::UnOp> for UnOp {
             }
             .fail()?,
         })
-    }
-}
-
-impl ToTokens for UnOp {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            UnOp::Not(t) => t.to_tokens(tokens),
-            UnOp::Neg(t) => t.to_tokens(tokens),
-        }
     }
 }
 
@@ -514,16 +471,6 @@ impl TryFrom<&syn::FieldValue> for FieldValue {
             colon_token: value.colon_token,
             expr: Expr::try_from(&value.expr)?,
         })
-    }
-}
-
-impl ToTokens for FieldValue {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        self.member.to_tokens(tokens);
-        if let Some(colon_token) = &self.colon_token {
-            colon_token.to_tokens(tokens);
-        }
-        self.expr.to_tokens(tokens);
     }
 }
 
@@ -799,109 +746,10 @@ impl TryFrom<&syn::Expr> for Expr {
     }
 }
 
-impl ToTokens for Expr {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Expr::Lit(lit) => lit.to_tokens(tokens),
-            Expr::Ident(id) => id.to_tokens(tokens),
-            Expr::Array(elems) => {
-                quote! { array }.to_tokens(tokens);
-                let paren = syn::token::Paren::default();
-                paren.surround(tokens, |inner| {
-                    for pair in elems.pairs() {
-                        let expr = pair.value();
-                        expr.to_tokens(inner);
-                        if let Some(comma) = pair.punct() {
-                            comma.to_tokens(inner);
-                        }
-                    }
-                });
-            }
-            Expr::Paren { paren_token, inner } => {
-                paren_token.surround(tokens, |tokens| inner.to_tokens(tokens));
-            }
-            Expr::Binary { lhs, op, rhs } => {
-                lhs.to_tokens(tokens);
-                op.to_tokens(tokens);
-                rhs.to_tokens(tokens);
-            }
-            Expr::Unary { op, expr } => {
-                op.to_tokens(tokens);
-                expr.to_tokens(tokens);
-            }
-            Expr::ArrayIndexing {
-                lhs,
-                bracket_token,
-                index,
-            } => {
-                lhs.to_tokens(tokens);
-                bracket_token.surround(tokens, |inner| {
-                    index.to_tokens(inner);
-                });
-            }
-            Expr::Swizzle {
-                lhs,
-                dot_token,
-                swizzle,
-            } => {
-                lhs.to_tokens(tokens);
-                dot_token.to_tokens(tokens);
-                swizzle.to_tokens(tokens);
-            }
-            Expr::FieldAccess {
-                base,
-                dot_token,
-                field,
-            } => {
-                base.to_tokens(tokens);
-                dot_token.to_tokens(tokens);
-                field.to_tokens(tokens);
-            }
-            Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.to_tokens(tokens),
-            Expr::FnCall {
-                lhs,
-                paren_token,
-                params,
-            } => {
-                lhs.to_tokens(tokens);
-                paren_token.surround(tokens, |tokens| {
-                    for pair in params.pairs() {
-                        let expr = pair.value();
-                        expr.to_tokens(tokens);
-                        if let Some(comma) = pair.punct() {
-                            comma.to_tokens(tokens);
-                        }
-                    }
-                });
-            }
-            Expr::Struct {
-                ident,
-                brace_token,
-                fields,
-            } => {
-                ident.to_tokens(tokens);
-                brace_token.surround(tokens, |inner| {
-                    fields.to_tokens(inner);
-                });
-            }
-        }
-    }
-}
-
 pub enum ReturnTypeAnnotation {
     None,
     BuiltIn(Ident),
     Location(Lit),
-}
-
-impl ToTokens for ReturnTypeAnnotation {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            ReturnTypeAnnotation::None => {}
-            ReturnTypeAnnotation::BuiltIn(ident) => quote! { @builtin(#ident) }.to_tokens(tokens),
-            ReturnTypeAnnotation::Location(lit) => quote! { @location(#lit) }.to_tokens(tokens),
-        }
-    }
 }
 
 pub enum ReturnType {
@@ -926,23 +774,6 @@ impl TryFrom<&syn::ReturnType> for ReturnType {
                     ty: Box::new(scalar),
                     annotation: ReturnTypeAnnotation::None,
                 })
-            }
-        }
-    }
-}
-
-impl ToTokens for ReturnType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            ReturnType::Default => {}
-            ReturnType::Type {
-                arrow,
-                annotation,
-                ty,
-            } => {
-                arrow.to_tokens(tokens);
-                annotation.to_tokens(tokens);
-                ty.to_tokens(tokens);
             }
         }
     }
@@ -1057,28 +888,6 @@ impl TryFrom<&syn::Local> for Local {
     }
 }
 
-impl ToTokens for Local {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        // let or var
-        if self.mutability.is_some() {
-            // This is a "var"
-            quote! { var }.to_tokens(tokens);
-        } else {
-            self.let_token.to_tokens(tokens);
-        }
-        self.ident.to_tokens(tokens);
-        if let Some((colon_token, ty)) = &self.ty {
-            colon_token.to_tokens(tokens);
-            ty.to_tokens(tokens);
-        }
-        if let Some(init) = &self.init {
-            init.eq_token.to_tokens(tokens);
-            init.expr.to_tokens(tokens);
-        }
-        self.semi_token.to_tokens(tokens);
-    }
-}
-
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
@@ -1118,23 +927,6 @@ impl TryFrom<&syn::Stmt> for Stmt {
     }
 }
 
-impl ToTokens for Stmt {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            Stmt::Local(local) => local.to_tokens(tokens),
-            Stmt::Const(item_const) => item_const.to_tokens(tokens),
-            Stmt::Expr { expr, semi_token } => {
-                if let Some(semi) = semi_token {
-                    expr.to_tokens(tokens);
-                    semi.to_tokens(tokens);
-                } else {
-                    quote! { return #expr; }.to_tokens(tokens);
-                }
-            }
-        }
-    }
-}
-
 pub struct Block {
     pub brace_token: syn::token::Brace,
     pub stmt: Vec<Stmt>,
@@ -1153,18 +945,6 @@ impl TryFrom<&syn::Block> for Block {
             brace_token,
             stmt: stmts,
         })
-    }
-}
-
-impl ToTokens for Block {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let brace_token = &self.brace_token;
-        let stmts = &self.stmt;
-        brace_token.surround(tokens, |inner| {
-            for stmt in stmts {
-                stmt.to_tokens(inner);
-            }
-        });
     }
 }
 
@@ -1190,32 +970,6 @@ pub enum BuiltIn {
     NumSubgroups,
 }
 
-impl ToTokens for BuiltIn {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            BuiltIn::VertexIndex => "vertex_index",
-            BuiltIn::InstanceIndex => "instance_index",
-            BuiltIn::Position => "position",
-            BuiltIn::FrontFacing => "front_facing",
-            BuiltIn::FragDepth => "frag_depth",
-            BuiltIn::SampleIndex => "sample_index",
-            BuiltIn::SampleMask => "sample_mask",
-            BuiltIn::LocalInvocationId => "local_invocation_id",
-            BuiltIn::LocalInvocationIndex => "local_invocation_index",
-            BuiltIn::GlobalInvocationId => "global_invocation_id",
-            BuiltIn::WorkgroupId => "workgroup_id",
-            BuiltIn::NumWorkgroups => "num_workgroups",
-            BuiltIn::SubgroupInvocationId => "subgroup_invocation_id",
-            BuiltIn::SubgroupSize => "subgroup_size",
-            BuiltIn::PrimitiveIndex => "primitive_index",
-            BuiltIn::SubgroupId => "subgroup_id",
-            BuiltIn::NumSubgroups => "num_subgroups",
-        };
-        let ident = quote::format_ident!("{ident}");
-        ident.to_tokens(tokens);
-    }
-}
-
 pub enum InterpolationType {
     Perspective(syn::Ident),
     Linear(syn::Ident),
@@ -1234,17 +988,6 @@ impl Parse for InterpolationType {
                 format!("Unexpected interpolation type '{other}'"),
             ))?,
         })
-    }
-}
-
-impl ToTokens for InterpolationType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            InterpolationType::Perspective(ident) => ident,
-            InterpolationType::Linear(ident) => ident,
-            InterpolationType::Flat(ident) => ident,
-        };
-        ident.to_tokens(tokens)
     }
 }
 
@@ -1273,19 +1016,6 @@ impl Parse for InterpolationSampling {
     }
 }
 
-impl ToTokens for InterpolationSampling {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ident = match self {
-            InterpolationSampling::Center(ident) => ident,
-            InterpolationSampling::Centroid(ident) => ident,
-            InterpolationSampling::Sample(ident) => ident,
-            InterpolationSampling::First(ident) => ident,
-            InterpolationSampling::Either(ident) => ident,
-        };
-        ident.to_tokens(tokens)
-    }
-}
-
 /// <https://gpuweb.github.io/gpuweb/wgsl/#interpolation>
 pub struct Interpolate {
     ty: InterpolationType,
@@ -1308,22 +1038,6 @@ impl Parse for Interpolate {
             comma_token,
             sampling,
         })
-    }
-}
-
-impl ToTokens for Interpolate {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let Self {
-            ty,
-            comma_token,
-            sampling,
-        } = self;
-        quote! { @interpolate }.to_tokens(tokens);
-        syn::token::Paren::default().surround(tokens, |tokens| {
-            ty.to_tokens(tokens);
-            comma_token.to_tokens(tokens);
-            sampling.to_tokens(tokens);
-        });
     }
 }
 
@@ -1417,19 +1131,6 @@ impl TryFrom<&syn::Attribute> for InterStageIo {
     }
 }
 
-impl ToTokens for InterStageIo {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            InterStageIo::BuiltIn(built_in) => quote! { @builtin(#built_in) },
-            InterStageIo::Location(loc) => quote! { @location(#loc) },
-            InterStageIo::BlendSrc(src) => quote! { @blend_src(#src) },
-            InterStageIo::Interpolate(lerp) => quote! { #lerp },
-            InterStageIo::Invariant => quote! { @invariant },
-        }
-        .to_tokens(tokens)
-    }
-}
-
 pub struct FnArg {
     pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
@@ -1503,23 +1204,6 @@ impl TryFrom<&syn::FnArg> for FnArg {
     }
 }
 
-impl ToTokens for FnArg {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let Self {
-            inter_stage_io,
-            ident,
-            colon_token,
-            ty,
-        } = self;
-        for inter_stage_io in inter_stage_io.iter() {
-            inter_stage_io.to_tokens(tokens);
-        }
-        ident.to_tokens(tokens);
-        colon_token.to_tokens(tokens);
-        ty.to_tokens(tokens);
-    }
-}
-
 #[derive(Default)]
 pub enum FnAttrs {
     #[default]
@@ -1556,16 +1240,6 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
             }
         }
         Ok(FnAttrs::None)
-    }
-}
-
-impl ToTokens for FnAttrs {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        match self {
-            FnAttrs::None => {}
-            FnAttrs::Vertex => quote! { @vertex }.to_tokens(tokens),
-            FnAttrs::Fragment => quote! { @fragment }.to_tokens(tokens),
-        }
     }
 }
 
@@ -1647,28 +1321,6 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
     }
 }
 
-impl ToTokens for ItemFn {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ItemFn {
-            fn_attrs,
-            fn_token,
-            ident,
-            paren_token,
-            inputs,
-            return_type,
-            block,
-        } = self;
-        fn_attrs.to_tokens(tokens);
-        fn_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        paren_token.surround(tokens, |tokens| {
-            inputs.to_tokens(tokens);
-        });
-        return_type.to_tokens(tokens);
-        block.to_tokens(tokens);
-    }
-}
-
 pub struct ItemConst {
     pub const_token: Token![const],
     pub ident: Ident,
@@ -1704,27 +1356,6 @@ impl TryFrom<&syn::ItemConst> for ItemConst {
             expr: Expr::try_from(expr.as_ref())?,
             semi_token: *semi_token,
         })
-    }
-}
-
-impl ToTokens for ItemConst {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let ItemConst {
-            const_token,
-            ident,
-            colon_token,
-            ty,
-            eq_token,
-            expr,
-            semi_token,
-        } = self;
-        const_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        colon_token.to_tokens(tokens);
-        ty.to_tokens(tokens);
-        eq_token.to_tokens(tokens);
-        expr.to_tokens(tokens);
-        semi_token.to_tokens(tokens);
     }
 }
 
@@ -1962,21 +1593,6 @@ impl TryFrom<&syn::ItemMacro> for ItemUniform {
     }
 }
 
-impl ToTokens for ItemUniform {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let group = &self.group;
-        let binding = &self.binding;
-        let name = &self.name;
-        let ty = &self.ty;
-
-        // WGSL uniform declaration (example, adjust as needed for your codegen)
-        quote! {
-            @group(#group) @binding(#binding) var<uniform> #name: #ty;
-        }
-        .to_tokens(tokens);
-    }
-}
-
 pub struct Field {
     pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
@@ -2007,19 +1623,6 @@ impl TryFrom<&syn::Field> for Field {
     }
 }
 
-impl ToTokens for Field {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        for io in self.inter_stage_io.iter() {
-            io.to_tokens(tokens);
-        }
-        self.ident.to_tokens(tokens);
-        if let Some(colon_token) = &self.colon_token {
-            colon_token.to_tokens(tokens);
-        }
-        self.ty.to_tokens(tokens);
-    }
-}
-
 pub struct FieldsNamed {
     pub brace_token: syn::token::Brace,
     pub named: syn::punctuated::Punctuated<Field, Token![,]>,
@@ -2040,16 +1643,6 @@ impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
             }
         }
         Ok(FieldsNamed { brace_token, named })
-    }
-}
-
-impl ToTokens for FieldsNamed {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let brace_token = &self.brace_token;
-        let named = &self.named;
-        brace_token.surround(tokens, |inner| {
-            named.to_tokens(inner);
-        });
     }
 }
 
@@ -2203,7 +1796,7 @@ mod test {
     fn parse_expr_binary() {
         let expr: syn::Expr = syn::parse_str("333 +  333").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + 333", &expr.into_token_stream().to_string());
+        assert_eq!("333 + 333", &expr.to_wgsl());
     }
 
     #[test]

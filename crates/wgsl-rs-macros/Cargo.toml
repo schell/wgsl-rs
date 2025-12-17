@@ -3,16 +3,17 @@ name = "wgsl-rs-macros"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["validation"]
+validation = ["dep:naga"]
+
 [lib]
 proc-macro = true
 bench = false
 
 [dependencies]
-darling = "0.23.0"
-ts-fmt-lite = "0.1.1"
-genemichaels-lib = "0.8.2"
 itertools.workspace = true
-naga.workspace = true
+naga = { workspace = true, optional = true }
 proc-macro2.workspace = true
 snafu.workspace = true
 syn.workspace = true

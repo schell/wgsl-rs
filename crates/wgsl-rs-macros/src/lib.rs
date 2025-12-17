@@ -1,7 +1,10 @@
-use darling::FromMeta;
 use proc_macro::TokenStream;
+use proc_macro2::LineColumn;
 use quote::{ToTokens, quote};
+use snafu::prelude::*;
 
+#[cfg(feature = "validation")]
+use crate::code_gen::GeneratedWgslCode;
 use crate::parse::InterStageIo;
 
 mod code_gen;
@@ -9,14 +12,32 @@ mod parse;
 mod swizzle;
 mod uniform;
 
-#[derive(Default, FromMeta)]
-#[darling(derive_syn_parse)]
+#[derive(Default)]
 struct Attrs {
     /// Present if the `wgsl` macro is of the form:
     /// #[wgsl(crate_path = path::to::crate)]
     ///
     /// Otherwise this is `None`.
     crate_path: Option<syn::Path>,
+}
+
+impl syn::parse::Parse for Attrs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let ident: syn::Ident = input.parse()?;
+        if ident.to_string().as_str() != "crate_path" {
+            return Err(syn::Error::new(ident.span(), "Expected only 'crate_path'"));
+        }
+
+        let _eq: syn::Token![=] = input.parse()?;
+        let path: syn::Path = input.parse()?;
+        Ok(Self {
+            crate_path: Some(path),
+        })
+    }
 }
 
 impl Attrs {
@@ -34,21 +55,77 @@ impl Attrs {
     }
 }
 
-fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream, syn::Error> {
-    // Parse Attrs from attr TokenStream
-    let attrs: Attrs = syn::parse(attr)?;
-    let crate_path = attrs.crate_path();
+#[derive(Debug, Snafu)]
+enum WgslGenError {
+    RustParse {
+        source: syn::Error,
+    },
 
-    let wgsl_module = parse::ItemMod::try_from(&input_mod)?;
-    // Get the modules imported into this one
-    let imports = wgsl_module.imports(&crate_path);
+    WgslParse {
+        source: parse::Error,
+    },
 
-    let formatter::GeneratedWgsl {
-        source_lines,
-        source_map,
-    } = formatter::generate_wgsl(wgsl_module);
+    #[cfg(feature = "validation")]
+    WgslValidate {
+        input_mod: Box<syn::ItemMod>,
+        error: syn::Error,
+    },
+}
 
-    let fragment = quote! {
+impl From<syn::Error> for WgslGenError {
+    fn from(source: syn::Error) -> Self {
+        Self::RustParse { source }
+    }
+}
+
+impl From<parse::Error> for WgslGenError {
+    fn from(source: parse::Error) -> Self {
+        Self::WgslParse { source }
+    }
+}
+
+#[cfg(feature = "validation")]
+fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<(), syn::Error> {
+    // Validate the module and emit validation errors as compilation errors
+    // by mapping the WGSL spans to Rust spans.
+    let source = source_lines.join("\n");
+    if let Err(e) = naga::front::wgsl::parse_str(&source) {
+        let mut errors = e.labels().flat_map(|(naga_span, msg)| {
+            let naga::SourceLocation {
+                line_number,
+                line_position,
+                offset: _,
+                length: _,
+            } = naga_span.location(&source);
+            let wgsl_lc = LineColumn {
+                line: line_number as usize,
+                column: (line_position - 1) as usize,
+            };
+            code.all_mappings_containing_wgsl_lc(wgsl_lc)
+                .next()
+                .map(move |mapping| {
+                    syn::Error::new(
+                        mapping.rust_atom.span(),
+                        format!("WGSL validation error: {msg}"),
+                    )
+                })
+        });
+        let error = errors.next().expect("there is at least one");
+        Err(errors.fold(error, |mut error, e| {
+            error.combine(e);
+            error
+        }))
+    } else {
+        Ok(())
+    }
+}
+
+fn gen_wgsl_module(
+    crate_path: &syn::Path,
+    imports: &[proc_macro2::TokenStream],
+    source_lines: &[String],
+) -> proc_macro2::TokenStream {
+    quote! {
         pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {
             imports: &[
                 #(&#imports),*
@@ -57,11 +134,31 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
                 #(#source_lines),*
             ]
         };
-    };
+    }
+}
 
+fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream, WgslGenError> {
+    // Parse Attrs from attr TokenStream
+    let attrs: Attrs = syn::parse(attr)?;
+    let crate_path = attrs.crate_path();
+
+    let wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    let imports = wgsl_module.imports(&crate_path);
+
+    let code = code_gen::generate_wgsl(wgsl_module);
+    let source_lines = code.source_lines();
+
+    let module_fragment = gen_wgsl_module(&crate_path, &imports, &source_lines);
     if let Some((_, content)) = input_mod.content.as_mut() {
-        let fragment_item: syn::Item = syn::parse2(fragment)?;
+        let fragment_item: syn::Item = syn::parse2(module_fragment)?;
         content.push(fragment_item);
+    }
+
+    #[cfg(feature = "validation")]
+    {
+        if let Err(error) = validate_wgsl(&code, &source_lines) {
+            return WgslValidateSnafu { input_mod, error }.fail();
+        }
     }
 
     Ok(input_mod.into_token_stream().into())
@@ -73,7 +170,20 @@ pub fn wgsl(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     let input_mod = syn::parse_macro_input!(token_stream as syn::ItemMod);
     match go_wgsl(attr, input_mod) {
         Ok(tokens) => tokens,
-        Err(e) => e.into_compile_error().into(),
+        Err(e) => match e {
+            WgslGenError::RustParse { source } => source.to_compile_error().into(),
+            WgslGenError::WgslParse { source } => {
+                syn::Error::from(source).to_compile_error().into()
+            }
+            WgslGenError::WgslValidate { input_mod, error } => {
+                let error = error.into_compile_error();
+                quote! {
+                    #input_mod
+                    #error
+                }
+                .into()
+            }
+        },
     }
 }
 

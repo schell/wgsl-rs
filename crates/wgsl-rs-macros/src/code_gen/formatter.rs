@@ -1,13 +1,8 @@
-use std::ops::{Deref, DerefMut};
-
-use proc_macro2::{Ident, LineColumn, Span, TokenStream};
-use quote::{ToTokens, format_ident};
+use proc_macro2::{Ident, LineColumn, Span};
+use quote::{ToTokens, quote};
 use syn::spanned::Spanned;
 
-use crate::{
-    code_gen::SourceMapping,
-    parse::{BinOp, Lit, Type, UnOp},
-};
+use crate::{code_gen::SourceMapping, parse::*};
 
 enum Line {
     IndentInc,
@@ -243,6 +238,18 @@ impl<T: GenerateCode> From<&T> for GeneratedWgslCode {
     }
 }
 
+impl GenerateCode for Ident {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        code.write_atom(self);
+    }
+}
+
+impl GenerateCode for proc_macro2::TokenStream {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        code.write_atom(self);
+    }
+}
+
 impl GenerateCode for Lit {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
@@ -326,54 +333,54 @@ impl GenerateCode for UnOp {
     }
 }
 
-impl ToTokens for FieldValue {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        self.member.to_tokens(tokens);
+impl GenerateCode for FieldValue {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        self.member.write_code(code);
         if let Some(colon_token) = &self.colon_token {
-            colon_token.to_tokens(tokens);
+            code.write_atom(colon_token);
         }
-        self.expr.to_tokens(tokens);
+        self.expr.write_code(code);
     }
 }
 
-impl ToTokens for Expr {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for Expr {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
-            Expr::Lit(lit) => lit.to_tokens(tokens),
-            Expr::Ident(id) => id.to_tokens(tokens),
+            Expr::Lit(lit) => lit.write_code(code),
+            Expr::Ident(id) => id.write_code(code),
             Expr::Array(elems) => {
-                quote! { array }.to_tokens(tokens);
+                quote! { array }.write_code(code);
                 let paren = syn::token::Paren::default();
                 paren.surround(tokens, |inner| {
                     for pair in elems.pairs() {
                         let expr = pair.value();
-                        expr.to_tokens(inner);
+                        expr.write_code(code);
                         if let Some(comma) = pair.punct() {
-                            comma.to_tokens(inner);
+                            comma.write_code(code);
                         }
                     }
                 });
             }
             Expr::Paren { paren_token, inner } => {
-                paren_token.surround(tokens, |tokens| inner.to_tokens(tokens));
+                paren_token.surround(tokens, |tokens| inner.write_code(code));
             }
             Expr::Binary { lhs, op, rhs } => {
-                lhs.to_tokens(tokens);
-                op.to_tokens(tokens);
-                rhs.to_tokens(tokens);
+                lhs.write_code(code);
+                op.write_code(code);
+                rhs.write_code(code);
             }
             Expr::Unary { op, expr } => {
-                op.to_tokens(tokens);
-                expr.to_tokens(tokens);
+                op.write_code(code);
+                expr.write_code(code);
             }
             Expr::ArrayIndexing {
                 lhs,
                 bracket_token,
                 index,
             } => {
-                lhs.to_tokens(tokens);
+                lhs.write_code(code);
                 bracket_token.surround(tokens, |inner| {
-                    index.to_tokens(inner);
+                    index.write_code(code);
                 });
             }
             Expr::Swizzle {
@@ -381,32 +388,32 @@ impl ToTokens for Expr {
                 dot_token,
                 swizzle,
             } => {
-                lhs.to_tokens(tokens);
-                dot_token.to_tokens(tokens);
-                swizzle.to_tokens(tokens);
+                lhs.write_code(code);
+                dot_token.write_code(code);
+                swizzle.write_code(code);
             }
             Expr::FieldAccess {
                 base,
                 dot_token,
                 field,
             } => {
-                base.to_tokens(tokens);
-                dot_token.to_tokens(tokens);
-                field.to_tokens(tokens);
+                base.write_code(code);
+                dot_token.write_code(code);
+                field.write_code(code);
             }
-            Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.to_tokens(tokens),
+            Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.write_code(code),
             Expr::FnCall {
                 lhs,
                 paren_token,
                 params,
             } => {
-                lhs.to_tokens(tokens);
+                lhs.write_code(code);
                 paren_token.surround(tokens, |tokens| {
                     for pair in params.pairs() {
                         let expr = pair.value();
-                        expr.to_tokens(tokens);
+                        expr.write_code(code);
                         if let Some(comma) = pair.punct() {
-                            comma.to_tokens(tokens);
+                            comma.write_code(code);
                         }
                     }
                 });
@@ -416,9 +423,9 @@ impl ToTokens for Expr {
                 brace_token,
                 fields,
             } => {
-                ident.to_tokens(tokens);
+                ident.write_code(code);
                 brace_token.surround(tokens, |inner| {
-                    fields.to_tokens(inner);
+                    fields.write_code(code);
                 });
             }
         }

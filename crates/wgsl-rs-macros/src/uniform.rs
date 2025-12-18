@@ -10,6 +10,7 @@ pub fn uniform(input: TokenStream) -> TokenStream {
         group,
         binding,
         name,
+        colon_token: _,
         ty,
     } = parse_macro_input!(input as UniformArgs);
 

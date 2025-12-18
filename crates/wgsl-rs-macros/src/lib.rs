@@ -43,10 +43,8 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // Get the modules imported into this one
     let imports = wgsl_module.imports(&crate_path);
 
-    let formatter::GeneratedWgsl {
-        source_lines,
-        source_map,
-    } = formatter::generate_wgsl(wgsl_module);
+    let code = code_gen::generate_wgsl(wgsl_module);
+    let source_lines = code.source_lines();
 
     let fragment = quote! {
         pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {

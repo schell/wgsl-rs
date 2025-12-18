@@ -1,10 +1,15 @@
 use proc_macro2::{Ident, LineColumn, Span};
-use quote::{ToTokens, quote};
+use quote::{ToTokens, quote, quote_spanned};
 use syn::spanned::Spanned;
 
-use crate::{code_gen::SourceMapping, parse::*};
+use crate::parse::*;
 
-enum Line {
+pub struct SourceMapping {
+    pub rust_span: (LineColumn, LineColumn),
+    pub wgsl_span: (LineColumn, LineColumn),
+}
+
+pub enum Line {
     IndentInc,
     IndentDec,
     Source(String),
@@ -39,18 +44,61 @@ impl Default for Surrounded<'_> {
     }
 }
 
-struct Sequenced<'a> {
-    rust_span: Span,
-    delim: &'a str,
-    use_newlines: bool,
+impl Surrounded<'_> {
+    pub fn block(outer_span: Span) -> Self {
+        Surrounded {
+            rust_span: outer_span,
+            open: "{",
+            close: "}",
+            use_newline_after_open: true,
+            use_newline_after_close: true,
+            increase_indentation: true,
+        }
+    }
+
+    pub fn parens() -> Self {
+        Surrounded {
+            open: "(",
+            close: ")",
+            ..Default::default()
+        }
+    }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.rust_span = span;
+        self
+    }
 }
 
-impl Default for Sequenced<'_> {
-    fn default() -> Self {
-        Self {
-            rust_span: Span::call_site(),
-            delim: Default::default(),
-            use_newlines: Default::default(),
+#[derive(Default)]
+struct Sequenced<'a> {
+    delim: &'a str,
+    use_newlines: bool,
+    use_delimiter_on_last_line: bool,
+}
+
+impl Sequenced<'_> {
+    pub fn comma() -> Sequenced<'static> {
+        Sequenced {
+            delim: ",",
+            use_newlines: false,
+            use_delimiter_on_last_line: false,
+        }
+    }
+
+    pub fn newlines() -> Sequenced<'static> {
+        Sequenced {
+            delim: "",
+            use_newlines: true,
+            use_delimiter_on_last_line: false,
+        }
+    }
+
+    pub fn comma_with_newlines() -> Sequenced<'static> {
+        Sequenced {
+            delim: ",",
+            use_newlines: true,
+            use_delimiter_on_last_line: true,
         }
     }
 }
@@ -79,17 +127,28 @@ impl GeneratedWgslCode {
         }
     }
 
-    /// Write a bit of WGSL code that is the "leaf" or "atom" of the tree.
-    fn write_atom(&mut self, to_tokens: &(impl Spanned + ToTokens)) {
-        let rust_span = to_tokens.span();
+    /// Write a string to the current line.
+    fn write_str(&mut self, rust_span: Span, s: &str) {
         let wgsl_start = self.next_wgsl_line_column();
-        let tokens = to_tokens.into_token_stream();
-        self.line.push_str(&tokens.to_string());
+        self.line.push_str(s);
         let wgsl_end = self.last_wgsl_line_column();
         self.source_map.push(SourceMapping {
             rust_span: (rust_span.start(), rust_span.end()),
             wgsl_span: (wgsl_start, wgsl_end),
         });
+    }
+
+    /// Write a bit of WGSL code that is the "leaf" or "atom" of the tree.
+    fn write_atom(&mut self, to_tokens: &(impl Spanned + ToTokens)) {
+        let rust_span = to_tokens.span();
+        let tokens = to_tokens.into_token_stream();
+        self.write_str(rust_span, &tokens.to_string());
+    }
+
+    /// Write an annotation.
+    fn write_annotation(&mut self, annotation: &str) {
+        self.line.push('@');
+        self.line.push_str(annotation);
     }
 
     /// Create a new line.
@@ -136,12 +195,8 @@ impl GeneratedWgslCode {
         let wgsl_start = self.next_wgsl_line_column();
         let (open, close) = (surrounded.open, surrounded.close);
         self.line.push_str(open);
-        if surrounded.use_newline_after_open
-            && surrounded.use_newline_after_close
-            && surrounded.increase_indentation
-        {
+        if surrounded.use_newline_after_open && surrounded.increase_indentation {
             self.indented(f);
-            self.line.push_str(close);
         } else {
             if surrounded.use_newline_after_open {
                 self.newline();
@@ -153,11 +208,12 @@ impl GeneratedWgslCode {
             if surrounded.increase_indentation {
                 self.dec_indent();
             }
-            self.line.push_str(close);
-            if surrounded.use_newline_after_close {
-                self.newline();
-            }
         }
+        self.line.push_str(close);
+        if surrounded.use_newline_after_close {
+            self.newline();
+        }
+
         let wgsl_end = self.last_wgsl_line_column();
         self.source_map.push(SourceMapping {
             rust_span: (rust_span.start(), rust_span.end()),
@@ -176,19 +232,36 @@ impl GeneratedWgslCode {
         self.source_map.extend(source_map);
     }
 
-    fn write_sequenced(&mut self, sequenced: Sequenced<'_>, items: Vec<GeneratedWgslCode>) {
+    fn write_sequenced(
+        &mut self,
+        sequenced: Sequenced<'_>,
+        items: impl IntoIterator<Item = impl Into<GeneratedWgslCode>>,
+    ) {
+        let items = items.into_iter().collect::<Vec<_>>();
         let len = items.len();
         for (i, item) in items.into_iter().enumerate() {
             self.append(item);
-            if i > 0 && i < len - 1 {
+            let is_last = i == len - 1;
+            if !is_last || sequenced.use_delimiter_on_last_line {
                 self.line.push_str(sequenced.delim);
-                if sequenced.use_newlines {
-                    self.newline();
-                } else {
-                    self.space();
-                }
+            }
+
+            if sequenced.use_newlines && !is_last {
+                self.newline();
+            } else if !is_last {
+                self.space();
             }
         }
+    }
+
+    pub fn last_line_is_empty(&self) -> bool {
+        for line in self.lines.iter().rev() {
+            match line {
+                Line::IndentInc | Line::IndentDec => continue,
+                Line::Source(src) => return src.is_empty(),
+            }
+        }
+        true
     }
 
     /// Construct the WGSL source code and return it as a list of lines.
@@ -220,7 +293,7 @@ impl GeneratedWgslCode {
     }
 }
 
-trait GenerateCode {
+pub trait GenerateCode {
     fn write_code(&self, code: &mut GeneratedWgslCode);
 
     fn to_wgsl(&self) -> String {
@@ -238,6 +311,14 @@ impl<T: GenerateCode> From<&T> for GeneratedWgslCode {
     }
 }
 
+impl<T: GenerateCode> GenerateCode for &Option<T> {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        if let Some(item) = self.as_ref() {
+            item.write_code(code);
+        }
+    }
+}
+
 impl GenerateCode for Ident {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         code.write_atom(self);
@@ -245,6 +326,12 @@ impl GenerateCode for Ident {
 }
 
 impl GenerateCode for proc_macro2::TokenStream {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        code.write_atom(self);
+    }
+}
+
+impl GenerateCode for syn::LitInt {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         code.write_atom(self);
     }
@@ -287,8 +374,7 @@ impl GenerateCode for Type {
                 len,
             } => {
                 let span: Span = bracket_token.span.span();
-                let array = Ident::new("array", span.into());
-                code.write_atom(&array);
+                code.write_str(span, "array");
                 code.write_surrounded(
                     Surrounded {
                         rust_span: span,
@@ -297,14 +383,9 @@ impl GenerateCode for Type {
                         ..Default::default()
                     },
                     |code| {
-                        code.write_sequenced(
-                            Sequenced {
-                                rust_span: span,
-                                delim: ",",
-                                ..Default::default()
-                            },
-                            vec![elem.as_ref().into(), len.into()],
-                        );
+                        elem.write_code(code);
+                        code.write_str(semi_token.span, ", ");
+                        len.write_code(code);
                     },
                 );
             }
@@ -348,21 +429,45 @@ impl GenerateCode for Expr {
         match self {
             Expr::Lit(lit) => lit.write_code(code),
             Expr::Ident(id) => id.write_code(code),
-            Expr::Array(elems) => {
+            Expr::Array {
+                bracket_token,
+                elems,
+            } => {
                 quote! { array }.write_code(code);
-                let paren = syn::token::Paren::default();
-                paren.surround(tokens, |inner| {
-                    for pair in elems.pairs() {
-                        let expr = pair.value();
-                        expr.write_code(code);
-                        if let Some(comma) = pair.punct() {
-                            comma.write_code(code);
-                        }
-                    }
-                });
+                let indented = elems.len() > 4;
+                code.write_surrounded(
+                    Surrounded {
+                        rust_span: bracket_token.span.join(),
+                        open: "(",
+                        close: ")",
+                        use_newline_after_open: indented,
+                        use_newline_after_close: indented,
+                        increase_indentation: indented,
+                    },
+                    |code| {
+                        code.write_sequenced(
+                            Sequenced {
+                                delim: ",",
+                                use_newlines: indented,
+                                use_delimiter_on_last_line: indented,
+                            },
+                            elems.iter(),
+                        );
+                    },
+                );
             }
             Expr::Paren { paren_token, inner } => {
-                paren_token.surround(tokens, |tokens| inner.write_code(code));
+                code.write_surrounded(
+                    Surrounded {
+                        rust_span: paren_token.span.join(),
+                        open: "(",
+                        close: ")",
+                        ..Default::default()
+                    },
+                    |code| {
+                        inner.write_code(code);
+                    },
+                );
             }
             Expr::Binary { lhs, op, rhs } => {
                 lhs.write_code(code);
@@ -379,9 +484,17 @@ impl GenerateCode for Expr {
                 index,
             } => {
                 lhs.write_code(code);
-                bracket_token.surround(tokens, |inner| {
-                    index.write_code(code);
-                });
+                code.write_surrounded(
+                    Surrounded {
+                        rust_span: bracket_token.span.join(),
+                        open: "[",
+                        close: "]",
+                        ..Default::default()
+                    },
+                    |code| {
+                        index.write_code(code);
+                    },
+                );
             }
             Expr::Swizzle {
                 lhs,
@@ -389,7 +502,7 @@ impl GenerateCode for Expr {
                 swizzle,
             } => {
                 lhs.write_code(code);
-                dot_token.write_code(code);
+                code.write_atom(dot_token);
                 swizzle.write_code(code);
             }
             Expr::FieldAccess {
@@ -398,25 +511,49 @@ impl GenerateCode for Expr {
                 field,
             } => {
                 base.write_code(code);
-                dot_token.write_code(code);
+                code.write_atom(dot_token);
                 field.write_code(code);
             }
-            Expr::Cast { lhs, ty } => quote! { #ty(#lhs) }.write_code(code),
+            Expr::Cast { lhs, ty } => {
+                ty.write_code(code);
+                code.write_surrounded(
+                    Surrounded {
+                        open: "(",
+                        close: ")",
+                        ..Default::default()
+                    },
+                    |code| {
+                        lhs.write_code(code);
+                    },
+                );
+            }
             Expr::FnCall {
                 lhs,
                 paren_token,
                 params,
             } => {
                 lhs.write_code(code);
-                paren_token.surround(tokens, |tokens| {
-                    for pair in params.pairs() {
-                        let expr = pair.value();
-                        expr.write_code(code);
-                        if let Some(comma) = pair.punct() {
-                            comma.write_code(code);
-                        }
-                    }
-                });
+                let indented = params.len() > 4;
+                code.write_surrounded(
+                    Surrounded {
+                        rust_span: paren_token.span.join(),
+                        open: "(",
+                        close: ")",
+                        use_newline_after_open: indented,
+                        use_newline_after_close: indented,
+                        increase_indentation: indented,
+                    },
+                    |code| {
+                        code.write_sequenced(
+                            Sequenced {
+                                delim: ",",
+                                use_newlines: indented,
+                                use_delimiter_on_last_line: indented,
+                            },
+                            params.iter(),
+                        );
+                    },
+                );
             }
             Expr::Struct {
                 ident,
@@ -424,26 +561,52 @@ impl GenerateCode for Expr {
                 fields,
             } => {
                 ident.write_code(code);
-                brace_token.surround(tokens, |inner| {
-                    fields.write_code(code);
+                code.write_surrounded(Surrounded::block(brace_token.span.join()), |code| {
+                    code.write_sequenced(Sequenced::comma_with_newlines(), fields.iter())
                 });
             }
         }
     }
 }
 
-impl ToTokens for ReturnTypeAnnotation {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for ReturnTypeAnnotation {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
             ReturnTypeAnnotation::None => {}
-            ReturnTypeAnnotation::BuiltIn(ident) => quote! { @builtin(#ident) }.to_tokens(tokens),
-            ReturnTypeAnnotation::Location(lit) => quote! { @location(#lit) }.to_tokens(tokens),
+            ReturnTypeAnnotation::BuiltIn(ident) => {
+                code.write_annotation("builtin");
+                code.write_surrounded(
+                    Surrounded {
+                        open: "(",
+                        close: ")",
+                        ..Default::default()
+                    },
+                    |code| {
+                        ident.write_code(code);
+                    },
+                );
+                code.space();
+            }
+            ReturnTypeAnnotation::Location(lit) => {
+                code.write_annotation("location");
+                code.write_surrounded(
+                    Surrounded {
+                        open: "(",
+                        close: ")",
+                        ..Default::default()
+                    },
+                    |code| {
+                        lit.write_code(code);
+                    },
+                );
+                code.space();
+            }
         }
     }
 }
 
-impl ToTokens for ReturnType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for ReturnType {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
             ReturnType::Default => {}
             ReturnType::Type {
@@ -451,67 +614,75 @@ impl ToTokens for ReturnType {
                 annotation,
                 ty,
             } => {
-                arrow.to_tokens(tokens);
-                annotation.to_tokens(tokens);
-                ty.to_tokens(tokens);
+                code.write_atom(arrow);
+                code.space();
+                annotation.write_code(code);
+                ty.write_code(code);
+                code.space();
             }
         }
     }
 }
 
-impl ToTokens for Local {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for Local {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         // let or var
         if self.mutability.is_some() {
             // This is a "var"
-            quote! { var }.to_tokens(tokens);
+            code.write_atom(&Ident::new("var", self.let_token.span()));
         } else {
-            self.let_token.to_tokens(tokens);
+            code.write_atom(&self.let_token);
         }
-        self.ident.to_tokens(tokens);
+        code.space();
+        self.ident.write_code(code);
         if let Some((colon_token, ty)) = &self.ty {
-            colon_token.to_tokens(tokens);
-            ty.to_tokens(tokens);
+            code.write_atom(colon_token);
+            code.space();
+            ty.write_code(code);
         }
         if let Some(init) = &self.init {
-            init.eq_token.to_tokens(tokens);
-            init.expr.to_tokens(tokens);
+            code.space();
+            code.write_atom(&init.eq_token);
+            code.space();
+            init.expr.write_code(code);
         }
-        self.semi_token.to_tokens(tokens);
+        code.write_atom(&self.semi_token);
     }
 }
 
-impl ToTokens for Stmt {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for Stmt {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
-            Stmt::Local(local) => local.to_tokens(tokens),
-            Stmt::Const(item_const) => item_const.to_tokens(tokens),
+            Stmt::Local(local) => local.write_code(code),
+            Stmt::Const(item_const) => item_const.as_ref().write_code(code),
             Stmt::Expr { expr, semi_token } => {
                 if let Some(semi) = semi_token {
-                    expr.to_tokens(tokens);
-                    semi.to_tokens(tokens);
+                    expr.write_code(code);
+                    code.write_atom(semi);
                 } else {
-                    quote! { return #expr; }.to_tokens(tokens);
+                    code.write_str(Span::call_site(), "return");
+                    code.space();
+                    expr.write_code(code);
+                    code.write_atom(&<syn::Token![;]>::default());
                 }
             }
         }
     }
 }
 
-impl ToTokens for Block {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for Block {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let brace_token = &self.brace_token;
         let stmts = &self.stmt;
-        brace_token.surround(tokens, |inner| {
-            for stmt in stmts {
-                stmt.to_tokens(inner);
-            }
+        code.write_surrounded(Surrounded::block(brace_token.span.join()), |code| {
+            code.write_sequenced(Sequenced::newlines(), stmts);
         });
+        code.newline();
     }
 }
 
-impl ToTokens for BuiltIn {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for BuiltIn {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ident = match self {
             BuiltIn::VertexIndex => "vertex_index",
             BuiltIn::InstanceIndex => "instance_index",
@@ -532,23 +703,23 @@ impl ToTokens for BuiltIn {
             BuiltIn::NumSubgroups => "num_subgroups",
         };
         let ident = quote::format_ident!("{ident}");
-        ident.to_tokens(tokens);
+        ident.write_code(code);
     }
 }
 
-impl ToTokens for InterpolationType {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for InterpolationType {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ident = match self {
             InterpolationType::Perspective(ident) => ident,
             InterpolationType::Linear(ident) => ident,
             InterpolationType::Flat(ident) => ident,
         };
-        ident.to_tokens(tokens)
+        ident.write_code(code)
     }
 }
 
-impl ToTokens for InterpolationSampling {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for InterpolationSampling {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ident = match self {
             InterpolationSampling::Center(ident) => ident,
             InterpolationSampling::Centroid(ident) => ident,
@@ -556,41 +727,50 @@ impl ToTokens for InterpolationSampling {
             InterpolationSampling::First(ident) => ident,
             InterpolationSampling::Either(ident) => ident,
         };
-        ident.to_tokens(tokens)
+        ident.write_code(code)
     }
 }
 
-impl ToTokens for Interpolate {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for Interpolate {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let Self {
             ty,
             comma_token,
             sampling,
         } = self;
-        quote! { @interpolate }.to_tokens(tokens);
-        syn::token::Paren::default().surround(tokens, |tokens| {
-            ty.to_tokens(tokens);
-            comma_token.to_tokens(tokens);
-            sampling.to_tokens(tokens);
+        code.write_annotation("interpolate");
+        code.write_surrounded(Surrounded::parens(), |code| {
+            ty.write_code(code);
+            code.write_atom(comma_token);
+            sampling.write_code(code);
         });
     }
 }
 
-impl ToTokens for InterStageIo {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for InterStageIo {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
-            InterStageIo::BuiltIn(built_in) => quote! { @builtin(#built_in) },
-            InterStageIo::Location(loc) => quote! { @location(#loc) },
-            InterStageIo::BlendSrc(src) => quote! { @blend_src(#src) },
-            InterStageIo::Interpolate(lerp) => quote! { #lerp },
-            InterStageIo::Invariant => quote! { @invariant },
+            InterStageIo::BuiltIn(built_in) => {
+                code.write_annotation("builtin");
+                code.write_surrounded(Surrounded::parens(), |code| built_in.write_code(code));
+            }
+            InterStageIo::Location(loc) => {
+                code.write_annotation("location");
+                code.write_surrounded(Surrounded::parens(), |code| loc.write_code(code));
+            }
+            InterStageIo::BlendSrc(src) => {
+                code.write_annotation("blend_src");
+                code.write_surrounded(Surrounded::parens(), |code| src.write_code(code));
+            }
+            InterStageIo::Interpolate(lerp) => lerp.write_code(code),
+            InterStageIo::Invariant => code.write_annotation("invariant"),
         }
-        .to_tokens(tokens)
+        code.space();
     }
 }
 
-impl ToTokens for FnArg {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for FnArg {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let Self {
             inter_stage_io,
             ident,
@@ -598,26 +778,32 @@ impl ToTokens for FnArg {
             ty,
         } = self;
         for inter_stage_io in inter_stage_io.iter() {
-            inter_stage_io.to_tokens(tokens);
+            inter_stage_io.write_code(code);
         }
-        ident.to_tokens(tokens);
-        colon_token.to_tokens(tokens);
-        ty.to_tokens(tokens);
+        ident.write_code(code);
+        code.write_atom(colon_token);
+        ty.write_code(code);
     }
 }
 
-impl ToTokens for FnAttrs {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for FnAttrs {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
             FnAttrs::None => {}
-            FnAttrs::Vertex => quote! { @vertex }.to_tokens(tokens),
-            FnAttrs::Fragment => quote! { @fragment }.to_tokens(tokens),
+            FnAttrs::Vertex => {
+                code.write_annotation("vertex");
+                code.space();
+            }
+            FnAttrs::Fragment => {
+                code.write_annotation("fragment");
+                code.space();
+            }
         }
     }
 }
 
-impl ToTokens for ItemFn {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for ItemFn {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemFn {
             fn_attrs,
             fn_token,
@@ -627,19 +813,29 @@ impl ToTokens for ItemFn {
             return_type,
             block,
         } = self;
-        fn_attrs.to_tokens(tokens);
-        fn_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        paren_token.surround(tokens, |tokens| {
-            inputs.to_tokens(tokens);
-        });
-        return_type.to_tokens(tokens);
-        block.to_tokens(tokens);
+
+        if !code.last_line_is_empty() {
+            code.newline();
+        }
+
+        fn_attrs.write_code(code);
+        code.write_atom(fn_token);
+        code.space();
+
+        ident.write_code(code);
+        code.write_surrounded(
+            Surrounded::parens().with_span(paren_token.span.join()),
+            |code| code.write_sequenced(Sequenced::comma(), inputs.iter()),
+        );
+        code.space();
+
+        return_type.write_code(code);
+        block.write_code(code);
     }
 }
 
-impl ToTokens for ItemConst {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+impl GenerateCode for ItemConst {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemConst {
             const_token,
             ident,
@@ -649,50 +845,120 @@ impl ToTokens for ItemConst {
             expr,
             semi_token,
         } = self;
-        const_token.to_tokens(tokens);
-        ident.to_tokens(tokens);
-        colon_token.to_tokens(tokens);
-        ty.to_tokens(tokens);
-        eq_token.to_tokens(tokens);
-        expr.to_tokens(tokens);
-        semi_token.to_tokens(tokens);
+        code.write_atom(const_token);
+        code.space();
+        ident.write_code(code);
+        code.write_atom(colon_token);
+        code.space();
+        ty.write_code(code);
+        code.space();
+        code.write_atom(eq_token);
+        code.space();
+        expr.write_code(code);
+        code.write_atom(semi_token);
+        code.newline();
     }
 }
 
-impl ToTokens for ItemUniform {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let group = &self.group;
-        let binding = &self.binding;
-        let name = &self.name;
-        let ty = &self.ty;
+impl GenerateCode for ItemUniform {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let Self {
+            group,
+            binding,
+            name,
+            colon_token,
+            ty,
+        } = self;
 
-        // WGSL uniform declaration (example, adjust as needed for your codegen)
-        quote! {
-            @group(#group) @binding(#binding) var<uniform> #name: #ty;
-        }
-        .to_tokens(tokens);
-    }
-}
+        // @group(#group) @binding(#binding) var<uniform> #name: #ty;
 
-impl ToTokens for Field {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        for io in self.inter_stage_io.iter() {
-            io.to_tokens(tokens);
-        }
-        self.ident.to_tokens(tokens);
-        if let Some(colon_token) = &self.colon_token {
-            colon_token.to_tokens(tokens);
-        }
-        self.ty.to_tokens(tokens);
-    }
-}
-
-impl ToTokens for FieldsNamed {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let brace_token = &self.brace_token;
-        let named = &self.named;
-        brace_token.surround(tokens, |inner| {
-            named.to_tokens(inner);
+        code.write_annotation("group");
+        code.write_surrounded(Surrounded::parens(), |code| {
+            group.write_code(code);
         });
+        code.space();
+
+        code.write_annotation("binding");
+        code.write_surrounded(Surrounded::parens(), |code| {
+            binding.write_code(code);
+        });
+        code.space();
+
+        code.write_str(name.span(), "var<uniform>");
+        code.space();
+
+        name.write_code(code);
+        code.write_atom(colon_token);
+        ty.write_code(code);
+        code.write_atom(&<syn::Token![;]>::default());
+
+        code.newline();
+    }
+}
+
+impl GenerateCode for Field {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        for io in self.inter_stage_io.iter() {
+            io.write_code(code);
+        }
+        self.ident.write_code(code);
+        code.write_atom(&self.colon_token);
+        self.ty.write_code(code);
+    }
+}
+
+impl GenerateCode for FieldsNamed {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        code.write_surrounded(Surrounded::block(self.brace_token.span.join()), |code| {
+            code.write_sequenced(Sequenced::comma_with_newlines(), self.named.iter());
+        });
+    }
+}
+
+impl GenerateCode for ItemStruct {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let ItemStruct {
+            struct_token,
+            ident,
+            fields,
+        } = self;
+
+        if !code.last_line_is_empty() {
+            code.newline();
+        }
+
+        code.write_atom(struct_token);
+        code.space();
+        ident.write_code(code);
+        code.space();
+        code.write_surrounded(Surrounded::block(fields.brace_token.span.join()), |code| {
+            code.write_sequenced(Sequenced::comma_with_newlines(), fields.named.iter());
+        });
+    }
+}
+
+impl GenerateCode for ItemMod {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        for item in &self.content {
+            item.write_code(code);
+        }
+    }
+}
+
+impl GenerateCode for Item {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        match self {
+            Item::Mod(item_mod) => item_mod.write_code(code),
+            Item::Uniform(item_uniform) => item_uniform.write_code(code),
+            Item::Const(item_const) => item_const.write_code(code),
+            Item::Fn(item_fn) => item_fn.write_code(code),
+            Item::Use(_item_use) => {
+                // Skip as "use" does not produce WGSL.
+                //
+                // Instead "use" is used by the `wgsl` macro to include
+                // imports of other WGSL code.
+            }
+            Item::Struct(item_struct) => item_struct.write_code(code),
+        }
     }
 }

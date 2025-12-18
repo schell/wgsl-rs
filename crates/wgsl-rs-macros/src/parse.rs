@@ -177,7 +177,7 @@ pub enum Type {
         bracket_token: syn::token::Bracket,
         elem: Box<Type>,
         semi_token: Token![;],
-        len: syn::Expr,
+        len: Expr,
     },
 
     /// Struct type: eg. MyStruct
@@ -209,7 +209,7 @@ impl TryFrom<&syn::Type> for Type {
                 bracket_token: *bracket_token,
                 elem: Box::new(elem),
                 semi_token: *semi_token,
-                len: len.clone(),
+                len: Expr::try_from(len)?,
             })
         } else if let syn::Type::Path(type_path) = ty {
             util::some_is_unsupported(
@@ -483,7 +483,10 @@ pub enum Expr {
     /// Eg. `a` or `foo`
     Ident(syn::Ident),
     /// An array literal: `[expr1, expr2, ...]`
-    Array(syn::punctuated::Punctuated<Expr, syn::Token![,]>),
+    Array {
+        bracket_token: syn::token::Bracket,
+        elems: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
+    },
     /// An expression enclosed in parentheses.
     ///
     /// `(a + b)`
@@ -572,7 +575,7 @@ impl TryFrom<&syn::Expr> for Expr {
             }
             syn::Expr::Array(syn::ExprArray {
                 attrs: _,
-                bracket_token: _,
+                bracket_token,
                 elems,
             }) => {
                 let mut expr_elems = syn::punctuated::Punctuated::new();
@@ -584,7 +587,10 @@ impl TryFrom<&syn::Expr> for Expr {
                         expr_elems.push_punct(**comma);
                     }
                 }
-                Self::Array(expr_elems)
+                Self::Array {
+                    bracket_token: *bracket_token,
+                    elems: expr_elems,
+                }
             }
             syn::Expr::Index(syn::ExprIndex {
                 attrs: _,
@@ -948,6 +954,7 @@ impl TryFrom<&syn::Block> for Block {
     }
 }
 
+// TODO: These enums should hold a reference to their Rust span for better error reporting
 #[derive(FromMeta)]
 #[darling(derive_syn_parse)]
 pub enum BuiltIn {
@@ -1018,9 +1025,9 @@ impl Parse for InterpolationSampling {
 
 /// <https://gpuweb.github.io/gpuweb/wgsl/#interpolation>
 pub struct Interpolate {
-    ty: InterpolationType,
-    comma_token: Option<Token![,]>,
-    sampling: Option<InterpolationSampling>,
+    pub ty: InterpolationType,
+    pub comma_token: Option<Token![,]>,
+    pub sampling: Option<InterpolationSampling>,
 }
 
 /// Parse the _arguments_ of #[interpolate(type, sampling)].
@@ -1477,7 +1484,7 @@ impl TryFrom<&syn::UseTree> for ItemUse {
                 note: "Renaming in use statements is not supported.",
             }
             .fail()?,
-            syn::UseTree::Glob(use_glob) => Self { modules: vec![] },
+            syn::UseTree::Glob(_use_glob) => Self { modules: vec![] },
             syn::UseTree::Group(use_group) => UnsupportedSnafu {
                 span: use_group.span(),
                 note: "Grouped use statements are not supported.",
@@ -1515,10 +1522,11 @@ impl TryFrom<&syn::UseTree> for ItemUse {
 // }
 // Use a custom parser for the macro arguments: `group($group), binding($binding), $name : $ty`
 pub(crate) struct UniformArgs {
-    pub group: syn::Expr,
-    pub binding: syn::Expr,
+    pub group: syn::LitInt,
+    pub binding: syn::LitInt,
 
     pub name: syn::Ident,
+    pub colon_token: Token![:],
     pub ty: syn::Type,
 }
 
@@ -1539,22 +1547,24 @@ impl syn::parse::Parse for UniformArgs {
         input.parse::<syn::Token![,]>()?;
 
         let name: syn::Ident = input.parse()?;
-        let _colon_token: syn::Token![:] = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
         let ty: syn::Type = input.parse()?;
 
         Ok(UniformArgs {
             group,
             binding,
             name,
+            colon_token,
             ty,
         })
     }
 }
 
 pub struct ItemUniform {
-    pub group: syn::Expr,
-    pub binding: syn::Expr,
+    pub group: syn::LitInt,
+    pub binding: syn::LitInt,
     pub name: syn::Ident,
+    pub colon_token: Token![:],
     pub ty: Type,
 }
 
@@ -1588,6 +1598,7 @@ impl TryFrom<&syn::ItemMacro> for ItemUniform {
             group: args.group,
             binding: args.binding,
             name: args.name,
+            colon_token: args.colon_token,
             ty: Type::try_from(&args.ty)?,
         })
     }
@@ -1770,6 +1781,7 @@ impl TryFrom<&syn::Item> for Item {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::code_gen::GenerateCode;
 
     #[test]
     fn parse_lit_bool() {
@@ -1803,20 +1815,20 @@ mod test {
     fn parse_expr_binary_ident() {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + TIMES", &expr.into_token_stream().to_string());
+        assert_eq!("333 + TIMES", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_vec4_f32_type() {
         let ty: syn::Type = syn::parse_str("Vec4<f32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("vec4 < f32 >", &ty.into_token_stream().to_string());
+        assert_eq!("vec4 < f32 >", &ty.to_wgsl());
     }
 
     #[test]
     fn parse_array_type() {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("array <f32 , 4 >", &ty.into_token_stream().to_string());
+        assert_eq!("array <f32 , 4 >", &ty.to_wgsl());
     }
 }

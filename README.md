@@ -17,7 +17,7 @@ Procedural macros are provided by the [`wgsl-rs-macros`](./crates/wgsl-rs-macros
       - [x] Vector aliases
       - [x] Arrays
       - [ ] Matrices
-      - [ ] Structs
+      - [x] Structs
       - [ ] Textures
       - [ ] Atomics
     - [x] Descriptor sets, bindings, etc.
@@ -26,6 +26,8 @@ Procedural macros are provided by the [`wgsl-rs-macros`](./crates/wgsl-rs-macros
   - [x] WGSL standard library for Rust
     - [x] Vector constructors (`vec2f`, `vec3f`, etc.)
     - [x] Binary operators (`+`, `-`, `*`, `/`, etc.)
+  - [x] Validate translated WGSL and map it back to Rust source spans, which displays
+        in your IDE, through rust-analyzer. Yeah!
   - [ ] Generate linkage info
   - [ ] Generate `wgpu` linkage (possibly via a separate crate like `wgsl-rs-wgpu`)
 

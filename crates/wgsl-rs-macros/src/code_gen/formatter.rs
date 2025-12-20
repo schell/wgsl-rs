@@ -253,6 +253,20 @@ impl GeneratedWgslCode {
             .push(Line::Source(std::mem::take(&mut self.line)));
     }
 
+    /// If the current line is empty the last completed line is popped off the list
+    /// and put back as the line to be appended to.
+    fn collapse_empty_trailing_line(&mut self) {
+        if self.line.is_empty()
+            && let Some(line) = self.lines.pop()
+        {
+            if let Line::Source(line) = line {
+                self.line = line;
+            } else {
+                self.lines.push(line);
+            }
+        }
+    }
+
     /// Increment the indentation level.
     fn inc_indent(&mut self) {
         self.lines.push(Line::IndentInc);
@@ -674,9 +688,18 @@ impl GenerateCode for Expr {
                 fields,
             } => {
                 ident.write_code(code);
-                code.write_surrounded(Surrounded::block(brace_token.span.join()), |code| {
-                    code.write_sequenced(Sequenced::comma_with_newlines(), fields.iter())
-                });
+                code.write_surrounded(
+                    Surrounded::parens().with_span(brace_token.span.join()),
+                    |code| {
+                        for pair in fields.pairs() {
+                            pair.value().expr.write_code(code);
+                            if let Some(p) = pair.punct() {
+                                code.write_atom(p);
+                                code.space();
+                            }
+                        }
+                    },
+                );
             }
         }
     }
@@ -784,6 +807,9 @@ impl GenerateCode for Stmt {
                     code.write_str(Span::call_site(), "return");
                     code.space();
                     expr.write_code(code);
+                    // Collapse any empty trailing line so the semitoken is written on the end of the last line
+                    // with code on it.
+                    code.collapse_empty_trailing_line();
                     code.write_atom(&<syn::Token![;]>::default());
                 }
             }

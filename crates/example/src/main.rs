@@ -58,16 +58,16 @@ pub mod structs {
         #[interpolate(flat)]
         pub z: u32,
 
+        #[location(2)]
         pub other: f32,
     }
 
     #[output]
     pub struct MyOutputs {
-        #[builtin(position)]
-        #[invariant]
+        #[location(0)]
         pub x: f32,
 
-        #[location(0)]
+        #[location(1)]
         pub y: Vec4<f32>,
     }
 

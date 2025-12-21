@@ -9,6 +9,7 @@ use crate::parse::InterStageIo;
 
 mod code_gen;
 mod parse;
+mod storage;
 mod swizzle;
 mod uniform;
 
@@ -215,9 +216,44 @@ pub fn fragment(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
 }
 
+#[proc_macro_attribute]
+pub fn compute(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    // Strip #[builtin(...)] attributes from function arguments
+    let mut item_fn: syn::ItemFn = syn::parse_macro_input!(token_stream);
+    for arg in item_fn.sig.inputs.iter_mut() {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            pat_type.attrs.retain(|attr| {
+                if let Some(ident) = attr.path().get_ident() {
+                    !matches!(ident.to_string().as_str(), "builtin")
+                } else {
+                    true
+                }
+            });
+        }
+    }
+    item_fn.into_token_stream().into()
+}
+
+#[proc_macro_attribute]
+pub fn workgroup_size(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    token_stream
+}
+
+/// Attribute for marking function parameters with WGSL builtin identifiers.
+/// This is stripped during Rust compilation but preserved in WGSL output.
+#[proc_macro_attribute]
+pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    token_stream
+}
+
 #[proc_macro]
 pub fn uniform(input: TokenStream) -> TokenStream {
     uniform::uniform(input)
+}
+
+#[proc_macro]
+pub fn storage(input: TokenStream) -> TokenStream {
+    storage::storage(input)
 }
 
 /// Defines an "input" struct.

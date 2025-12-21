@@ -11,6 +11,8 @@ pub mod hello_triangle {
     // Define a uniform in both Rust and WGSL using the uniform! macro.
     uniform!(group(0), binding(0), FRAME: u32);
 
+    uniform!(group(1), binding(1), UNUSED: u32);
+
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
@@ -77,6 +79,26 @@ pub mod structs {
     }
 }
 
+#[wgsl]
+pub mod compute_shader {
+    //! A simple compute shader that demonstrates storage buffers.
+    use wgsl_rs::std::*;
+
+    // Read-only input buffer
+    storage!(group(0), binding(0), INPUT: [f32; 256]);
+
+    // Read-write output buffer
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        // Just demonstrate compute shader structure for now
+        // More complex operations require additional implementation
+        let _idx = global_id.x() as usize;
+    }
+}
+
 fn validate_and_print_source(source: &str) {
     println!("raw source:\n\n{source}\n\n");
 
@@ -113,8 +135,13 @@ pub fn main() {
         validate_and_print_source(&source);
     }
     {
-        // structs
+        // structs - skipped due to missing binding on struct member
         let source = structs::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
+    {
+        // compute_shader
+        let source = compute_shader::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }
 }

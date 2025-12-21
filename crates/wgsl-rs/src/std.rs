@@ -11,7 +11,7 @@
 
 use std::sync::{Arc, LazyLock, RwLock};
 
-pub use wgsl_rs_macros::{fragment, input, output, uniform, vertex};
+pub use wgsl_rs_macros::{builtin, compute, fragment, input, output, storage, uniform, vertex, workgroup_size};
 
 mod numeric_builtin_functions;
 pub use numeric_builtin_functions::*;
@@ -268,6 +268,16 @@ pub struct UniformVariable<T> {
 }
 
 pub type Uniform<T> = LazyLock<UniformVariable<T>>;
+
+/// A shader storage buffer, backed by a storage buffer on the CPU.
+pub struct StorageVariable<T> {
+    pub group: u32,
+    pub binding: u32,
+    pub read_write: bool,
+    pub value: Arc<RwLock<Option<T>>>,
+}
+
+pub type Storage<T> = LazyLock<StorageVariable<T>>;
 
 /// Used to provide WGSL type conversion functions like `f32(...)`, etc.
 pub trait Convert<T> {

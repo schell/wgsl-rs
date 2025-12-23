@@ -11,8 +11,6 @@ pub mod hello_triangle {
     // Define a uniform in both Rust and WGSL using the uniform! macro.
     uniform!(group(0), binding(0), FRAME: u32);
 
-    uniform!(group(1), binding(1), UNUSED: u32);
-
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
@@ -93,8 +91,9 @@ pub mod compute_shader {
     #[compute]
     #[workgroup_size(64)]
     pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
-        // Just demonstrate compute shader structure for now
-        // More complex operations require additional implementation
+        // Compute the index from global invocation ID
+        // Note: Storage buffer access requires additional implementation
+        // This demonstrates the compute shader structure with storage buffers
         let _idx = global_id.x() as usize;
     }
 }
@@ -135,7 +134,7 @@ pub fn main() {
         validate_and_print_source(&source);
     }
     {
-        // structs - skipped due to missing binding on struct member
+        // structs
         let source = structs::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }

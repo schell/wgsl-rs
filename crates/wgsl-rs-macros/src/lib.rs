@@ -1,5 +1,4 @@
 use proc_macro::TokenStream;
-use proc_macro2::LineColumn;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
 
@@ -89,35 +88,89 @@ fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<()
     // Validate the module and emit validation errors as compilation errors
     // by mapping the WGSL spans to Rust spans.
     let source = source_lines.join("\n");
-    if let Err(e) = naga::front::wgsl::parse_str(&source) {
-        let mut errors = e.labels().flat_map(|(naga_span, msg)| {
-            let naga::SourceLocation {
-                line_number,
-                line_position,
-                offset: _,
-                length: _,
-            } = naga_span.location(&source);
-            let wgsl_lc = LineColumn {
-                line: line_number as usize,
-                column: (line_position - 1) as usize,
-            };
-            code.all_mappings_containing_wgsl_lc(wgsl_lc)
-                .next()
-                .map(move |mapping| {
-                    syn::Error::new(
-                        mapping.rust_atom.span(),
-                        format!("WGSL validation error: {msg}"),
-                    )
-                })
-        });
-        let error = errors.next().expect("there is at least one");
-        Err(errors.fold(error, |mut error, e| {
-            error.combine(e);
-            error
-        }))
-    } else {
-        Ok(())
+
+    /// Converts a byte offset in the source to a LineColumn position.
+    /// Returns 1-based line and column numbers to match our WGSL source map.
+    fn offset_to_line_column(source: &str, offset: u32) -> proc_macro2::LineColumn {
+        let mut line = 1;
+        let mut column = 1;
+        for (i, ch) in source.char_indices() {
+            if i >= offset as usize {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+        }
+        proc_macro2::LineColumn { line, column }
     }
+
+    /// Converts a naga error message and source location into a syn::Error,
+    /// mapping WGSL source positions back to Rust source spans when possible.
+    fn convert_naga_error(
+        code: &GeneratedWgslCode,
+        source: &str,
+        msg: &str,
+        loc: Option<naga::SourceLocation>,
+    ) -> syn::Error {
+        if let Some(naga::SourceLocation {
+            offset,
+            length,
+            ..
+        }) = loc
+        {
+            let wgsl_start = offset_to_line_column(source, offset);
+            let wgsl_end = offset_to_line_column(source, offset + length);
+
+            // First, try to find a mapping that exactly matches the naga span
+            if let Some(mapping) = code.mapping_for_wgsl_span(wgsl_start, wgsl_end) {
+                return syn::Error::new(mapping.rust_atom.span(), msg);
+            }
+
+            // Fall back to finding any mapping that contains the start position
+            if let Some(mapping) = code.all_mappings_containing_wgsl_lc(wgsl_start).next() {
+                return syn::Error::new(mapping.rust_atom.span(), msg);
+            }
+        }
+        // Fall back to call_site if we can't map the location
+        syn::Error::new(proc_macro2::Span::call_site(), msg)
+    }
+
+    // First, parse the WGSL source
+    let module = match naga::front::wgsl::parse_str(&source) {
+        Ok(module) => module,
+        Err(e) => {
+            let mut errors = e.labels().map(|(naga_span, label_msg)| {
+                let loc = Some(naga_span.location(&source));
+                convert_naga_error(code, &source, &format!("WGSL parse error: {label_msg}"), loc)
+            });
+            let error = errors.next().expect("there is at least one");
+            return Err(errors.fold(error, |mut error, e| {
+                error.combine(e);
+                error
+            }));
+        }
+    };
+
+    // Then run validation
+    let validation_result = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .subgroup_stages(naga::valid::ShaderStages::all())
+    .subgroup_operations(naga::valid::SubgroupOperationSet::all())
+    .validate(&module);
+
+    if let Err(e) = validation_result {
+        let loc = e.location(&source);
+        let msg = format!("WGSL validation error: {}", e.emit_to_string(&source));
+        return Err(convert_naga_error(code, &source, &msg, loc));
+    }
+
+    Ok(())
 }
 
 fn gen_wgsl_module(

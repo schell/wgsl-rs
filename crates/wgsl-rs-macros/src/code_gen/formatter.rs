@@ -6,20 +6,25 @@ use crate::parse::*;
 
 #[derive(Clone)]
 pub enum RustAtom {
-    Tokens(proc_macro2::TokenStream),
-    String { string: String, span: Span },
+    Tokens {
+        tokens: proc_macro2::TokenStream,
+        span: Span,
+    },
+    String {
+        string: String,
+        span: Span,
+    },
 }
 
 impl std::fmt::Debug for RustAtom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let span = self.span();
         match self {
-            Self::Tokens(arg0) => f
+            Self::Tokens { tokens, span } => f
                 .debug_tuple("Tokens")
-                .field(&arg0.to_string())
+                .field(&tokens.to_string())
                 .field(&(span.start(), span.end()))
                 .finish(),
-            Self::String { string, span: _ } => f
+            Self::String { string, span } => f
                 .debug_struct("String")
                 .field("string", string)
                 .field("span", &(span.start(), span.end()))
@@ -31,22 +36,7 @@ impl std::fmt::Debug for RustAtom {
 impl RustAtom {
     pub fn span(&self) -> Span {
         match self {
-            Self::Tokens(arg0) => {
-                if arg0.is_empty() {
-                    return Span::call_site();
-                }
-                let mut stream = arg0.clone().into_token_stream().into_iter();
-                let mut span = stream
-                    .next()
-                    .expect("unreachable - stream is non-empty")
-                    .span();
-                for tt in stream {
-                    span = span
-                        .join(tt.span())
-                        .expect("token tree should have spans in the same file");
-                }
-                span
-            }
+            Self::Tokens { tokens: _, span } => *span,
             Self::String { string: _, span } => *span,
         }
     }
@@ -231,12 +221,13 @@ impl GeneratedWgslCode {
     /// Write a bit of WGSL code that is the "leaf" or "atom" of the tree.
     fn write_atom(&mut self, to_tokens: &impl ToTokens) {
         let tokens = to_tokens.into_token_stream();
+        let span = tokens.span();
         let wgsl_start = self.next_wgsl_line_column();
         self.line.push_str(&tokens.to_string());
         let wgsl_end = self.last_wgsl_line_column();
 
         self.source_map.push(SourceMapping {
-            rust_atom: RustAtom::Tokens(tokens),
+            rust_atom: RustAtom::Tokens { tokens, span },
             wgsl_span: (wgsl_start, wgsl_end),
         });
     }
@@ -403,6 +394,29 @@ impl GeneratedWgslCode {
     /// Construct the WGSL source code and return it as one contiguous string.
     pub fn source(&self) -> String {
         self.source_lines().join("\n")
+    }
+
+    /// Returns the mapping that exactly matches the given WGSL span, if any.
+    /// Falls back to finding the smallest mapping that contains the span.
+    pub fn mapping_for_wgsl_span(
+        &self,
+        start: LineColumn,
+        end: LineColumn,
+    ) -> Option<&SourceMapping> {
+        // First, try to find an exact match
+        if let Some(mapping) = self
+            .source_map
+            .iter()
+            .find(|m| m.wgsl_span.0 == start && m.wgsl_span.1 == end)
+        {
+            return Some(mapping);
+        }
+
+        // Fall back to finding the smallest mapping that contains both start and end
+        self.source_map
+            .iter()
+            .filter(|m| m.wgsl_contains(start) && m.wgsl_contains(end))
+            .min_by_key(|m| m.wgsl_size())
     }
 
     /// Returns all Rust spans that contain the WGSL line column.

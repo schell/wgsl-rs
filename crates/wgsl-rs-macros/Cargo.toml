@@ -4,9 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["validation", "linkage"]
+default = ["validation"]
 validation = ["dep:naga"]
-linkage = []
 
 [lib]
 proc-macro = true

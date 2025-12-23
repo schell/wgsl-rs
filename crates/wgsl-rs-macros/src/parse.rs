@@ -1770,11 +1770,14 @@ pub enum StorageAccess {
 /// ```rust
 /// // Read-only (implicit):
 /// storage!(group(0), binding(0), DATA: [f32; 256]);
+/// // Read-only (explicit):
+/// storage!(group(0), binding(0), read_only, DATA: [f32; 256]);
 /// // Read-write (explicit):
 /// storage!(group(0), binding(0), read_write, DATA: [f32; 256]);
 /// ```
 ///
 /// ```wgsl
+/// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
 /// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
 /// @group(0) @binding(0) var<storage, read_write> DATA: array<f32, 256>;
 /// ```
@@ -1813,8 +1816,8 @@ impl syn::parse::Parse for ItemStorage {
         let binding = content.parse()?;
         input.parse::<syn::Token![,]>()?;
 
-        // Check for optional access mode (read_write)
-        // If the next token is an ident that's "read_write", consume it
+        // Check for optional access mode (read_only or read_write)
+        // If the next token is an ident that's "read_write" or "read_only", consume it
         let access = if input.peek(syn::Ident) {
             let lookahead = input.fork();
             let ident: syn::Ident = lookahead.parse()?;
@@ -1823,6 +1826,11 @@ impl syn::parse::Parse for ItemStorage {
                 let _: syn::Ident = input.parse()?;
                 input.parse::<syn::Token![,]>()?;
                 StorageAccess::ReadWrite
+            } else if ident == "read_only" {
+                // Consume from the real stream
+                let _: syn::Ident = input.parse()?;
+                input.parse::<syn::Token![,]>()?;
+                StorageAccess::Read
             } else {
                 // Not an access mode, leave it for the name
                 StorageAccess::Read
@@ -2108,5 +2116,84 @@ mod test {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
         assert_eq!("array <f32 , 4 >", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_storage_read_only_implicit() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(0), DATA: [f32; 256]").unwrap();
+        assert!(matches!(storage.access, StorageAccess::Read));
+        assert_eq!("DATA", storage.name.to_string());
+        assert_eq!("0", storage.group.to_string());
+        assert_eq!("0", storage.binding.to_string());
+    }
+
+    #[test]
+    fn parse_storage_read_only_explicit() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(1), read_only, DATA: [f32; 256]").unwrap();
+        assert!(matches!(storage.access, StorageAccess::Read));
+        assert_eq!("DATA", storage.name.to_string());
+        assert_eq!("1", storage.binding.to_string());
+    }
+
+    #[test]
+    fn parse_storage_read_write() {
+        let storage: ItemStorage =
+            syn::parse_str("group(1), binding(2), read_write, OUTPUT: [u32; 128]").unwrap();
+        assert!(matches!(storage.access, StorageAccess::ReadWrite));
+        assert_eq!("OUTPUT", storage.name.to_string());
+        assert_eq!("1", storage.group.to_string());
+        assert_eq!("2", storage.binding.to_string());
+    }
+
+    #[test]
+    fn storage_to_wgsl_read() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(0), DATA: [f32; 256]").unwrap();
+        let wgsl = storage.to_wgsl();
+        assert!(wgsl.contains("@group(0)"));
+        assert!(wgsl.contains("@binding(0)"));
+        assert!(wgsl.contains("var<storage, read>"));
+        assert!(wgsl.contains("DATA"));
+    }
+
+    #[test]
+    fn storage_to_wgsl_read_write() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(1), read_write, OUTPUT: [f32; 256]").unwrap();
+        let wgsl = storage.to_wgsl();
+        assert!(wgsl.contains("var<storage, read_write>"));
+        assert!(wgsl.contains("OUTPUT"));
+    }
+
+    #[test]
+    fn parse_workgroup_size_1d() {
+        let args: WorkgroupSizeArgs = syn::parse_str("64").unwrap();
+        assert_eq!("64", args.x.to_string());
+        assert!(args.y.is_none());
+        assert!(args.z.is_none());
+    }
+
+    #[test]
+    fn parse_workgroup_size_2d() {
+        let args: WorkgroupSizeArgs = syn::parse_str("8, 8").unwrap();
+        assert_eq!("8", args.x.to_string());
+        assert!(args.y.is_some());
+        let (_, y_val) = args.y.unwrap();
+        assert_eq!("8", y_val.to_string());
+        assert!(args.z.is_none());
+    }
+
+    #[test]
+    fn parse_workgroup_size_3d() {
+        let args: WorkgroupSizeArgs = syn::parse_str("4, 4, 4").unwrap();
+        assert_eq!("4", args.x.to_string());
+        assert!(args.y.is_some());
+        assert!(args.z.is_some());
+        let (_, y_val) = args.y.unwrap();
+        let (_, z_val) = args.z.unwrap();
+        assert_eq!("4", y_val.to_string());
+        assert_eq!("4", z_val.to_string());
     }
 }

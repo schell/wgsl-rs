@@ -299,6 +299,7 @@ name = "wgsl-rs"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "naga",
  "paste",
  "wgsl-rs-macros",
 ]

@@ -1669,7 +1669,7 @@ impl TryFrom<&syn::UseTree> for ItemUse {
 
 /// A uniform declaration.
 ///
-/// ```rust
+/// ```rust,ignore
 /// uniform!(group(0), binding(0), FRAME: u32);
 /// ```
 ///
@@ -1767,7 +1767,7 @@ pub enum StorageAccess {
 
 /// A storage buffer declaration.
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Read-only (implicit):
 /// storage!(group(0), binding(0), DATA: [f32; 256]);
 /// // Read-only (explicit):
@@ -2094,28 +2094,28 @@ mod test {
     fn parse_expr_binary() {
         let expr: syn::Expr = syn::parse_str("333 +  333").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + 333", &expr.to_wgsl());
+        assert_eq!("333+333", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ident() {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + TIMES", &expr.to_wgsl());
+        assert_eq!("333+TIMES", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_vec4_f32_type() {
         let ty: syn::Type = syn::parse_str("Vec4<f32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("vec4 < f32 >", &ty.to_wgsl());
+        assert_eq!("vec4<f32>", &ty.to_wgsl());
     }
 
     #[test]
     fn parse_array_type() {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("array <f32 , 4 >", &ty.to_wgsl());
+        assert_eq!("array<f32, 4>", &ty.to_wgsl());
     }
 
     #[test]

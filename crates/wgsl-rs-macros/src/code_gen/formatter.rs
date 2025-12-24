@@ -986,6 +986,33 @@ impl GenerateCode for FnAttrs {
                 code.write_annotation(ident);
                 code.space();
             }
+            FnAttrs::Compute {
+                ident,
+                workgroup_size,
+            } => {
+                // @compute
+                code.write_annotation(ident);
+                code.space();
+                // @workgroup_size(x, y?, z?)
+                code.write_annotation(&workgroup_size.ident);
+                code.write_surrounded(
+                    Surrounded::parens().with_span(workgroup_size.paren_token.span.join()),
+                    |code| {
+                        workgroup_size.x.write_code(code);
+                        if let Some((comma, y)) = &workgroup_size.y {
+                            code.write_atom(comma);
+                            code.space();
+                            y.write_code(code);
+                        }
+                        if let Some((comma, z)) = &workgroup_size.z {
+                            code.write_atom(comma);
+                            code.space();
+                            z.write_code(code);
+                        }
+                    },
+                );
+                code.space();
+            }
         }
     }
 }
@@ -1095,6 +1122,59 @@ impl GenerateCode for ItemUniform {
     }
 }
 
+impl GenerateCode for ItemStorage {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let Self {
+            group_ident,
+            group_paren_token,
+            group,
+            binding_ident,
+            binding_paren_token,
+            binding,
+            access,
+            name,
+            colon_token,
+            ty,
+            rust_ty: _,
+        } = self;
+
+        // @group(#group) @binding(#binding) var<storage, read|read_write> #name: #ty;
+
+        code.write_annotation(group_ident);
+        code.write_surrounded(
+            Surrounded::parens().with_span(group_paren_token.span.join()),
+            |code| {
+                group.write_code(code);
+            },
+        );
+        code.space();
+
+        code.write_annotation(binding_ident);
+        code.write_surrounded(
+            Surrounded::parens().with_span(binding_paren_token.span.join()),
+            |code| {
+                binding.write_code(code);
+            },
+        );
+        code.space();
+
+        // var<storage, read> or var<storage, read_write>
+        let access_mode = match access {
+            StorageAccess::Read => "read",
+            StorageAccess::ReadWrite => "read_write",
+        };
+        code.write_str(Span::call_site(), &format!("var<storage, {access_mode}>"));
+        code.space();
+
+        name.write_code(code);
+        code.write_atom(colon_token);
+        ty.write_code(code);
+        code.write_atom(&<syn::Token![;]>::default());
+
+        code.newline();
+    }
+}
+
 impl GenerateCode for Field {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         for io in self.inter_stage_io.iter() {
@@ -1149,6 +1229,7 @@ impl GenerateCode for Item {
         match self {
             Item::Mod(item_mod) => item_mod.write_code(code),
             Item::Uniform(item_uniform) => item_uniform.write_code(code),
+            Item::Storage(item_storage) => item_storage.write_code(code),
             Item::Const(item_const) => item_const.write_code(code),
             Item::Fn(item_fn) => item_fn.write_code(code),
             Item::Use(_item_use) => {

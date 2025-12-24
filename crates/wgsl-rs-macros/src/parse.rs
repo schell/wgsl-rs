@@ -1279,18 +1279,36 @@ impl TryFrom<&syn::FnArg> for FnArg {
     }
 }
 
+/// Workgroup size for compute shaders.
+///
+/// In WGSL: `@workgroup_size(x, y, z)` where y and z default to 1.
+pub struct WorkgroupSize {
+    pub ident: Ident,
+    pub paren_token: syn::token::Paren,
+    pub x: syn::LitInt,
+    pub y: Option<(syn::Token![,], syn::LitInt)>,
+    pub z: Option<(syn::Token![,], syn::LitInt)>,
+}
+
 #[derive(Default)]
 pub enum FnAttrs {
     #[default]
     None,
     Vertex(Ident),
     Fragment(Ident),
+    Compute {
+        ident: Ident,
+        workgroup_size: WorkgroupSize,
+    },
 }
 
 impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
     type Error = Error;
 
     fn try_from(value: &Vec<syn::Attribute>) -> Result<Self, Self::Error> {
+        // First pass: find the shader stage attribute (vertex, fragment, compute)
+        let mut stage: Option<(&str, Ident)> = None;
+
         for syn::Attribute {
             pound_token: _,
             style,
@@ -1306,6 +1324,11 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                 match ident.to_string().as_str() {
                     "vertex" => return Ok(FnAttrs::Vertex(ident.clone())),
                     "fragment" => return Ok(FnAttrs::Fragment(ident.clone())),
+                    "compute" => {
+                        stage = Some(("compute", ident.clone()));
+                    }
+                    // Skip workgroup_size and other attributes in this pass
+                    "workgroup_size" => {}
                     other => UnsupportedSnafu {
                         span: ident.span(),
                         note: format!("'{other}' is not a supported annotation"),
@@ -1314,7 +1337,94 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                 }
             }
         }
+
+        // If we found a compute stage, look for workgroup_size
+        if let Some(("compute", compute_ident)) = stage {
+            // Second pass: find workgroup_size
+            for attr in value.iter() {
+                if matches!(attr.style, syn::AttrStyle::Inner(_)) {
+                    continue;
+                }
+
+                if let Some(ident) = attr.path().get_ident() {
+                    if ident == "workgroup_size" {
+                        let list = attr.meta.require_list().map_err(|_| Error::Unsupported {
+                            span: ident.span(),
+                            note: "workgroup_size requires arguments: #[workgroup_size(x)] or #[workgroup_size(x, y)] or #[workgroup_size(x, y, z)]".to_string(),
+                        })?;
+
+                        let paren_token = if let syn::MacroDelimiter::Paren(p) = &list.delimiter {
+                            *p
+                        } else {
+                            return UnsupportedSnafu {
+                                span: ident.span(),
+                                note: "workgroup_size must use parentheses",
+                            }
+                            .fail();
+                        };
+
+                        // Parse the workgroup size values (1-3 integers separated by commas)
+                        let tokens = list.tokens.clone();
+                        let parsed: WorkgroupSizeArgs =
+                            syn::parse2(tokens).map_err(|e| Error::Unsupported {
+                                span: ident.span(),
+                                note: format!("Failed to parse workgroup_size: {e}"),
+                            })?;
+
+                        return Ok(FnAttrs::Compute {
+                            ident: compute_ident,
+                            workgroup_size: WorkgroupSize {
+                                ident: ident.clone(),
+                                paren_token,
+                                x: parsed.x,
+                                y: parsed.y,
+                                z: parsed.z,
+                            },
+                        });
+                    }
+                }
+            }
+
+            // Compute without workgroup_size
+            return UnsupportedSnafu {
+                span: compute_ident.span(),
+                note: "compute shader requires #[workgroup_size(x)] attribute",
+            }
+            .fail();
+        }
+
         Ok(FnAttrs::None)
+    }
+}
+
+/// Helper struct to parse workgroup_size arguments
+struct WorkgroupSizeArgs {
+    x: syn::LitInt,
+    y: Option<(syn::Token![,], syn::LitInt)>,
+    z: Option<(syn::Token![,], syn::LitInt)>,
+}
+
+impl syn::parse::Parse for WorkgroupSizeArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let x: syn::LitInt = input.parse()?;
+
+        let y = if input.peek(syn::Token![,]) {
+            let comma: syn::Token![,] = input.parse()?;
+            let y_val: syn::LitInt = input.parse()?;
+            Some((comma, y_val))
+        } else {
+            None
+        };
+
+        let z = if y.is_some() && input.peek(syn::Token![,]) {
+            let comma: syn::Token![,] = input.parse()?;
+            let z_val: syn::LitInt = input.parse()?;
+            Some((comma, z_val))
+        } else {
+            None
+        };
+
+        Ok(WorkgroupSizeArgs { x, y, z })
     }
 }
 
@@ -1645,6 +1755,137 @@ impl TryFrom<&syn::ItemMacro> for ItemUniform {
     }
 }
 
+/// Access mode for storage buffers.
+#[derive(Clone, Copy, Default)]
+pub enum StorageAccess {
+    /// `var<storage, read>` - read-only (default when access mode is omitted)
+    #[default]
+    Read,
+    /// `var<storage, read_write>` - read-write
+    ReadWrite,
+}
+
+/// A storage buffer declaration.
+///
+/// ```rust
+/// // Read-only (implicit):
+/// storage!(group(0), binding(0), DATA: [f32; 256]);
+/// // Read-only (explicit):
+/// storage!(group(0), binding(0), read_only, DATA: [f32; 256]);
+/// // Read-write (explicit):
+/// storage!(group(0), binding(0), read_write, DATA: [f32; 256]);
+/// ```
+///
+/// ```wgsl
+/// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
+/// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
+/// @group(0) @binding(0) var<storage, read_write> DATA: array<f32, 256>;
+/// ```
+pub(crate) struct ItemStorage {
+    pub group_ident: Ident,
+    pub group_paren_token: syn::token::Paren,
+    pub group: syn::LitInt,
+
+    pub binding_ident: Ident,
+    pub binding_paren_token: syn::token::Paren,
+    pub binding: syn::LitInt,
+
+    pub access: StorageAccess,
+
+    pub name: syn::Ident,
+    pub colon_token: Token![:],
+    pub ty: Type,
+
+    // We keep the Rust type around
+    pub rust_ty: syn::Type,
+}
+
+impl syn::parse::Parse for ItemStorage {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // group
+        let group_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let group_paren_token = parenthesized!(content in input);
+        let group = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        // binding
+        let binding_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let binding_paren_token = parenthesized!(content in input);
+        let binding = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        // Check for optional access mode (read_only or read_write)
+        // If the next token is an ident that's "read_write" or "read_only", consume it
+        let access = if input.peek(syn::Ident) {
+            let lookahead = input.fork();
+            let ident: syn::Ident = lookahead.parse()?;
+            if ident == "read_write" {
+                // Consume from the real stream
+                let _: syn::Ident = input.parse()?;
+                input.parse::<syn::Token![,]>()?;
+                StorageAccess::ReadWrite
+            } else if ident == "read_only" {
+                // Consume from the real stream
+                let _: syn::Ident = input.parse()?;
+                input.parse::<syn::Token![,]>()?;
+                StorageAccess::Read
+            } else {
+                // Not an access mode, leave it for the name
+                StorageAccess::Read
+            }
+        } else {
+            StorageAccess::Read
+        };
+
+        let name: syn::Ident = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
+        let rust_ty: syn::Type = input.parse()?;
+        let ty = Type::try_from(&rust_ty)?;
+
+        Ok(ItemStorage {
+            group,
+            binding,
+            access,
+            name,
+            colon_token,
+            ty,
+            rust_ty,
+            group_ident,
+            group_paren_token,
+            binding_ident,
+            binding_paren_token,
+        })
+    }
+}
+
+impl TryFrom<&syn::ItemMacro> for ItemStorage {
+    type Error = Error;
+
+    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
+        // Ensure it's the "storage" macro
+        if item_macro
+            .mac
+            .path
+            .get_ident()
+            .map(|id| id != "storage")
+            .unwrap_or(true)
+        {
+            return UnsupportedSnafu {
+                span: item_macro.span(),
+                note: "Only 'storage!' macro is supported as a storage declaration.",
+            }
+            .fail();
+        }
+
+        syn::parse2::<ItemStorage>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
+            span: item_macro.span(),
+            note: format!("{e}"),
+        })
+    }
+}
+
 pub struct Field {
     pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
@@ -1758,6 +1999,7 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
 pub enum Item {
     Const(Box<ItemConst>),
     Uniform(Box<ItemUniform>),
+    Storage(Box<ItemStorage>),
     Fn(ItemFn),
     Mod(ItemMod),
     Use(ItemUse),
@@ -1776,6 +2018,9 @@ impl TryFrom<&syn::Item> for Item {
                 match maybe_ident.as_deref() {
                     Some("uniform") => {
                         Ok(Item::Uniform(Box::new(ItemUniform::try_from(item_macro)?)))
+                    }
+                    Some("storage") => {
+                        Ok(Item::Storage(Box::new(ItemStorage::try_from(item_macro)?)))
                     }
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
@@ -1871,5 +2116,84 @@ mod test {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
         assert_eq!("array <f32 , 4 >", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_storage_read_only_implicit() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(0), DATA: [f32; 256]").unwrap();
+        assert!(matches!(storage.access, StorageAccess::Read));
+        assert_eq!("DATA", storage.name.to_string());
+        assert_eq!("0", storage.group.to_string());
+        assert_eq!("0", storage.binding.to_string());
+    }
+
+    #[test]
+    fn parse_storage_read_only_explicit() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(1), read_only, DATA: [f32; 256]").unwrap();
+        assert!(matches!(storage.access, StorageAccess::Read));
+        assert_eq!("DATA", storage.name.to_string());
+        assert_eq!("1", storage.binding.to_string());
+    }
+
+    #[test]
+    fn parse_storage_read_write() {
+        let storage: ItemStorage =
+            syn::parse_str("group(1), binding(2), read_write, OUTPUT: [u32; 128]").unwrap();
+        assert!(matches!(storage.access, StorageAccess::ReadWrite));
+        assert_eq!("OUTPUT", storage.name.to_string());
+        assert_eq!("1", storage.group.to_string());
+        assert_eq!("2", storage.binding.to_string());
+    }
+
+    #[test]
+    fn storage_to_wgsl_read() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(0), DATA: [f32; 256]").unwrap();
+        let wgsl = storage.to_wgsl();
+        assert!(wgsl.contains("@group(0)"));
+        assert!(wgsl.contains("@binding(0)"));
+        assert!(wgsl.contains("var<storage, read>"));
+        assert!(wgsl.contains("DATA"));
+    }
+
+    #[test]
+    fn storage_to_wgsl_read_write() {
+        let storage: ItemStorage =
+            syn::parse_str("group(0), binding(1), read_write, OUTPUT: [f32; 256]").unwrap();
+        let wgsl = storage.to_wgsl();
+        assert!(wgsl.contains("var<storage, read_write>"));
+        assert!(wgsl.contains("OUTPUT"));
+    }
+
+    #[test]
+    fn parse_workgroup_size_1d() {
+        let args: WorkgroupSizeArgs = syn::parse_str("64").unwrap();
+        assert_eq!("64", args.x.to_string());
+        assert!(args.y.is_none());
+        assert!(args.z.is_none());
+    }
+
+    #[test]
+    fn parse_workgroup_size_2d() {
+        let args: WorkgroupSizeArgs = syn::parse_str("8, 8").unwrap();
+        assert_eq!("8", args.x.to_string());
+        assert!(args.y.is_some());
+        let (_, y_val) = args.y.unwrap();
+        assert_eq!("8", y_val.to_string());
+        assert!(args.z.is_none());
+    }
+
+    #[test]
+    fn parse_workgroup_size_3d() {
+        let args: WorkgroupSizeArgs = syn::parse_str("4, 4, 4").unwrap();
+        assert_eq!("4", args.x.to_string());
+        assert!(args.y.is_some());
+        assert!(args.z.is_some());
+        let (_, y_val) = args.y.unwrap();
+        let (_, z_val) = args.z.unwrap();
+        assert_eq!("4", y_val.to_string());
+        assert_eq!("4", z_val.to_string());
     }
 }

@@ -143,4 +143,31 @@ pub fn main() {
         let source = compute_shader::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }
+
+    #[cfg(feature = "linkage-wgpu")]
+    test_linkage();
+}
+
+/// Test the linkage API when the feature is enabled.
+#[cfg(feature = "linkage-wgpu")]
+fn test_linkage() {
+    println!("\n=== Testing Linkage API ===\n");
+
+    // Test hello_triangle linkage
+    println!("hello_triangle::linkage::SHADER_SOURCE length: {}", hello_triangle::linkage::SHADER_SOURCE.len());
+    println!("hello_triangle bind_group_0 layout entries: {}", hello_triangle::linkage::bind_group_0::LAYOUT_ENTRIES.len());
+    println!("hello_triangle vtx_main entry point: {}", hello_triangle::linkage::vtx_main::ENTRY_POINT);
+    println!("hello_triangle frag_main entry point: {}", hello_triangle::linkage::frag_main::ENTRY_POINT);
+
+    // Test compute_shader linkage
+    println!("\ncompute_shader::linkage::SHADER_SOURCE length: {}", compute_shader::linkage::SHADER_SOURCE.len());
+    println!("compute_shader bind_group_0 layout entries: {}", compute_shader::linkage::bind_group_0::LAYOUT_ENTRIES.len());
+    println!("compute_shader main entry point: {}", compute_shader::linkage::main::ENTRY_POINT);
+    println!("compute_shader main workgroup size: {:?}", compute_shader::linkage::main::WORKGROUP_SIZE);
+
+    // Test structs linkage
+    println!("\nstructs::linkage::SHADER_SOURCE length: {}", structs::linkage::SHADER_SOURCE.len());
+    println!("structs frag_shader entry point: {}", structs::linkage::frag_shader::ENTRY_POINT);
+
+    println!("\n=== Linkage API tests passed ===");
 }

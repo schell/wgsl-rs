@@ -7,6 +7,8 @@ use crate::code_gen::GeneratedWgslCode;
 use crate::parse::InterStageIo;
 
 mod code_gen;
+#[cfg(feature = "linkage-wgpu")]
+mod linkage;
 mod parse;
 mod storage;
 mod swizzle;
@@ -255,6 +257,15 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         quote! {}
     };
 
+    // Generate linkage module when feature is enabled
+    #[cfg(feature = "linkage-wgpu")]
+    let linkage_fragment = {
+        let wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+        let linkage_info =
+            linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
+        linkage::generate_linkage_module(&linkage_info, &source_lines)
+    };
+
     if let Some((_, content)) = input_mod.content.as_mut() {
         let fragment_item: syn::Item = syn::parse2(module_fragment)?;
         content.push(fragment_item);
@@ -263,6 +274,13 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         if !validation_test.is_empty() {
             let test_item: syn::Item = syn::parse2(validation_test)?;
             content.push(test_item);
+        }
+
+        // Add linkage if the feature is set
+        #[cfg(feature = "linkage-wgpu")]
+        {
+            let linkage_item: syn::Item = syn::parse2(linkage_fragment)?;
+            content.push(linkage_item);
         }
     }
 

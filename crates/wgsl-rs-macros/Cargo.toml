@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = ["validation"]
 validation = ["dep:naga"]
+linkage-wgpu = []
 
 [lib]
 proc-macro = true

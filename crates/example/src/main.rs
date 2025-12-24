@@ -77,6 +77,27 @@ pub mod structs {
     }
 }
 
+#[wgsl]
+pub mod compute_shader {
+    //! A simple compute shader that demonstrates storage buffers.
+    use wgsl_rs::std::*;
+
+    // Read-only input buffer
+    storage!(group(0), binding(0), INPUT: [f32; 256]);
+
+    // Read-write output buffer
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        // Compute the index from global invocation ID
+        // Note: Storage buffer access requires additional implementation
+        // This demonstrates the compute shader structure with storage buffers
+        let _idx = global_id.x() as usize;
+    }
+}
+
 fn validate_and_print_source(source: &str) {
     println!("raw source:\n\n{source}\n\n");
 
@@ -115,6 +136,11 @@ pub fn main() {
     {
         // structs
         let source = structs::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
+    {
+        // compute_shader
+        let source = compute_shader::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }
 }

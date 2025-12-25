@@ -513,7 +513,7 @@ pub enum Expr {
     /// Type conversion.
     ///
     /// This needs special help because we want to support indexing with u32 and
-    /// i32 sinc WGSL supports this.
+    /// i32 since WGSL supports this.
     Cast { lhs: Box<Expr>, ty: Box<Type> },
     /// A function call
     FnCall {

@@ -5,7 +5,6 @@
 //! time it's constructed.
 //!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
-//!
 // HEY!
 //
 // This module is incomplete at best.
@@ -38,7 +37,8 @@ pub enum Error {
     },
 
     #[snafu(display(
-        "Unsupported use of if-then-else, WGSL if statements are a control structure, not an expression."
+        "Unsupported use of if-then-else, WGSL if statements are a control structure, not an \
+         expression."
     ))]
     UnsupportedIfThen { span: proc_macro2::Span },
 
@@ -231,7 +231,10 @@ impl TryFrom<&syn::Type> for Type {
                                     "4" => 4,
                                     other_n => UnsupportedSnafu {
                                         span: ident.span(),
-                                        note: format!("Unsupported vector type '{other}'. `{other_n}` must be one of 2, 3, or 4"),
+                                        note: format!(
+                                            "Unsupported vector type '{other}'. `{other_n}` must \
+                                             be one of 2, 3, or 4"
+                                        ),
                                     }
                                     .fail()?,
                                 };
@@ -242,8 +245,12 @@ impl TryFrom<&syn::Type> for Type {
                                     "b" => ScalarType::Bool,
                                     other_prefix => UnsupportedSnafu {
                                         span: ident.span(),
-                                        note: format!("Unsupported vectory type '{other}'. `{other_prefix}` must be one of i, u, f or b")
-                                    }.fail()?
+                                        note: format!(
+                                            "Unsupported vectory type '{other}'. `{other_prefix}` \
+                                             must be one of i, u, f or b"
+                                        ),
+                                    }
+                                    .fail()?,
                                 };
                                 Type::Vector {
                                     elements,
@@ -505,8 +512,8 @@ pub enum Expr {
     },
     /// Type conversion.
     ///
-    /// This needs special help because we want to support indexing with u32 and i32
-    /// sinc WGSL supports this.
+    /// This needs special help because we want to support indexing with u32 and
+    /// i32 sinc WGSL supports this.
     Cast { lhs: Box<Expr>, ty: Box<Type> },
     /// A function call
     FnCall {
@@ -800,7 +807,8 @@ impl TryFrom<&syn::LocalInit> for LocalInit {
 
 pub struct Local {
     pub let_token: Token![let],
-    /// If `mutability` is `Some`, this is a `var` binding, otherwise this is a `let` binding.
+    /// If `mutability` is `Some`, this is a `var` binding, otherwise this is a
+    /// `let` binding.
     pub mutability: Option<Token![mut]>,
     pub ident: Ident,
     pub ty: Option<(Token![:], Type)>,
@@ -945,7 +953,8 @@ impl TryFrom<&syn::Block> for Block {
     }
 }
 
-// TODO: These enums should hold a reference to their Rust span for better error reporting
+// TODO: These enums should hold a reference to their Rust span for better error
+// reporting
 pub enum BuiltIn {
     VertexIndex(Ident),
     InstanceIndex(Ident),
@@ -1068,7 +1077,8 @@ impl Parse for Interpolate {
     }
 }
 
-/// A shader stage input is a datum provided to the shader stage from upstream in the pipeline.
+/// A shader stage input is a datum provided to the shader stage from upstream
+/// in the pipeline.
 ///
 /// Each datum is either a built-in input value, or a user-defined input.
 ///
@@ -1350,7 +1360,9 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                     if ident == "workgroup_size" {
                         let list = attr.meta.require_list().map_err(|_| Error::Unsupported {
                             span: ident.span(),
-                            note: "workgroup_size requires arguments: #[workgroup_size(x)] or #[workgroup_size(x, y)] or #[workgroup_size(x, y, z)]".to_string(),
+                            note: "workgroup_size requires arguments: #[workgroup_size(x)] or \
+                                   #[workgroup_size(x, y)] or #[workgroup_size(x, y, z)]"
+                                .to_string(),
                         })?;
 
                         let paren_token = if let syn::MacroDelimiter::Paren(p) = &list.delimiter {
@@ -2025,8 +2037,8 @@ impl TryFrom<&syn::Item> for Item {
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
                         note: format!(
-                            "Unknown macro '{other:?}' doesn't expand into WGSL\n\
-                            Seen as '{item_macro:#?}'",
+                            "Unknown macro '{other:?}' doesn't expand into WGSL\nSeen as \
+                             '{item_macro:#?}'",
                         ),
                     }
                     .fail()?,

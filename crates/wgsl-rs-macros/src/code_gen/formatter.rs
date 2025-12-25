@@ -70,7 +70,12 @@ impl SourceMapping {
             0
         }
     }
-    /// Returns whether this mapping contains the input WGSL line column.                                                                                                                                                                                                                                                                                                                    
+    /// Returns whether this mapping contains the input WGSL line column.
+    ///                                                                         
+    ///                                                                         
+    ///                                                                         
+    ///                                                                         
+    ///
     pub fn wgsl_contains(&self, line_column: LineColumn) -> bool {
         let (start, end) = self.wgsl_span;
 
@@ -204,7 +209,8 @@ impl GeneratedWgslCode {
 
     /// Write a string to the current line.
     ///
-    /// This is used for situations where we don't have verbatim Rust tokens to write.
+    /// This is used for situations where we don't have verbatim Rust tokens to
+    /// write.
     fn write_str(&mut self, rust_span: Span, s: &str) {
         let wgsl_start = self.next_wgsl_line_column();
         self.line.push_str(s);
@@ -244,8 +250,8 @@ impl GeneratedWgslCode {
             .push(Line::Source(std::mem::take(&mut self.line)));
     }
 
-    /// If the current line is empty the last completed line is popped off the list
-    /// and put back as the line to be appended to.
+    /// If the current line is empty the last completed line is popped off the
+    /// list and put back as the line to be appended to.
     fn collapse_empty_trailing_line(&mut self) {
         if self.line.is_empty()
             && let Some(line) = self.lines.pop()
@@ -829,8 +835,8 @@ impl GenerateCode for Stmt {
                     code.write_str(Span::call_site(), "return");
                     code.space();
                     expr.write_code(code);
-                    // Collapse any empty trailing line so the semitoken is written on the end of the last line
-                    // with code on it.
+                    // Collapse any empty trailing line so the semitoken is written on the end of
+                    // the last line with code on it.
                     code.collapse_empty_trailing_line();
                     code.write_atom(&<syn::Token![;]>::default());
                 }

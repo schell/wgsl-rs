@@ -41,8 +41,17 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache SARIF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-sarif-tools-v1
+
       - name: Install SARIF tools
-        run: cargo install clippy-sarif sarif-fmt
+        run: |
+          if ! command -v clippy-sarif >/dev/null 2>&1 || ! command -v sarif-fmt >/dev/null 2>&1; then
+            cargo install clippy-sarif sarif-fmt
+          fi
 
       - name: Run Clippy
         run: |

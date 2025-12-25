@@ -19,6 +19,10 @@ struct Attrs {
     ///
     /// Otherwise this is `None`.
     crate_path: Option<syn::Path>,
+
+    /// If true, skip all validation (compile-time and test-time).
+    /// Set via `#[wgsl(skip_validation)]`.
+    skip_validation: bool,
 }
 
 impl syn::parse::Parse for Attrs {
@@ -27,16 +31,40 @@ impl syn::parse::Parse for Attrs {
             return Ok(Self::default());
         }
 
-        let ident: syn::Ident = input.parse()?;
-        if ident.to_string().as_str() != "crate_path" {
-            return Err(syn::Error::new(ident.span(), "Expected only 'crate_path'"));
+        let mut attrs = Self::default();
+
+        loop {
+            let ident: syn::Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "crate_path" => {
+                    let _eq: syn::Token![=] = input.parse()?;
+                    let path: syn::Path = input.parse()?;
+                    attrs.crate_path = Some(path);
+                }
+                "skip_validation" => {
+                    attrs.skip_validation = true;
+                }
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!(
+                            "Unknown attribute '{other}', expected 'crate_path' or 'skip_validation'"
+                        ),
+                    ));
+                }
+            }
+
+            // Check for comma separator or end
+            if input.is_empty() {
+                break;
+            }
+            let _comma: syn::Token![,] = input.parse()?;
+            if input.is_empty() {
+                break;
+            }
         }
 
-        let _eq: syn::Token![=] = input.parse()?;
-        let path: syn::Path = input.parse()?;
-        Ok(Self {
-            crate_path: Some(path),
-        })
+        Ok(attrs)
     }
 }
 
@@ -117,12 +145,7 @@ fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<()
         msg: &str,
         loc: Option<naga::SourceLocation>,
     ) -> syn::Error {
-        if let Some(naga::SourceLocation {
-            offset,
-            length,
-            ..
-        }) = loc
-        {
+        if let Some(naga::SourceLocation { offset, length, .. }) = loc {
             let wgsl_start = offset_to_line_column(source, offset);
             let wgsl_end = offset_to_line_column(source, offset + length);
 
@@ -146,7 +169,12 @@ fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<()
         Err(e) => {
             let mut errors = e.labels().map(|(naga_span, label_msg)| {
                 let loc = Some(naga_span.location(&source));
-                convert_naga_error(code, &source, &format!("WGSL parse error: {label_msg}"), loc)
+                convert_naga_error(
+                    code,
+                    &source,
+                    &format!("WGSL parse error: {label_msg}"),
+                    loc,
+                )
             });
             let error = errors.next().expect("there is at least one");
             return Err(errors.fold(error, |mut error, e| {
@@ -191,6 +219,22 @@ fn gen_wgsl_module(
     }
 }
 
+/// Generates a `#[test]` function that validates the concatenated WGSL source.
+///
+/// This is used for modules that have imports, which cannot be validated at
+/// compile-time because the imported symbols aren't available during macro
+/// expansion.
+fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
+    let error_msg = format!("WGSL validation failed for module '{module_ident}'");
+    quote! {
+        #[cfg(all(test, feature = "validation"))]
+        #[test]
+        fn __validate_wgsl() {
+            WGSL_MODULE.validate().expect(#error_msg);
+        }
+    }
+}
+
 fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream, WgslGenError> {
     // Parse Attrs from attr TokenStream
     let attrs: Attrs = syn::parse(attr)?;
@@ -203,14 +247,36 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let source_lines = code.source_lines();
 
     let module_fragment = gen_wgsl_module(&crate_path, &imports, &source_lines);
+
+    // Generate validation test for modules with imports (unless skip_validation is set)
+    let validation_test = if !attrs.skip_validation && !imports.is_empty() {
+        gen_validation_test(&input_mod.ident)
+    } else {
+        quote! {}
+    };
+
     if let Some((_, content)) = input_mod.content.as_mut() {
         let fragment_item: syn::Item = syn::parse2(module_fragment)?;
         content.push(fragment_item);
+
+        // Add validation test function if generated
+        if !validation_test.is_empty() {
+            let test_item: syn::Item = syn::parse2(validation_test)?;
+            content.push(test_item);
+        }
     }
 
     #[cfg(feature = "validation")]
-    {
-        if let Err(error) = validate_wgsl(&code, &source_lines) {
+    if !attrs.skip_validation {
+        // Only validate modules that don't have imports from other WGSL modules.
+        // Modules with imports cannot be validated in isolation because naga doesn't
+        // see the imported symbols. These modules will be validated at test-time
+        // via the auto-generated __validate_wgsl() test function.
+        // Note: imports from `wgsl_rs::std` are filtered out by `imports()`, so modules
+        // that only import from std will still be validated at compile-time.
+        if imports.is_empty()
+            && let Err(error) = validate_wgsl(&code, &source_lines)
+        {
             return WgslValidateSnafu { input_mod, error }.fail();
         }
     }

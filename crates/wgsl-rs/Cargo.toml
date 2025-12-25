@@ -3,8 +3,13 @@ name = "wgsl-rs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["validation"]
+validation = ["dep:naga"]
+
 [dependencies]
 glam.workspace = true
+naga = { workspace = true, optional = true }
 paste = "1"
 wgsl-rs-macros = { version = "0.1.0", path = "../wgsl-rs-macros" }
 

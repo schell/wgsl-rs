@@ -393,7 +393,15 @@ impl GeneratedWgslCode {
     #[cfg(test)]
     /// Construct the WGSL source code and return it as one contiguous string.
     pub fn source(&self) -> String {
-        self.source_lines().join("\n")
+        let mut result = self.source_lines().join("\n");
+        // Include any uncommitted content on the current line
+        if !self.line.is_empty() {
+            if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(&self.line);
+        }
+        result
     }
 
     /// Returns the mapping that exactly matches the given WGSL span, if any.

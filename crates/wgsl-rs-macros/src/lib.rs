@@ -7,6 +7,8 @@ use crate::code_gen::GeneratedWgslCode;
 use crate::parse::InterStageIo;
 
 mod code_gen;
+#[cfg(feature = "linkage-wgpu")]
+mod linkage;
 mod parse;
 mod storage;
 mod swizzle;
@@ -48,7 +50,8 @@ impl syn::parse::Parse for Attrs {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "Unknown attribute '{other}', expected 'crate_path' or 'skip_validation'"
+                            "Unknown attribute '{other}', expected 'crate_path' or \
+                             'skip_validation'"
                         ),
                     ));
                 }
@@ -243,16 +246,25 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let wgsl_module = parse::ItemMod::try_from(&input_mod)?;
     let imports = wgsl_module.imports(&crate_path);
 
-    let code = code_gen::generate_wgsl(wgsl_module);
+    let code = code_gen::generate_wgsl(&wgsl_module);
     let source_lines = code.source_lines();
 
     let module_fragment = gen_wgsl_module(&crate_path, &imports, &source_lines);
 
-    // Generate validation test for modules with imports (unless skip_validation is set)
+    // Generate validation test for modules with imports (unless skip_validation is
+    // set)
     let validation_test = if !attrs.skip_validation && !imports.is_empty() {
         gen_validation_test(&input_mod.ident)
     } else {
         quote! {}
+    };
+
+    // Generate linkage module when feature is enabled
+    #[cfg(feature = "linkage-wgpu")]
+    let linkage_fragment = {
+        let linkage_info =
+            linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
+        linkage::generate_linkage_module(&linkage_info, &source_lines)
     };
 
     if let Some((_, content)) = input_mod.content.as_mut() {
@@ -263,6 +275,13 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         if !validation_test.is_empty() {
             let test_item: syn::Item = syn::parse2(validation_test)?;
             content.push(test_item);
+        }
+
+        // Add linkage if the feature is set
+        #[cfg(feature = "linkage-wgpu")]
+        {
+            let linkage_item: syn::Item = syn::parse2(linkage_fragment)?;
+            content.push(linkage_item);
         }
     }
 

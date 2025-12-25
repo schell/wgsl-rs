@@ -748,6 +748,19 @@ impl TryFrom<&syn::Expr> for Expr {
     }
 }
 
+// TODO: BuiltIn and Location should be built when a vertex or fragment shader
+// are annotated with certain attributes:
+//
+// ```rust
+// #[vertex(return(location(0)))]
+// fn my_vertex() -> Vec4f {...}
+//
+// #[fragment(return(builtin(...)))]
+// fn my_fragment() -> Vec4f {...}
+// ```
+//
+// Then we can remove this #[allow(dead_code)]
+#[allow(dead_code)]
 pub enum ReturnTypeAnnotation {
     None,
     BuiltIn(Ident),
@@ -1355,44 +1368,44 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                     continue;
                 }
 
-                if let Some(ident) = attr.path().get_ident() {
-                    if ident == "workgroup_size" {
-                        let list = attr.meta.require_list().map_err(|_| Error::Unsupported {
+                if let Some(ident) = attr.path().get_ident()
+                    && ident == "workgroup_size"
+                {
+                    let list = attr.meta.require_list().map_err(|_| Error::Unsupported {
+                        span: ident.span(),
+                        note: "workgroup_size requires arguments: #[workgroup_size(x)] or \
+                               #[workgroup_size(x, y)] or #[workgroup_size(x, y, z)]"
+                            .to_string(),
+                    })?;
+
+                    let paren_token = if let syn::MacroDelimiter::Paren(p) = &list.delimiter {
+                        *p
+                    } else {
+                        return UnsupportedSnafu {
                             span: ident.span(),
-                            note: "workgroup_size requires arguments: #[workgroup_size(x)] or \
-                                   #[workgroup_size(x, y)] or #[workgroup_size(x, y, z)]"
-                                .to_string(),
+                            note: "workgroup_size must use parentheses",
+                        }
+                        .fail();
+                    };
+
+                    // Parse the workgroup size values (1-3 integers separated by commas)
+                    let tokens = list.tokens.clone();
+                    let parsed: WorkgroupSizeArgs =
+                        syn::parse2(tokens).map_err(|e| Error::Unsupported {
+                            span: ident.span(),
+                            note: format!("Failed to parse workgroup_size: {e}"),
                         })?;
 
-                        let paren_token = if let syn::MacroDelimiter::Paren(p) = &list.delimiter {
-                            *p
-                        } else {
-                            return UnsupportedSnafu {
-                                span: ident.span(),
-                                note: "workgroup_size must use parentheses",
-                            }
-                            .fail();
-                        };
-
-                        // Parse the workgroup size values (1-3 integers separated by commas)
-                        let tokens = list.tokens.clone();
-                        let parsed: WorkgroupSizeArgs =
-                            syn::parse2(tokens).map_err(|e| Error::Unsupported {
-                                span: ident.span(),
-                                note: format!("Failed to parse workgroup_size: {e}"),
-                            })?;
-
-                        return Ok(FnAttrs::Compute {
-                            ident: compute_ident,
-                            workgroup_size: WorkgroupSize {
-                                ident: ident.clone(),
-                                paren_token,
-                                x: parsed.x,
-                                y: parsed.y,
-                                z: parsed.z,
-                            },
-                        });
-                    }
+                    return Ok(FnAttrs::Compute {
+                        ident: compute_ident,
+                        workgroup_size: WorkgroupSize {
+                            ident: ident.clone(),
+                            paren_token,
+                            x: parsed.x,
+                            y: parsed.y,
+                            z: parsed.z,
+                        },
+                    });
                 }
             }
 
@@ -2011,7 +2024,7 @@ pub enum Item {
     Const(Box<ItemConst>),
     Uniform(Box<ItemUniform>),
     Storage(Box<ItemStorage>),
-    Fn(ItemFn),
+    Fn(Box<ItemFn>),
     Mod(ItemMod),
     Use(ItemUse),
     Struct(ItemStruct),
@@ -2046,7 +2059,7 @@ impl TryFrom<&syn::Item> for Item {
             syn::Item::Const(item_const) => {
                 Ok(Item::Const(Box::new(ItemConst::try_from(item_const)?)))
             }
-            syn::Item::Fn(item_fn) => Ok(Item::Fn(item_fn.try_into()?)),
+            syn::Item::Fn(item_fn) => Ok(Item::Fn(Box::new(item_fn.try_into()?))),
             syn::Item::Use(syn::ItemUse {
                 attrs: _,
                 vis: _,

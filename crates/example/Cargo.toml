@@ -3,12 +3,10 @@ name = "example"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = ["linkage-wgpu"]
-linkage-wgpu = ["wgsl-rs/linkage-wgpu", "dep:wgpu"]
-
 [dependencies]
+futures.workspace = true
 glam.workspace = true
 naga.workspace = true
-wgpu = { workspace = true, optional = true }
-wgsl-rs = { path = "../wgsl-rs" }
+winit.workspace = true
+wgpu.workspace = true
+wgsl-rs = { path = "../wgsl-rs", features = ["linkage-wgpu"] }

@@ -12,7 +12,7 @@ use crate::parse::{FnAttrs, Item, ItemMod, ItemStorage, ItemUniform, StorageAcce
 /// Information about a binding (uniform or storage buffer).
 pub struct BindingInfo {
     pub binding: u32,
-    pub name: syn::Ident,
+    pub _name: syn::Ident,
     pub kind: BindingKind,
 }
 
@@ -79,7 +79,7 @@ impl LinkageInfo {
             .or_default()
             .push(BindingInfo {
                 binding,
-                name: u.name.clone(),
+                _name: u.name.clone(),
                 kind: BindingKind::Uniform,
             });
     }
@@ -94,7 +94,7 @@ impl LinkageInfo {
             .or_default()
             .push(BindingInfo {
                 binding,
-                name: s.name.clone(),
+                _name: s.name.clone(),
                 kind: BindingKind::Storage { read_only },
             });
     }
@@ -157,7 +157,6 @@ pub fn generate_linkage_module(info: &LinkageInfo, source_lines: &[String]) -> T
     let compute_modules = generate_compute_entry_modules(&info.compute_entries, &module_name_str);
 
     quote! {
-        #[cfg(feature = "linkage-wgpu")]
         pub mod linkage {
             /// The WGSL source code as a single string.
             pub const SHADER_SOURCE: &str = #shader_source;
@@ -360,7 +359,7 @@ fn generate_compute_entry_modules(entries: &[ComputeEntry], module_name: &str) -
                         wgpu::PipelineLayoutDescriptor {
                             label: Some(#label),
                             bind_group_layouts,
-                            push_constant_ranges: &[],
+                            immediate_size: 0,
                         }
                     }
 

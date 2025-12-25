@@ -85,8 +85,6 @@ impl ToTokens for Swizzling {
             swizzles,
         } = self;
 
-        let mut methods: Vec<proc_macro2::TokenStream> = vec![];
-
         #[derive(Clone, PartialEq, PartialOrd, Hash, Eq)]
         struct SwizzleComponent {
             /// The field on "type" that contains the component

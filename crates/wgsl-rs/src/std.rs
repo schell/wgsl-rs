@@ -1,13 +1,14 @@
 //! The WGSL standard library, for Rust.
 //!
-//! When using the module-level `wgsl` proc-macro, this module must only be glob-imported.
+//! When using the module-level `wgsl` proc-macro, this module must only be
+//! glob-imported.
 //!
 //! The glob-imported import statement `use wgsl_rs::std::*` pulls in all the
 //! WGSL types and functions into Rust that are part of the global scope
 //! in WGSL, but don't already exist in Rust's global scope.
 //!
-//! These types include (but are not limited to) vector types like `Vec2f`, `Vec3f`, etc.
-//! and constructors like `vec2`, `vec2f` and `vec3i`, etc.
+//! These types include (but are not limited to) vector types like `Vec2f`,
+//! `Vec3f`, etc. and constructors like `vec2`, `vec2f` and `vec3i`, etc.
 
 use std::sync::{Arc, LazyLock, RwLock};
 

@@ -76,24 +76,28 @@ use crate::std::*;
 /// Provides the numeric built-in function `abs`.
 pub trait NumericBuiltinAbs {
     /// The absolute value of e. Component-wise when T is a vector.
-    /// * If e is a floating-point type, then the result is e with a positive sign bit.
+    /// * If e is a floating-point type, then the result is e with a positive
+    ///   sign bit.
     /// * If e is an unsigned integer scalar type, then the result is e.
-    /// * If e is a signed integer scalar type and evaluates to the largest negative value, then the result is e.
+    /// * If e is a signed integer scalar type and evaluates to the largest
+    ///   negative value, then the result is e.
     fn abs(self) -> Self;
 }
 
 /// The absolute value of e. Component-wise when T is a vector.
-/// * If e is a floating-point type, then the result is e with a positive sign bit.
+/// * If e is a floating-point type, then the result is e with a positive sign
+///   bit.
 /// * If e is an unsigned integer scalar type, then the result is e.
-/// * If e is a signed integer scalar type and evaluates to the largest negative value, then the result is e.
+/// * If e is a signed integer scalar type and evaluates to the largest negative
+///   value, then the result is e.
 pub fn abs<T: NumericBuiltinAbs>(e: T) -> T {
     <T as NumericBuiltinAbs>::abs(e)
 }
 
 /// Provides the numeric built-in function `acos`.
 pub trait NumericBuiltinAcos {
-    /// Returns the principal value, in radians, of the inverse cosine (cos⁻¹) of e.
-    /// Component-wise when T is a vector.
+    /// Returns the principal value, in radians, of the inverse cosine (cos⁻¹)
+    /// of e. Component-wise when T is a vector.
     /// Note: The result is not mathematically meaningful when abs(e) > 1.
     fn acos(self) -> Self;
 }
@@ -107,19 +111,21 @@ pub fn acos<T: NumericBuiltinAcos>(e: T) -> T {
 
 /// Provides the numeric built-in function `sin`.
 pub trait NumericBuiltinSin {
-    /// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
+    /// Returns the sine of e, where e is in radians. Component-wise when T is a
+    /// vector.
     fn sin(self) -> Self;
 }
 
-/// Returns the sine of e, where e is in radians. Component-wise when T is a vector.
+/// Returns the sine of e, where e is in radians. Component-wise when T is a
+/// vector.
 pub fn sin<T: NumericBuiltinSin>(e: T) -> T {
     <T as NumericBuiltinSin>::sin(e)
 }
 
 /// Provides the numeric built-in function `asin`.
 pub trait NumericBuiltinAsin {
-    /// Returns the principal value, in radians, of the inverse sine (sin⁻¹) of e.
-    /// Component-wise when T is a vector.
+    /// Returns the principal value, in radians, of the inverse sine (sin⁻¹) of
+    /// e. Component-wise when T is a vector.
     /// Note: The result is not mathematically meaningful when abs(e) > 1.
     fn asin(self) -> Self;
 }
@@ -133,35 +139,39 @@ pub fn asin<T: NumericBuiltinAsin>(e: T) -> T {
 
 /// Provides the numeric built-in function `atan`.
 pub trait NumericBuiltinAtan {
-    /// Returns the principal value, in radians, of the inverse tangent (tan⁻¹) of e.
-    /// Component-wise when T is a vector.
+    /// Returns the principal value, in radians, of the inverse tangent (tan⁻¹)
+    /// of e. Component-wise when T is a vector.
     fn atan(self) -> Self;
 }
 
-/// Returns the principal value, in radians, of the inverse tangent (tan⁻¹) of e.
-/// Component-wise when T is a vector.
+/// Returns the principal value, in radians, of the inverse tangent (tan⁻¹) of
+/// e. Component-wise when T is a vector.
 pub fn atan<T: NumericBuiltinAtan>(e: T) -> T {
     <T as NumericBuiltinAtan>::atan(e)
 }
 
 /// Provides the numeric built-in function `cos`.
 pub trait NumericBuiltinCos {
-    /// Returns the cosine of e, where e is in radians. Component-wise when T is a vector.
+    /// Returns the cosine of e, where e is in radians. Component-wise when T is
+    /// a vector.
     fn cos(self) -> Self;
 }
 
-/// Returns the cosine of e, where e is in radians. Component-wise when T is a vector.
+/// Returns the cosine of e, where e is in radians. Component-wise when T is a
+/// vector.
 pub fn cos<T: NumericBuiltinCos>(e: T) -> T {
     <T as NumericBuiltinCos>::cos(e)
 }
 
 /// Provides the numeric built-in function `tan`.
 pub trait NumericBuiltinTan {
-    /// Returns the tangent of e, where e is in radians. Component-wise when T is a vector.
+    /// Returns the tangent of e, where e is in radians. Component-wise when T
+    /// is a vector.
     fn tan(self) -> Self;
 }
 
-/// Returns the tangent of e, where e is in radians. Component-wise when T is a vector.
+/// Returns the tangent of e, where e is in radians. Component-wise when T is a
+/// vector.
 pub fn tan<T: NumericBuiltinTan>(e: T) -> T {
     <T as NumericBuiltinTan>::tan(e)
 }

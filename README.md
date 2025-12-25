@@ -153,7 +153,7 @@ The project is split into a few parts:
 - **`wgsl-rs`**
   Provides the `Module` type, `wgsl::std`, and exports the `wgsl` macro.
 
-There's also a [devlog](DEVLOG) that explains some of the decisions and tradeoffs made during the making
+There's also a [devlog](DEVLOG.md) that explains some of the decisions and tradeoffs made during the making
 of this library.
 
 ---

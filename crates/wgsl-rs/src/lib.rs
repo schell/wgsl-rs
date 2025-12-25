@@ -118,7 +118,7 @@ mod test {
     pub mod vecs {
         use crate::std::*;
 
-        const VEC3F_ONE: Vec4f = vec4f(0.0, 1.0, 2.0, 3.0);
+        const _VEC3F_ONE: Vec4f = vec4f(0.0, 1.0, 2.0, 3.0);
     }
 
     #[test]

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+futures.workspace = true
 glam.workspace = true
 naga.workspace = true
-wgsl-rs = { path = "../wgsl-rs" }
+winit.workspace = true
+wgpu.workspace = true
+wgsl-rs = { path = "../wgsl-rs", features = ["linkage-wgpu"] }

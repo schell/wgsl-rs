@@ -246,7 +246,7 @@ impl TryFrom<&syn::Type> for Type {
                                     other_prefix => UnsupportedSnafu {
                                         span: ident.span(),
                                         note: format!(
-                                            "Unsupported vectory type '{other}'. `{other_prefix}` \
+                                            "Unsupported vector type '{other}'. `{other_prefix}` \
                                              must be one of i, u, f or b"
                                         ),
                                     }

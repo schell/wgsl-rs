@@ -38,6 +38,80 @@ Yes! See the [example](crates/example/src/main.rs), which transpiles the shader 
 
 ---
 
+## Validation
+
+`wgsl-rs` validates your WGSL at compile-time using [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga).
+Validation errors are mapped back to Rust source spans, so they show up in your IDE via rust-analyzer.
+
+### Validation Strategy
+
+| Module Type | Validation |
+|-------------|------------|
+| Standalone (no imports) | Compile-time via naga |
+| With imports from other `#[wgsl]` modules | Test-time via auto-generated `#[test]` function |
+| `#[wgsl(skip_validation)]` | No validation |
+
+**Why test-time for modules with imports?**
+
+Modules that import from other `#[wgsl]` modules cannot be validated at compile-time because
+the imported symbols aren't available during macro expansion. Instead, `wgsl-rs` generates a
+`#[test] fn __validate_wgsl()` that validates the concatenated WGSL source at test-time.
+
+### Example
+
+```rust
+// Standalone module - validated at compile-time
+#[wgsl]
+pub mod constants {
+    pub const PI: f32 = 3.14159;
+}
+
+// Module with imports - validated at test-time
+#[wgsl]
+pub mod shader {
+    use super::constants::*;
+    
+    pub fn circle_area(r: f32) -> f32 {
+        PI * r * r
+    }
+}
+
+// Skip all validation
+#[wgsl(skip_validation)]
+pub mod experimental {
+    // ...
+}
+```
+
+### Runtime Validation
+
+You can also validate modules at runtime using `Module::validate()`:
+
+```rust
+use wgsl_rs::wgsl;
+
+#[wgsl]
+pub mod my_shader {
+    // ...
+}
+
+fn main() {
+    // Validate manually (requires "validation" feature)
+    my_shader::WGSL_MODULE.validate().expect("WGSL validation failed");
+}
+```
+
+### Disabling Validation
+
+To disable validation entirely, disable the `validation` feature:
+
+```toml
+[dependencies]
+wgsl-rs = { version = "...", default-features = false }
+```
+
+---
+
 ## Should I use Rust-GPU instead?
 
 **Maybe — it depends on your needs.**

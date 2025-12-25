@@ -100,8 +100,8 @@ impl ToTokens for Swizzling {
             components: Vec<SwizzleComponent>,
             /// The constructor, if any.
             ///
-            /// Single component swizzles simply return the component, so they don't need
-            /// a constructor.
+            /// Single component swizzles simply return the component, so they
+            /// don't need a constructor.
             constructor: Option<syn::Ident>,
             /// The return type of the swizzle
             return_ty: syn::Ident,

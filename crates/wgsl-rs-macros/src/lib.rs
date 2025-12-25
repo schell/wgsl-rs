@@ -314,7 +314,8 @@ pub fn swizzle(token_stream: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn vertex(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
-    // For now we don't do any transformations except for pulling out the #[builtin(...)]s
+    // For now we don't do any transformations except for pulling out the
+    // #[builtin(...)]s
     let mut item_fn: syn::ItemFn = syn::parse_macro_input!(token_stream);
     for arg in item_fn.sig.inputs.iter_mut() {
         if let syn::FnArg::Typed(pat_type) = arg {

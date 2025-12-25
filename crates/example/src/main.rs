@@ -2,8 +2,8 @@ use wgsl_rs::wgsl;
 
 #[wgsl]
 pub mod hello_triangle {
-    //! This is a "hello world" shader that shows a triangle with changing color.
-    //! Original source is [here](https://google.github.io/tour-of-wgsl/).
+    //! This is a "hello world" shader that shows a triangle with changing
+    //! color. Original source is [here](https://google.github.io/tour-of-wgsl/).
 
     // Only glob-imports are supported, but hey, imports work!
     use wgsl_rs::std::*;

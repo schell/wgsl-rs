@@ -953,8 +953,7 @@ impl TryFrom<&syn::Block> for Block {
     }
 }
 
-// TODO: These enums should hold a reference to their Rust span for better error
-// reporting
+/// WGSL built-in annotations for shader inputs and outputs.
 pub enum BuiltIn {
     VertexIndex(Ident),
     InstanceIndex(Ident),

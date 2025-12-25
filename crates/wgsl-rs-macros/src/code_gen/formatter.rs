@@ -1,3 +1,4 @@
+//! Performs code generation and formatting.
 use proc_macro2::{Ident, LineColumn, Span};
 use quote::ToTokens;
 use syn::spanned::Spanned;
@@ -70,12 +71,8 @@ impl SourceMapping {
             0
         }
     }
+
     /// Returns whether this mapping contains the input WGSL line column.
-    ///                                                                         
-    ///                                                                         
-    ///                                                                         
-    ///                                                                         
-    ///
     pub fn wgsl_contains(&self, line_column: LineColumn) -> bool {
         let (start, end) = self.wgsl_span;
 

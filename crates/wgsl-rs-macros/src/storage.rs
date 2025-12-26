@@ -39,30 +39,21 @@ pub fn storage(input: TokenStream) -> TokenStream {
 
         /// Buffer descriptor for the storage variable.
         ///
-        /// This descriptor configures a GPU buffer with the following properties:
+        /// This descriptor defines the properties of the GPU buffer that will store
+        /// this storage variable's data. The descriptor includes:
         ///
-        /// # Buffer Size
-        /// The buffer size is calculated at compile time using `std::mem::size_of::<T>()`,
-        /// where `T` is the Rust type associated with this storage variable. This ensures
-        /// the buffer is appropriately sized for the data type.
+        /// - **Size**: Automatically calculated from the Rust type's size at compile time
+        ///   using `std::mem::size_of::<T>()`. Note that storage buffers may have
+        ///   device-specific alignment requirements (check your device limits for
+        ///   `min_storage_buffer_offset_alignment`).
         ///
-        /// # Usage Flags
-        /// The buffer includes three usage flags:
-        /// - `STORAGE`: Allows the buffer to be used as a storage buffer in shaders, enabling
-        ///   read and/or write operations from compute or fragment shaders.
-        /// - `COPY_DST`: Allows data to be copied into the buffer (e.g., via `queue.write_buffer`
-        ///   or `encoder.copy_buffer_to_buffer`).
-        /// - `COPY_SRC`: Allows data to be copied from the buffer (e.g., for reading results back
-        ///   to the CPU or copying to another buffer).
+        /// - **Usage Flags**: The buffer is created with the following usage flags:
+        ///   - `STORAGE`: Allows the buffer to be bound as a storage buffer in shaders
+        ///   - `COPY_DST`: Allows data to be copied into the buffer (e.g., via `queue.write_buffer()`)
+        ///   - `COPY_SRC`: Allows data to be copied from the buffer (useful for readback or buffer-to-buffer copies)
         ///
-        /// # Alignment and Size Constraints
-        /// Storage buffers must meet specific alignment requirements:
-        /// - The buffer size must be a multiple of the GPU's minimum storage buffer alignment
-        ///   (typically 16 bytes, but can vary by device).
-        /// - Array elements and struct fields have specific alignment requirements defined by
-        ///   WGSL's memory layout rules.
-        /// - If the Rust type's size doesn't meet alignment requirements, you may need to add
-        ///   padding to your type definition.
+        /// The buffer created from this descriptor is initially empty and must be
+        /// populated with data before use, typically using `queue.write_buffer()`.
         pub const #buffer_descriptor_name: wgpu::BufferDescriptor<'static> = wgpu::BufferDescriptor {
             label: Some(#name_str),
             size: std::mem::size_of::<#rust_ty>() as u64,

@@ -2269,4 +2269,111 @@ mod test {
         assert_eq!("4", y_val.to_string());
         assert_eq!("4", z_val.to_string());
     }
+
+    // Tests for to_snake_case function
+    #[test]
+    fn to_snake_case_screaming_case() {
+        // SCREAMING_CASE (all uppercase with underscores) should just be lowercased
+        assert_eq!(to_snake_case("FRAME"), "frame");
+        assert_eq!(to_snake_case("FRAME_BUFFER"), "frame_buffer");
+        assert_eq!(to_snake_case("MY_CONSTANT"), "my_constant");
+        assert_eq!(to_snake_case("INPUT_DATA"), "input_data");
+    }
+
+    #[test]
+    fn to_snake_case_screaming_case_with_numbers() {
+        // SCREAMING_CASE with numbers
+        assert_eq!(to_snake_case("BUFFER_1"), "buffer_1");
+        assert_eq!(to_snake_case("DATA_2D"), "data_2d");
+        assert_eq!(to_snake_case("VEC3_POSITION"), "vec3_position");
+    }
+
+    #[test]
+    fn to_snake_case_pascal_case() {
+        // PascalCase should convert to snake_case
+        assert_eq!(to_snake_case("MyBuffer"), "my_buffer");
+        assert_eq!(to_snake_case("FrameBuffer"), "frame_buffer");
+        assert_eq!(to_snake_case("InputData"), "input_data");
+        assert_eq!(to_snake_case("SimpleType"), "simple_type");
+    }
+
+    #[test]
+    fn to_snake_case_camel_case() {
+        // camelCase should convert to snake_case
+        assert_eq!(to_snake_case("myBuffer"), "my_buffer");
+        assert_eq!(to_snake_case("frameBuffer"), "frame_buffer");
+        assert_eq!(to_snake_case("inputData"), "input_data");
+    }
+
+    #[test]
+    fn to_snake_case_mixed_case_consecutive_caps() {
+        // Mixed case with consecutive capitals
+        assert_eq!(to_snake_case("HTTPServer"), "h_t_t_p_server");
+        assert_eq!(to_snake_case("XMLParser"), "x_m_l_parser");
+        assert_eq!(to_snake_case("URLPath"), "u_r_l_path");
+    }
+
+    #[test]
+    fn to_snake_case_already_snake_case() {
+        // Already snake_case should remain unchanged
+        assert_eq!(to_snake_case("my_buffer"), "my_buffer");
+        assert_eq!(to_snake_case("frame_buffer"), "frame_buffer");
+        assert_eq!(to_snake_case("input_data"), "input_data");
+        assert_eq!(to_snake_case("simple_type"), "simple_type");
+    }
+
+    #[test]
+    fn to_snake_case_single_character() {
+        // Single character inputs
+        assert_eq!(to_snake_case("A"), "a");
+        assert_eq!(to_snake_case("a"), "a");
+        assert_eq!(to_snake_case("Z"), "z");
+        assert_eq!(to_snake_case("1"), "1");
+    }
+
+    #[test]
+    fn to_snake_case_empty_string() {
+        // Empty string should remain empty
+        assert_eq!(to_snake_case(""), "");
+    }
+
+    #[test]
+    fn to_snake_case_with_numbers() {
+        // Strings with numbers in various positions
+        assert_eq!(to_snake_case("Buffer2D"), "buffer2_d");
+        assert_eq!(to_snake_case("Vec3Position"), "vec3_position");
+        assert_eq!(to_snake_case("MyType123"), "my_type123");
+    }
+
+    #[test]
+    fn to_snake_case_single_uppercase() {
+        // Single uppercase word
+        assert_eq!(to_snake_case("FRAME"), "frame");
+        assert_eq!(to_snake_case("Buffer"), "buffer");
+    }
+
+    #[test]
+    fn to_snake_case_multiple_underscores() {
+        // Multiple underscores in SCREAMING_CASE
+        assert_eq!(to_snake_case("MY__BUFFER"), "my__buffer");
+        assert_eq!(to_snake_case("INPUT___DATA"), "input___data");
+    }
+
+    #[test]
+    fn to_snake_case_leading_underscore() {
+        // Leading underscores
+        assert_eq!(to_snake_case("_PRIVATE"), "_private");
+        // Note: _MyBuffer becomes __my_buffer because the underscore at position 0
+        // is preserved, and when we hit 'M' at position 1, we add another underscore
+        // before it (since i > 0). This behavior, while not ideal, is acceptable
+        // for the typical use case where WGSL buffer names are SCREAMING_CASE.
+        assert_eq!(to_snake_case("_MyBuffer"), "__my_buffer");
+    }
+
+    #[test]
+    fn to_snake_case_trailing_underscore() {
+        // Trailing underscores
+        assert_eq!(to_snake_case("BUFFER_"), "buffer_");
+        assert_eq!(to_snake_case("MyBuffer_"), "my_buffer_");
+    }
 }

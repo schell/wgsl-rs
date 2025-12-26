@@ -12,7 +12,7 @@ use crate::parse::{FnAttrs, Item, ItemMod, ItemStorage, ItemUniform, StorageAcce
 /// Information about a binding (uniform or storage buffer).
 pub struct BindingInfo {
     pub binding: u32,
-    pub _name: syn::Ident,
+    pub name: syn::Ident,
     pub kind: BindingKind,
 }
 
@@ -79,7 +79,7 @@ impl LinkageInfo {
             .or_default()
             .push(BindingInfo {
                 binding,
-                _name: u.name.clone(),
+                name: u.name.clone(),
                 kind: BindingKind::Uniform,
             });
     }
@@ -94,7 +94,7 @@ impl LinkageInfo {
             .or_default()
             .push(BindingInfo {
                 binding,
-                _name: s.name.clone(),
+                name: s.name.clone(),
                 kind: BindingKind::Storage { read_only },
             });
     }
@@ -226,6 +226,32 @@ fn generate_bind_group_modules(info: &LinkageInfo, module_name: &str) -> TokenSt
                 })
                 .collect();
 
+            // Generate typed parameters for bind_group function
+            // Parameters are in declaration order, but use their correct binding numbers
+            let param_names: Vec<syn::Ident> = bindings
+                .iter()
+                .map(|b| format_ident!("{}", crate::parse::to_snake_case(&b.name.to_string())))
+                .collect();
+
+            let param_decls: Vec<TokenStream> = param_names
+                .iter()
+                .map(|name| quote! { #name: wgpu::BindingResource<'a> })
+                .collect();
+
+            let bind_group_entries: Vec<TokenStream> = bindings
+                .iter()
+                .zip(param_names.iter())
+                .map(|(binding_info, param_name)| {
+                    let binding_num = binding_info.binding;
+                    quote! {
+                        wgpu::BindGroupEntry {
+                            binding: #binding_num,
+                            resource: #param_name,
+                        }
+                    }
+                })
+                .collect();
+
             quote! {
                 pub mod #mod_name {
                     /// The bind group layout entries.
@@ -246,7 +272,10 @@ fn generate_bind_group_modules(info: &LinkageInfo, module_name: &str) -> TokenSt
                     }
 
                     /// Creates a bind group with the given entries.
-                    pub fn bind_group<'a>(
+                    ///
+                    /// This is a dynamic version that accepts a slice of entries.
+                    /// For a safer version with named parameters, use [`create`].
+                    pub fn create_dynamic<'a>(
                         device: &wgpu::Device,
                         layout: &wgpu::BindGroupLayout,
                         entries: &[wgpu::BindGroupEntry<'a>],
@@ -256,6 +285,24 @@ fn generate_bind_group_modules(info: &LinkageInfo, module_name: &str) -> TokenSt
                             layout,
                             entries,
                         })
+                    }
+
+                    /// Creates a bind group with the specified bindings.
+                    ///
+                    /// Each parameter corresponds to a binding in this bind group,
+                    /// providing IDE feedback about which resources are expected.
+                    pub fn create<'a>(
+                        device: &wgpu::Device,
+                        layout: &wgpu::BindGroupLayout,
+                        #(#param_decls),*
+                    ) -> wgpu::BindGroup {
+                        create_dynamic(
+                            device,
+                            layout,
+                            &[
+                                #(#bind_group_entries),*
+                            ],
+                        )
                     }
                 }
             }

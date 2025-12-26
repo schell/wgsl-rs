@@ -3,29 +3,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
-use crate::parse::ItemUniform;
-
-/// Converts a SCREAMING_CASE or PascalCase identifier to snake_case.
-fn to_snake_case(s: &str) -> String {
-    // For SCREAMING_CASE (all uppercase with underscores), just lowercase it
-    if s.chars().all(|c| c.is_uppercase() || c == '_') {
-        return s.to_lowercase();
-    }
-
-    // For PascalCase or camelCase
-    let mut result = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(ch.to_ascii_lowercase());
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
+use crate::parse::{ItemUniform, to_snake_case};
 
 pub fn uniform(input: TokenStream) -> TokenStream {
     let ItemUniform {

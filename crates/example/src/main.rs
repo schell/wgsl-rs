@@ -232,13 +232,10 @@ fn build_linkage() {
             queue.write_buffer(&frame_uniform_buffer, 0, &frame.to_ne_bytes());
 
             let bindgroup_layout = hello_triangle::linkage::bind_group_0::layout(device);
-            let bindgroup = hello_triangle::linkage::bind_group_0::bind_group(
+            let bindgroup = hello_triangle::linkage::bind_group_0::create(
                 device,
                 &bindgroup_layout,
-                &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_uniform_buffer.as_entire_binding(),
-                }],
+                frame_uniform_buffer.as_entire_binding(),
             );
 
             let module = hello_triangle::linkage::shader_module(device);

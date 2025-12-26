@@ -109,3 +109,26 @@ return type location or builtin, `wgsl-rs` will automatically insert an appropri
 
 I think most people who need to specify a return value other than the default `@builtin(position)` for
 vertex shaders or `@location(0)` for fragment shaders will use a struct, so this is fine.
+
+## features
+
+### wgpu linkage (`linkage-wgpu` feature)
+
+When the `linkage-wgpu` feature is enabled, the `#[wgsl]` macro generates additional wgpu-specific
+code to simplify integration with wgpu applications:
+
+**Buffer descriptors and creation functions** - For each `uniform!` and `storage!` declaration:
+- A `{NAME}_BUFFER_DESCRIPTOR: wgpu::BufferDescriptor<'static>` constant
+- A `create_{name}_buffer(device: &wgpu::Device) -> wgpu::Buffer` function
+
+**Bind group modules** - For each bind group, a `linkage::bind_group_{N}` module containing:
+- `LAYOUT_ENTRIES` and `LAYOUT_DESCRIPTOR` constants
+- `layout(device)` - creates the bind group layout
+- `create(device, layout, ...)` - type-safe bind group creation with named parameters
+- `create_dynamic(device, layout, entries)` - dynamic bind group creation with a slice
+
+**Shader entry point modules** - For vertex, fragment, and compute entry points:
+- Entry point name constants
+- Helper functions for creating pipeline states
+
+This feature adds `wgpu` as a dependency to `wgsl-rs`.

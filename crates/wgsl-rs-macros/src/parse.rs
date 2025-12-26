@@ -2308,9 +2308,9 @@ mod test {
     #[test]
     fn to_snake_case_mixed_case_consecutive_caps() {
         // Mixed case with consecutive capitals
-        assert_eq!(to_snake_case("HTTPServer"), "h_t_t_p_server");
-        assert_eq!(to_snake_case("XMLParser"), "x_m_l_parser");
-        assert_eq!(to_snake_case("URLPath"), "u_r_l_path");
+        assert_eq!(to_snake_case("HTTPServer"), "http_server");
+        assert_eq!(to_snake_case("XMLParser"), "xml_parser");
+        assert_eq!(to_snake_case("URLPath"), "url_path");
     }
 
     #[test]
@@ -2363,11 +2363,7 @@ mod test {
     fn to_snake_case_leading_underscore() {
         // Leading underscores
         assert_eq!(to_snake_case("_PRIVATE"), "_private");
-        // Note: _MyBuffer becomes __my_buffer because the underscore at position 0
-        // is preserved, and when we hit 'M' at position 1, we add another underscore
-        // before it (since i > 0). This behavior, while not ideal, is acceptable
-        // for the typical use case where WGSL buffer names are SCREAMING_CASE.
-        assert_eq!(to_snake_case("_MyBuffer"), "__my_buffer");
+        assert_eq!(to_snake_case("_MyBuffer"), "_my_buffer");
     }
 
     #[test]

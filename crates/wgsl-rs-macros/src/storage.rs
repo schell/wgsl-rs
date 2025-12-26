@@ -5,6 +5,28 @@ use syn::parse_macro_input;
 
 use crate::parse::{ItemStorage, StorageAccess};
 
+/// Converts a SCREAMING_CASE or PascalCase identifier to snake_case.
+fn to_snake_case(s: &str) -> String {
+    // For SCREAMING_CASE (all uppercase with underscores), just lowercase it
+    if s.chars().all(|c| c.is_uppercase() || c == '_') {
+        return s.to_lowercase();
+    }
+
+    // For PascalCase or camelCase
+    let mut result = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(ch.to_ascii_lowercase());
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 pub fn storage(input: TokenStream) -> TokenStream {
     let ItemStorage {
         group,
@@ -16,8 +38,16 @@ pub fn storage(input: TokenStream) -> TokenStream {
     } = parse_macro_input!(input as ItemStorage);
 
     let internal_name = format_ident!("__{}", name);
+    let name_str = name.to_string();
 
     let is_read_write = matches!(access, StorageAccess::ReadWrite);
+
+    // Generate buffer descriptor constant name: INPUT -> INPUT_BUFFER_DESCRIPTOR
+    let buffer_descriptor_name = format_ident!("{}_BUFFER_DESCRIPTOR", name);
+
+    // Generate buffer creation function name: INPUT -> create_input_buffer
+    let snake_name = to_snake_case(&name_str);
+    let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
 
     let expanded = quote! {
         static #internal_name: std::sync::LazyLock<StorageVariable<#rust_ty>> =
@@ -28,6 +58,21 @@ pub fn storage(input: TokenStream) -> TokenStream {
                 value: Default::default(),
             });
         static #name: &std::sync::LazyLock<StorageVariable<#rust_ty>> = &#internal_name;
+
+        /// Buffer descriptor for the storage variable.
+        pub const #buffer_descriptor_name: wgpu::BufferDescriptor<'static> = wgpu::BufferDescriptor {
+            label: Some(#name_str),
+            size: std::mem::size_of::<#rust_ty>() as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                .union(wgpu::BufferUsages::COPY_DST)
+                .union(wgpu::BufferUsages::COPY_SRC),
+            mapped_at_creation: false,
+        };
+
+        /// Creates a buffer for the storage variable.
+        pub fn #create_buffer_fn_name(device: &wgpu::Device) -> wgpu::Buffer {
+            device.create_buffer(&#buffer_descriptor_name)
+        }
     };
 
     expanded.into()

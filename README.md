@@ -28,8 +28,8 @@ Procedural macros are provided by the [`wgsl-rs-macros`](./crates/wgsl-rs-macros
     - [x] Binary operators (`+`, `-`, `*`, `/`, etc.)
   - [x] Validate translated WGSL and map it back to Rust source spans, which displays
         in your IDE, through rust-analyzer. Yeah!
-  - [ ] Generate linkage info
-  - [ ] Generate `wgpu` linkage (possibly via a separate crate like `wgsl-rs-wgpu`)
+  - [x] Generate linkage info
+  - [x] Generate `wgpu` linkage (using the cargo feature "linkage-wgpu")
 
 ### Can it Hello World?
 

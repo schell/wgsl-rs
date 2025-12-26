@@ -120,17 +120,42 @@ pub fn to_snake_case(s: &str) -> String {
         return s.to_lowercase();
     }
 
-    // For PascalCase or camelCase
-    let mut result = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
+    // For PascalCase or camelCase (including acronyms like HTTPServer)
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let mut prev_is_upper = false;
+    let mut prev_is_alnum = false;
+
+    while let Some(ch) = chars.next() {
+        let next = chars.peek().copied();
+
+        let is_upper = ch.is_uppercase();
+        let is_lower = ch.is_lowercase();
+        let is_digit = ch.is_ascii_digit();
+
+        // Decide if we need an underscore before this uppercase char.
+        // - Transition from lower/digit to upper: fooBar -> foo_bar
+        // - End of an acronym before a lowercase: HTTPServer -> http_server
+        let boundary_before = if is_upper {
+            let next_is_lower = next.map(|c| c.is_lowercase()).unwrap_or(false);
+            (prev_is_alnum && !prev_is_upper) || (prev_is_upper && next_is_lower)
+        } else {
+            false
+        };
+
+        if boundary_before && !result.ends_with('_') {
+            result.push('_');
+        }
+
+        // Normalize uppercase to lowercase; keep other chars as-is.
+        if is_upper {
             result.push(ch.to_ascii_lowercase());
         } else {
             result.push(ch);
         }
+
+        prev_is_upper = is_upper;
+        prev_is_alnum = is_upper || is_lower || is_digit;
     }
     result
 }

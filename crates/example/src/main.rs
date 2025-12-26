@@ -228,22 +228,14 @@ fn build_linkage() {
             let device = &wgpu_stuff.device;
             let queue = &wgpu_stuff.queue;
             let frame = 0u32;
-            let frame_uniform_buffer = device.create_buffer(&wgpu::wgt::BufferDescriptor {
-                label: Some("FRAME"),
-                size: 4,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+            let frame_uniform_buffer = hello_triangle::create_frame_buffer(device);
             queue.write_buffer(&frame_uniform_buffer, 0, &frame.to_ne_bytes());
 
             let bindgroup_layout = hello_triangle::linkage::bind_group_0::layout(device);
-            let bindgroup = hello_triangle::linkage::bind_group_0::bind_group(
+            let bindgroup = hello_triangle::linkage::bind_group_0::create(
                 device,
                 &bindgroup_layout,
-                &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_uniform_buffer.as_entire_binding(),
-                }],
+                frame_uniform_buffer.as_entire_binding(),
             );
 
             let module = hello_triangle::linkage::shader_module(device);

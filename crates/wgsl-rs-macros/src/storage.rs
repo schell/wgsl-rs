@@ -63,25 +63,49 @@ pub fn storage(input: TokenStream) -> TokenStream {
             mapped_at_creation: false,
         };
 
-        /// Creates a GPU buffer for the storage variable.
+        /// Creates a buffer for the storage variable.
         ///
-        /// This is a convenience function that creates a buffer using the pre-defined
-        /// descriptor constant. The returned buffer is empty and must be populated with
-        /// data before being used in a shader.
+        /// This function creates an empty GPU buffer using the associated buffer descriptor.
+        /// The buffer is created with no initial data and must be populated before use.
+        ///
+        /// # Populating the Buffer
+        /// After creating the buffer, you must write data to it using one of these methods:
+        ///
+        /// - **Using `queue.write_buffer`** (recommended for most cases):
+        ///   ```no_run
+        ///   # use wgpu::{Device, Queue, Buffer};
+        ///   # fn example(device: &Device, queue: &Queue, buffer: &Buffer) {
+        ///   let data: [f32; 256] = [0.0; 256];
+        ///   queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data));
+        ///   # }
+        ///   ```
+        ///
+        /// - **Using `encoder.copy_buffer_to_buffer`** for GPU-to-GPU copies:
+        ///   ```no_run
+        ///   # use wgpu::{CommandEncoder, Buffer};
+        ///   # fn example(encoder: &mut CommandEncoder, src: &Buffer, dst: &Buffer) {
+        ///   encoder.copy_buffer_to_buffer(src, 0, dst, 0, 1024);
+        ///   # }
+        ///   ```
+        ///
+        /// - **Using `mapped_at_creation`** (modify the descriptor if you need this):
+        ///   For pre-initialization during buffer creation, set `mapped_at_creation: true`
+        ///   in the buffer descriptor.
         ///
         /// # Example
+        /// ```no_run
+        /// # use wgpu::{Device, Queue};
+        /// # fn example(device: &Device, queue: &Queue) {
+        /// // Assuming you have a storage variable: storage!(group(0), binding(0), DATA: [f32; 256]);
+        /// // This generates: create_data_buffer and DATA_BUFFER_DESCRIPTOR
         ///
-        /// ```ignore
         /// // Create the buffer
-        /// let buffer = create_my_storage_buffer(&device);
+        /// // let buffer = create_data_buffer(device);
         ///
-        /// // Populate it with data (for an array of f32)
-        /// let data: [f32; 256] = [0.0; 256];
-        /// queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data));
-        ///
-        /// // For read-write storage buffers, data can be read back after compute:
-        /// // ... run compute shader ...
-        /// // Then copy or map the buffer to read results
+        /// // Populate with data
+        /// let data: [f32; 256] = [1.0; 256];
+        /// // queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data));
+        /// # }
         /// ```
         pub fn #create_buffer_fn_name(device: &wgpu::Device) -> wgpu::Buffer {
             device.create_buffer(&#buffer_descriptor_name)

@@ -7,29 +7,9 @@ Procedural macros are provided by the [`wgsl-rs-macros`](./crates/wgsl-rs-macros
 
 ---
 
-## Roadmap
+## Roadmap to Beta
 
-- [x] `wgsl` macro for modules
-  - [x] Translate a subset of Rust into WGSL
-    - [x] Types
-      - [x] Concrete scalars
-      - [x] `vec{N}<{scalar}>`
-      - [x] Vector aliases
-      - [x] Arrays
-      - [ ] Matrices
-      - [x] Structs
-      - [ ] Textures
-      - [ ] Atomics
-    - [x] Descriptor sets, bindings, etc.
-    - [ ] Expand support for all WGSL syntax
-  - [x] Glob-importing other `wgsl-rs` modules
-  - [x] WGSL standard library for Rust
-    - [x] Vector constructors (`vec2f`, `vec3f`, etc.)
-    - [x] Binary operators (`+`, `-`, `*`, `/`, etc.)
-  - [x] Validate translated WGSL and map it back to Rust source spans, which displays
-        in your IDE, through rust-analyzer. Yeah!
-  - [x] Generate linkage info
-  - [x] Generate `wgpu` linkage (using the cargo feature "linkage-wgpu")
+There is a project plan for getting to beta [here](https://github.com/users/schell/projects/3/views/1)
 
 ### Can it Hello World?
 

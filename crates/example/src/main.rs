@@ -82,6 +82,35 @@ pub mod compute_shader {
     }
 }
 
+#[wgsl]
+pub mod matrix_example {
+    //! Demonstrates matrix types and constructors.
+    use wgsl_rs::std::*;
+
+    // 4x4 identity matrix constant
+    const IDENTITY: Mat4f = mat4x4f(
+        vec4f(1.0, 0.0, 0.0, 0.0),
+        vec4f(0.0, 1.0, 0.0, 0.0),
+        vec4f(0.0, 0.0, 1.0, 0.0),
+        vec4f(0.0, 0.0, 0.0, 1.0),
+    );
+
+    // 3x3 matrix constant
+    const ROTATION_2D: Mat3f = mat3x3f(
+        vec3f(1.0, 0.0, 0.0),
+        vec3f(0.0, 1.0, 0.0),
+        vec3f(0.0, 0.0, 1.0),
+    );
+
+    // 2x2 matrix constant
+    const SCALE_2D: Mat2f = mat2x2f(vec2f(2.0, 0.0), vec2f(0.0, 2.0));
+
+    #[vertex]
+    pub fn matrix_vertex() -> Vec4f {
+        vec4f(0.0, 0.0, 0.0, 1.0)
+    }
+}
+
 fn validate_and_print_source(source: &str) {
     println!("raw source:\n\n{source}\n\n");
 
@@ -421,6 +450,11 @@ pub fn main() {
     {
         // compute_shader
         let source = compute_shader::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
+    {
+        // matrix_example
+        let source = matrix_example::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }
 

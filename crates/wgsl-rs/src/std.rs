@@ -24,6 +24,9 @@ pub trait IsScalar: Sized {
     type Vector2;
     type Vector3;
     type Vector4;
+    type Matrix2;
+    type Matrix3;
+    type Matrix4;
 
     /// Constructs a two dimensional vector.
     fn vec2(x: Self, y: Self) -> Vec2<Self>;
@@ -209,11 +212,14 @@ wgsl_rs_macros::swizzle!(
 );
 
 macro_rules! impl_is_scalar {
-    ($ty:ty, $vec2:ty, $vec3:ty, $vec4:ty) => {
+    ($ty:ty, $vec2:ty, $vec3:ty, $vec4:ty, $mat2:ty, $mat3:ty, $mat4:ty) => {
         impl IsScalar for $ty {
             type Vector2 = $vec2;
             type Vector3 = $vec3;
             type Vector4 = $vec4;
+            type Matrix2 = $mat2;
+            type Matrix3 = $mat3;
+            type Matrix4 = $mat4;
 
             fn vec2(x: Self, y: Self) -> Vec2<Self> {
                 Vec2 {
@@ -235,10 +241,70 @@ macro_rules! impl_is_scalar {
         }
     };
 }
-impl_is_scalar!(f32, glam::Vec2, glam::Vec3, glam::Vec4);
-impl_is_scalar!(i32, glam::IVec2, glam::IVec3, glam::IVec4);
-impl_is_scalar!(u32, glam::UVec2, glam::UVec3, glam::UVec4);
-impl_is_scalar!(bool, glam::BVec2, glam::BVec3, glam::BVec4);
+impl_is_scalar!(
+    f32,
+    glam::Vec2,
+    glam::Vec3,
+    glam::Vec4,
+    glam::Mat2,
+    glam::Mat3,
+    glam::Mat4
+);
+impl_is_scalar!(i32, glam::IVec2, glam::IVec3, glam::IVec4, (), (), ());
+impl_is_scalar!(u32, glam::UVec2, glam::UVec3, glam::UVec4, (), (), ());
+impl_is_scalar!(bool, glam::BVec2, glam::BVec3, glam::BVec4, (), (), ());
+
+/// matrix! generates the N×N matrix type
+macro_rules! matrix {
+    ($n:literal) => {
+        paste::paste! {
+            /// A square matrix.
+            #[repr(transparent)]
+            #[derive(Clone, Copy)]
+            pub struct [<Mat $n>]<T: IsScalar> {
+                inner: T::[<Matrix $n>],
+            }
+        }
+    };
+}
+
+/// matrix_aliases! generates aliases for the f32 matrix types and column-wise
+/// constructors.
+macro_rules! matrix_aliases {
+    ($n:literal, $glam_ty:ty, $col_ty:ident, [$($col:ident),+]) => {
+        paste::paste! {
+            pub type [<Mat $n f>] = [<Mat $n>]<f32>;
+
+            /// Column-wise matrix constructor
+            pub const fn [<mat $n x $n f>]($($col: $col_ty),+) -> [<Mat $n f>] {
+                [<Mat $n>] {
+                    inner: <$glam_ty>::from_cols($($col.inner),+),
+                }
+            }
+        }
+    };
+}
+
+matrix!(2);
+matrix!(3);
+matrix!(4);
+matrix_aliases!(2, glam::Mat2, Vec2f, [col0, col1]);
+matrix_aliases!(3, glam::Mat3, Vec3f, [col0, col1, col2]);
+matrix_aliases!(4, glam::Mat4, Vec4f, [col0, col1, col2, col3]);
+
+/// From<glam::MatN> for MatNf...
+macro_rules! impl_from_mat {
+    ($from:ty, $to:ident) => {
+        impl From<$from> for $to {
+            fn from(value: $from) -> Self {
+                $to { inner: value }
+            }
+        }
+    };
+}
+impl_from_mat!(glam::Mat2, Mat2f);
+impl_from_mat!(glam::Mat3, Mat3f);
+impl_from_mat!(glam::Mat4, Mat4f);
 
 /// From<glam::VecN> for VecN<T>...
 macro_rules! impl_from_vec {

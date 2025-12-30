@@ -155,3 +155,55 @@ macro_rules! impl_from_mat {
 impl_from_mat!(glam::Mat2, Mat2f);
 impl_from_mat!(glam::Mat3, Mat3f);
 impl_from_mat!(glam::Mat4, Mat4f);
+
+/// Implements matrix * matrix multiplication for square matrices.
+macro_rules! impl_mat_mul_mat {
+    ($mat:ty) => {
+        impl std::ops::Mul<$mat> for $mat {
+            type Output = $mat;
+            fn mul(self, rhs: $mat) -> Self::Output {
+                Self { inner: self.inner * rhs.inner }
+            }
+        }
+    };
+}
+impl_mat_mul_mat!(Mat2f);
+impl_mat_mul_mat!(Mat3f);
+impl_mat_mul_mat!(Mat4f);
+
+/// Implements matrix * vector multiplication.
+macro_rules! impl_mat_mul_vec {
+    ($mat:ty, $vec:ty) => {
+        impl std::ops::Mul<$vec> for $mat {
+            type Output = $vec;
+            fn mul(self, rhs: $vec) -> Self::Output {
+                <$vec>::from(self.inner * rhs.inner)
+            }
+        }
+    };
+}
+impl_mat_mul_vec!(Mat2f, Vec2f);
+impl_mat_mul_vec!(Mat3f, Vec3f);
+impl_mat_mul_vec!(Mat4f, Vec4f);
+
+/// Implements matrix * scalar and scalar * matrix multiplication.
+macro_rules! impl_mat_mul_scalar {
+    ($mat:ty) => {
+        impl std::ops::Mul<f32> for $mat {
+            type Output = $mat;
+            fn mul(self, rhs: f32) -> Self::Output {
+                Self { inner: self.inner * rhs }
+            }
+        }
+
+        impl std::ops::Mul<$mat> for f32 {
+            type Output = $mat;
+            fn mul(self, rhs: $mat) -> Self::Output {
+                <$mat>::from(self * rhs.inner)
+            }
+        }
+    };
+}
+impl_mat_mul_scalar!(Mat2f);
+impl_mat_mul_scalar!(Mat3f);
+impl_mat_mul_scalar!(Mat4f);

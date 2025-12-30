@@ -16,12 +16,12 @@ pub mod hello_triangle {
         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
 
         let position = POS[vertex_index as usize];
-        vec4(position.x(), position.y(), 0.0, 1.0)
+        vec4f(position.x(), position.y(), 0.0, 1.0)
     }
 
     #[fragment]
     pub fn frag_main() -> Vec4f {
-        vec4(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0)
+        vec4f(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0)
     }
 }
 

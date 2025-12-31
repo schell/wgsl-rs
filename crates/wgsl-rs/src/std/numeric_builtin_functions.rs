@@ -6,16 +6,16 @@
 //! | --- | --- | --- | --- |
 //! |x| fn abs(e: T ) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | The absolute value of e. Component-wise when T is a vector. <br>       If e is a floating-point type, then the result is e with a positive sign bit.<br>    If e is an unsigned integer scalar type, then the result is e.<br>    If e is a signed integer scalar type and evaluates to the largest<br>    negative value, then the result is e. |
 //! |x| fn acos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) > 1. |
-//! | | fn acosh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when e < 1. |
+//! |x| fn acosh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when e < 1. |
 //! |x| fn asin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) > 1. |
-//! | | fn asinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the inverse hyperbolic sine (sinh-1) of e, as a hyperbolic angle in radians. That is, approximates x such that sinh(x) = e. <br>       Component-wise when T is a vector. |
+//! |x| fn asinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the inverse hyperbolic sine (sinh-1) of e, as a hyperbolic angle in radians. That is, approximates x such that sinh(x) = e. <br>       Component-wise when T is a vector. |
 //! |x| fn atan(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the principal value, in radians, of the inverse tangent (tan-1) of e. That is, approximates x with π/2 ≤ x ≤ π/2, such that tan(x) = e. <br>       Component-wise when T is a vector. |
-//! | | fn atanh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) ≥ 1. |
+//! |x| fn atanh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) ≥ 1. |
 //! | | fn atan2(y: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns an angle, in radians, in the interval [-π, π] whose tangent is y÷x. <br>       The quadrant selected by the result depends on the signs of y and x.<br>    For example, the function may be implemented as:<br>       <br>        <br>         atan(y/x) when x > 0<br>        <br>         atan(y/x) + π when (x < 0) and (y > 0)<br>        <br>         atan(y/x) - π when (x < 0) and (y < 0)<br>       <br>       Note: atan2 is ill-defined when y/x is ill-defined, at the origin (x,y) = (0,0), and when y is non-normal or infinite.<br>       Component-wise when T is a vector. |
 //! |x| fn ceil(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the ceiling of e. Component-wise when T is a vector. |
 //! |x| fn clamp(e: T, low: T, high: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Restricts the value of e within a range. <br>       If T is an integer type, then the result is min(max(e, low), high).<br>       If T is a floating-point type, then the result is either min(max(e, low), high), or the median of the three values e, low, high.<br>       Component-wise when T is a vector.<br>       If low is greater than high, then:<br>       <br>        <br>         It is a shader-creation error if low and high are const-expressions.<br>        <br>         It is a pipeline-creation error if low and high are override-expressions. |
 //! |x| fn cos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the cosine of e, where e is in radians. Component-wise when T is a vector. |
-//! | | fn cosh(arg: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic cosine of arg, where arg is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function (earg + e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector |
+//! |x| fn cosh(arg: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic cosine of arg, where arg is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function (earg + e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector |
 //! | | fn countLeadingZeros(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of consecutive 0 bits starting from the most significant bit<br>        of e, when T is a scalar type. Component-wise when T is a vector. Also known as "clz" in some languages. |
 //! | | fn countOneBits(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of 1 bits in the representation of e. Also known as "population count". Component-wise when T is a vector. |
 //! | | fn countTrailingZeros(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of consecutive 0 bits starting from the least significant bit<br>        of e, when T is a scalar type. Component-wise when T is a vector. Also known as "ctz" in some languages. |
@@ -62,7 +62,7 @@
 //! |x| fn saturate(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns clamp(e, 0.0, 1.0). Component-wise when T is a vector. |
 //! |x| fn sign(e: T) -> T | S is AbstractInt, AbstractFloat, i32, f32, or f16. T is S, or vecN<S> | Result is: <br>       <br>         1 when e > 0 <br>         0 when e = 0 <br>         -1 when e < 0 <br>       <br>       Component-wise when T is a vector. |
 //! |x| fn sin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the sine of e, where e is in radians. Component-wise when T is a vector. |
-//! | | fn sinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic sine of e, where e is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function<br>    (earg − e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector. |
+//! |x| fn sinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic sine of e, where e is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function<br>    (earg − e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector. |
 //! | | fn smoothstep(low: T, high: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the smooth Hermite interpolation between 0 and 1. Component-wise when T is a vector. <br>       For scalar T, the result is t * t * (3.0 - 2.0 * t),<br>    where t = clamp((x - low) / (high - low), 0.0, 1.0). |
 //! |x| fn sqrt(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the square root of e. Component-wise when T is a vector. |
 //! |x| fn step(edge: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns 1.0 if edge ≤ x, and 0.0 otherwise. Component-wise when T is a vector. |
@@ -881,6 +881,190 @@ mod tanh {
     impl_tanh_vec!(Vec4f);
 }
 
+/// Provides the numeric built-in function `acosh`.
+pub trait NumericBuiltinAcosh {
+    /// Returns the inverse hyperbolic cosine (cosh⁻¹) of e.
+    /// Component-wise when T is a vector.
+    /// Note: The result is not mathematically meaningful when e < 1.
+    fn acosh(self) -> Self;
+}
+
+/// Returns the inverse hyperbolic cosine (cosh⁻¹) of e.
+/// Component-wise when T is a vector.
+/// Note: The result is not mathematically meaningful when e < 1.
+pub fn acosh<T: NumericBuiltinAcosh>(e: T) -> T {
+    <T as NumericBuiltinAcosh>::acosh(e)
+}
+
+mod acosh {
+    use super::*;
+    impl NumericBuiltinAcosh for f32 {
+        fn acosh(self) -> Self {
+            self.acosh()
+        }
+    }
+    macro_rules! impl_acosh_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAcosh for $ty {
+                fn acosh(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.acosh()),
+                    }
+                }
+            }
+        };
+    }
+    impl_acosh_vec!(Vec2f);
+    impl_acosh_vec!(Vec3f);
+    impl_acosh_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `asinh`.
+pub trait NumericBuiltinAsinh {
+    /// Returns the inverse hyperbolic sine (sinh⁻¹) of e.
+    /// Component-wise when T is a vector.
+    fn asinh(self) -> Self;
+}
+
+/// Returns the inverse hyperbolic sine (sinh⁻¹) of e.
+/// Component-wise when T is a vector.
+pub fn asinh<T: NumericBuiltinAsinh>(e: T) -> T {
+    <T as NumericBuiltinAsinh>::asinh(e)
+}
+
+mod asinh {
+    use super::*;
+    impl NumericBuiltinAsinh for f32 {
+        fn asinh(self) -> Self {
+            self.asinh()
+        }
+    }
+    macro_rules! impl_asinh_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAsinh for $ty {
+                fn asinh(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.asinh()),
+                    }
+                }
+            }
+        };
+    }
+    impl_asinh_vec!(Vec2f);
+    impl_asinh_vec!(Vec3f);
+    impl_asinh_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `atanh`.
+pub trait NumericBuiltinAtanh {
+    /// Returns the inverse hyperbolic tangent (tanh⁻¹) of e.
+    /// Component-wise when T is a vector.
+    /// Note: The result is not mathematically meaningful when abs(e) >= 1.
+    fn atanh(self) -> Self;
+}
+
+/// Returns the inverse hyperbolic tangent (tanh⁻¹) of e.
+/// Component-wise when T is a vector.
+/// Note: The result is not mathematically meaningful when abs(e) >= 1.
+pub fn atanh<T: NumericBuiltinAtanh>(e: T) -> T {
+    <T as NumericBuiltinAtanh>::atanh(e)
+}
+
+mod atanh {
+    use super::*;
+    impl NumericBuiltinAtanh for f32 {
+        fn atanh(self) -> Self {
+            self.atanh()
+        }
+    }
+    macro_rules! impl_atanh_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinAtanh for $ty {
+                fn atanh(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.atanh()),
+                    }
+                }
+            }
+        };
+    }
+    impl_atanh_vec!(Vec2f);
+    impl_atanh_vec!(Vec3f);
+    impl_atanh_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `cosh`.
+pub trait NumericBuiltinCosh {
+    /// Returns the hyperbolic cosine of e, where e is a hyperbolic angle in
+    /// radians. Component-wise when T is a vector.
+    fn cosh(self) -> Self;
+}
+
+/// Returns the hyperbolic cosine of e, where e is a hyperbolic angle in
+/// radians. Component-wise when T is a vector.
+pub fn cosh<T: NumericBuiltinCosh>(e: T) -> T {
+    <T as NumericBuiltinCosh>::cosh(e)
+}
+
+mod cosh {
+    use super::*;
+    impl NumericBuiltinCosh for f32 {
+        fn cosh(self) -> Self {
+            self.cosh()
+        }
+    }
+    macro_rules! impl_cosh_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinCosh for $ty {
+                fn cosh(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.cosh()),
+                    }
+                }
+            }
+        };
+    }
+    impl_cosh_vec!(Vec2f);
+    impl_cosh_vec!(Vec3f);
+    impl_cosh_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `sinh`.
+pub trait NumericBuiltinSinh {
+    /// Returns the hyperbolic sine of e, where e is a hyperbolic angle in
+    /// radians. Component-wise when T is a vector.
+    fn sinh(self) -> Self;
+}
+
+/// Returns the hyperbolic sine of e, where e is a hyperbolic angle in radians.
+/// Component-wise when T is a vector.
+pub fn sinh<T: NumericBuiltinSinh>(e: T) -> T {
+    <T as NumericBuiltinSinh>::sinh(e)
+}
+
+mod sinh {
+    use super::*;
+    impl NumericBuiltinSinh for f32 {
+        fn sinh(self) -> Self {
+            self.sinh()
+        }
+    }
+    macro_rules! impl_sinh_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinSinh for $ty {
+                fn sinh(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.sinh()),
+                    }
+                }
+            }
+        };
+    }
+    impl_sinh_vec!(Vec2f);
+    impl_sinh_vec!(Vec3f);
+    impl_sinh_vec!(Vec4f);
+}
+
 pub trait NumericBuiltinTrunc {
     fn trunc(self) -> Self;
 }
@@ -1588,6 +1772,41 @@ mod test {
         let t = 0.0f32;
         let tanh_t = tanh(t);
         assert_eq!(0.0, tanh_t);
+    }
+
+    #[test]
+    fn sanity_acosh() {
+        let t = 1.0f32;
+        let acosh_t = acosh(t);
+        assert_eq!(0.0, acosh_t);
+    }
+
+    #[test]
+    fn sanity_asinh() {
+        let t = 0.0f32;
+        let asinh_t = asinh(t);
+        assert_eq!(0.0, asinh_t);
+    }
+
+    #[test]
+    fn sanity_atanh() {
+        let t = 0.0f32;
+        let atanh_t = atanh(t);
+        assert_eq!(0.0, atanh_t);
+    }
+
+    #[test]
+    fn sanity_cosh() {
+        let t = 0.0f32;
+        let cosh_t = cosh(t);
+        assert_eq!(1.0, cosh_t);
+    }
+
+    #[test]
+    fn sanity_sinh() {
+        let t = 0.0f32;
+        let sinh_t = sinh(t);
+        assert_eq!(0.0, sinh_t);
     }
 
     #[test]

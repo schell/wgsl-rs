@@ -1091,13 +1091,9 @@ mod mix {
         ($n:literal, $ty:ty) => {
             impl NumericBuiltinMix for Vec<$n, $ty> {
                 fn mix(self, e2: Self, e3: Self) -> Self {
-                    let a = self.inner.to_array();
-                    let b = e2.inner.to_array();
-                    let mut t = e3.inner.to_array();
-                    for i in 0..t.len() {
-                        t[i] = mix(a[i], b[i], t[i]);
+                    Self {
+                        inner: self.inner * (1.0 - e3.inner) + e2.inner * e3.inner,
                     }
-                    <$ty>::vec_from_array(t)
                 }
             }
         };
@@ -1402,16 +1398,14 @@ mod select {
             impl LogicalBuiltinSelect<Vec<$n, bool>> for Vec<$n, $ty> {
                 fn select(f: Self, t: Self, cond: Vec<$n, bool>) -> Self {
                     let cond_array = bool::vec_to_array(cond);
-                    let f_array = <$ty>::vec_to_array(f);
-                    let mut t_array = <$ty>::vec_to_array(t);
-                    for i in 0..t_array.len() {
-                        t_array[i] = if cond_array[i] {
-                            t_array[i]
-                        } else {
-                            f_array[i]
-                        };
+                    let mut f_array = <$ty>::vec_to_array(f);
+                    let t_array = <$ty>::vec_to_array(t);
+                    for i in 0..f_array.len() {
+                        if cond_array[i] {
+                            f_array[i] = t_array[i];
+                        }
                     }
-                    <$ty>::vec_from_array(t_array)
+                    <$ty>::vec_from_array(f_array)
                 }
             }
         };

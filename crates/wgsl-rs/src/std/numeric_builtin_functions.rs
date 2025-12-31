@@ -12,27 +12,27 @@
 //! |x| fn atan(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the principal value, in radians, of the inverse tangent (tan-1) of e. That is, approximates x with π/2 ≤ x ≤ π/2, such that tan(x) = e. <br>       Component-wise when T is a vector. |
 //! | | fn atanh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) ≥ 1. |
 //! | | fn atan2(y: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns an angle, in radians, in the interval [-π, π] whose tangent is y÷x. <br>       The quadrant selected by the result depends on the signs of y and x.<br>    For example, the function may be implemented as:<br>       <br>        <br>         atan(y/x) when x > 0<br>        <br>         atan(y/x) + π when (x < 0) and (y > 0)<br>        <br>         atan(y/x) - π when (x < 0) and (y < 0)<br>       <br>       Note: atan2 is ill-defined when y/x is ill-defined, at the origin (x,y) = (0,0), and when y is non-normal or infinite.<br>       Component-wise when T is a vector. |
-//! | | fn ceil(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the ceiling of e. Component-wise when T is a vector. |
-//! | | fn clamp(e: T, low: T, high: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Restricts the value of e within a range. <br>       If T is an integer type, then the result is min(max(e, low), high).<br>       If T is a floating-point type, then the result is either min(max(e, low), high), or the median of the three values e, low, high.<br>       Component-wise when T is a vector.<br>       If low is greater than high, then:<br>       <br>        <br>         It is a shader-creation error if low and high are const-expressions.<br>        <br>         It is a pipeline-creation error if low and high are override-expressions. |
+//! |x| fn ceil(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the ceiling of e. Component-wise when T is a vector. |
+//! |x| fn clamp(e: T, low: T, high: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Restricts the value of e within a range. <br>       If T is an integer type, then the result is min(max(e, low), high).<br>       If T is a floating-point type, then the result is either min(max(e, low), high), or the median of the three values e, low, high.<br>       Component-wise when T is a vector.<br>       If low is greater than high, then:<br>       <br>        <br>         It is a shader-creation error if low and high are const-expressions.<br>        <br>         It is a pipeline-creation error if low and high are override-expressions. |
 //! |x| fn cos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the cosine of e, where e is in radians. Component-wise when T is a vector. |
 //! | | fn cosh(arg: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic cosine of arg, where arg is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function (earg + e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector |
 //! | | fn countLeadingZeros(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of consecutive 0 bits starting from the most significant bit<br>        of e, when T is a scalar type. Component-wise when T is a vector. Also known as "clz" in some languages. |
 //! | | fn countOneBits(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of 1 bits in the representation of e. Also known as "population count". Component-wise when T is a vector. |
 //! | | fn countTrailingZeros(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of consecutive 0 bits starting from the least significant bit<br>        of e, when T is a scalar type. Component-wise when T is a vector. Also known as "ctz" in some languages. |
-//! | | fn cross(e1: vec3<T>, e2: vec3<T>) -> vec3<T> | T is AbstractFloat, f32, or f16 | Returns the cross product of e1 and e2. |
-//! | | fn degrees(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts radians to degrees, approximating e1 × 180 ÷ π. Component-wise when T is a vector |
+//! |x| fn cross(e1: vec3<T>, e2: vec3<T>) -> vec3<T> | T is AbstractFloat, f32, or f16 | Returns the cross product of e1 and e2. |
+//! |x| fn degrees(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts radians to degrees, approximating e1 × 180 ÷ π. Component-wise when T is a vector |
 //! | | fn determinant(e: matCxC<T>) -> T | T is AbstractFloat, f32, or f16 | Returns the determinant of e. |
 //! | | fn distance(e1: T, e2: T) -> S | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the distance between e1 and e2 (e.g. length(e1 - e2)). |
-//! | | fn dot(e1: vecN<T>, e2: vecN<T>) -> T | T is AbstractInt, AbstractFloat, i32, u32, f32, or f16 | Returns the dot product of e1 and e2. |
-//! | | fn exp(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the natural exponentiation of e1 (e.g. ee1). Component-wise when T is a vector. |
-//! | | fn exp2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns 2 raised to the power e (e.g. 2e). Component-wise when T is a vector. |
+//! |x| fn dot(e1: vecN<T>, e2: vecN<T>) -> T | T is AbstractInt, AbstractFloat, i32, u32, f32, or f16 | Returns the dot product of e1 and e2. |
+//! |x| fn exp(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the natural exponentiation of e1 (e.g. ee1). Component-wise when T is a vector. |
+//! |x| fn exp2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns 2 raised to the power e (e.g. 2e). Component-wise when T is a vector. |
 //! | | fn extractBits(e: T, offset: u32, count: u32) -> T | T is i32 or vecN<i32> | Reads bits from an integer, with sign extension. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is 0 if c is 0. <br>        Otherwise, bits 0..c - 1 of the result are copied from bits o..o + c - 1 of e.<br>       Other bits of the result are the same as bit c - 1 of the result. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
 //! | | fn extractBits(e: T, offset: u32, count: u32) -> T | T is u32 or vecN<u32> | Reads bits from an integer, without sign extension. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is 0 if c is 0. <br>        Otherwise, bits 0..c - 1 of the result are copied from bits o..o + c - 1 of e.<br>       Other bits of the result are 0. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
 //! | | fn faceForward(e1: T, e2: T, e3: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | Returns e1 if dot(e2, e3) is negative, and -e1 otherwise. |
 //! | | fn firstLeadingBit(e: T) -> T | T is i32 or vecN<i32> | Note: Since signed integers use twos-complement representation,<br>the sign bit appears in the most significant bit position. |
 //! | | fn firstLeadingBit(e: T) -> T | T is u32 or vecN<u32> | For scalar T, the result is: <br>       <br>        T(-1) if e is zero. <br>        Otherwise the position of the most significant 1<br>            bit in e. <br>       <br>        Component-wise when T is a vector. |
 //! | | fn firstTrailingBit(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | For scalar T, the result is: <br>       <br>        T(-1) if e is zero. <br>        Otherwise the position of the least significant 1<br>            bit in e. <br>       <br>        Component-wise when T is a vector. |
-//! | | fn floor(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the floor of e. Component-wise when T is a vector. |
+//! |x| fn floor(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the floor of e. Component-wise when T is a vector. |
 //! | | fn fma(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 * e2 + e3. Component-wise when T is a vector. <br>       Note: The name fma is short for "fused multiply add".<br>       Note: The IEEE-754 fusedMultiplyAdd operation computes the intermediate results<br>    as if with unbounded range and precision, and only the final result is rounded<br>    to the destination type.<br>    However, the § 14.6.1 Floating Point Accuracy rule for fma allows an implementation<br>    which performs an ordinary multiply to the target type followed by an ordinary addition.<br>    In this case the intermediate values may overflow or lose accuracy, and the overall<br>    operation is not "fused" at all. |
 //! |x| fn fract(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: Valid results are in the closed interval [0, 1.0].<br>For example, if e is a very small negative number, then fract(e) may be 1.0. |
 //! | | fn insertBits(e: T, newbits: T, offset: u32, count: u32) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | Sets bits in an integer. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is e if c is 0. <br>        Otherwise,<br>       bits o..o + c - 1 of the result are copied from bits 0..c - 1 of newbits.<br>       Other bits of the result are copied from e. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
@@ -43,7 +43,7 @@
 //! |x| fn log2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
 //! |x| fn max(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e1 is less than e2, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
 //! |x| fn min(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e2 is less than e1, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
-//! | | fn mix(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the linear blend of e1 and e2 (e.g. e1 * (1 - e3) + e2 * e3). Component-wise when T is a vector. |
+//! |x| fn mix(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the linear blend of e1 and e2 (e.g. e1 * (1 - e3) + e2 * e3). Component-wise when T is a vector. |
 //! | | fn mix(e1: T2, e2: T2, e3: T) -> T2 | T is AbstractFloat, f32, or f16 T2 is vecN<T> | Returns the component-wise linear blend of e1 and e2,<br>        using scalar blending factor e3 for each component. Same as mix(e1, e2, T2(e3)). |
 //! | | fn modf(e: T) -> __modf_result_f32 | T is f32 | Note: A value cannot be explicitly declared with the type __modf_result_f32,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_f16 | T is f16 | Note: A value cannot be explicitly declared with the type __modf_result_f16,<br>but a value may infer the type. |
@@ -51,7 +51,7 @@
 //! | | fn modf(e: T) -> __modf_result_vecN_f32 | T is vecN<f32> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_f32,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_vecN_f16 | T is vecN<f16> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_f16,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_vecN_abstract | T is vecN<AbstractFloat> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_abstract,<br>but a value may infer the type. |
-//! | | fn normalize(e: vecN<T> ) -> vecN<T> | T is AbstractFloat, f32, or f16 | Returns a unit vector in the same direction as e. |
+//! |x| fn normalize(e: vecN<T> ) -> vecN<T> | T is AbstractFloat, f32, or f16 | Returns a unit vector in the same direction as e. |
 //! |x| fn pow(e1: T, e2: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 raised to the power e2. Component-wise when T is a vector. |
 //! | | fn quantizeToF16(e: T) -> T | T is f32 or vecN<f32> | Note: The vec2<f32> case is the same as unpack2x16float(pack2x16float(e)). |
 //! |x| fn radians(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts degrees to radians, approximating e1 × π ÷ 180. Component-wise when T is a vector |
@@ -910,7 +910,535 @@ mod trunc {
     impl_trunc_vec!(Vec4f);
 }
 
-// --- End Additional Numeric Builtin Implementations ---
+// --- Issue #12: Essential Numeric and Logical Builtin Functions ---
+
+/// Provides the numeric built-in function `dot`.
+pub trait NumericBuiltinDot {
+    type Scalar;
+    /// Returns the dot product of two vectors.
+    fn dot(self, other: Self) -> Self::Scalar;
+}
+
+/// Returns the dot product of e1 and e2.
+pub fn dot<T: NumericBuiltinDot>(e1: T, e2: T) -> T::Scalar {
+    <T as NumericBuiltinDot>::dot(e1, e2)
+}
+
+mod dot {
+    use super::*;
+
+    macro_rules! impl_dot_vec_f {
+        ($ty:ty, $scalar:ty) => {
+            impl NumericBuiltinDot for $ty {
+                type Scalar = $scalar;
+                fn dot(self, other: Self) -> Self::Scalar {
+                    self.inner.dot(other.inner)
+                }
+            }
+        };
+    }
+    impl_dot_vec_f!(Vec2f, f32);
+    impl_dot_vec_f!(Vec3f, f32);
+    impl_dot_vec_f!(Vec4f, f32);
+
+    macro_rules! impl_dot_vec_i {
+        ($ty:ty, $scalar:ty) => {
+            impl NumericBuiltinDot for $ty {
+                type Scalar = $scalar;
+                fn dot(self, other: Self) -> Self::Scalar {
+                    let a = self.inner.to_array();
+                    let b = other.inner.to_array();
+                    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+                }
+            }
+        };
+    }
+    impl_dot_vec_i!(Vec2i, i32);
+    impl_dot_vec_i!(Vec3i, i32);
+    impl_dot_vec_i!(Vec4i, i32);
+    impl_dot_vec_i!(Vec2u, u32);
+    impl_dot_vec_i!(Vec3u, u32);
+    impl_dot_vec_i!(Vec4u, u32);
+}
+
+/// Provides the numeric built-in function `normalize`.
+pub trait NumericBuiltinNormalize {
+    /// Returns a unit vector in the same direction as e.
+    fn normalize(self) -> Self;
+}
+
+/// Returns a unit vector in the same direction as e.
+pub fn normalize<T: NumericBuiltinNormalize>(e: T) -> T {
+    <T as NumericBuiltinNormalize>::normalize(e)
+}
+
+mod normalize {
+    use super::*;
+
+    macro_rules! impl_normalize_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinNormalize for $ty {
+                fn normalize(self) -> Self {
+                    Self {
+                        inner: self.inner.normalize(),
+                    }
+                }
+            }
+        };
+    }
+    impl_normalize_vec!(Vec2f);
+    impl_normalize_vec!(Vec3f);
+    impl_normalize_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `cross`.
+pub trait NumericBuiltinCross {
+    /// Returns the cross product of e1 and e2.
+    fn cross(self, other: Self) -> Self;
+}
+
+/// Returns the cross product of e1 and e2 (vec3 only).
+pub fn cross<T: NumericBuiltinCross>(e1: T, e2: T) -> T {
+    <T as NumericBuiltinCross>::cross(e1, e2)
+}
+
+mod cross {
+    use super::*;
+
+    impl NumericBuiltinCross for Vec3f {
+        fn cross(self, other: Self) -> Self {
+            Self {
+                inner: self.inner.cross(other.inner),
+            }
+        }
+    }
+}
+
+/// Provides the numeric built-in function `clamp`.
+pub trait NumericBuiltinClamp {
+    /// Restricts the value of e within a range [low, high].
+    fn clamp(self, low: Self, high: Self) -> Self;
+}
+
+/// Restricts the value of e within a range [low, high].
+pub fn clamp<T: NumericBuiltinClamp>(e: T, low: T, high: T) -> T {
+    <T as NumericBuiltinClamp>::clamp(e, low, high)
+}
+
+mod clamp {
+    use super::*;
+
+    impl NumericBuiltinClamp for f32 {
+        fn clamp(self, low: Self, high: Self) -> Self {
+            self.clamp(low, high)
+        }
+    }
+
+    impl NumericBuiltinClamp for i32 {
+        fn clamp(self, low: Self, high: Self) -> Self {
+            std::cmp::Ord::clamp(self, low, high)
+        }
+    }
+
+    impl NumericBuiltinClamp for u32 {
+        fn clamp(self, low: Self, high: Self) -> Self {
+            std::cmp::Ord::clamp(self, low, high)
+        }
+    }
+
+    macro_rules! impl_clamp_vec_f {
+        ($ty:ty) => {
+            impl NumericBuiltinClamp for $ty {
+                fn clamp(self, low: Self, high: Self) -> Self {
+                    Self {
+                        inner: self.inner.clamp(low.inner, high.inner),
+                    }
+                }
+            }
+        };
+    }
+    impl_clamp_vec_f!(Vec2f);
+    impl_clamp_vec_f!(Vec3f);
+    impl_clamp_vec_f!(Vec4f);
+
+    macro_rules! impl_clamp_vec_i {
+        ($ty:ty) => {
+            impl NumericBuiltinClamp for $ty {
+                fn clamp(self, low: Self, high: Self) -> Self {
+                    Self {
+                        inner: self.inner.clamp(low.inner, high.inner),
+                    }
+                }
+            }
+        };
+    }
+    impl_clamp_vec_i!(Vec2i);
+    impl_clamp_vec_i!(Vec3i);
+    impl_clamp_vec_i!(Vec4i);
+    impl_clamp_vec_i!(Vec2u);
+    impl_clamp_vec_i!(Vec3u);
+    impl_clamp_vec_i!(Vec4u);
+}
+
+/// Provides the numeric built-in function `mix`.
+pub trait NumericBuiltinMix {
+    /// Returns the linear blend of e1 and e2: e1 * (1 - e3) + e2 * e3.
+    fn mix(self, e2: Self, e3: Self) -> Self;
+}
+
+/// Returns the linear blend of e1 and e2: e1 * (1 - e3) + e2 * e3.
+pub fn mix<T: NumericBuiltinMix>(e1: T, e2: T, e3: T) -> T {
+    <T as NumericBuiltinMix>::mix(e1, e2, e3)
+}
+
+mod mix {
+    use super::*;
+
+    impl NumericBuiltinMix for f32 {
+        fn mix(self, e2: Self, e3: Self) -> Self {
+            self * (1.0 - e3) + e2 * e3
+        }
+    }
+
+    // For vectors, we use component-wise mix
+    impl NumericBuiltinMix for Vec2f {
+        fn mix(self, e2: Self, e3: Self) -> Self {
+            let a = self.inner.to_array();
+            let b = e2.inner.to_array();
+            let t = e3.inner.to_array();
+            Self {
+                inner: glam::Vec2::new(
+                    a[0] * (1.0 - t[0]) + b[0] * t[0],
+                    a[1] * (1.0 - t[1]) + b[1] * t[1],
+                ),
+            }
+        }
+    }
+
+    impl NumericBuiltinMix for Vec3f {
+        fn mix(self, e2: Self, e3: Self) -> Self {
+            let a = self.inner.to_array();
+            let b = e2.inner.to_array();
+            let t = e3.inner.to_array();
+            Self {
+                inner: glam::Vec3::new(
+                    a[0] * (1.0 - t[0]) + b[0] * t[0],
+                    a[1] * (1.0 - t[1]) + b[1] * t[1],
+                    a[2] * (1.0 - t[2]) + b[2] * t[2],
+                ),
+            }
+        }
+    }
+
+    impl NumericBuiltinMix for Vec4f {
+        fn mix(self, e2: Self, e3: Self) -> Self {
+            let a = self.inner.to_array();
+            let b = e2.inner.to_array();
+            let t = e3.inner.to_array();
+            Self {
+                inner: glam::Vec4::new(
+                    a[0] * (1.0 - t[0]) + b[0] * t[0],
+                    a[1] * (1.0 - t[1]) + b[1] * t[1],
+                    a[2] * (1.0 - t[2]) + b[2] * t[2],
+                    a[3] * (1.0 - t[3]) + b[3] * t[3],
+                ),
+            }
+        }
+    }
+}
+
+/// Provides the numeric built-in function `floor`.
+pub trait NumericBuiltinFloor {
+    /// Returns the floor of e. Component-wise when T is a vector.
+    fn floor(self) -> Self;
+}
+
+/// Returns the floor of e. Component-wise when T is a vector.
+pub fn floor<T: NumericBuiltinFloor>(e: T) -> T {
+    <T as NumericBuiltinFloor>::floor(e)
+}
+
+mod floor {
+    use super::*;
+
+    impl NumericBuiltinFloor for f32 {
+        fn floor(self) -> Self {
+            self.floor()
+        }
+    }
+
+    macro_rules! impl_floor_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinFloor for $ty {
+                fn floor(self) -> Self {
+                    Self {
+                        inner: self.inner.floor(),
+                    }
+                }
+            }
+        };
+    }
+    impl_floor_vec!(Vec2f);
+    impl_floor_vec!(Vec3f);
+    impl_floor_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `ceil`.
+pub trait NumericBuiltinCeil {
+    /// Returns the ceiling of e. Component-wise when T is a vector.
+    fn ceil(self) -> Self;
+}
+
+/// Returns the ceiling of e. Component-wise when T is a vector.
+pub fn ceil<T: NumericBuiltinCeil>(e: T) -> T {
+    <T as NumericBuiltinCeil>::ceil(e)
+}
+
+mod ceil {
+    use super::*;
+
+    impl NumericBuiltinCeil for f32 {
+        fn ceil(self) -> Self {
+            self.ceil()
+        }
+    }
+
+    macro_rules! impl_ceil_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinCeil for $ty {
+                fn ceil(self) -> Self {
+                    Self {
+                        inner: self.inner.ceil(),
+                    }
+                }
+            }
+        };
+    }
+    impl_ceil_vec!(Vec2f);
+    impl_ceil_vec!(Vec3f);
+    impl_ceil_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `exp`.
+pub trait NumericBuiltinExp {
+    /// Returns the natural exponentiation of e (e^e). Component-wise when T is
+    /// a vector.
+    fn exp(self) -> Self;
+}
+
+/// Returns the natural exponentiation of e (e^e). Component-wise when T is a
+/// vector.
+pub fn exp<T: NumericBuiltinExp>(e: T) -> T {
+    <T as NumericBuiltinExp>::exp(e)
+}
+
+mod exp {
+    use super::*;
+
+    impl NumericBuiltinExp for f32 {
+        fn exp(self) -> Self {
+            self.exp()
+        }
+    }
+
+    macro_rules! impl_exp_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinExp for $ty {
+                fn exp(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.exp()),
+                    }
+                }
+            }
+        };
+    }
+    impl_exp_vec!(Vec2f);
+    impl_exp_vec!(Vec3f);
+    impl_exp_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `exp2`.
+pub trait NumericBuiltinExp2 {
+    /// Returns 2 raised to the power e (2^e). Component-wise when T is a
+    /// vector.
+    fn exp2(self) -> Self;
+}
+
+/// Returns 2 raised to the power e (2^e). Component-wise when T is a vector.
+pub fn exp2<T: NumericBuiltinExp2>(e: T) -> T {
+    <T as NumericBuiltinExp2>::exp2(e)
+}
+
+mod exp2 {
+    use super::*;
+
+    impl NumericBuiltinExp2 for f32 {
+        fn exp2(self) -> Self {
+            self.exp2()
+        }
+    }
+
+    macro_rules! impl_exp2_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinExp2 for $ty {
+                fn exp2(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t.exp2()),
+                    }
+                }
+            }
+        };
+    }
+    impl_exp2_vec!(Vec2f);
+    impl_exp2_vec!(Vec3f);
+    impl_exp2_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `degrees`.
+pub trait NumericBuiltinDegrees {
+    /// Converts radians to degrees. Component-wise when T is a vector.
+    fn degrees(self) -> Self;
+}
+
+/// Converts radians to degrees. Component-wise when T is a vector.
+pub fn degrees<T: NumericBuiltinDegrees>(e: T) -> T {
+    <T as NumericBuiltinDegrees>::degrees(e)
+}
+
+mod degrees {
+    use super::*;
+
+    impl NumericBuiltinDegrees for f32 {
+        fn degrees(self) -> Self {
+            self * 180.0 / std::f32::consts::PI
+        }
+    }
+
+    macro_rules! impl_degrees_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinDegrees for $ty {
+                fn degrees(self) -> Self {
+                    Self {
+                        inner: self.inner.map(|t| t * 180.0 / std::f32::consts::PI),
+                    }
+                }
+            }
+        };
+    }
+    impl_degrees_vec!(Vec2f);
+    impl_degrees_vec!(Vec3f);
+    impl_degrees_vec!(Vec4f);
+}
+
+/// Provides the logical built-in function `all`.
+pub trait LogicalBuiltinAll {
+    /// Returns true if all components are true.
+    fn all(self) -> bool;
+}
+
+/// Returns true if all components of e are true.
+pub fn all<T: LogicalBuiltinAll>(e: T) -> bool {
+    <T as LogicalBuiltinAll>::all(e)
+}
+
+mod all {
+    use super::*;
+
+    impl LogicalBuiltinAll for Vec2b {
+        fn all(self) -> bool {
+            self.inner.all()
+        }
+    }
+
+    impl LogicalBuiltinAll for Vec3b {
+        fn all(self) -> bool {
+            self.inner.all()
+        }
+    }
+
+    impl LogicalBuiltinAll for Vec4b {
+        fn all(self) -> bool {
+            self.inner.all()
+        }
+    }
+}
+
+/// Provides the logical built-in function `any`.
+pub trait LogicalBuiltinAny {
+    /// Returns true if any component is true.
+    fn any(self) -> bool;
+}
+
+/// Returns true if any component of e is true.
+pub fn any<T: LogicalBuiltinAny>(e: T) -> bool {
+    <T as LogicalBuiltinAny>::any(e)
+}
+
+mod any {
+    use super::*;
+
+    impl LogicalBuiltinAny for Vec2b {
+        fn any(self) -> bool {
+            self.inner.any()
+        }
+    }
+
+    impl LogicalBuiltinAny for Vec3b {
+        fn any(self) -> bool {
+            self.inner.any()
+        }
+    }
+
+    impl LogicalBuiltinAny for Vec4b {
+        fn any(self) -> bool {
+            self.inner.any()
+        }
+    }
+}
+
+/// Provides the logical built-in function `select`.
+pub trait LogicalBuiltinSelect {
+    /// Returns t if cond is true, else f.
+    fn select(f: Self, t: Self, cond: bool) -> Self;
+}
+
+/// Returns t if cond is true, else f.
+pub fn select<T: LogicalBuiltinSelect>(f: T, t: T, cond: bool) -> T {
+    <T as LogicalBuiltinSelect>::select(f, t, cond)
+}
+
+mod select {
+    use super::*;
+
+    macro_rules! impl_select {
+        ($ty:ty) => {
+            impl LogicalBuiltinSelect for $ty {
+                fn select(f: Self, t: Self, cond: bool) -> Self {
+                    if cond { t } else { f }
+                }
+            }
+        };
+    }
+
+    impl_select!(f32);
+    impl_select!(i32);
+    impl_select!(u32);
+    impl_select!(bool);
+    impl_select!(Vec2f);
+    impl_select!(Vec3f);
+    impl_select!(Vec4f);
+    impl_select!(Vec2i);
+    impl_select!(Vec3i);
+    impl_select!(Vec4i);
+    impl_select!(Vec2u);
+    impl_select!(Vec3u);
+    impl_select!(Vec4u);
+    impl_select!(Vec2b);
+    impl_select!(Vec3b);
+    impl_select!(Vec4b);
+}
+
+// --- End Issue #12 Implementations ---
 
 #[cfg(test)]
 mod test {
@@ -1079,5 +1607,101 @@ mod test {
         let t = 2.7f32;
         let trunc_t = trunc(t);
         assert_eq!(2.0, trunc_t);
+    }
+
+    // --- Issue #12 Tests ---
+
+    #[test]
+    fn sanity_dot() {
+        let a = vec3f(1.0, 2.0, 3.0);
+        let b = vec3f(4.0, 5.0, 6.0);
+        let dot_ab = dot(a, b);
+        assert_eq!(32.0, dot_ab); // 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
+    }
+
+    #[test]
+    fn sanity_normalize() {
+        let v = vec3f(3.0, 0.0, 0.0);
+        let norm_v = normalize(v);
+        assert!((norm_v.inner.x - 1.0).abs() < 1e-6);
+        assert!((norm_v.inner.y - 0.0).abs() < 1e-6);
+        assert!((norm_v.inner.z - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_cross() {
+        let a = vec3f(1.0, 0.0, 0.0);
+        let b = vec3f(0.0, 1.0, 0.0);
+        let cross_ab = cross(a, b);
+        assert!((cross_ab.inner.x - 0.0).abs() < 1e-6);
+        assert!((cross_ab.inner.y - 0.0).abs() < 1e-6);
+        assert!((cross_ab.inner.z - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_clamp() {
+        assert_eq!(clamp(5.0f32, 0.0, 10.0), 5.0);
+        assert_eq!(clamp(-1.0f32, 0.0, 10.0), 0.0);
+        assert_eq!(clamp(15.0f32, 0.0, 10.0), 10.0);
+        assert_eq!(clamp(5i32, 0, 10), 5);
+        assert_eq!(clamp(5u32, 0, 10), 5);
+    }
+
+    #[test]
+    fn sanity_mix() {
+        let result = mix(0.0f32, 10.0, 0.5);
+        assert!((result - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_floor() {
+        assert_eq!(floor(2.7f32), 2.0);
+        assert_eq!(floor(-2.7f32), -3.0);
+    }
+
+    #[test]
+    fn sanity_ceil() {
+        assert_eq!(ceil(2.3f32), 3.0);
+        assert_eq!(ceil(-2.3f32), -2.0);
+    }
+
+    #[test]
+    fn sanity_exp() {
+        let result = exp(1.0f32);
+        assert!((result - std::f32::consts::E).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_exp2() {
+        assert_eq!(exp2(3.0f32), 8.0);
+    }
+
+    #[test]
+    fn sanity_degrees() {
+        let rad = std::f32::consts::PI;
+        let deg = degrees(rad);
+        assert!((deg - 180.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn sanity_all() {
+        assert!(all(vec2b(true, true)));
+        assert!(!all(vec2b(true, false)));
+        assert!(!all(vec2b(false, false)));
+    }
+
+    #[test]
+    fn sanity_any() {
+        assert!(any(vec2b(true, false)));
+        assert!(any(vec2b(false, true)));
+        assert!(!any(vec2b(false, false)));
+    }
+
+    #[test]
+    fn sanity_select() {
+        assert_eq!(select(1.0f32, 2.0, true), 2.0);
+        assert_eq!(select(1.0f32, 2.0, false), 1.0);
+        assert_eq!(select(1i32, 2, true), 2);
+        assert_eq!(select(1u32, 2, false), 1);
     }
 }

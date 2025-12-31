@@ -210,6 +210,17 @@ pub enum Type {
         scalar: Option<(Token![<], Ident, Token![>])>,
     },
 
+    /// Matrix types:
+    /// mat{N}x{N}<f32>
+    ///   where N is 2, 3, or 4
+    /// Only f32 matrices are supported (matching WGSL).
+    #[allow(dead_code)]
+    Matrix {
+        size: u8,
+        ident: Ident,
+        scalar: Option<(Token![<], Ident, Token![>])>,
+    },
+
     /// Array type: [T; N]
     Array {
         bracket_token: syn::token::Bracket,
@@ -223,9 +234,16 @@ pub enum Type {
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
-    let (_vec, n_prefix) = s.split_once("Vec")?;
-    (n_prefix.len() == 2).then_some(())?;
-    let split = n_prefix.split_at(1);
+    let (_vec, n_suffix) = s.split_once("Vec")?;
+    (n_suffix.len() == 2).then_some(())?;
+    let split = n_suffix.split_at(1);
+    Some(split)
+}
+
+fn split_as_mat(s: &str) -> Option<(&str, &str)> {
+    let (_mat, n_suffix) = s.split_once("Mat")?;
+    (n_suffix.len() == 2).then_some(())?;
+    let split = n_suffix.split_at(1);
     Some(split)
 }
 
@@ -273,7 +291,7 @@ impl TryFrom<&syn::Type> for Type {
                         },
                         other => {
                             // Check for vec
-                            if let Some((n, prefix)) = split_as_vec(other) {
+                            if let Some((n, suffix)) = split_as_vec(other) {
                                 let elements = match n {
                                     "2" => 2,
                                     "3" => 3,
@@ -287,15 +305,15 @@ impl TryFrom<&syn::Type> for Type {
                                     }
                                     .fail()?,
                                 };
-                                let scalar_ty = match prefix {
+                                let scalar_ty = match suffix {
                                     "i" => ScalarType::I32,
                                     "u" => ScalarType::U32,
                                     "f" => ScalarType::F32,
                                     "b" => ScalarType::Bool,
-                                    other_prefix => UnsupportedSnafu {
+                                    other_suffix => UnsupportedSnafu {
                                         span: ident.span(),
                                         note: format!(
-                                            "Unsupported vector type '{other}'. `{other_prefix}` \
+                                            "Unsupported vector type '{other}'. `{other_suffix}` \
                                              must be one of i, u, f or b"
                                         ),
                                     }
@@ -304,6 +322,37 @@ impl TryFrom<&syn::Type> for Type {
                                 Type::Vector {
                                     elements,
                                     scalar_ty,
+                                    ident: ident.clone(),
+                                    scalar: None,
+                                }
+                            } else if let Some((n, suffix)) = split_as_mat(other) {
+                                // Check for matrix alias (Mat2f, Mat3f, Mat4f)
+                                let size = match n {
+                                    "2" => 2,
+                                    "3" => 3,
+                                    "4" => 4,
+                                    other_n => UnsupportedSnafu {
+                                        span: ident.span(),
+                                        note: format!(
+                                            "Unsupported matrix type '{other}'. `{other_n}` must \
+                                             be one of 2, 3, or 4"
+                                        ),
+                                    }
+                                    .fail()?,
+                                };
+                                // Only f32 matrices are supported in WGSL
+                                if suffix != "f" {
+                                    UnsupportedSnafu {
+                                        span: ident.span(),
+                                        note: format!(
+                                            "Unsupported matrix type '{other}'. Only f32 matrices \
+                                             are supported (Mat2f, Mat3f, Mat4f)"
+                                        ),
+                                    }
+                                    .fail()?
+                                }
+                                Type::Matrix {
+                                    size,
                                     ident: ident.clone(),
                                     scalar: None,
                                 }
@@ -322,7 +371,8 @@ impl TryFrom<&syn::Type> for Type {
                     args,
                     gt_token,
                 }) => {
-                    // Expect this to be a vector of the form `Vec{N}<{scalar}>`
+                    // Expect this to be a vector or matrix of the form `Vec{N}<{scalar}>` or
+                    // `Mat{N}<f32>`
                     util::some_is_unsupported(
                         colon2_token.as_ref(),
                         "Prefix path syntax unsupported in WGSL",
@@ -336,15 +386,22 @@ impl TryFrom<&syn::Type> for Type {
                         }
                     );
 
-                    let elements = match ident.to_string().as_str() {
-                        "Vec2" => 2,
-                        "Vec3" => 3,
-                        "Vec4" => 4,
-                        _other => UnsupportedSnafu {
-                            span: ident.span(),
-                            note: "Unsupported vector, must be one of Vec2, Vec3 or Vec4",
-                        }
-                        .fail()?,
+                    let ident_str = ident.to_string();
+
+                    // Check for vector types
+                    let elements = match ident_str.as_str() {
+                        "Vec2" => Some(2u8),
+                        "Vec3" => Some(3),
+                        "Vec4" => Some(4),
+                        _ => None,
+                    };
+
+                    // Check for matrix types
+                    let matrix_size = match ident_str.as_str() {
+                        "Mat2" => Some(2u8),
+                        "Mat3" => Some(3),
+                        "Mat4" => Some(4),
+                        _ => None,
                     };
 
                     let arg = args.first().expect("checked that len was 1");
@@ -355,12 +412,36 @@ impl TryFrom<&syn::Type> for Type {
                                 ident: scalar_ident,
                             } = Type::try_from(ty)?
                             {
-                                Ok(Type::Vector {
-                                    elements,
-                                    scalar_ty,
-                                    ident: ident.clone(),
-                                    scalar: Some((*lt_token, scalar_ident, *gt_token)),
-                                })
+                                if let Some(elements) = elements {
+                                    // Vector type
+                                    Ok(Type::Vector {
+                                        elements,
+                                        scalar_ty,
+                                        ident: ident.clone(),
+                                        scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                    })
+                                } else if let Some(size) = matrix_size {
+                                    // Matrix type - only f32 is supported
+                                    if !matches!(scalar_ty, ScalarType::F32) {
+                                        UnsupportedSnafu {
+                                            span: ty.span(),
+                                            note: "Only f32 matrices are supported in WGSL",
+                                        }
+                                        .fail()?
+                                    }
+                                    Ok(Type::Matrix {
+                                        size,
+                                        ident: ident.clone(),
+                                        scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                    })
+                                } else {
+                                    UnsupportedSnafu {
+                                        span: ident.span(),
+                                        note: "Unsupported generic type, must be one of Vec2, \
+                                               Vec3, Vec4, Mat2, Mat3 or Mat4",
+                                    }
+                                    .fail()
+                                }
                             } else {
                                 UnsupportedSnafu {
                                     span: ty.span(),
@@ -2371,5 +2452,62 @@ mod test {
         // Trailing underscores
         assert_eq!(to_snake_case("BUFFER_"), "buffer_");
         assert_eq!(to_snake_case("MyBuffer_"), "my_buffer_");
+    }
+
+    // Matrix type parsing tests
+    #[test]
+    fn parse_mat4_f32_type() {
+        let ty: syn::Type = syn::parse_str("Mat4<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("mat4x4<f32>", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_mat4f_type() {
+        let ty: syn::Type = syn::parse_str("Mat4f").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("mat4x4f", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_mat3_f32_type() {
+        let ty: syn::Type = syn::parse_str("Mat3<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("mat3x3<f32>", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_mat3f_type() {
+        let ty: syn::Type = syn::parse_str("Mat3f").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("mat3x3f", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_mat2_f32_type() {
+        let ty: syn::Type = syn::parse_str("Mat2<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("mat2x2<f32>", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_mat2f_type() {
+        let ty: syn::Type = syn::parse_str("Mat2f").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("mat2x2f", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_mat4_i32_type_fails() {
+        let ty: syn::Type = syn::parse_str("Mat4<i32>").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_mat4i_type_fails() {
+        let ty: syn::Type = syn::parse_str("Mat4i").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(result.is_err());
     }
 }

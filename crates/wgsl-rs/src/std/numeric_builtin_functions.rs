@@ -1356,11 +1356,6 @@ mod any {
     }
 }
 
-pub enum SelectCondition<T> {
-    Bool(bool),
-    Vec(T),
-}
-
 /// Provides the logical built-in function `select`.
 pub trait LogicalBuiltinSelect<Condition> {
     /// Returns t if cond is true, else f.

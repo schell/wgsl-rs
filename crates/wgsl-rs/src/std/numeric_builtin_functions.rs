@@ -1219,13 +1219,13 @@ mod ceil {
 
 /// Provides the numeric built-in function `exp`.
 pub trait NumericBuiltinExp {
-    /// Returns the natural exponentiation of e (e^e). Component-wise when T is
-    /// a vector.
+    /// Returns the natural exponentiation of the input (e raised to the power
+    /// of the input). Component-wise when T is a vector.
     fn exp(self) -> Self;
 }
 
-/// Returns the natural exponentiation of e (e^e). Component-wise when T is a
-/// vector.
+/// Returns the natural exponentiation of the input (e raised to the power of
+/// the input). Component-wise when T is a vector.
 pub fn exp<T: NumericBuiltinExp>(e: T) -> T {
     <T as NumericBuiltinExp>::exp(e)
 }

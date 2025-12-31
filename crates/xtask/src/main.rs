@@ -26,7 +26,8 @@ enum WgslSpecAction {
     Toc,
     /// Fetch a specific section by anchor ID
     Section {
-        /// The section anchor ID (e.g., "vector-types", "texture-builtin-functions")
+        /// The section anchor ID (e.g., "vector-types",
+        /// "texture-builtin-functions")
         anchor: String,
         /// Optional subsection anchor ID (e.g., "texturedimensions")
         subsection: Option<String>,
@@ -116,22 +117,24 @@ fn fetch_section(
     let target_anchor = subsection.unwrap_or(anchor);
 
     // Find the heading element with the target anchor ID
-    let heading_selector =
-        Selector::parse(&format!("h1#{target_anchor}, h2#{target_anchor}, h3#{target_anchor}, h4#{target_anchor}, h5#{target_anchor}, h6#{target_anchor}"))
-            .map_err(|e| format!("Invalid selector: {e:?}"))?;
+    let heading_selector = Selector::parse(&format!(
+        "h1#{target_anchor}, h2#{target_anchor}, h3#{target_anchor}, h4#{target_anchor}, \
+         h5#{target_anchor}, h6#{target_anchor}"
+    ))
+    .map_err(|e| format!("Invalid selector: {e:?}"))?;
 
     let heading = document.select(&heading_selector).next().ok_or_else(|| {
         format!(
-            "Could not find section with anchor '#{target_anchor}'.\n\
-             Run 'cargo xtask wgsl-spec toc' to see available sections."
+            "Could not find section with anchor '#{target_anchor}'.\nRun 'cargo xtask wgsl-spec \
+             toc' to see available sections."
         )
     })?;
 
     // Determine the heading level (h2 -> 2, h3 -> 3, etc.)
     let heading_level = get_heading_level(heading).ok_or("Could not determine heading level")?;
 
-    // Determine the boundary level - if shallow, stop at same level or higher (any subsection)
-    // If not shallow, stop only at same level or higher
+    // Determine the boundary level - if shallow, stop at same level or higher (any
+    // subsection) If not shallow, stop only at same level or higher
     let boundary_level = if shallow {
         heading_level + 1 // Stop at any subsection heading
     } else {

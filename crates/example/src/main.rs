@@ -16,12 +16,12 @@ pub mod hello_triangle {
         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
 
         let position = POS[vertex_index as usize];
-        vec4(position.x(), position.y(), 0.0, 1.0)
+        vec4f(position.x(), position.y(), 0.0, 1.0)
     }
 
     #[fragment]
     pub fn frag_main() -> Vec4f {
-        vec4(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0)
+        vec4f(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0)
     }
 }
 
@@ -79,6 +79,37 @@ pub mod compute_shader {
         // Note: Storage buffer access requires additional implementation
         // This demonstrates the compute shader structure with storage buffers
         let _idx = global_id.x() as usize;
+    }
+}
+
+#[wgsl]
+#[allow(dead_code)]
+pub mod matrix_example {
+    //! Demonstrates matrix types and constructors.
+    use wgsl_rs::std::*;
+
+    // 4x4 identity matrix constant
+    const IDENTITY: Mat4f = mat4x4f(
+        vec4f(1.0, 0.0, 0.0, 0.0),
+        vec4f(0.0, 1.0, 0.0, 0.0),
+        vec4f(0.0, 0.0, 1.0, 0.0),
+        vec4f(0.0, 0.0, 0.0, 1.0),
+    );
+
+    // 3x3 2D rotation matrix (30 degrees)
+    // cos(30°) ≈ 0.866, sin(30°) = 0.5
+    const ROTATION_2D: Mat3f = mat3x3f(
+        vec3f(0.866, 0.5, 0.0),
+        vec3f(-0.5, 0.866, 0.0),
+        vec3f(0.0, 0.0, 1.0),
+    );
+
+    // 2x2 matrix constant
+    const SCALE_2D: Mat2f = mat2x2f(vec2f(2.0, 0.0), vec2f(0.0, 2.0));
+
+    #[vertex]
+    pub fn matrix_vertex() -> Vec4f {
+        vec4f(0.0, 0.0, 0.0, 1.0)
     }
 }
 
@@ -421,6 +452,11 @@ pub fn main() {
     {
         // compute_shader
         let source = compute_shader::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
+    {
+        // matrix_example
+        let source = matrix_example::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }
 

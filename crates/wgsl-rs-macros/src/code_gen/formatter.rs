@@ -542,6 +542,21 @@ impl GenerateCode for Type {
                 );
             }
             Type::Struct { ident } => code.write_atom(ident),
+            Type::Matrix {
+                size,
+                ident,
+                scalar,
+            } => {
+                // WGSL format: mat{N}x{N}<f32> or mat{N}x{N}f
+                code.write_str(ident.span(), &format!("mat{}x{}", size, size));
+                if let Some((lt, scalar_ident, gt)) = scalar {
+                    code.write_atom(lt);
+                    code.write_atom(scalar_ident);
+                    code.write_atom(gt);
+                } else {
+                    code.write_str(ident.span(), "f");
+                }
+            }
         }
     }
 }

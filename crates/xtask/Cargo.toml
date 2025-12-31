@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap.workspace = true
+env_logger.workspace = true
+html2text.workspace = true
+log.workspace = true
+reqwest.workspace = true
+scraper.workspace = true

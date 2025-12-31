@@ -1,9 +1,15 @@
 //! This program is a development tool to be used by agents, human or otherwise.
 
+use std::time::Duration;
+
 use clap::Parser;
 use scraper::{ElementRef, Html, Node, Selector};
 
 const WGSL_SPEC_URL: &str = "https://www.w3.org/TR/WGSL/";
+/// Timeout for HTTP requests to the WGSL spec.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Width in characters for text output formatting.
+const OUTPUT_WIDTH: usize = 100;
 
 #[derive(clap::Parser)]
 struct Cli {
@@ -64,8 +70,10 @@ fn main() {
 }
 
 fn fetch_toc() -> Result<(), Box<dyn std::error::Error>> {
-    let response = reqwest::blocking::get(WGSL_SPEC_URL)?;
-    let html = response.text()?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()?;
+    let html = client.get(WGSL_SPEC_URL).send()?.text()?;
     let document = Html::parse_document(&html);
 
     let nav_selector = Selector::parse("nav#toc").unwrap();
@@ -109,8 +117,10 @@ fn fetch_section(
     subsection: Option<&str>,
     shallow: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let response = reqwest::blocking::get(WGSL_SPEC_URL)?;
-    let html = response.text()?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()?;
+    let html = client.get(WGSL_SPEC_URL).send()?.text()?;
     let document = Html::parse_document(&html);
 
     // Determine which anchor to look for
@@ -133,12 +143,17 @@ fn fetch_section(
     // Determine the heading level (h2 -> 2, h3 -> 3, etc.)
     let heading_level = get_heading_level(heading).ok_or("Could not determine heading level")?;
 
-    // Determine the boundary level - if shallow, stop at same level or higher (any
-    // subsection) If not shallow, stop only at same level or higher
+    // Determine the stop level for section boundary detection.
+    // Heading levels: h1=1, h2=2, h3=3, etc. Lower number = higher level heading.
+    // - Shallow mode: stop at any heading at the same level or deeper (level >=
+    //   heading_level), effectively excluding subsections. We use heading_level + 1
+    //   so that level <= boundary catches both same-level and subsection headings.
+    // - Deep mode: stop only at headings of the same or higher level (level <=
+    //   heading_level), which includes all subsection content.
     let boundary_level = if shallow {
-        heading_level + 1 // Stop at any subsection heading
+        heading_level + 1
     } else {
-        heading_level // Stop only at same or higher level
+        heading_level
     };
 
     // Build HTML content by collecting sibling elements
@@ -181,7 +196,7 @@ fn fetch_section(
     }
 
     // Convert HTML to text/markdown using html2text
-    let text = html2text::from_read(content_html.as_bytes(), 100)?;
+    let text = html2text::from_read(content_html.as_bytes(), OUTPUT_WIDTH)?;
     println!("{text}");
 
     Ok(())

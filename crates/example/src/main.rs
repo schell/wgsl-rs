@@ -83,6 +83,7 @@ pub mod compute_shader {
 }
 
 #[wgsl]
+#[allow(dead_code)]
 pub mod matrix_example {
     //! Demonstrates matrix types and constructors.
     use wgsl_rs::std::*;

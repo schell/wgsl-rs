@@ -162,7 +162,9 @@ macro_rules! impl_mat_mul_mat {
         impl std::ops::Mul<$mat> for $mat {
             type Output = $mat;
             fn mul(self, rhs: $mat) -> Self::Output {
-                Self { inner: self.inner * rhs.inner }
+                Self {
+                    inner: self.inner * rhs.inner,
+                }
             }
         }
     };
@@ -192,7 +194,9 @@ macro_rules! impl_mat_mul_scalar {
         impl std::ops::Mul<f32> for $mat {
             type Output = $mat;
             fn mul(self, rhs: f32) -> Self::Output {
-                Self { inner: self.inner * rhs }
+                Self {
+                    inner: self.inner * rhs,
+                }
             }
         }
 

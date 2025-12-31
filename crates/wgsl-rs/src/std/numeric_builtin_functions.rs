@@ -1044,7 +1044,7 @@ mod clamp {
         }
     }
 
-    macro_rules! impl_clamp_vec_f {
+    macro_rules! impl_clamp_vec {
         ($ty:ty) => {
             impl NumericBuiltinClamp for $ty {
                 fn clamp(self, low: Self, high: Self) -> Self {
@@ -1055,27 +1055,15 @@ mod clamp {
             }
         };
     }
-    impl_clamp_vec_f!(Vec2f);
-    impl_clamp_vec_f!(Vec3f);
-    impl_clamp_vec_f!(Vec4f);
-
-    macro_rules! impl_clamp_vec_i {
-        ($ty:ty) => {
-            impl NumericBuiltinClamp for $ty {
-                fn clamp(self, low: Self, high: Self) -> Self {
-                    Self {
-                        inner: self.inner.clamp(low.inner, high.inner),
-                    }
-                }
-            }
-        };
-    }
-    impl_clamp_vec_i!(Vec2i);
-    impl_clamp_vec_i!(Vec3i);
-    impl_clamp_vec_i!(Vec4i);
-    impl_clamp_vec_i!(Vec2u);
-    impl_clamp_vec_i!(Vec3u);
-    impl_clamp_vec_i!(Vec4u);
+    impl_clamp_vec!(Vec2f);
+    impl_clamp_vec!(Vec3f);
+    impl_clamp_vec!(Vec4f);
+    impl_clamp_vec!(Vec2i);
+    impl_clamp_vec!(Vec3i);
+    impl_clamp_vec!(Vec4i);
+    impl_clamp_vec!(Vec2u);
+    impl_clamp_vec!(Vec3u);
+    impl_clamp_vec!(Vec4u);
 }
 
 /// Provides the numeric built-in function `mix`.
@@ -1099,50 +1087,24 @@ mod mix {
     }
 
     // For vectors, we use component-wise mix
-    impl NumericBuiltinMix for Vec2f {
-        fn mix(self, e2: Self, e3: Self) -> Self {
-            let a = self.inner.to_array();
-            let b = e2.inner.to_array();
-            let t = e3.inner.to_array();
-            Self {
-                inner: glam::Vec2::new(
-                    a[0] * (1.0 - t[0]) + b[0] * t[0],
-                    a[1] * (1.0 - t[1]) + b[1] * t[1],
-                ),
+    macro_rules! impl_mix_vec {
+        ($n:literal, $ty:ty) => {
+            impl NumericBuiltinMix for Vec<$n, $ty> {
+                fn mix(self, e2: Self, e3: Self) -> Self {
+                    let a = self.inner.to_array();
+                    let b = e2.inner.to_array();
+                    let mut t = e3.inner.to_array();
+                    for i in 0..t.len() {
+                        t[i] = mix(a[i], b[i], t[i]);
+                    }
+                    <$ty>::vec_from_array(t)
+                }
             }
-        }
+        };
     }
-
-    impl NumericBuiltinMix for Vec3f {
-        fn mix(self, e2: Self, e3: Self) -> Self {
-            let a = self.inner.to_array();
-            let b = e2.inner.to_array();
-            let t = e3.inner.to_array();
-            Self {
-                inner: glam::Vec3::new(
-                    a[0] * (1.0 - t[0]) + b[0] * t[0],
-                    a[1] * (1.0 - t[1]) + b[1] * t[1],
-                    a[2] * (1.0 - t[2]) + b[2] * t[2],
-                ),
-            }
-        }
-    }
-
-    impl NumericBuiltinMix for Vec4f {
-        fn mix(self, e2: Self, e3: Self) -> Self {
-            let a = self.inner.to_array();
-            let b = e2.inner.to_array();
-            let t = e3.inner.to_array();
-            Self {
-                inner: glam::Vec4::new(
-                    a[0] * (1.0 - t[0]) + b[0] * t[0],
-                    a[1] * (1.0 - t[1]) + b[1] * t[1],
-                    a[2] * (1.0 - t[2]) + b[2] * t[2],
-                    a[3] * (1.0 - t[3]) + b[3] * t[3],
-                ),
-            }
-        }
-    }
+    impl_mix_vec!(2, f32);
+    impl_mix_vec!(3, f32);
+    impl_mix_vec!(4, f32);
 }
 
 /// Provides the numeric built-in function `floor`.

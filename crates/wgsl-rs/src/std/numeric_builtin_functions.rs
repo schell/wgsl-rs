@@ -910,8 +910,6 @@ mod trunc {
     impl_trunc_vec!(Vec4f);
 }
 
-// --- Issue #12: Essential Numeric and Logical Builtin Functions ---
-
 /// Provides the numeric built-in function `dot`.
 pub trait NumericBuiltinDot {
     type Scalar;
@@ -1396,23 +1394,28 @@ mod any {
     }
 }
 
+pub enum SelectCondition<T> {
+    Bool(bool),
+    Vec(T),
+}
+
 /// Provides the logical built-in function `select`.
-pub trait LogicalBuiltinSelect {
+pub trait LogicalBuiltinSelect<Condition> {
     /// Returns t if cond is true, else f.
-    fn select(f: Self, t: Self, cond: bool) -> Self;
+    fn select(f: Self, t: Self, cond: Condition) -> Self;
 }
 
 /// Returns t if cond is true, else f.
-pub fn select<T: LogicalBuiltinSelect>(f: T, t: T, cond: bool) -> T {
-    <T as LogicalBuiltinSelect>::select(f, t, cond)
+pub fn select<T: LogicalBuiltinSelect<C>, C>(f: T, t: T, cond: C) -> T {
+    <T as LogicalBuiltinSelect<C>>::select(f, t, cond)
 }
 
 mod select {
     use super::*;
 
-    macro_rules! impl_select {
+    macro_rules! impl_select_bool {
         ($ty:ty) => {
-            impl LogicalBuiltinSelect for $ty {
+            impl LogicalBuiltinSelect<bool> for $ty {
                 fn select(f: Self, t: Self, cond: bool) -> Self {
                     if cond { t } else { f }
                 }
@@ -1420,25 +1423,59 @@ mod select {
         };
     }
 
-    impl_select!(f32);
-    impl_select!(i32);
-    impl_select!(u32);
-    impl_select!(bool);
-    impl_select!(Vec2f);
-    impl_select!(Vec3f);
-    impl_select!(Vec4f);
-    impl_select!(Vec2i);
-    impl_select!(Vec3i);
-    impl_select!(Vec4i);
-    impl_select!(Vec2u);
-    impl_select!(Vec3u);
-    impl_select!(Vec4u);
-    impl_select!(Vec2b);
-    impl_select!(Vec3b);
-    impl_select!(Vec4b);
-}
+    impl_select_bool!(f32);
+    impl_select_bool!(i32);
+    impl_select_bool!(u32);
+    impl_select_bool!(bool);
+    impl_select_bool!(Vec2f);
+    impl_select_bool!(Vec3f);
+    impl_select_bool!(Vec4f);
+    impl_select_bool!(Vec2i);
+    impl_select_bool!(Vec3i);
+    impl_select_bool!(Vec4i);
+    impl_select_bool!(Vec2u);
+    impl_select_bool!(Vec3u);
+    impl_select_bool!(Vec4u);
+    impl_select_bool!(Vec2b);
+    impl_select_bool!(Vec3b);
+    impl_select_bool!(Vec4b);
 
-// --- End Issue #12 Implementations ---
+    macro_rules! impl_select_vec {
+        ($n:literal, $ty:ty) => {
+            impl LogicalBuiltinSelect<Vec<$n, bool>> for Vec<$n, $ty> {
+                fn select(f: Self, t: Self, cond: Vec<$n, bool>) -> Self {
+                    let cond_array = bool::vec_to_array(cond);
+                    let f_array = <$ty>::vec_to_array(f);
+                    let mut t_array = <$ty>::vec_to_array(t);
+                    for i in 0..t_array.len() {
+                        t_array[i] = if cond_array[i] {
+                            t_array[i]
+                        } else {
+                            f_array[i]
+                        };
+                    }
+                    <$ty>::vec_from_array(t_array)
+                }
+            }
+        };
+    }
+
+    impl_select_vec!(2, f32);
+    impl_select_vec!(3, f32);
+    impl_select_vec!(4, f32);
+
+    impl_select_vec!(2, i32);
+    impl_select_vec!(3, i32);
+    impl_select_vec!(4, i32);
+
+    impl_select_vec!(2, u32);
+    impl_select_vec!(3, u32);
+    impl_select_vec!(4, u32);
+
+    impl_select_vec!(2, bool);
+    impl_select_vec!(3, bool);
+    impl_select_vec!(4, bool);
+}
 
 #[cfg(test)]
 mod test {
@@ -1608,8 +1645,6 @@ mod test {
         let trunc_t = trunc(t);
         assert_eq!(2.0, trunc_t);
     }
-
-    // --- Issue #12 Tests ---
 
     #[test]
     fn sanity_dot() {

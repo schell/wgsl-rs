@@ -478,6 +478,24 @@ impl GenerateCode for Ident {
     }
 }
 
+impl GenerateCode for FnPath {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        match self {
+            FnPath::Ident(ident) => ident.write_code(code),
+            FnPath::TypeMethod {
+                ty,
+                colon2_token,
+                method,
+            } => {
+                // Light::attenuate -> Light_attenuate
+                ty.write_code(code);
+                code.write_str(colon2_token.span(), "_");
+                method.write_code(code);
+            }
+        }
+    }
+}
+
 impl GenerateCode for proc_macro2::TokenStream {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         code.write_atom(self);
@@ -695,11 +713,11 @@ impl GenerateCode for Expr {
                 );
             }
             Expr::FnCall {
-                lhs,
+                path,
                 paren_token,
                 params,
             } => {
-                lhs.write_code(code);
+                path.write_code(code);
                 let indented = params.len() > 4;
                 code.write_surrounded(
                     Surrounded {
@@ -1250,6 +1268,53 @@ impl GenerateCode for ItemMod {
     }
 }
 
+impl GenerateCode for ItemImpl {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let ItemImpl {
+            impl_token: _,
+            self_ty,
+            brace_token: _,
+            items,
+        } = self;
+
+        // Write each method as a standalone function with mangled name:
+        // StructName_method
+        for item_fn in items {
+            let ItemFn {
+                fn_attrs,
+                fn_token,
+                ident,
+                paren_token,
+                inputs,
+                return_type,
+                block,
+            } = item_fn;
+
+            if !code.last_line_is_empty() {
+                code.newline();
+            }
+
+            fn_attrs.write_code(code);
+            code.write_atom(fn_token);
+            code.space();
+
+            // Write mangled name: StructName_method
+            self_ty.write_code(code);
+            code.write_str(ident.span(), "_");
+            ident.write_code(code);
+
+            code.write_surrounded(
+                Surrounded::parens().with_span(paren_token.span.join()),
+                |code| code.write_sequenced(Sequenced::comma(), inputs.iter()),
+            );
+            code.space();
+
+            return_type.write_code(code);
+            block.write_code(code);
+        }
+    }
+}
+
 impl GenerateCode for Item {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
@@ -1265,6 +1330,7 @@ impl GenerateCode for Item {
                 // imports of other WGSL code.
             }
             Item::Struct(item_struct) => item_struct.write_code(code),
+            Item::Impl(item_impl) => item_impl.write_code(code),
         }
     }
 }

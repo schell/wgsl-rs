@@ -600,6 +600,23 @@ impl TryFrom<&syn::FieldValue> for FieldValue {
     }
 }
 
+/// A function path - either a simple identifier or a type-qualified path.
+///
+/// Used in function calls to support both `foo(args)` and `Type::method(args)`.
+pub enum FnPath {
+    /// Simple function call: `foo()`
+    Ident(Ident),
+    /// Type-qualified call: `Light::attenuate()`
+    ///
+    /// This is used for calling methods defined in impl blocks.
+    /// In WGSL output, this becomes `Light_attenuate()`.
+    TypeMethod {
+        ty: Ident,
+        colon2_token: Token![::],
+        method: Ident,
+    },
+}
+
 /// WGSL expressions.
 pub enum Expr {
     /// A literal value.
@@ -645,9 +662,12 @@ pub enum Expr {
     /// This needs special help because we want to support indexing with u32 and
     /// i32 since WGSL supports this.
     Cast { lhs: Box<Expr>, ty: Box<Type> },
-    /// A function call
+    /// A function call.
+    ///
+    /// Supports both simple calls like `foo(args)` and type-qualified calls
+    /// like `Light::attenuate(args)` for calling impl block methods.
     FnCall {
-        lhs: Ident,
+        path: FnPath,
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
     },
@@ -766,7 +786,12 @@ impl TryFrom<&syn::Expr> for Expr {
                     turbofish.as_ref(),
                     "Turbofish is not supported in WGSL",
                 )?;
-                util::some_is_unsupported(args.first(), "Swizzling cannot accept parameters")?;
+                util::some_is_unsupported(
+                    args.first(),
+                    "Method call syntax (receiver.method(args)) is only supported for swizzles \
+                     (e.g., v.xyz()). For struct methods, use explicit path syntax: \
+                     Type::method(receiver, args)",
+                )?;
                 let lhs = Box::new(Expr::try_from(receiver.as_ref())?);
                 // Treat as swizzle: receiver.method
                 Self::Swizzle {
@@ -803,14 +828,38 @@ impl TryFrom<&syn::Expr> for Expr {
             }) => match func.as_ref() {
                 syn::Expr::Path(expr_path) => {
                     util::some_is_unsupported(expr_path.qself.as_ref(), "QSelf unsupported")?;
-                    let lhs = expr_path
-                        .path
-                        .get_ident()
-                        .context(UnsupportedSnafu {
-                            span: expr_path.path.span(),
-                            note: "Expected an identifier",
-                        })?
-                        .clone();
+
+                    let syn_path = &expr_path.path;
+                    let fn_path = if let Some(ident) = syn_path.get_ident() {
+                        // Simple function call: foo(args)
+                        FnPath::Ident(ident.clone())
+                    } else if syn_path.segments.len() == 2 {
+                        // Type::method call: Light::attenuate(args)
+                        let ty = syn_path.segments[0].ident.clone();
+                        let method = syn_path.segments[1].ident.clone();
+                        // Check for no generics on segments
+                        for seg in &syn_path.segments {
+                            if !matches!(seg.arguments, syn::PathArguments::None) {
+                                return UnsupportedSnafu {
+                                    span: seg.arguments.span(),
+                                    note: "generic arguments in function paths are not supported",
+                                }
+                                .fail();
+                            }
+                        }
+                        FnPath::TypeMethod {
+                            ty,
+                            colon2_token: Token![::](syn_path.segments[0].ident.span()),
+                            method,
+                        }
+                    } else {
+                        return UnsupportedSnafu {
+                            span: syn_path.span(),
+                            note: "only simple function calls or Type::method calls are supported",
+                        }
+                        .fail();
+                    };
+
                     let paren_token = *paren_token;
                     let mut params = syn::punctuated::Punctuated::new();
                     for pair in args.pairs() {
@@ -822,7 +871,7 @@ impl TryFrom<&syn::Expr> for Expr {
                         }
                     }
                     Self::FnCall {
-                        lhs,
+                        path: fn_path,
                         paren_token,
                         params,
                     }
@@ -1655,6 +1704,79 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
     }
 }
 
+impl ItemFn {
+    /// Convert an impl item function to an ItemFn.
+    ///
+    /// This is similar to `TryFrom<&syn::ItemFn>` but handles the slightly
+    /// different structure of `syn::ImplItemFn`.
+    pub fn try_from_impl_fn(value: &syn::ImplItemFn) -> Result<Self, Error> {
+        let syn::ImplItemFn {
+            attrs,
+            vis,
+            defaultness,
+            sig,
+            block,
+        } = value;
+
+        util::some_is_unsupported(
+            defaultness.as_ref(),
+            "default fns are not supported in WGSL",
+        )?;
+
+        snafu::ensure!(
+            matches!(vis, syn::Visibility::Public(_)),
+            VisibilitySnafu {
+                span: sig.span(),
+                item: "Impl methods"
+            }
+        );
+
+        let fn_attrs = FnAttrs::try_from(attrs)?;
+        let mut inputs = syn::punctuated::Punctuated::new();
+        for pair in sig.inputs.pairs() {
+            let input = pair.value();
+            let arg = FnArg::try_from(*input)?;
+            inputs.push_value(arg);
+            if let Some(comma) = pair.punct() {
+                inputs.push_punct(**comma);
+            }
+        }
+
+        let mut return_type = ReturnType::try_from(&sig.output)?;
+        match &mut return_type {
+            ReturnType::Default => {}
+            ReturnType::Type {
+                arrow: _,
+                annotation,
+                ty,
+            } => {
+                if let Type::Vector {
+                    elements: 4,
+                    scalar_ty: ScalarType::F32,
+                    ..
+                } = ty.as_ref()
+                {
+                    *annotation = match fn_attrs {
+                        FnAttrs::Vertex(_) => ReturnTypeAnnotation::DefaultBuiltInPosition,
+                        FnAttrs::Fragment(_) => ReturnTypeAnnotation::DefaultLocation,
+                        _ => ReturnTypeAnnotation::None,
+                    }
+                }
+            }
+        }
+
+        Ok(ItemFn {
+            fn_attrs,
+            fn_token: sig.fn_token,
+            ident: sig.ident.clone(),
+            paren_token: sig.paren_token,
+            inputs,
+            return_type,
+            block: Block::try_from(block)?,
+        })
+    }
+}
+
 pub struct ItemConst {
     pub const_token: Token![const],
     pub ident: Ident,
@@ -2149,6 +2271,123 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
     }
 }
 
+/// An impl block for a struct.
+///
+/// Methods are just regular functions with explicit receiver parameters - no
+/// `self` support. They get name-mangled to `StructName_method` in WGSL output.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl Light {
+///     pub fn attenuate(light: Light, distance: f32) -> f32 {
+///         light.intensity / (distance * distance)
+///     }
+/// }
+/// ```
+///
+/// Becomes in WGSL:
+///
+/// ```wgsl
+/// fn Light_attenuate(light: Light, distance: f32) -> f32 {
+///     return light.intensity / (distance * distance);
+/// }
+/// ```
+pub struct ItemImpl {
+    pub impl_token: Token![impl],
+    pub self_ty: Ident,
+    pub brace_token: syn::token::Brace,
+    pub items: Vec<ItemFn>,
+}
+
+impl TryFrom<&syn::ItemImpl> for ItemImpl {
+    type Error = Error;
+
+    fn try_from(value: &syn::ItemImpl) -> Result<Self, Self::Error> {
+        let syn::ItemImpl {
+            attrs: _,
+            defaultness,
+            unsafety,
+            impl_token,
+            generics,
+            trait_,
+            self_ty,
+            brace_token,
+            items,
+        } = value;
+
+        // Reject unsupported syntax
+        util::some_is_unsupported(
+            defaultness.as_ref(),
+            "default impls are not supported in WGSL",
+        )?;
+        util::some_is_unsupported(unsafety.as_ref(), "unsafe impls are not supported in WGSL")?;
+
+        // Reject generics
+        if !generics.params.is_empty() {
+            return UnsupportedSnafu {
+                span: generics.span(),
+                note: "generic impl blocks are not supported in WGSL",
+            }
+            .fail();
+        }
+
+        // Reject trait impls
+        if let Some((_, trait_path, _)) = trait_ {
+            return UnsupportedSnafu {
+                span: trait_path.span(),
+                note: "trait impls are not supported in WGSL. Use `impl StructName { ... }` \
+                       instead",
+            }
+            .fail();
+        }
+
+        // Get the struct name (self_ty must be a simple ident)
+        let self_ty_ident = match self_ty.as_ref() {
+            syn::Type::Path(type_path) => type_path
+                .path
+                .get_ident()
+                .context(UnsupportedSnafu {
+                    span: type_path.span(),
+                    note: "impl block type must be a simple identifier",
+                })?
+                .clone(),
+            other => {
+                return UnsupportedSnafu {
+                    span: other.span(),
+                    note: "impl block type must be a simple struct name",
+                }
+                .fail();
+            }
+        };
+
+        // Parse methods
+        let mut parsed_items = Vec::new();
+        for item in items {
+            match item {
+                syn::ImplItem::Fn(impl_fn) => {
+                    let item_fn = ItemFn::try_from_impl_fn(impl_fn)?;
+                    parsed_items.push(item_fn);
+                }
+                other => {
+                    return UnsupportedSnafu {
+                        span: other.span(),
+                        note: "only functions are supported in impl blocks",
+                    }
+                    .fail();
+                }
+            }
+        }
+
+        Ok(ItemImpl {
+            impl_token: *impl_token,
+            self_ty: self_ty_ident,
+            brace_token: *brace_token,
+            items: parsed_items,
+        })
+    }
+}
+
 /// WGSL items that may appear in a "module" or scope.
 pub enum Item {
     Const(Box<ItemConst>),
@@ -2158,6 +2397,7 @@ pub enum Item {
     Mod(ItemMod),
     Use(ItemUse),
     Struct(ItemStruct),
+    Impl(ItemImpl),
 }
 
 impl TryFrom<&syn::Item> for Item {
@@ -2199,6 +2439,7 @@ impl TryFrom<&syn::Item> for Item {
                 semi_token: _,
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
+            syn::Item::Impl(item_impl) => Ok(Item::Impl(ItemImpl::try_from(item_impl)?)),
             _ => UnsupportedSnafu {
                 span: value.span(),
                 note: format!(
@@ -2509,5 +2750,168 @@ mod test {
         let ty: syn::Type = syn::parse_str("Mat4i").unwrap();
         let result = Type::try_from(&ty);
         assert!(result.is_err());
+    }
+
+    // Impl block parsing tests
+    #[test]
+    fn parse_impl_block() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub fn attenuate(light: Light, distance: f32) -> f32 {
+                    light.intensity / (distance * distance)
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(item_impl) => {
+                assert_eq!("Light", item_impl.self_ty.to_string());
+                assert_eq!(1, item_impl.items.len());
+                assert_eq!("attenuate", item_impl.items[0].ident.to_string());
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
+    fn parse_impl_block_multiple_methods() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Point {
+                pub fn new(x: f32, y: f32) -> Point {
+                    Point { x: x, y: y }
+                }
+                pub fn distance(p1: Point, p2: Point) -> f32 {
+                    let dx = p1.x - p2.x;
+                    let dy = p1.y - p2.y;
+                    (dx * dx + dy * dy)
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(item_impl) => {
+                assert_eq!("Point", item_impl.self_ty.to_string());
+                assert_eq!(2, item_impl.items.len());
+                assert_eq!("new", item_impl.items[0].ident.to_string());
+                assert_eq!("distance", item_impl.items[1].ident.to_string());
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
+    fn parse_impl_rejects_traits() {
+        let item: syn::Item = syn::parse_quote! {
+            impl SomeTrait for Light {
+                pub fn foo() {}
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("trait impls are not supported"),
+            "Expected error about trait impls, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn parse_impl_rejects_generics() {
+        let item: syn::Item = syn::parse_quote! {
+            impl<T> Light {
+                pub fn foo() {}
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("generic impl blocks are not supported"),
+            "Expected error about generics, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn parse_impl_rejects_self_receiver() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub fn foo(&self) {}
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("self"),
+            "Expected error about self, got: {}",
+            err
+        );
+    }
+
+    // Type::method call parsing tests
+    #[test]
+    fn parse_type_method_call() {
+        let expr: syn::Expr = syn::parse_quote! {
+            Light::attenuate(light, 2.0)
+        };
+        let expr = Expr::try_from(&expr).unwrap();
+        match expr {
+            Expr::FnCall {
+                path: FnPath::TypeMethod { ty, method, .. },
+                ..
+            } => {
+                assert_eq!(ty.to_string(), "Light");
+                assert_eq!(method.to_string(), "attenuate");
+            }
+            _ => panic!("Expected Expr::FnCall with TypeMethod path"),
+        }
+    }
+
+    #[test]
+    fn parse_simple_function_call() {
+        let expr: syn::Expr = syn::parse_quote! {
+            sin(x)
+        };
+        let expr = Expr::try_from(&expr).unwrap();
+        match expr {
+            Expr::FnCall {
+                path: FnPath::Ident(ident),
+                ..
+            } => {
+                assert_eq!(ident.to_string(), "sin");
+            }
+            _ => panic!("Expected Expr::FnCall with Ident path"),
+        }
+    }
+
+    // WGSL code generation tests for impl blocks
+    #[test]
+    fn impl_block_generates_mangled_functions() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub fn attenuate(light: Light, distance: f32) -> f32 {
+                    light.intensity / (distance * distance)
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn Light_attenuate"),
+            "Expected 'fn Light_attenuate' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn type_method_call_generates_mangled_name() {
+        let expr: syn::Expr = syn::parse_quote! {
+            Light::attenuate(light, 2.0)
+        };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert_eq!(wgsl, "Light_attenuate(light, 2.0)");
     }
 }

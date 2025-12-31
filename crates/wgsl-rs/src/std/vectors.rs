@@ -2,7 +2,7 @@
 
 /// Trait for accessing the underlying type of a vector.
 pub trait ScalarCompOfVec<const N: usize>: Sized {
-    type Output: Copy + Clone;
+    type Output: Copy + Clone + PartialEq;
 
     fn vec_from_array(array: [Self; N]) -> Vec<N, Self>;
     fn vec_to_array(vec: Vec<N, Self>) -> [Self; N];
@@ -10,7 +10,7 @@ pub trait ScalarCompOfVec<const N: usize>: Sized {
 
 /// An `N` dimensional vector.
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Vec<const N: usize, T: ScalarCompOfVec<N>> {
     pub(crate) inner: <T as ScalarCompOfVec<N>>::Output,
 }
@@ -18,6 +18,14 @@ pub struct Vec<const N: usize, T: ScalarCompOfVec<N>> {
 pub type Vec2<T> = Vec<2, T>;
 pub type Vec3<T> = Vec<3, T>;
 pub type Vec4<T> = Vec<4, T>;
+
+impl<const N: usize, T: ScalarCompOfVec<N> + std::fmt::Debug + Copy> std::fmt::Debug for Vec<N, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Vec")
+            .field("inner", &T::vec_to_array(*self))
+            .finish()
+    }
+}
 
 macro_rules! vec_constructor {
     ($n:literal, [$($comps:ident),+]) => {

@@ -1738,5 +1738,13 @@ mod test {
         assert_eq!(select(1.0f32, 2.0, false), 1.0);
         assert_eq!(select(1i32, 2, true), 2);
         assert_eq!(select(1u32, 2, false), 1);
+        assert_eq!(
+            select(vec2f(0.0, 1.0), vec2f(10.0, 11.0), false),
+            vec2f(0.0, 1.0)
+        );
+        assert_eq!(
+            select(vec2f(0.0, 1.0), vec2f(10.0, 11.0), vec2b(true, false)),
+            vec2f(10.0, 1.0)
+        );
     }
 }

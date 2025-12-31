@@ -2,17 +2,24 @@
 members = [
   "crates/example",
   "crates/wgsl-rs",
-  "crates/wgsl-rs-macros"
+  "crates/wgsl-rs-macros",
+  "crates/xtask"
 ]
 
 resolver = "2"
 
 [workspace.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+env_logger = "0.11.8"
 futures = "0.3"
 glam = "0.30.9"
-itertools = "0.14.0"
+itertools = "0.14"
+log = "0.4"
 naga = { version = "27.0.3", features = ["wgsl-in", "wgsl-out"] }
+html2text = "0.16"
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
+reqwest = { version = "0.12", features = ["blocking"] }
+scraper = "0.22"
 quote = "1.0"
 snafu = "0.8.9"
 syn = { version = "2.0", features = ["full", "printing", "extra-traits"] }

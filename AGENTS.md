@@ -1,7 +1,7 @@
 # wgsl-rs
 
 Rust-to-WGSL transpiler using proc macros.
-Workspace with `wgsl-rs`, `wgsl-rs-macros`, and `example` crates.
+Workspace with `wgsl-rs`, `wgsl-rs-macros`, `example`, and `xtask` crates.
 
 ## Commands
 
@@ -13,6 +13,21 @@ cargo test -- test_name        # Run a single test by name
 cargo fmt && cargo clippy      # Format and lint
 cargo run -p example           # Run the example
 cargo expand -p example        # Expand the example which uses the `wgsl` macro, showing the generated WGSL_MODULE
+```
+
+### xtask - development tools for agents
+
+This repo contains a `cargo xtask` that provides agents with some
+shorthand commands for common development tasks.
+
+`cargo xtask wgsl-spec` provides access to the WGSL specification without
+overwhelming an agent's context window.
+
+```bash
+cargo xtask wgsl-spec toc                        # List WGSL spec table of contents
+cargo xtask wgsl-spec section <anchor>           # Fetch a spec section with subsections
+cargo xtask wgsl-spec section --shallow <anchor> # Fetch section without subsections
+cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
 ```
 
 ## Code Style

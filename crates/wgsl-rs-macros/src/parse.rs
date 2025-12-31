@@ -234,9 +234,9 @@ pub enum Type {
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
-    let (_vec, n_prefix) = s.split_once("Vec")?;
-    (n_prefix.len() == 2).then_some(())?;
-    let split = n_prefix.split_at(1);
+    let (_vec, n_suffix) = s.split_once("Vec")?;
+    (n_suffix.len() == 2).then_some(())?;
+    let split = n_suffix.split_at(1);
     Some(split)
 }
 
@@ -291,7 +291,7 @@ impl TryFrom<&syn::Type> for Type {
                         },
                         other => {
                             // Check for vec
-                            if let Some((n, prefix)) = split_as_vec(other) {
+                            if let Some((n, suffix)) = split_as_vec(other) {
                                 let elements = match n {
                                     "2" => 2,
                                     "3" => 3,
@@ -305,15 +305,15 @@ impl TryFrom<&syn::Type> for Type {
                                     }
                                     .fail()?,
                                 };
-                                let scalar_ty = match prefix {
+                                let scalar_ty = match suffix {
                                     "i" => ScalarType::I32,
                                     "u" => ScalarType::U32,
                                     "f" => ScalarType::F32,
                                     "b" => ScalarType::Bool,
-                                    other_prefix => UnsupportedSnafu {
+                                    other_suffix => UnsupportedSnafu {
                                         span: ident.span(),
                                         note: format!(
-                                            "Unsupported vector type '{other}'. `{other_prefix}` \
+                                            "Unsupported vector type '{other}'. `{other_suffix}` \
                                              must be one of i, u, f or b"
                                         ),
                                     }

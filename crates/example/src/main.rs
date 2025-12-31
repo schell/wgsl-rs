@@ -96,10 +96,11 @@ pub mod matrix_example {
         vec4f(0.0, 0.0, 0.0, 1.0),
     );
 
-    // 3x3 matrix constant
+    // 3x3 2D rotation matrix (30 degrees)
+    // cos(30°) ≈ 0.866, sin(30°) = 0.5
     const ROTATION_2D: Mat3f = mat3x3f(
-        vec3f(1.0, 0.0, 0.0),
-        vec3f(0.0, 1.0, 0.0),
+        vec3f(0.866, 0.5, 0.0),
+        vec3f(-0.5, 0.866, 0.0),
         vec3f(0.0, 0.0, 1.0),
     );
 

@@ -2399,7 +2399,7 @@ pub struct EnumVariant {
 pub struct ItemEnum {
     pub enum_token: Token![enum],
     pub ident: Ident,
-    pub brace_token: syn::token::Brace,
+    pub _brace_token: syn::token::Brace,
     pub variants: Vec<EnumVariant>,
 }
 
@@ -2504,7 +2504,7 @@ impl TryFrom<&syn::ItemEnum> for ItemEnum {
         Ok(ItemEnum {
             enum_token: *enum_token,
             ident: ident.clone(),
-            brace_token: *brace_token,
+            _brace_token: *brace_token,
             variants: parsed_variants,
         })
     }

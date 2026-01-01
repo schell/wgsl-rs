@@ -1366,7 +1366,7 @@ impl GenerateCode for ItemEnum {
         let ItemEnum {
             enum_token,
             ident: enum_ident,
-            brace_token: _,
+            _brace_token: _,
             variants,
         } = self;
 

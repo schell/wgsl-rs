@@ -1361,6 +1361,49 @@ impl GenerateCode for ItemImpl {
     }
 }
 
+impl GenerateCode for ItemEnum {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let ItemEnum {
+            enum_token,
+            ident: enum_ident,
+            _brace_token: _,
+            variants,
+        } = self;
+
+        let mut current_discriminant: u32 = 0;
+
+        for variant in variants {
+            // If explicit discriminant, use it; otherwise use current value
+            let value = if let Some((_, lit_int)) = &variant.discriminant {
+                let val = lit_int
+                    .base10_parse::<u32>()
+                    // This may silently swallow an error if the literal isn't a u32, but
+                    // that case is unreachable because enums defined within a `#[wgsl]` module
+                    // must be `#[repr(u32)]`, so Rust would catch this before we get here.
+                    .unwrap_or(current_discriminant);
+                current_discriminant = val;
+                val
+            } else {
+                current_discriminant
+            };
+
+            // Generate: const EnumName_VariantName: u32 = Nu;
+            code.write_str(enum_token.span(), "const");
+            code.space();
+            enum_ident.write_code(code);
+            code.write_str(variant.ident.span(), "_");
+            variant.ident.write_code(code);
+            code.write_str(variant.ident.span(), ": u32 = ");
+            code.write_str(variant.ident.span(), &format!("{value}u"));
+            code.write_str(variant.ident.span(), ";");
+            code.newline();
+
+            // Increment for next variant
+            current_discriminant += 1;
+        }
+    }
+}
+
 impl GenerateCode for Item {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
@@ -1377,6 +1420,7 @@ impl GenerateCode for Item {
             }
             Item::Struct(item_struct) => item_struct.write_code(code),
             Item::Impl(item_impl) => item_impl.write_code(code),
+            Item::Enum(item_enum) => item_enum.write_code(code),
         }
     }
 }

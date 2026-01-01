@@ -167,6 +167,19 @@ pub mod impl_example {
     }
 }
 
+/// Limited support for enums.
+#[wgsl]
+pub mod enum_example {
+
+    /// Analytical lighting types.
+    #[repr(u32)]
+    pub enum LightType {
+        Directional,
+        Spot,
+        Point,
+    }
+}
+
 fn validate_and_print_source(source: &str) {
     println!("raw source:\n\n{source}\n\n");
 
@@ -516,6 +529,11 @@ pub fn main() {
     {
         // impl_example - demonstrates struct impl blocks with explicit receiver syntax
         let source = impl_example::WGSL_MODULE.wgsl_source().join("\n");
+        validate_and_print_source(&source);
+    }
+    {
+        // enum_example
+        let source = enum_example::WGSL_MODULE.wgsl_source().join("\n");
         validate_and_print_source(&source);
     }
 

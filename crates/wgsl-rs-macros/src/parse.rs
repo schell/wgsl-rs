@@ -2364,6 +2364,152 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
     }
 }
 
+/// A single variant of an enum.
+///
+/// Only unit variants are supported (no tuple or struct variants).
+pub struct EnumVariant {
+    pub ident: Ident,
+    /// Optional explicit discriminant value, e.g., `First = 5`.
+    pub discriminant: Option<(Token![=], syn::LitInt)>,
+}
+
+/// An enum declaration.
+///
+/// Only unit-variant enums with `#[repr(u32)]` are supported.
+/// Each variant becomes a `const` in WGSL with the enum name as prefix.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[repr(u32)]
+/// pub enum State {
+///     Idle,
+///     Running,
+///     Stopped = 10,
+/// }
+/// ```
+///
+/// Becomes in WGSL:
+///
+/// ```wgsl
+/// const State_Idle: u32 = 0u;
+/// const State_Running: u32 = 1u;
+/// const State_Stopped: u32 = 10u;
+/// ```
+pub struct ItemEnum {
+    pub enum_token: Token![enum],
+    pub ident: Ident,
+    pub brace_token: syn::token::Brace,
+    pub variants: Vec<EnumVariant>,
+}
+
+impl TryFrom<&syn::ItemEnum> for ItemEnum {
+    type Error = Error;
+
+    fn try_from(value: &syn::ItemEnum) -> Result<Self, Self::Error> {
+        let syn::ItemEnum {
+            attrs,
+            vis,
+            enum_token,
+            ident,
+            generics,
+            brace_token,
+            variants,
+        } = value;
+
+        // Check visibility
+        snafu::ensure!(
+            matches!(vis, syn::Visibility::Public(_)),
+            VisibilitySnafu {
+                span: enum_token.span(),
+                item: "Enums"
+            }
+        );
+
+        // Reject generics
+        if !generics.params.is_empty() {
+            return UnsupportedSnafu {
+                span: generics.span(),
+                note: "generic enums are not supported in WGSL",
+            }
+            .fail();
+        }
+
+        // Check for #[repr(u32)] attribute
+        let has_repr_u32 = attrs.iter().any(|attr| {
+            if attr.path().is_ident("repr")
+                && let Ok(inner) = attr.parse_args::<syn::Ident>()
+            {
+                return inner == "u32";
+            }
+            false
+        });
+
+        if !has_repr_u32 {
+            return UnsupportedSnafu {
+                span: enum_token.span(),
+                note: "enums must have #[repr(u32)] attribute for WGSL compatibility",
+            }
+            .fail();
+        }
+
+        // Parse variants
+        let mut parsed_variants = Vec::new();
+        for variant in variants {
+            // Reject tuple and struct variants
+            match &variant.fields {
+                syn::Fields::Unit => {}
+                syn::Fields::Unnamed(fields) => {
+                    return UnsupportedSnafu {
+                        span: fields.span(),
+                        note: "tuple variants are not supported in WGSL enums, only unit variants",
+                    }
+                    .fail();
+                }
+                syn::Fields::Named(fields) => {
+                    return UnsupportedSnafu {
+                        span: fields.span(),
+                        note: "struct variants are not supported in WGSL enums, only unit variants",
+                    }
+                    .fail();
+                }
+            }
+
+            // Parse discriminant if present
+            let discriminant = if let Some((eq, expr)) = &variant.discriminant {
+                // Only support integer literals
+                match expr {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(lit_int),
+                        ..
+                    }) => Some((*eq, lit_int.clone())),
+                    _ => {
+                        return UnsupportedSnafu {
+                            span: expr.span(),
+                            note: "only integer literal discriminants are supported in WGSL enums",
+                        }
+                        .fail();
+                    }
+                }
+            } else {
+                None
+            };
+
+            parsed_variants.push(EnumVariant {
+                ident: variant.ident.clone(),
+                discriminant,
+            });
+        }
+
+        Ok(ItemEnum {
+            enum_token: *enum_token,
+            ident: ident.clone(),
+            brace_token: *brace_token,
+            variants: parsed_variants,
+        })
+    }
+}
+
 /// An item that can appear inside an impl block.
 ///
 /// Currently supports functions and constants.
@@ -2510,6 +2656,7 @@ pub enum Item {
     Use(ItemUse),
     Struct(ItemStruct),
     Impl(ItemImpl),
+    Enum(ItemEnum),
 }
 
 impl TryFrom<&syn::Item> for Item {
@@ -2552,6 +2699,7 @@ impl TryFrom<&syn::Item> for Item {
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
             syn::Item::Impl(item_impl) => Ok(Item::Impl(ItemImpl::try_from(item_impl)?)),
+            syn::Item::Enum(item_enum) => Ok(Item::Enum(ItemEnum::try_from(item_enum)?)),
             _ => UnsupportedSnafu {
                 span: value.span(),
                 note: format!(
@@ -3152,5 +3300,284 @@ mod test {
             "Expected 'fn Light_get' in WGSL output, got: {}",
             wgsl
         );
+    }
+
+    // Enum parsing and code generation tests
+    #[test]
+    fn parse_enum_basic() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum State {
+                Idle,
+                Running,
+                Stopped,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Enum(item_enum) => {
+                assert_eq!("State", item_enum.ident.to_string());
+                assert_eq!(3, item_enum.variants.len());
+                assert_eq!("Idle", item_enum.variants[0].ident.to_string());
+                assert_eq!("Running", item_enum.variants[1].ident.to_string());
+                assert_eq!("Stopped", item_enum.variants[2].ident.to_string());
+            }
+            _ => panic!("Expected Item::Enum"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_with_explicit_discriminants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum Priority {
+                Low = 1,
+                Medium = 5,
+                High = 10,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Enum(item_enum) => {
+                assert_eq!(3, item_enum.variants.len());
+                assert!(item_enum.variants[0].discriminant.is_some());
+                assert!(item_enum.variants[1].discriminant.is_some());
+                assert!(item_enum.variants[2].discriminant.is_some());
+                let (_, lit) = item_enum.variants[0].discriminant.as_ref().unwrap();
+                assert_eq!("1", lit.to_string());
+            }
+            _ => panic!("Expected Item::Enum"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_mixed_discriminants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum Mixed {
+                A,
+                B = 10,
+                C,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Enum(item_enum) => {
+                assert!(item_enum.variants[0].discriminant.is_none());
+                assert!(item_enum.variants[1].discriminant.is_some());
+                assert!(item_enum.variants[2].discriminant.is_none());
+            }
+            _ => panic!("Expected Item::Enum"),
+        }
+    }
+
+    #[test]
+    fn enum_rejects_missing_repr() {
+        let item: syn::Item = syn::parse_quote! {
+            pub enum NoRepr {
+                A,
+                B,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("repr(u32)"),
+            "Expected error about repr(u32), got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn enum_rejects_wrong_repr() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(i32)]
+            pub enum WrongRepr {
+                A,
+                B,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("repr(u32)"),
+            "Expected error about repr(u32), got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn enum_rejects_tuple_variants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum WithTuple {
+                A,
+                B(u32),
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("tuple variants"),
+            "Expected error about tuple variants, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn enum_rejects_struct_variants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum WithStruct {
+                A,
+                B { x: u32 },
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("struct variants"),
+            "Expected error about struct variants, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn enum_rejects_generics() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum Generic<T> {
+                A,
+                B,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("generic"),
+            "Expected error about generics, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn enum_rejects_non_public() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            enum Private {
+                A,
+                B,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("public"),
+            "Expected error about visibility, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn enum_generates_wgsl_constants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum State {
+                Idle,
+                Running,
+                Stopped,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const State_Idle: u32 = 0u;"),
+            "Expected 'const State_Idle: u32 = 0u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const State_Running: u32 = 1u;"),
+            "Expected 'const State_Running: u32 = 1u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const State_Stopped: u32 = 2u;"),
+            "Expected 'const State_Stopped: u32 = 2u;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn enum_generates_wgsl_with_explicit_discriminants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum Priority {
+                Low = 1,
+                Medium = 5,
+                High = 10,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const Priority_Low: u32 = 1u;"),
+            "Expected 'const Priority_Low: u32 = 1u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Priority_Medium: u32 = 5u;"),
+            "Expected 'const Priority_Medium: u32 = 5u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Priority_High: u32 = 10u;"),
+            "Expected 'const Priority_High: u32 = 10u;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn enum_generates_wgsl_with_mixed_discriminants() {
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum Mixed {
+                A,
+                B = 10,
+                C,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const Mixed_A: u32 = 0u;"),
+            "Expected 'const Mixed_A: u32 = 0u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Mixed_B: u32 = 10u;"),
+            "Expected 'const Mixed_B: u32 = 10u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Mixed_C: u32 = 11u;"),
+            "Expected 'const Mixed_C: u32 = 11u;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn enum_variant_usage_via_type_path() {
+        // This test verifies that EnumName::Variant works via the existing TypePath
+        // mechanism
+        let expr: syn::Expr = syn::parse_quote! { State::Running };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert_eq!(wgsl, "State_Running");
     }
 }

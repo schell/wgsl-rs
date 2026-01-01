@@ -37,3 +37,15 @@ cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
 - **Naming**: PascalCase types, snake_case functions/modules, SCREAMING_SNAKE_CASE constants
 - **Patterns**: `TryFrom` for AST conversions, traits per WGSL builtin, macros for repetitive impls
 - **Spans**: Preserve `proc_macro2::Span` on all parsed types for error mapping back to Rust source
+
+## DEVLOG.md file
+
+The [DEVLOG](DEVLOG.md) is a set of long-lived development notes.
+It is a very informal change-log that also contains thoughts about this library's purpose, requirements, and challenges.
+
+## SESSION.md file
+
+An ephemeral session file is maintained at SESSION.md, which you can use as scratch space for your editing session.
+This file is not checked into git and should be used to persist context between editing sessions.
+Think of this file as a mini DEVLOG.md, and when the session has ended and goals have been accomplished,
+update the [DEVLOG](DEVLOG.md) with a brief, one line summary of the session, then remove the SESSION.md file.

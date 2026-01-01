@@ -1370,13 +1370,16 @@ impl GenerateCode for ItemEnum {
             variants,
         } = self;
 
-        let mut current_discriminant: u64 = 0;
+        let mut current_discriminant: u32 = 0;
 
         for variant in variants {
             // If explicit discriminant, use it; otherwise use current value
             let value = if let Some((_, lit_int)) = &variant.discriminant {
                 let val = lit_int
-                    .base10_parse::<u64>()
+                    .base10_parse::<u32>()
+                    // This may silently swallow an error if the literal isn't a u32, but
+                    // that case is unreachable because enums defined within a `#[wgsl]` module
+                    // must be `#[repr(u32)]`, so Rust would catch this before we get here.
                     .unwrap_or(current_discriminant);
                 current_discriminant = val;
                 val

@@ -174,9 +174,16 @@ pub mod enum_example {
     /// Analytical lighting types.
     #[repr(u32)]
     pub enum LightType {
-        Directional,
-        Spot,
-        Point,
+        Directional = 1337,
+        Spot = 420,
+        Point = 666,
+    }
+
+    #[repr(u32)]
+    pub enum Holidays {
+        // Syntax error!
+        // Halloween = -23,
+        AprilFoolsDay,
     }
 }
 

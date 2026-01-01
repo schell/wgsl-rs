@@ -1,7 +1,11 @@
 # wgsl-rs
 
-**wgsl-rs** lets you write a subset of Rust code and automatically generate WGSL shaders and `wgpu` runtime linkage. With
-`wgsl-rs`, you can run your code on the CPU in Rust, and use the generated WGSL on the GPU.
+With **wgsl-rs** you write a subset of Rust code and it automatically generates WGSL shaders and `wgpu` runtime linkage. 
+Rust code written this way is fully operational (it can be run on the CPU) while the transpiled WGSL is isomorphic and 
+should generate the same results on the GPU. 
+
+In short, with `wgsl-rs`, you can unit test and run your code on the CPU in Rust, and use the generated WGSL on the GPU,
+while sharing the same type definitions between the two.
 
 Procedural macros are provided by the [`wgsl-rs-macros`](./crates/wgsl-rs-macros) crate.
 

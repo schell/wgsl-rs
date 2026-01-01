@@ -2402,9 +2402,9 @@ pub enum ImplItem {
 /// }
 /// ```
 pub struct ItemImpl {
-    pub impl_token: Token![impl],
+    pub _impl_token: Token![impl],
     pub self_ty: Ident,
-    pub brace_token: syn::token::Brace,
+    pub _brace_token: syn::token::Brace,
     pub items: Vec<ImplItem>,
 }
 
@@ -2492,9 +2492,9 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         }
 
         Ok(ItemImpl {
-            impl_token: *impl_token,
+            _impl_token: *impl_token,
             self_ty: self_ty_ident,
-            brace_token: *brace_token,
+            _brace_token: *brace_token,
             items: parsed_items,
         })
     }

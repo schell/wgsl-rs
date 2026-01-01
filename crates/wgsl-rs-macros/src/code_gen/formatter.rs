@@ -1281,9 +1281,9 @@ impl GenerateCode for ItemMod {
 impl GenerateCode for ItemImpl {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemImpl {
-            impl_token: _,
+            _impl_token: _,
             self_ty,
-            brace_token: _,
+            _brace_token: _,
             items,
         } = self;
 

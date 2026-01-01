@@ -683,6 +683,15 @@ pub enum Expr {
         dot_token: Token![.],
         field: Ident,
     },
+    /// A type-qualified path like `Light::CONSTANT`.
+    ///
+    /// Used for accessing associated constants defined in impl blocks.
+    /// In WGSL output, this becomes `Light_CONSTANT`.
+    TypePath {
+        ty: Ident,
+        colon2_token: Token![::],
+        member: Ident,
+    },
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -702,11 +711,41 @@ impl TryFrom<&syn::Expr> for Expr {
                 path,
             }) => {
                 util::some_is_unsupported(qself.as_ref(), "QSelf is unsupported")?;
-                let ident = path.get_ident().context(UnsupportedSnafu {
-                    span: path.span(),
-                    note: format!("Expected an identifier, saw '{}'", path.into_token_stream()),
-                })?;
-                Self::Ident(ident.clone())
+
+                if let Some(ident) = path.get_ident() {
+                    // Simple identifier: `foo`
+                    Self::Ident(ident.clone())
+                } else if path.segments.len() == 2 {
+                    // Type::member path: `Light::CONSTANT`
+                    let ty = path.segments[0].ident.clone();
+                    let member = path.segments[1].ident.clone();
+
+                    // Check no generics on segments
+                    for seg in &path.segments {
+                        if !matches!(seg.arguments, syn::PathArguments::None) {
+                            return UnsupportedSnafu {
+                                span: seg.arguments.span(),
+                                note: "generic arguments in type paths are not supported",
+                            }
+                            .fail();
+                        }
+                    }
+
+                    Self::TypePath {
+                        ty,
+                        colon2_token: Token![::](path.segments[0].ident.span()),
+                        member,
+                    }
+                } else {
+                    return UnsupportedSnafu {
+                        span: path.span(),
+                        note: format!(
+                            "only simple identifiers or Type::member paths are supported, saw '{}'",
+                            path.into_token_stream()
+                        ),
+                    }
+                    .fail();
+                }
             }
             syn::Expr::Paren(syn::ExprParen {
                 attrs: _,
@@ -1815,6 +1854,60 @@ impl TryFrom<&syn::ItemConst> for ItemConst {
     }
 }
 
+impl ItemConst {
+    /// Convert an impl item constant to an ItemConst.
+    ///
+    /// This is similar to `TryFrom<&syn::ItemConst>` but handles the slightly
+    /// different structure of `syn::ImplItemConst`.
+    pub fn try_from_impl_const(value: &syn::ImplItemConst) -> Result<Self, Error> {
+        let syn::ImplItemConst {
+            attrs: _,
+            vis,
+            defaultness,
+            const_token,
+            ident,
+            generics,
+            colon_token,
+            ty,
+            eq_token,
+            expr,
+            semi_token,
+        } = value;
+
+        util::some_is_unsupported(
+            defaultness.as_ref(),
+            "default constants are not supported in WGSL",
+        )?;
+
+        snafu::ensure!(
+            matches!(vis, syn::Visibility::Public(_)),
+            VisibilitySnafu {
+                span: const_token.span(),
+                item: "Impl constants"
+            }
+        );
+
+        // Reject generics on constants
+        if !generics.params.is_empty() {
+            return UnsupportedSnafu {
+                span: generics.span(),
+                note: "generic constants are not supported in WGSL",
+            }
+            .fail();
+        }
+
+        Ok(ItemConst {
+            const_token: *const_token,
+            ident: ident.clone(),
+            colon_token: *colon_token,
+            ty: Type::try_from(ty)?,
+            eq_token: *eq_token,
+            expr: Expr::try_from(expr)?,
+            semi_token: *semi_token,
+        })
+    }
+}
+
 /// A WGSL "module".
 pub struct ItemMod {
     #[allow(dead_code)]
@@ -2271,15 +2364,28 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
     }
 }
 
+/// An item that can appear inside an impl block.
+///
+/// Currently supports functions and constants.
+pub enum ImplItem {
+    /// A function defined in an impl block.
+    Fn(ItemFn),
+    /// A constant defined in an impl block.
+    Const(ItemConst),
+}
+
 /// An impl block for a struct.
 ///
-/// Methods are just regular functions with explicit receiver parameters - no
-/// `self` support. They get name-mangled to `StructName_method` in WGSL output.
+/// Methods and constants are name-mangled to `StructName_member` in WGSL
+/// output. Methods are just regular functions with explicit receiver parameters
+/// - no `self` support.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// impl Light {
+///     pub const DEFAULT_INTENSITY: f32 = 1.0;
+///
 ///     pub fn attenuate(light: Light, distance: f32) -> f32 {
 ///         light.intensity / (distance * distance)
 ///     }
@@ -2289,6 +2395,8 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
 /// Becomes in WGSL:
 ///
 /// ```wgsl
+/// const Light_DEFAULT_INTENSITY: f32 = 1.0;
+///
 /// fn Light_attenuate(light: Light, distance: f32) -> f32 {
 ///     return light.intensity / (distance * distance);
 /// }
@@ -2297,7 +2405,7 @@ pub struct ItemImpl {
     pub impl_token: Token![impl],
     pub self_ty: Ident,
     pub brace_token: syn::token::Brace,
-    pub items: Vec<ItemFn>,
+    pub items: Vec<ImplItem>,
 }
 
 impl TryFrom<&syn::ItemImpl> for ItemImpl {
@@ -2361,18 +2469,22 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             }
         };
 
-        // Parse methods
+        // Parse impl items (functions and constants)
         let mut parsed_items = Vec::new();
         for item in items {
             match item {
                 syn::ImplItem::Fn(impl_fn) => {
                     let item_fn = ItemFn::try_from_impl_fn(impl_fn)?;
-                    parsed_items.push(item_fn);
+                    parsed_items.push(ImplItem::Fn(item_fn));
+                }
+                syn::ImplItem::Const(impl_const) => {
+                    let item_const = ItemConst::try_from_impl_const(impl_const)?;
+                    parsed_items.push(ImplItem::Const(item_const));
                 }
                 other => {
                     return UnsupportedSnafu {
                         span: other.span(),
-                        note: "only functions are supported in impl blocks",
+                        note: "only functions and constants are supported in impl blocks",
                     }
                     .fail();
                 }
@@ -2767,7 +2879,12 @@ mod test {
             Item::Impl(item_impl) => {
                 assert_eq!("Light", item_impl.self_ty.to_string());
                 assert_eq!(1, item_impl.items.len());
-                assert_eq!("attenuate", item_impl.items[0].ident.to_string());
+                match &item_impl.items[0] {
+                    ImplItem::Fn(item_fn) => {
+                        assert_eq!("attenuate", item_fn.ident.to_string());
+                    }
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
             }
             _ => panic!("Expected Item::Impl"),
         }
@@ -2792,8 +2909,69 @@ mod test {
             Item::Impl(item_impl) => {
                 assert_eq!("Point", item_impl.self_ty.to_string());
                 assert_eq!(2, item_impl.items.len());
-                assert_eq!("new", item_impl.items[0].ident.to_string());
-                assert_eq!("distance", item_impl.items[1].ident.to_string());
+                match &item_impl.items[0] {
+                    ImplItem::Fn(item_fn) => assert_eq!("new", item_fn.ident.to_string()),
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
+                match &item_impl.items[1] {
+                    ImplItem::Fn(item_fn) => assert_eq!("distance", item_fn.ident.to_string()),
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
+    fn parse_impl_block_with_const() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub const INTENSITY: f32 = 1.0;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(item_impl) => {
+                assert_eq!("Light", item_impl.self_ty.to_string());
+                assert_eq!(1, item_impl.items.len());
+                match &item_impl.items[0] {
+                    ImplItem::Const(item_const) => {
+                        assert_eq!("INTENSITY", item_const.ident.to_string());
+                    }
+                    _ => panic!("Expected ImplItem::Const"),
+                }
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
+    fn parse_impl_block_with_const_and_fn() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub const DEFAULT_INTENSITY: f32 = 1.0;
+                pub fn attenuate(light: Light, distance: f32) -> f32 {
+                    light.intensity / (distance * distance)
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(item_impl) => {
+                assert_eq!("Light", item_impl.self_ty.to_string());
+                assert_eq!(2, item_impl.items.len());
+                match &item_impl.items[0] {
+                    ImplItem::Const(item_const) => {
+                        assert_eq!("DEFAULT_INTENSITY", item_const.ident.to_string());
+                    }
+                    _ => panic!("Expected ImplItem::Const"),
+                }
+                match &item_impl.items[1] {
+                    ImplItem::Fn(item_fn) => {
+                        assert_eq!("attenuate", item_fn.ident.to_string());
+                    }
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
             }
             _ => panic!("Expected Item::Impl"),
         }
@@ -2913,5 +3091,66 @@ mod test {
         let expr = Expr::try_from(&expr).unwrap();
         let wgsl = expr.to_wgsl();
         assert_eq!(wgsl, "Light_attenuate(light, 2.0)");
+    }
+
+    // Type::CONSTANT path parsing tests
+    #[test]
+    fn parse_type_path_expr() {
+        let expr: syn::Expr = syn::parse_quote! { Light::INTENSITY };
+        let expr = Expr::try_from(&expr).unwrap();
+        match expr {
+            Expr::TypePath { ty, member, .. } => {
+                assert_eq!(ty.to_string(), "Light");
+                assert_eq!(member.to_string(), "INTENSITY");
+            }
+            _ => panic!("Expected Expr::TypePath"),
+        }
+    }
+
+    #[test]
+    fn type_path_generates_mangled_name() {
+        let expr: syn::Expr = syn::parse_quote! { Light::INTENSITY };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert_eq!(wgsl, "Light_INTENSITY");
+    }
+
+    // WGSL code generation tests for impl constants
+    #[test]
+    fn impl_const_generates_mangled_name() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub const INTENSITY: f32 = 1.0;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const Light_INTENSITY"),
+            "Expected 'const Light_INTENSITY' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn impl_const_and_fn_generate_mangled_names() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub const DEFAULT: f32 = 1.0;
+                pub fn get(l: Light) -> f32 { l.x }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const Light_DEFAULT"),
+            "Expected 'const Light_DEFAULT' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("fn Light_get"),
+            "Expected 'fn Light_get' in WGSL output, got: {}",
+            wgsl
+        );
     }
 }

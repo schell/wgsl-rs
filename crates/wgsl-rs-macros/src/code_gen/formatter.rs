@@ -759,6 +759,16 @@ impl GenerateCode for Expr {
                     },
                 );
             }
+            Expr::TypePath {
+                ty,
+                colon2_token,
+                member,
+            } => {
+                // Light::CONSTANT -> Light_CONSTANT
+                ty.write_code(code);
+                code.write_str(colon2_token.span(), "_");
+                member.write_code(code);
+            }
         }
     }
 }
@@ -1277,40 +1287,76 @@ impl GenerateCode for ItemImpl {
             items,
         } = self;
 
-        // Write each method as a standalone function with mangled name:
-        // StructName_method
-        for item_fn in items {
-            let ItemFn {
-                fn_attrs,
-                fn_token,
-                ident,
-                paren_token,
-                inputs,
-                return_type,
-                block,
-            } = item_fn;
+        // Write each item with mangled name: StructName_member
+        for item in items {
+            match item {
+                ImplItem::Const(item_const) => {
+                    let ItemConst {
+                        const_token,
+                        ident,
+                        colon_token,
+                        ty,
+                        eq_token,
+                        expr,
+                        semi_token,
+                    } = item_const;
 
-            if !code.last_line_is_empty() {
-                code.newline();
+                    if !code.last_line_is_empty() {
+                        code.newline();
+                    }
+
+                    code.write_atom(const_token);
+                    code.space();
+
+                    // Write mangled name: StructName_CONSTANT
+                    self_ty.write_code(code);
+                    code.write_str(ident.span(), "_");
+                    ident.write_code(code);
+
+                    code.write_atom(colon_token);
+                    code.space();
+                    ty.write_code(code);
+                    code.space();
+                    code.write_atom(eq_token);
+                    code.space();
+                    expr.write_code(code);
+                    code.write_atom(semi_token);
+                    code.newline();
+                }
+                ImplItem::Fn(item_fn) => {
+                    let ItemFn {
+                        fn_attrs,
+                        fn_token,
+                        ident,
+                        paren_token,
+                        inputs,
+                        return_type,
+                        block,
+                    } = item_fn;
+
+                    if !code.last_line_is_empty() {
+                        code.newline();
+                    }
+
+                    fn_attrs.write_code(code);
+                    code.write_atom(fn_token);
+                    code.space();
+
+                    // Write mangled name: StructName_method
+                    self_ty.write_code(code);
+                    code.write_str(ident.span(), "_");
+                    ident.write_code(code);
+
+                    code.write_surrounded(
+                        Surrounded::parens().with_span(paren_token.span.join()),
+                        |code| code.write_sequenced(Sequenced::comma(), inputs.iter()),
+                    );
+                    code.space();
+
+                    return_type.write_code(code);
+                    block.write_code(code);
+                }
             }
-
-            fn_attrs.write_code(code);
-            code.write_atom(fn_token);
-            code.space();
-
-            // Write mangled name: StructName_method
-            self_ty.write_code(code);
-            code.write_str(ident.span(), "_");
-            ident.write_code(code);
-
-            code.write_surrounded(
-                Surrounded::parens().with_span(paren_token.span.join()),
-                |code| code.write_sequenced(Sequenced::comma(), inputs.iter()),
-            );
-            code.space();
-
-            return_type.write_code(code);
-            block.write_code(code);
         }
     }
 }

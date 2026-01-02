@@ -279,11 +279,12 @@ pub mod binary_ops_example {
     }
 }
 
-fn validate_and_print_source(source: &str) {
+fn validate_and_print_source(module: &wgsl_rs::Module) {
+    let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
 
     // Parse the source into a Module.
-    let module: naga::Module = naga::front::wgsl::parse_str(source).unwrap();
+    let module: naga::Module = naga::front::wgsl::parse_str(&source).unwrap();
 
     // Validate the module.
     // Validation can be made less restrictive by changing the ValidationFlags.
@@ -297,7 +298,7 @@ fn validate_and_print_source(source: &str) {
 
     let info = match result {
         Err(e) => {
-            panic!("{}", e.emit_to_string(source));
+            panic!("{}", e.emit_to_string(&source));
         }
         Ok(i) => i,
     };
@@ -605,41 +606,13 @@ fn build_linkage() {
 }
 
 pub fn main() {
-    {
-        // hello_triangle
-        let source = hello_triangle::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
-    {
-        // structs
-        let source = structs::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
-    {
-        // compute_shader
-        let source = compute_shader::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
-    {
-        // matrix_example
-        let source = matrix_example::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
-    {
-        // impl_example - demonstrates struct impl blocks with explicit receiver syntax
-        let source = impl_example::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
-    {
-        // enum_example
-        let source = enum_example::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
-    {
-        // binary_ops_example - demonstrates all binary operators
-        let source = binary_ops_example::WGSL_MODULE.wgsl_source().join("\n");
-        validate_and_print_source(&source);
-    }
+    validate_and_print_source(&hello_triangle::WGSL_MODULE);
+    validate_and_print_source(&structs::WGSL_MODULE);
+    validate_and_print_source(&compute_shader::WGSL_MODULE);
+    validate_and_print_source(&matrix_example::WGSL_MODULE);
+    validate_and_print_source(&impl_example::WGSL_MODULE);
+    validate_and_print_source(&enum_example::WGSL_MODULE);
+    validate_and_print_source(&binary_ops_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

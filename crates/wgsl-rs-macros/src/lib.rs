@@ -179,7 +179,9 @@ fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<()
                     loc,
                 )
             });
-            let error = errors.next().expect("there is at least one");
+            let error = errors
+                .next()
+                .unwrap_or_else(|| syn::Error::new(proc_macro2::Span::call_site(), format!("{e}")));
             return Err(errors.fold(error, |mut error, e| {
                 error.combine(e);
                 error

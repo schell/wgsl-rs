@@ -512,12 +512,31 @@ impl std::fmt::Display for Lit {
     }
 }
 
-/// A binary operator: `+` `-` `*`.
+/// A binary operator: `+` `-` `*` `/` `%` `==` `!=` `<` `<=` `>` `>=` `&&` `||`
+/// `&` `|` `^` `<<` `>>`.
 pub enum BinOp {
+    // Arithmetic
     Add(Token![+]),
     Sub(Token![-]),
     Mul(Token![*]),
     Div(Token![/]),
+    Rem(Token![%]),
+    // Comparison
+    Eq(Token![==]),
+    Ne(Token![!=]),
+    Lt(Token![<]),
+    Le(Token![<=]),
+    Gt(Token![>]),
+    Ge(Token![>=]),
+    // Logical
+    And(Token![&&]),
+    Or(Token![||]),
+    // Bitwise
+    BitAnd(Token![&]),
+    BitOr(Token![|]),
+    BitXor(Token![^]),
+    Shl(Token![<<]),
+    Shr(Token![>>]),
 }
 
 impl TryFrom<&syn::BinOp> for BinOp {
@@ -525,10 +544,29 @@ impl TryFrom<&syn::BinOp> for BinOp {
 
     fn try_from(value: &syn::BinOp) -> Result<Self, Self::Error> {
         Ok(match value {
+            // Arithmetic
             syn::BinOp::Add(t) => Self::Add(*t),
             syn::BinOp::Sub(t) => Self::Sub(*t),
             syn::BinOp::Mul(t) => Self::Mul(*t),
             syn::BinOp::Div(t) => Self::Div(*t),
+            syn::BinOp::Rem(t) => Self::Rem(*t),
+            // Comparison
+            syn::BinOp::Eq(t) => Self::Eq(*t),
+            syn::BinOp::Ne(t) => Self::Ne(*t),
+            syn::BinOp::Lt(t) => Self::Lt(*t),
+            syn::BinOp::Le(t) => Self::Le(*t),
+            syn::BinOp::Gt(t) => Self::Gt(*t),
+            syn::BinOp::Ge(t) => Self::Ge(*t),
+            // Logical
+            syn::BinOp::And(t) => Self::And(*t),
+            syn::BinOp::Or(t) => Self::Or(*t),
+            // Bitwise
+            syn::BinOp::BitAnd(t) => Self::BitAnd(*t),
+            syn::BinOp::BitOr(t) => Self::BitOr(*t),
+            syn::BinOp::BitXor(t) => Self::BitXor(*t),
+            syn::BinOp::Shl(t) => Self::Shl(*t),
+            syn::BinOp::Shr(t) => Self::Shr(*t),
+            // Compound assignments are not supported (yet)
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!(
@@ -544,10 +582,28 @@ impl TryFrom<&syn::BinOp> for BinOp {
 impl std::fmt::Display for BinOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            // Arithmetic
             BinOp::Add(_) => "+",
             BinOp::Sub(_) => "-",
             BinOp::Mul(_) => "*",
             BinOp::Div(_) => "/",
+            BinOp::Rem(_) => "%",
+            // Comparison
+            BinOp::Eq(_) => "==",
+            BinOp::Ne(_) => "!=",
+            BinOp::Lt(_) => "<",
+            BinOp::Le(_) => "<=",
+            BinOp::Gt(_) => ">",
+            BinOp::Ge(_) => ">=",
+            // Logical
+            BinOp::And(_) => "&&",
+            BinOp::Or(_) => "||",
+            // Bitwise
+            BinOp::BitAnd(_) => "&",
+            BinOp::BitOr(_) => "|",
+            BinOp::BitXor(_) => "^",
+            BinOp::Shl(_) => "<<",
+            BinOp::Shr(_) => ">>",
         };
         f.write_str(s)
     }
@@ -2757,6 +2813,108 @@ mod test {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
         assert_eq!("333+TIMES", &expr.to_wgsl());
+    }
+
+    // Remainder operator
+    #[test]
+    fn parse_expr_binary_rem() {
+        let expr: syn::Expr = syn::parse_str("10 % 3").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("10%3", &expr.to_wgsl());
+    }
+
+    // Comparison operators
+    #[test]
+    fn parse_expr_binary_eq() {
+        let expr: syn::Expr = syn::parse_str("a == b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a==b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_ne() {
+        let expr: syn::Expr = syn::parse_str("a != b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a!=b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_lt() {
+        let expr: syn::Expr = syn::parse_str("a < b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a<b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_le() {
+        let expr: syn::Expr = syn::parse_str("a <= b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a<=b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_gt() {
+        let expr: syn::Expr = syn::parse_str("a > b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a>b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_ge() {
+        let expr: syn::Expr = syn::parse_str("a >= b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a>=b", &expr.to_wgsl());
+    }
+
+    // Logical operators
+    #[test]
+    fn parse_expr_binary_and() {
+        let expr: syn::Expr = syn::parse_str("a && b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a&&b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_or() {
+        let expr: syn::Expr = syn::parse_str("a || b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a||b", &expr.to_wgsl());
+    }
+
+    // Bitwise operators
+    #[test]
+    fn parse_expr_binary_bitand() {
+        let expr: syn::Expr = syn::parse_str("a & b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a&b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_bitor() {
+        let expr: syn::Expr = syn::parse_str("a | b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a|b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_bitxor() {
+        let expr: syn::Expr = syn::parse_str("a ^ b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a^b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_shl() {
+        let expr: syn::Expr = syn::parse_str("a << b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a<<b", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_expr_binary_shr() {
+        let expr: syn::Expr = syn::parse_str("a >> b").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("a>>b", &expr.to_wgsl());
     }
 
     #[test]

@@ -354,12 +354,12 @@ pub mod while_loop_example {
     pub fn test_simple_while() -> Vec4f {
         let mut i = 0;
         let mut sum = 0.0;
-        
+
         while i < 10 {
             sum += f32(i);
             i += 1;
         }
-        
+
         vec4f(sum / 10.0, 0.0, 0.0, 1.0)
     }
 
@@ -367,12 +367,12 @@ pub mod while_loop_example {
     pub fn test_while_with_condition() -> Vec4f {
         let mut value = 1.0;
         let mut iterations = 0;
-        
+
         while value < 100.0 && iterations < 20 {
             value *= 1.5;
             iterations += 1;
         }
-        
+
         vec4f(value / 100.0, f32(iterations) / 20.0, 0.0, 1.0)
     }
 
@@ -381,7 +381,7 @@ pub mod while_loop_example {
         let mut i = 0;
         let mut j = 0;
         let mut count = 0;
-        
+
         while i < 5 {
             j = 0;
             while j < 5 {
@@ -390,7 +390,7 @@ pub mod while_loop_example {
             }
             i += 1;
         }
-        
+
         vec4f(f32(count) / 25.0, 0.0, 0.0, 1.0)
     }
 }

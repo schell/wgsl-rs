@@ -504,7 +504,21 @@ impl GenerateCode for proc_macro2::TokenStream {
 
 impl GenerateCode for syn::LitInt {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
-        code.write_atom(self);
+        // Convert Rust integer literal suffixes to WGSL suffixes:
+        // - u32, usize -> u
+        // - i32, isize -> i
+        // - no suffix -> no suffix (abstract int)
+        let base = self.base10_digits();
+        let suffix = self.suffix();
+        let wgsl_suffix = match suffix {
+            "u32" | "usize" => "u",
+            "i32" | "isize" => "i",
+            "" => "",
+            // For any other suffix, just pass it through
+            other => other,
+        };
+        let wgsl_lit = format!("{}{}", base, wgsl_suffix);
+        code.write_str(self.span(), &wgsl_lit);
     }
 }
 
@@ -513,7 +527,8 @@ impl GenerateCode for Lit {
         match self {
             Lit::Bool(lit_bool) => code.write_atom(lit_bool),
             Lit::Float(lit_float) => code.write_atom(lit_float),
-            Lit::Int(lit_int) => code.write_atom(lit_int),
+            // Use the GenerateCode impl for LitInt to handle suffix conversion
+            Lit::Int(lit_int) => lit_int.write_code(code),
         }
     }
 }
@@ -582,10 +597,28 @@ impl GenerateCode for Type {
 impl GenerateCode for BinOp {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
+            // Arithmetic
             BinOp::Add(t) => code.write_atom(t),
             BinOp::Sub(t) => code.write_atom(t),
             BinOp::Mul(t) => code.write_atom(t),
             BinOp::Div(t) => code.write_atom(t),
+            BinOp::Rem(t) => code.write_atom(t),
+            // Comparison
+            BinOp::Eq(t) => code.write_atom(t),
+            BinOp::Ne(t) => code.write_atom(t),
+            BinOp::Lt(t) => code.write_atom(t),
+            BinOp::Le(t) => code.write_atom(t),
+            BinOp::Gt(t) => code.write_atom(t),
+            BinOp::Ge(t) => code.write_atom(t),
+            // Logical
+            BinOp::And(t) => code.write_atom(t),
+            BinOp::Or(t) => code.write_atom(t),
+            // Bitwise
+            BinOp::BitAnd(t) => code.write_atom(t),
+            BinOp::BitOr(t) => code.write_atom(t),
+            BinOp::BitXor(t) => code.write_atom(t),
+            BinOp::Shl(t) => code.write_atom(t),
+            BinOp::Shr(t) => code.write_atom(t),
         }
     }
 }

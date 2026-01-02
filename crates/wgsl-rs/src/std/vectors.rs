@@ -246,3 +246,182 @@ impl_from_vec!(glam::UVec4, Vec4u, u32, 4);
 impl_from_vec!(glam::BVec2, Vec2b, bool, 2);
 impl_from_vec!(glam::BVec3, Vec3b, bool, 3);
 impl_from_vec!(glam::BVec4, Vec4b, bool, 4);
+
+/// Implements vector-vector binary operations (Add, Sub, Mul, Div).
+macro_rules! impl_vec_ops {
+    ($vec:ty) => {
+        impl std::ops::Add for $vec {
+            type Output = $vec;
+            fn add(self, rhs: $vec) -> Self::Output {
+                Self {
+                    inner: self.inner + rhs.inner,
+                }
+            }
+        }
+
+        impl std::ops::Sub for $vec {
+            type Output = $vec;
+            fn sub(self, rhs: $vec) -> Self::Output {
+                Self {
+                    inner: self.inner - rhs.inner,
+                }
+            }
+        }
+
+        impl std::ops::Mul for $vec {
+            type Output = $vec;
+            fn mul(self, rhs: $vec) -> Self::Output {
+                Self {
+                    inner: self.inner * rhs.inner,
+                }
+            }
+        }
+
+        impl std::ops::Div for $vec {
+            type Output = $vec;
+            fn div(self, rhs: $vec) -> Self::Output {
+                Self {
+                    inner: self.inner / rhs.inner,
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-vector Rem operation (only for f32 vectors).
+macro_rules! impl_vec_rem {
+    ($vec:ty) => {
+        impl std::ops::Rem for $vec {
+            type Output = $vec;
+            fn rem(self, rhs: $vec) -> Self::Output {
+                Self {
+                    inner: self.inner % rhs.inner,
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-scalar and scalar-vector binary operations (Add, Sub, Mul,
+/// Div).
+macro_rules! impl_vec_scalar_ops {
+    ($vec:ty, $scalar:ty) => {
+        // Vec op Scalar
+        impl std::ops::Add<$scalar> for $vec {
+            type Output = $vec;
+            fn add(self, rhs: $scalar) -> Self::Output {
+                Self {
+                    inner: self.inner + rhs,
+                }
+            }
+        }
+
+        impl std::ops::Sub<$scalar> for $vec {
+            type Output = $vec;
+            fn sub(self, rhs: $scalar) -> Self::Output {
+                Self {
+                    inner: self.inner - rhs,
+                }
+            }
+        }
+
+        impl std::ops::Mul<$scalar> for $vec {
+            type Output = $vec;
+            fn mul(self, rhs: $scalar) -> Self::Output {
+                Self {
+                    inner: self.inner * rhs,
+                }
+            }
+        }
+
+        impl std::ops::Div<$scalar> for $vec {
+            type Output = $vec;
+            fn div(self, rhs: $scalar) -> Self::Output {
+                Self {
+                    inner: self.inner / rhs,
+                }
+            }
+        }
+
+        // Scalar op Vec
+        impl std::ops::Add<$vec> for $scalar {
+            type Output = $vec;
+            fn add(self, rhs: $vec) -> Self::Output {
+                <$vec>::from(self + rhs.inner)
+            }
+        }
+
+        impl std::ops::Sub<$vec> for $scalar {
+            type Output = $vec;
+            fn sub(self, rhs: $vec) -> Self::Output {
+                <$vec>::from(self - rhs.inner)
+            }
+        }
+
+        impl std::ops::Mul<$vec> for $scalar {
+            type Output = $vec;
+            fn mul(self, rhs: $vec) -> Self::Output {
+                <$vec>::from(self * rhs.inner)
+            }
+        }
+
+        impl std::ops::Div<$vec> for $scalar {
+            type Output = $vec;
+            fn div(self, rhs: $vec) -> Self::Output {
+                <$vec>::from(self / rhs.inner)
+            }
+        }
+    };
+}
+
+/// Implements vector-scalar and scalar-vector Rem operation (only for f32
+/// vectors).
+macro_rules! impl_vec_scalar_rem {
+    ($vec:ty, $scalar:ty) => {
+        impl std::ops::Rem<$scalar> for $vec {
+            type Output = $vec;
+            fn rem(self, rhs: $scalar) -> Self::Output {
+                Self {
+                    inner: self.inner % rhs,
+                }
+            }
+        }
+
+        impl std::ops::Rem<$vec> for $scalar {
+            type Output = $vec;
+            fn rem(self, rhs: $vec) -> Self::Output {
+                <$vec>::from(self % rhs.inner)
+            }
+        }
+    };
+}
+
+// Float vectors: Add, Sub, Mul, Div, Rem
+impl_vec_ops!(Vec2f);
+impl_vec_ops!(Vec3f);
+impl_vec_ops!(Vec4f);
+impl_vec_rem!(Vec2f);
+impl_vec_rem!(Vec3f);
+impl_vec_rem!(Vec4f);
+impl_vec_scalar_ops!(Vec2f, f32);
+impl_vec_scalar_ops!(Vec3f, f32);
+impl_vec_scalar_ops!(Vec4f, f32);
+impl_vec_scalar_rem!(Vec2f, f32);
+impl_vec_scalar_rem!(Vec3f, f32);
+impl_vec_scalar_rem!(Vec4f, f32);
+
+// Signed integer vectors: Add, Sub, Mul, Div (no Rem)
+impl_vec_ops!(Vec2i);
+impl_vec_ops!(Vec3i);
+impl_vec_ops!(Vec4i);
+impl_vec_scalar_ops!(Vec2i, i32);
+impl_vec_scalar_ops!(Vec3i, i32);
+impl_vec_scalar_ops!(Vec4i, i32);
+
+// Unsigned integer vectors: Add, Sub, Mul, Div (no Rem)
+impl_vec_ops!(Vec2u);
+impl_vec_ops!(Vec3u);
+impl_vec_ops!(Vec4u);
+impl_vec_scalar_ops!(Vec2u, u32);
+impl_vec_scalar_ops!(Vec3u, u32);
+impl_vec_scalar_ops!(Vec4u, u32);

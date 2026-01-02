@@ -402,14 +402,8 @@ pub mod while_loop_example {
 #[allow(dead_code, unused_assignments)]
 pub mod loop_example {
     //! Demonstrates WGSL loop statements (infinite loops).
-    //!
-    //! **IMPORTANT**: These examples are for WGSL code generation demonstration only.
-    //! They contain infinite loops without break/continue statements (which are not yet
-    //! supported in wgsl-rs). In real WGSL shaders, you MUST include break conditions
-    //! to prevent GPU hangs or driver timeouts.
-    //!
-    //! These functions are marked with #[allow(dead_code)] and are never actually
-    //! executed by the example application.
+    //! Note: These are demonstration examples only. Real WGSL shaders
+    //! require break conditions to prevent GPU hangs.
 
     use wgsl_rs::std::*;
 

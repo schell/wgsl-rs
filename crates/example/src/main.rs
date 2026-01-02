@@ -344,6 +344,57 @@ pub mod assignment_example {
     }
 }
 
+/// Demonstrates while loop support.
+#[wgsl]
+#[allow(dead_code, unused_assignments)]
+pub mod while_loop_example {
+    use wgsl_rs::std::*;
+
+    #[fragment]
+    pub fn test_simple_while() -> Vec4f {
+        let mut i = 0;
+        let mut sum = 0.0;
+        
+        while i < 10 {
+            sum += f32(i);
+            i += 1;
+        }
+        
+        vec4f(sum / 10.0, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_while_with_condition() -> Vec4f {
+        let mut value = 1.0;
+        let mut iterations = 0;
+        
+        while value < 100.0 && iterations < 20 {
+            value *= 1.5;
+            iterations += 1;
+        }
+        
+        vec4f(value / 100.0, f32(iterations) / 20.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_nested_while() -> Vec4f {
+        let mut i = 0;
+        let mut j = 0;
+        let mut count = 0;
+        
+        while i < 5 {
+            j = 0;
+            while j < 5 {
+                count += 1;
+                j += 1;
+            }
+            i += 1;
+        }
+        
+        vec4f(f32(count) / 25.0, 0.0, 0.0, 1.0)
+    }
+}
+
 fn validate_and_print_source(module: &wgsl_rs::Module) {
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
@@ -679,6 +730,7 @@ pub fn main() {
     validate_and_print_source(&enum_example::WGSL_MODULE);
     validate_and_print_source(&binary_ops_example::WGSL_MODULE);
     validate_and_print_source(&assignment_example::WGSL_MODULE);
+    validate_and_print_source(&while_loop_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

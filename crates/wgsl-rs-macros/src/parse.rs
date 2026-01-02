@@ -1263,6 +1263,14 @@ pub enum Stmt {
         condition: Expr,
         body: Block,
     },
+    /// Loop statement: `loop { ... }`
+    ///
+    /// WGSL-specific infinite loop without a condition.
+    /// Note: `continuing { ... }` blocks are not supported.
+    Loop {
+        loop_token: Token![loop],
+        body: Block,
+    },
     Expr {
         expr: Expr,
         /// If `None`, this expression is a return statement
@@ -1343,6 +1351,22 @@ impl TryFrom<&syn::Stmt> for Stmt {
                         Ok(Stmt::While {
                             while_token: *while_token,
                             condition: Expr::try_from(cond.as_ref())?,
+                            body: Block::try_from(body)?,
+                        })
+                    }
+                    // Loop statement: `loop { ... }`
+                    syn::Expr::Loop(syn::ExprLoop {
+                        attrs: _,
+                        label,
+                        loop_token,
+                        body,
+                    }) => {
+                        util::some_is_unsupported(
+                            label.as_ref(),
+                            "Labels on loops are not supported in WGSL",
+                        )?;
+                        Ok(Stmt::Loop {
+                            loop_token: *loop_token,
                             body: Block::try_from(body)?,
                         })
                     }
@@ -3942,5 +3966,113 @@ mod test {
         let expr = Expr::try_from(&expr).unwrap();
         let wgsl = expr.to_wgsl();
         assert_eq!(wgsl, "State_Running");
+    }
+
+    // Loop statement tests
+    #[test]
+    fn parse_loop_basic() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            loop {
+                let x: u32 = 1u;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        match stmt {
+            Stmt::Loop { .. } => {}
+            _ => panic!("Expected Stmt::Loop"),
+        }
+    }
+
+    #[test]
+    fn parse_loop_with_assignments() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            loop {
+                let mut x: u32 = 0u;
+                x = x + 1u;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        match stmt {
+            Stmt::Loop { .. } => {}
+            _ => panic!("Expected Stmt::Loop"),
+        }
+    }
+
+    #[test]
+    fn parse_loop_nested() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            loop {
+                loop {
+                    let x: u32 = 0u;
+                }
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        match stmt {
+            Stmt::Loop { .. } => {}
+            _ => panic!("Expected Stmt::Loop"),
+        }
+    }
+
+    #[test]
+    fn parse_loop_rejects_label() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            'outer: loop {
+                let x: u32 = 0u;
+            }
+        };
+        let result = Stmt::try_from(&stmt);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("Labels on loops are not supported"),
+            "Expected error about labels, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn loop_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            loop {
+                let x: u32 = 1u;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.starts_with("loop"),
+            "Expected 'loop' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("let x"),
+            "Expected 'let x' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn loop_generates_wgsl_in_function() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn test_loop() {
+                let mut x: u32 = 0u;
+                loop {
+                    x += 1u;
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("loop {"),
+            "Expected 'loop {{' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("x += 1u;"),
+            "Expected 'x += 1u;' in WGSL output, got: {}",
+            wgsl
+        );
     }
 }

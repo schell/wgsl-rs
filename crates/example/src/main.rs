@@ -279,6 +279,71 @@ pub mod binary_ops_example {
     }
 }
 
+/// Demonstrates assignment statements including:
+/// - Simple assignment: x = expr;
+/// - Compound assignment: x += expr;, x -= expr;, etc.
+/// - Field assignment: obj.field = expr;
+/// - Array element assignment: arr[i] = expr;
+#[wgsl]
+#[allow(dead_code, unused_assignments)]
+pub mod assignment_example {
+    use wgsl_rs::std::*;
+
+    pub struct Point {
+        pub x: f32,
+        pub y: f32,
+    }
+
+    #[fragment]
+    #[allow(clippy::assign_op_pattern)]
+    pub fn test_simple_assignment() -> Vec4f {
+        let mut value = 0.0;
+        value = 1.0;
+        value = value + 1.0; // intentionally not using += to test simple assignment
+        value = value + 1.0; // value is now 3.0 and is read below
+        vec4f(value, value, value, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_compound_assignment() -> Vec4f {
+        let mut x = 10.0;
+        x += 5.0; // 15.0
+        x -= 3.0; // 12.0
+        x *= 2.0; // 24.0
+        x /= 4.0; // 6.0
+        vec4f(x, x, x, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_bitwise_compound_assignment() -> Vec4f {
+        let mut bits: u32 = 0xFF00;
+        bits &= 0x0F0F;
+        bits |= 0x00F0;
+        bits ^= 0x000F;
+        bits <<= 2u32;
+        bits >>= 1u32;
+        vec4f(f32(bits) / 65535.0, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_field_assignment() -> Vec4f {
+        let mut p = Point { x: 0.0, y: 0.0 };
+        p.x = 1.0;
+        p.y = 2.0;
+        vec4f(p.x, p.y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_array_assignment() -> Vec4f {
+        let mut arr: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+        arr[0] = 1.0;
+        arr[1] = 2.0;
+        arr[2] = 3.0;
+        arr[3] = 4.0;
+        vec4f(arr[0], arr[1], arr[2], arr[3])
+    }
+}
+
 fn validate_and_print_source(module: &wgsl_rs::Module) {
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
@@ -613,6 +678,7 @@ pub fn main() {
     validate_and_print_source(&impl_example::WGSL_MODULE);
     validate_and_print_source(&enum_example::WGSL_MODULE);
     validate_and_print_source(&binary_ops_example::WGSL_MODULE);
+    validate_and_print_source(&assignment_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

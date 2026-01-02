@@ -632,6 +632,23 @@ impl GenerateCode for UnOp {
     }
 }
 
+impl GenerateCode for CompoundOp {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        match self {
+            CompoundOp::AddAssign(t) => code.write_atom(t),
+            CompoundOp::SubAssign(t) => code.write_atom(t),
+            CompoundOp::MulAssign(t) => code.write_atom(t),
+            CompoundOp::DivAssign(t) => code.write_atom(t),
+            CompoundOp::RemAssign(t) => code.write_atom(t),
+            CompoundOp::BitAndAssign(t) => code.write_atom(t),
+            CompoundOp::BitOrAssign(t) => code.write_atom(t),
+            CompoundOp::BitXorAssign(t) => code.write_atom(t),
+            CompoundOp::ShlAssign(t) => code.write_atom(t),
+            CompoundOp::ShrAssign(t) => code.write_atom(t),
+        }
+    }
+}
+
 impl GenerateCode for FieldValue {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         self.member.write_code(code);
@@ -900,6 +917,32 @@ impl GenerateCode for Stmt {
         match self {
             Stmt::Local(local) => local.write_code(code),
             Stmt::Const(item_const) => item_const.as_ref().write_code(code),
+            Stmt::Assignment {
+                lhs,
+                eq_token,
+                rhs,
+                semi_token,
+            } => {
+                lhs.write_code(code);
+                code.space();
+                code.write_atom(eq_token);
+                code.space();
+                rhs.write_code(code);
+                code.write_atom(semi_token);
+            }
+            Stmt::CompoundAssignment {
+                lhs,
+                op,
+                rhs,
+                semi_token,
+            } => {
+                lhs.write_code(code);
+                code.space();
+                op.write_code(code);
+                code.space();
+                rhs.write_code(code);
+                code.write_atom(semi_token);
+            }
             Stmt::Expr { expr, semi_token } => {
                 if let Some(semi) = semi_token {
                     expr.write_code(code);

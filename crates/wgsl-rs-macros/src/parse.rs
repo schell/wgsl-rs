@@ -609,6 +609,66 @@ impl std::fmt::Display for BinOp {
     }
 }
 
+/// A compound assignment operator: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`,
+/// `^=`, `<<=`, `>>=`
+#[allow(clippy::enum_variant_names)]
+pub enum CompoundOp {
+    AddAssign(Token![+=]),
+    SubAssign(Token![-=]),
+    MulAssign(Token![*=]),
+    DivAssign(Token![/=]),
+    RemAssign(Token![%=]),
+    BitAndAssign(Token![&=]),
+    BitOrAssign(Token![|=]),
+    BitXorAssign(Token![^=]),
+    ShlAssign(Token![<<=]),
+    ShrAssign(Token![>>=]),
+}
+
+impl TryFrom<&syn::BinOp> for CompoundOp {
+    type Error = Error;
+
+    fn try_from(value: &syn::BinOp) -> Result<Self, Self::Error> {
+        Ok(match value {
+            syn::BinOp::AddAssign(t) => Self::AddAssign(*t),
+            syn::BinOp::SubAssign(t) => Self::SubAssign(*t),
+            syn::BinOp::MulAssign(t) => Self::MulAssign(*t),
+            syn::BinOp::DivAssign(t) => Self::DivAssign(*t),
+            syn::BinOp::RemAssign(t) => Self::RemAssign(*t),
+            syn::BinOp::BitAndAssign(t) => Self::BitAndAssign(*t),
+            syn::BinOp::BitOrAssign(t) => Self::BitOrAssign(*t),
+            syn::BinOp::BitXorAssign(t) => Self::BitXorAssign(*t),
+            syn::BinOp::ShlAssign(t) => Self::ShlAssign(*t),
+            syn::BinOp::ShrAssign(t) => Self::ShrAssign(*t),
+            other => UnsupportedSnafu {
+                span: other.span(),
+                note: format!(
+                    "'{}' is not a compound assignment operator.",
+                    other.into_token_stream()
+                ),
+            }
+            .fail()?,
+        })
+    }
+}
+
+/// Returns true if the binary operator is a compound assignment operator.
+fn is_compound_assign_op(op: &syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::AddAssign(_)
+            | syn::BinOp::SubAssign(_)
+            | syn::BinOp::MulAssign(_)
+            | syn::BinOp::DivAssign(_)
+            | syn::BinOp::RemAssign(_)
+            | syn::BinOp::BitAndAssign(_)
+            | syn::BinOp::BitOrAssign(_)
+            | syn::BinOp::BitXorAssign(_)
+            | syn::BinOp::ShlAssign(_)
+            | syn::BinOp::ShrAssign(_)
+    )
+}
+
 /// A unary operator: "!" or "-"
 pub enum UnOp {
     Not(Token![!]),
@@ -1183,6 +1243,20 @@ impl TryFrom<&syn::Local> for Local {
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
+    /// Simple assignment: `lhs = rhs;`
+    Assignment {
+        lhs: Expr,
+        eq_token: Token![=],
+        rhs: Expr,
+        semi_token: Token![;],
+    },
+    /// Compound assignment: `lhs += rhs;`, `lhs -= rhs;`, etc.
+    CompoundAssignment {
+        lhs: Expr,
+        op: CompoundOp,
+        rhs: Expr,
+        semi_token: Token![;],
+    },
     Expr {
         expr: Expr,
         /// If `None`, this expression is a return statement
@@ -1206,10 +1280,52 @@ impl TryFrom<&syn::Stmt> for Stmt {
                 }
                 .fail(),
             },
-            syn::Stmt::Expr(expr, semi_token) => Ok(Stmt::Expr {
-                expr: Expr::try_from(expr)?,
-                semi_token: *semi_token,
-            }),
+            syn::Stmt::Expr(expr, semi_token) => {
+                // Check for assignment expressions
+                match expr {
+                    syn::Expr::Assign(syn::ExprAssign {
+                        attrs: _,
+                        left,
+                        eq_token,
+                        right,
+                    }) => {
+                        let semi_token = semi_token.ok_or_else(|| Error::Unsupported {
+                            span: expr.span(),
+                            note: "Assignment statements must end with a semicolon".to_string(),
+                        })?;
+                        Ok(Stmt::Assignment {
+                            lhs: Expr::try_from(left.as_ref())?,
+                            eq_token: *eq_token,
+                            rhs: Expr::try_from(right.as_ref())?,
+                            semi_token,
+                        })
+                    }
+                    // In syn 2.0, compound assignment like `x += y` is parsed as
+                    // Expr::Binary with BinOp being a compound assignment operator
+                    syn::Expr::Binary(syn::ExprBinary {
+                        attrs: _,
+                        left,
+                        op,
+                        right,
+                    }) if is_compound_assign_op(op) => {
+                        let semi_token = semi_token.ok_or_else(|| Error::Unsupported {
+                            span: expr.span(),
+                            note: "Compound assignment statements must end with a semicolon"
+                                .to_string(),
+                        })?;
+                        Ok(Stmt::CompoundAssignment {
+                            lhs: Expr::try_from(left.as_ref())?,
+                            op: CompoundOp::try_from(op)?,
+                            rhs: Expr::try_from(right.as_ref())?,
+                            semi_token,
+                        })
+                    }
+                    _ => Ok(Stmt::Expr {
+                        expr: Expr::try_from(expr)?,
+                        semi_token: *semi_token,
+                    }),
+                }
+            }
             _ => UnsupportedSnafu {
                 span: value.span(),
                 note: format!("Unsupported statement: '{}'", value.into_token_stream()),

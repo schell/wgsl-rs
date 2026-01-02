@@ -1257,6 +1257,12 @@ pub enum Stmt {
         rhs: Expr,
         semi_token: Token![;],
     },
+    /// While loop: `while condition { ... }`
+    While {
+        while_token: Token![while],
+        condition: Expr,
+        body: Block,
+    },
     Expr {
         expr: Expr,
         /// If `None`, this expression is a return statement
@@ -1318,6 +1324,24 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             op: CompoundOp::try_from(op)?,
                             rhs: Expr::try_from(right.as_ref())?,
                             semi_token,
+                        })
+                    }
+                    // While loop: `while condition { ... }`
+                    syn::Expr::While(syn::ExprWhile {
+                        attrs: _,
+                        label,
+                        while_token,
+                        cond,
+                        body,
+                    }) => {
+                        util::some_is_unsupported(
+                            label.as_ref(),
+                            "Labels on while loops are not supported in WGSL",
+                        )?;
+                        Ok(Stmt::While {
+                            while_token: *while_token,
+                            condition: Expr::try_from(cond.as_ref())?,
+                            body: Block::try_from(body)?,
                         })
                     }
                     _ => Ok(Stmt::Expr {

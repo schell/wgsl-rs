@@ -85,7 +85,6 @@ matrix!(
     [x_axis, y_axis, z_axis]
 );
 
-
 // Mat<4, 4, f32>
 matrix!(
     4,

@@ -943,6 +943,17 @@ impl GenerateCode for Stmt {
                 rhs.write_code(code);
                 code.write_atom(semi_token);
             }
+            Stmt::While {
+                while_token,
+                condition,
+                body,
+            } => {
+                code.write_atom(while_token);
+                code.space();
+                condition.write_code(code);
+                code.space();
+                body.write_code(code);
+            }
             Stmt::Expr { expr, semi_token } => {
                 if let Some(semi) = semi_token {
                     expr.write_code(code);

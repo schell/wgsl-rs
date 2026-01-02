@@ -113,15 +113,16 @@ pub mod matrix_example {
     }
 }
 
-/// Demonstrates struct impl blocks with explicit receiver syntax.
-///
-/// Methods and constants are defined in impl blocks.
-/// - Methods are called using `Type::method(receiver, args)` syntax
-/// - Constants are accessed using `Type::CONSTANT` syntax
-///
-/// Both translate to `Type_member` in WGSL output.
+
 #[wgsl]
 pub mod impl_example {
+    //! Demonstrates struct impl blocks with explicit receiver syntax.
+    //!
+    //! Methods and constants are defined in impl blocks.
+    //! - Methods are called using `Type::method(receiver, args)` syntax
+    //! - Constants are accessed using `Type::CONSTANT` syntax
+    //!
+    //! Both translate to `Type_member` in WGSL output.
     use wgsl_rs::std::*;
 
     pub struct Light {
@@ -167,9 +168,9 @@ pub mod impl_example {
     }
 }
 
-/// Limited support for enums.
 #[wgsl]
 pub mod enum_example {
+    //! Limited support for enums.
 
     /// Analytical lighting types.
     #[repr(u32)]
@@ -279,14 +280,15 @@ pub mod binary_ops_example {
     }
 }
 
-/// Demonstrates assignment statements including:
-/// - Simple assignment: x = expr;
-/// - Compound assignment: x += expr;, x -= expr;, etc.
-/// - Field assignment: obj.field = expr;
-/// - Array element assignment: arr[i] = expr;
+
 #[wgsl]
 #[allow(dead_code, unused_assignments)]
 pub mod assignment_example {
+    //! Demonstrates assignment statements including:
+    //! - Simple assignment: x = expr;
+    //! - Compound assignment: x += expr;, x -= expr;, etc.
+    //! - Field assignment: obj.field = expr;
+    //! - Array element assignment: arr[i] = expr;
     use wgsl_rs::std::*;
 
     pub struct Point {
@@ -392,6 +394,69 @@ pub mod while_loop_example {
         }
 
         vec4f(f32(count) / 25.0, 0.0, 0.0, 1.0)
+    }
+}
+
+
+#[wgsl]
+#[allow(dead_code)]
+pub mod if_example {
+    //! Demonstrates if statements including:
+    //! - Simple if
+    //! - if/else
+    //! - if/else if/else chains
+    //! - Nested if statements
+
+    use wgsl_rs::std::*;
+
+    #[fragment]
+    pub fn test_simple_if() -> Vec4f {
+        let mut result = 0.0;
+        if true {
+            result = 1.0;
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_if_else() -> Vec4f {
+        let mut result = 0.0;
+        if result < 1.0 {
+            result = 1.0;
+        } else {
+            result = 2.0;
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    #[allow(unused_assignments)]
+    pub fn test_if_else_if_else() -> Vec4f {
+        let x = 5;
+        let mut result = 0.0;
+        if x < 3 {
+            result = 1.0;
+        } else if x < 7 {
+            result = 2.0;
+        } else {
+            result = 3.0;
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_nested_if() -> Vec4f {
+        let x = 5;
+        let y = 10;
+        let mut result = 0.0;
+        if x > 0 {
+            if y > 5 {
+                result = 1.0;
+            } else {
+                result = 0.5;
+            }
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
     }
 }
 
@@ -731,6 +796,7 @@ pub fn main() {
     validate_and_print_source(&binary_ops_example::WGSL_MODULE);
     validate_and_print_source(&assignment_example::WGSL_MODULE);
     validate_and_print_source(&while_loop_example::WGSL_MODULE);
+    validate_and_print_source(&if_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

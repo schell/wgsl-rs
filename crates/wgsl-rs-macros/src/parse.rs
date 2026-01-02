@@ -1268,6 +1268,8 @@ pub enum Stmt {
         /// If `None`, this expression is a return statement
         semi_token: Option<Token![;]>,
     },
+    /// If statement (with optional else/else-if chains)
+    If(Box<StmtIf>),
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -1344,6 +1346,8 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             body: Block::try_from(body)?,
                         })
                     }
+                    // If statements are control flow statements in WGSL
+                    syn::Expr::If(expr_if) => Ok(Stmt::If(Box::new(StmtIf::try_from(expr_if)?))),
                     _ => Ok(Stmt::Expr {
                         expr: Expr::try_from(expr)?,
                         semi_token: *semi_token,
@@ -1376,6 +1380,67 @@ impl TryFrom<&syn::Block> for Block {
         Ok(Block {
             brace_token,
             stmt: stmts,
+        })
+    }
+}
+
+/// WGSL if statement.
+///
+/// Unlike Rust, WGSL `if` is a statement, not an expression.
+/// This means you cannot write `let x = if cond { a } else { b }` in WGSL.
+pub struct StmtIf {
+    pub if_token: Token![if],
+    pub condition: Box<Expr>,
+    pub then_block: Block,
+    pub else_branch: Option<ElseBranch>,
+}
+
+/// The else branch of an if statement.
+pub struct ElseBranch {
+    pub else_token: Token![else],
+    pub body: ElseBody,
+}
+
+/// The body of an else branch - either a block or another if statement.
+pub enum ElseBody {
+    Block(Block),
+    If(Box<StmtIf>),
+}
+
+impl TryFrom<&syn::ExprIf> for StmtIf {
+    type Error = Error;
+
+    fn try_from(value: &syn::ExprIf) -> Result<Self, Self::Error> {
+        let condition = Box::new(Expr::try_from(value.cond.as_ref())?);
+        let then_block = Block::try_from(&value.then_branch)?;
+
+        let else_branch = if let Some((else_token, else_expr)) = &value.else_branch {
+            let body = match else_expr.as_ref() {
+                syn::Expr::Block(syn::ExprBlock { block, .. }) => {
+                    ElseBody::Block(Block::try_from(block)?)
+                }
+                syn::Expr::If(else_if) => ElseBody::If(Box::new(StmtIf::try_from(else_if)?)),
+                other => {
+                    return UnsupportedSnafu {
+                        span: other.span(),
+                        note: "else branch must be a block or another if",
+                    }
+                    .fail();
+                }
+            };
+            Some(ElseBranch {
+                else_token: *else_token,
+                body,
+            })
+        } else {
+            None
+        };
+
+        Ok(StmtIf {
+            if_token: value.if_token,
+            condition,
+            then_block,
+            else_branch,
         })
     }
 }

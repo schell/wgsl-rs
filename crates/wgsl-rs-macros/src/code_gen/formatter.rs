@@ -968,6 +968,7 @@ impl GenerateCode for Stmt {
                     code.write_atom(&<syn::Token![;]>::default());
                 }
             }
+            Stmt::If(stmt_if) => stmt_if.write_code(code),
         }
     }
 }
@@ -980,6 +981,65 @@ impl GenerateCode for Block {
             code.write_sequenced(Sequenced::newlines(), stmts);
         });
         code.newline();
+    }
+}
+
+/// Helper to write a block for if statements, controlling trailing newline.
+///
+/// When `has_else` is true, we want `} else {` on the same line, so we
+/// collapse the trailing newline after the closing brace.
+fn write_block_for_if(block: &Block, code: &mut GeneratedWgslCode, has_else: bool) {
+    let brace_token = &block.brace_token;
+    let stmts = &block.stmt;
+    code.write_surrounded(Surrounded::block(brace_token.span.join()), |code| {
+        code.write_sequenced(Sequenced::newlines(), stmts);
+    });
+
+    if has_else {
+        // Don't add newline - we want "} else {" on same line
+        code.collapse_empty_trailing_line();
+        code.space();
+    } else {
+        code.newline();
+    }
+}
+
+impl GenerateCode for StmtIf {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        code.write_atom(&self.if_token);
+        code.space();
+        self.condition.write_code(code);
+        code.space();
+
+        // Write the then block, controlling newline based on else presence
+        write_block_for_if(&self.then_block, code, self.else_branch.is_some());
+
+        if let Some(else_branch) = &self.else_branch {
+            else_branch.write_code(code);
+        }
+    }
+}
+
+impl GenerateCode for ElseBranch {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        code.write_atom(&self.else_token);
+        code.space();
+        self.body.write_code(code);
+    }
+}
+
+impl GenerateCode for ElseBody {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        match self {
+            ElseBody::Block(block) => {
+                // Final else block - use normal block formatting with trailing newline
+                block.write_code(code);
+            }
+            ElseBody::If(if_stmt) => {
+                // else if - recursively write the if statement
+                if_stmt.write_code(code);
+            }
+        }
     }
 }
 

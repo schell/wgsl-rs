@@ -402,8 +402,14 @@ pub mod while_loop_example {
 #[allow(dead_code, unused_assignments)]
 pub mod loop_example {
     //! Demonstrates WGSL loop statements (infinite loops).
-    //! Note: break and continue statements are not yet supported in wgsl-rs.
-    //! In real WGSL shaders, you would use break/continue to exit loops.
+    //!
+    //! **IMPORTANT**: These examples are for WGSL code generation demonstration only.
+    //! They contain infinite loops without break/continue statements (which are not yet
+    //! supported in wgsl-rs). In real WGSL shaders, you MUST include break conditions
+    //! to prevent GPU hangs or driver timeouts.
+    //!
+    //! These functions are marked with #[allow(dead_code)] and are never actually
+    //! executed by the example application.
 
     use wgsl_rs::std::*;
 
@@ -415,7 +421,7 @@ pub mod loop_example {
         loop {
             sum += f32(counter);
             counter += 1;
-            // In real WGSL, you would add: if counter >= 10 { break; }
+            // REQUIRED in real WGSL: if counter >= 10 { break; }
         }
 
         vec4f(sum / 10.0, 0.0, 0.0, 1.0)
@@ -432,10 +438,10 @@ pub mod loop_example {
             loop {
                 result += 1.0;
                 j += 1;
-                // In real WGSL: if j >= 5 { break; }
+                // REQUIRED in real WGSL: if j >= 5 { break; }
             }
             i += 1;
-            // In real WGSL: if i >= 5 { break; }
+            // REQUIRED in real WGSL: if i >= 5 { break; }
         }
 
         vec4f(result / 25.0, 0.0, 0.0, 1.0)
@@ -449,7 +455,7 @@ pub mod loop_example {
         loop {
             value = value * 1.5;
             iterations += 1;
-            // In real WGSL: if value >= 100.0 || iterations >= 20 { break; }
+            // REQUIRED in real WGSL: if value >= 100.0 || iterations >= 20 { break; }
         }
 
         vec4f(value / 100.0, f32(iterations) / 20.0, 0.0, 1.0)

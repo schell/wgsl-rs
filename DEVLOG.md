@@ -132,3 +132,17 @@ code to simplify integration with wgpu applications:
 - Helper functions for creating pipeline states
 
 This feature adds `wgpu` as a dependency to `wgsl-rs`.
+
+### 2026-01-03: for-loop support and warnings with #[wgsl_allow]
+
+`for i in 0..n` transpiles to `for (var i = 0; i < n; i++)` and `for i in 0..=n` transpiles to `for (var i = 0; i <= n; i++)`.
+Nested loops work correctly.
+Only bounded ranges are supported (WGSL requires explicit bounds).
+
+For-loops with non-literal bounds (where the bounds cannot be verified at compile-time to be ascending)
+emit a compile error, since warnings can't be emitted (there's a hack to emit them as deprecations, but it's hacky).
+Use `#[wgsl_allow(non_literal_loop_bounds)]` on the containing function to suppress this error.
+The attribute must be on the for-loop statement. 
+
+#### Future improvements
+It would be nice to emit these warnings as `proc_macro::Diagnostic`s on nightly.

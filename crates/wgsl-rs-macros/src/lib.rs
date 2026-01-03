@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
+use syn::visit_mut::{self, VisitMut};
 
 #[cfg(feature = "validation")]
 use crate::code_gen::GeneratedWgslCode;
@@ -14,6 +15,35 @@ mod storage;
 mod swizzle;
 mod uniform;
 
+/// Visitor that strips `#[wgsl_allow(...)]` attributes from expressions.
+/// These attributes are used by wgsl-rs during parsing but should not appear
+/// in the emitted Rust code (since statement-level attributes require nightly).
+struct StripWgslAllowAttrs;
+
+impl VisitMut for StripWgslAllowAttrs {
+    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        // Strip wgsl_allow attributes from any expression that has them
+        strip_wgsl_allow_attrs(expr);
+        // Continue visiting nested expressions
+        visit_mut::visit_expr_mut(self, expr);
+    }
+}
+
+/// Strips `#[wgsl_allow(...)]` attributes from an expression.
+fn strip_wgsl_allow_attrs(expr: &mut syn::Expr) {
+    let attrs = match expr {
+        syn::Expr::ForLoop(e) => &mut e.attrs,
+        syn::Expr::While(e) => &mut e.attrs,
+        syn::Expr::Loop(e) => &mut e.attrs,
+        syn::Expr::If(e) => &mut e.attrs,
+        syn::Expr::Match(e) => &mut e.attrs,
+        syn::Expr::Block(e) => &mut e.attrs,
+        _ => return,
+    };
+
+    attrs.retain(|attr| !attr.path().is_ident("wgsl_allow"));
+}
+
 #[derive(Default)]
 struct Attrs {
     /// Present if the `wgsl` macro is of the form:
@@ -23,6 +53,7 @@ struct Attrs {
     crate_path: Option<syn::Path>,
 
     /// If true, skip all validation (compile-time and test-time).
+    ///
     /// Set via `#[wgsl(skip_validation)]`.
     skip_validation: bool,
 }
@@ -250,7 +281,6 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 
     let code = code_gen::generate_wgsl(&wgsl_module);
     let source_lines = code.source_lines();
-
     let module_fragment = gen_wgsl_module(&crate_path, &imports, &source_lines);
 
     // Generate validation test for modules with imports (unless skip_validation is
@@ -301,6 +331,12 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
             return WgslValidateSnafu { input_mod, error }.fail();
         }
     }
+
+    // Strip #[wgsl_allow] attributes before emitting Rust code.
+    // These attributes are used during parsing but must be removed from the output
+    // because statement-level attributes require the unstable stmt_expr_attributes
+    // feature.
+    StripWgslAllowAttrs.visit_item_mod_mut(&mut input_mod);
 
     Ok(input_mod.into_token_stream().into())
 }
@@ -384,6 +420,39 @@ pub fn workgroup_size(_attr: TokenStream, token_stream: TokenStream) -> TokenStr
 /// This is stripped during Rust compilation but preserved in WGSL output.
 #[proc_macro_attribute]
 pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    token_stream
+}
+
+/// Suppresses specific wgsl-rs warnings/errors on annotated statements.
+///
+/// Use this attribute on for-loops with non-literal bounds to acknowledge
+/// that the loop may fail at runtime if the range is descending (WGSL only
+/// supports ascending iteration).
+///
+/// # Available Warnings
+///
+/// - `non_literal_loop_bounds`: Suppresses the error for for-loops with
+///   non-literal bounds (e.g., `for i in 0..n` where `n` is a variable).
+///
+/// # Example
+///
+/// ```ignore
+/// pub fn sum_to_n(n: i32) -> i32 {
+///     let mut total = 0;
+///     #[wgsl_allow(non_literal_loop_bounds)]
+///     for i in 0..n {
+///         total += i;
+///     }
+///     total
+/// }
+/// ```
+///
+/// # Note
+///
+/// This attribute is stripped from the emitted Rust code by the `#[wgsl]`
+/// macro, allowing statement-level attributes to work on stable Rust.
+#[proc_macro_attribute]
+pub fn wgsl_allow(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
 }
 

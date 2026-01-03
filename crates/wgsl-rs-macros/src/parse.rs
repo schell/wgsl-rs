@@ -166,11 +166,6 @@ pub(crate) fn emit_warning(warning: &Warning) {
     }
 }
 
-#[cfg(not(nightly))]
-pub(crate) fn emit_warning(_warning: &Warning) {
-    // No-op on stable - caller should return Error::SuppressableWarning
-}
-
 pub(crate) mod util {
     use super::*;
 

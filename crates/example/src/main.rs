@@ -280,7 +280,6 @@ pub mod binary_ops_example {
 
 
 #[wgsl]
-#[allow(dead_code)]
 pub mod for_loop_example {
     //! Demonstrates for-loop support with range expressions.
     //! - Exclusive ranges: `for i in 0..10 { ... }`

@@ -1273,6 +1273,7 @@ pub enum Stmt {
     /// Break statement: `break;`
     Break {
         break_token: Token![break],
+        semi_token: Token![;],
     },
 }
 
@@ -1357,18 +1358,23 @@ impl TryFrom<&syn::Stmt> for Stmt {
                         attrs: _,
                         break_token,
                         label,
-                        expr,
+                        expr: break_expr,
                     }) => {
                         util::some_is_unsupported(
                             label.as_ref(),
                             "Labels on break statements are not supported in WGSL",
                         )?;
                         util::some_is_unsupported(
-                            expr.as_ref(),
+                            break_expr.as_ref(),
                             "Break with values is not supported in WGSL",
                         )?;
+                        let semi_token = semi_token.ok_or_else(|| Error::Unsupported {
+                            span: expr.span(),
+                            note: "Break statements must end with a semicolon".to_string(),
+                        })?;
                         Ok(Stmt::Break {
                             break_token: *break_token,
+                            semi_token,
                         })
                     }
                     _ => Ok(Stmt::Expr {

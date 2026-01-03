@@ -360,7 +360,7 @@ pub mod for_loop_example {
 }
 
 #[wgsl]
-#[expect(unused_assignments, reason = "demostration")]
+#[expect(unused_assignments, reason = "demonstration")]
 pub mod assignment_example {
     //! Demonstrates assignment statements including:
     //! - Simple assignment: x = expr;
@@ -375,7 +375,7 @@ pub mod assignment_example {
     }
 
     #[fragment]
-    #[expect(clippy::assign_op_pattern, reason = "demostration")]
+    #[expect(clippy::assign_op_pattern, reason = "demonstration")]
     pub fn test_simple_assignment() -> Vec4f {
         let mut value = 0.0;
         value = 1.0;

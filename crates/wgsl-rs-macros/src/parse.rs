@@ -1278,6 +1278,11 @@ pub enum Stmt {
     },
     /// If statement (with optional else/else-if chains)
     If(Box<StmtIf>),
+    /// Break statement: `break;`
+    Break {
+        break_token: Token![break],
+        semi_token: Token![;],
+    },
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -1372,6 +1377,30 @@ impl TryFrom<&syn::Stmt> for Stmt {
                     }
                     // If statements are control flow statements in WGSL
                     syn::Expr::If(expr_if) => Ok(Stmt::If(Box::new(StmtIf::try_from(expr_if)?))),
+                    // Break statement: `break;`
+                    syn::Expr::Break(syn::ExprBreak {
+                        attrs: _,
+                        break_token,
+                        label,
+                        expr: break_expr,
+                    }) => {
+                        util::some_is_unsupported(
+                            label.as_ref(),
+                            "Labels on break statements are not supported in WGSL",
+                        )?;
+                        util::some_is_unsupported(
+                            break_expr.as_ref(),
+                            "Break with values is not supported in WGSL",
+                        )?;
+                        let semi_token = semi_token.ok_or_else(|| Error::Unsupported {
+                            span: expr.span(),
+                            note: "Break statements must end with a semicolon".to_string(),
+                        })?;
+                        Ok(Stmt::Break {
+                            break_token: *break_token,
+                            semi_token,
+                        })
+                    }
                     _ => Ok(Stmt::Expr {
                         expr: Expr::try_from(expr)?,
                         semi_token: *semi_token,

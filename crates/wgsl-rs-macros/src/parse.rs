@@ -141,7 +141,7 @@ pub struct Warning {
 /// On nightly, this uses `proc_macro::Diagnostic` to emit a proper compiler
 /// warning. If called outside of a proc macro context (e.g., in unit tests),
 /// this is a no-op.
-pub(crate) fn emit_warning(warning: &Warning) {
+pub(crate) fn emit_warning(_warning: &Warning) {
     #[cfg(nightly)]
     {
         use proc_macro::{Diagnostic, Level};
@@ -150,13 +150,13 @@ pub(crate) fn emit_warning(warning: &Warning) {
         // In unit tests, attempting to use it will panic. We catch this and silently
         // ignore the warning in test contexts.
         let result = std::panic::catch_unwind(|| {
-            let span = warning
+            let span = _warning
                 .spans
                 .first()
                 .map(|s| s.unwrap())
                 .unwrap_or_else(proc_macro::Span::call_site);
 
-            Diagnostic::spanned(span, Level::Warning, format!("{}", warning.name))
+            Diagnostic::spanned(span, Level::Warning, format!("{}", _warning.name))
                 .help("Add #[wgsl_allow(non_literal_loop_bounds)] to suppress this warning")
                 .emit();
         });

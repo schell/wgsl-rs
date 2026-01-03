@@ -140,8 +140,6 @@ Nested loops work correctly.
 Only bounded ranges are supported (WGSL requires explicit bounds).
 
 For-loops with non-literal bounds (where the bounds cannot be verified at compile-time to be ascending)
-emit a compile error, since warnings can't be emitted (there's a hack to emit them as deprecations, but it's hacky).
-Use `#[wgsl_allow(non_literal_loop_bounds)]` on the for-loop to suppress this error.
-
-#### Future improvements
-It would be nice to emit these warnings as `proc_macro::Diagnostic`s on nightly.
+emit a compile error on stable, since warnings can't be emitted (there's a hack to emit them as deprecations, but it's hacky).
+On nightly it emits a warning.
+Use `#[wgsl_allow(non_literal_loop_bounds)]` on the for-loop to suppress these errors/warnings.

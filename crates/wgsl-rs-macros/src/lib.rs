@@ -1,3 +1,5 @@
+#![cfg_attr(nightly, feature(proc_macro_diagnostic))]
+
 use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;

@@ -136,6 +136,39 @@ pub struct Warning {
     pub spans: Vec<Span>,
 }
 
+/// Emits a warning diagnostic on nightly, no-op on stable.
+///
+/// On nightly, this uses `proc_macro::Diagnostic` to emit a proper compiler
+/// warning. If called outside of a proc macro context (e.g., in unit tests),
+/// this is a no-op.
+#[cfg(nightly)]
+pub(crate) fn emit_warning(warning: &Warning) {
+    use proc_macro::{Diagnostic, Level};
+
+    // proc_macro::Span is only available during actual proc macro expansion.
+    // In unit tests, attempting to use it will panic. We catch this and silently
+    // ignore the warning in test contexts.
+    let result = std::panic::catch_unwind(|| {
+        let span = warning
+            .spans
+            .first()
+            .map(|s| s.unwrap())
+            .unwrap_or_else(proc_macro::Span::call_site);
+
+        Diagnostic::spanned(span, Level::Warning, format!("{}", warning.name))
+            .help("Add #[wgsl_allow(non_literal_loop_bounds)] to suppress this warning")
+            .emit();
+    });
+
+    // Silently ignore if we're not in a proc macro context (e.g., unit tests)
+    let _ = result;
+}
+
+#[cfg(not(nightly))]
+pub(crate) fn emit_warning(_warning: &Warning) {
+    // No-op on stable - caller should return Error::SuppressableWarning
+}
+
 pub(crate) mod util {
     use super::*;
 
@@ -1616,7 +1649,7 @@ impl TryFrom<&syn::ExprForLoop> for ForLoop {
         // Parse the range expression
         let (from, inclusive, range_span, to) = parse_range_expr(expr)?;
 
-        // Check for non-literal bounds and emit error if not suppressed
+        // Check for non-literal bounds and emit warning/error if not suppressed
         let mut non_literal_spans = vec![];
         if !from.is_literal() {
             non_literal_spans.push(from.span());
@@ -1626,12 +1659,21 @@ impl TryFrom<&syn::ExprForLoop> for ForLoop {
         }
 
         if !non_literal_spans.is_empty() && !allowed.contains(&WarningName::NonLiteralLoopBounds) {
-            return Err(Error::SuppressableWarning {
-                warning: Warning {
-                    name: WarningName::NonLiteralLoopBounds,
-                    spans: non_literal_spans,
-                },
-            });
+            let warning = Warning {
+                name: WarningName::NonLiteralLoopBounds,
+                spans: non_literal_spans,
+            };
+
+            #[cfg(nightly)]
+            {
+                emit_warning(&warning);
+                // Continue parsing on nightly
+            }
+
+            #[cfg(not(nightly))]
+            {
+                return Err(Error::SuppressableWarning { warning });
+            }
         }
 
         // Parse the body
@@ -4518,7 +4560,9 @@ mod test {
         );
     }
 
+    // On stable, non-literal loop bounds return an error (SuppressableWarning)
     #[test]
+    #[cfg(not(nightly))]
     fn for_loop_error_with_non_literal_bounds() {
         let expr: syn::Expr = syn::parse_quote! {
             for i in start..end {
@@ -4536,6 +4580,32 @@ mod test {
             matches!(err, Error::SuppressableWarning { .. }),
             "Expected SuppressableWarning, got: {:?}",
             err
+        );
+    }
+
+    // On nightly, non-literal loop bounds emit a warning diagnostic and parsing
+    // succeeds. The emit_warning function gracefully handles being called
+    // outside of a proc macro context (like in unit tests) by catching the
+    // panic and continuing.
+    #[test]
+    #[cfg(nightly)]
+    fn for_loop_warning_with_non_literal_bounds_nightly() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in start..end {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        // On nightly, parsing succeeds (warning would be emitted during real macro
+        // expansion)
+        let result = ForLoop::try_from(for_loop);
+        assert!(
+            result.is_ok(),
+            "Expected success on nightly, got: {:?}",
+            result.err()
         );
     }
 

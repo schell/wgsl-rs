@@ -1270,6 +1270,10 @@ pub enum Stmt {
     },
     /// If statement (with optional else/else-if chains)
     If(Box<StmtIf>),
+    /// Break statement: `break;`
+    Break {
+        break_token: Token![break],
+    },
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -1348,6 +1352,25 @@ impl TryFrom<&syn::Stmt> for Stmt {
                     }
                     // If statements are control flow statements in WGSL
                     syn::Expr::If(expr_if) => Ok(Stmt::If(Box::new(StmtIf::try_from(expr_if)?))),
+                    // Break statement: `break;`
+                    syn::Expr::Break(syn::ExprBreak {
+                        attrs: _,
+                        break_token,
+                        label,
+                        expr,
+                    }) => {
+                        util::some_is_unsupported(
+                            label.as_ref(),
+                            "Labels on break statements are not supported in WGSL",
+                        )?;
+                        util::some_is_unsupported(
+                            expr.as_ref(),
+                            "Break with values is not supported in WGSL",
+                        )?;
+                        Ok(Stmt::Break {
+                            break_token: *break_token,
+                        })
+                    }
                     _ => Ok(Stmt::Expr {
                         expr: Expr::try_from(expr)?,
                         semi_token: *semi_token,
@@ -3942,5 +3965,52 @@ mod test {
         let expr = Expr::try_from(&expr).unwrap();
         let wgsl = expr.to_wgsl();
         assert_eq!(wgsl, "State_Running");
+    }
+
+    #[test]
+    fn parse_break_statement() {
+        let stmt: syn::Stmt = syn::parse_quote! { break; };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert_eq!(wgsl, "break;");
+    }
+
+    #[test]
+    fn parse_break_in_while_loop() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            while i < 10 {
+                if i >= 5 {
+                    break;
+                }
+                i += 1;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("break;"),
+            "Expected 'break;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn break_with_label_rejected() {
+        let stmt: syn::Stmt = syn::parse_quote! { break 'outer; };
+        let result = Stmt::try_from(&stmt);
+        assert!(
+            result.is_err(),
+            "Expected break with label to be rejected, but it succeeded"
+        );
+    }
+
+    #[test]
+    fn break_with_value_rejected() {
+        let stmt: syn::Stmt = syn::parse_quote! { break 42; };
+        let result = Stmt::try_from(&stmt);
+        assert!(
+            result.is_err(),
+            "Expected break with value to be rejected, but it succeeded"
+        );
     }
 }

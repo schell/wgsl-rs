@@ -113,7 +113,6 @@ pub mod matrix_example {
     }
 }
 
-
 #[wgsl]
 pub mod impl_example {
     //! Demonstrates struct impl blocks with explicit receiver syntax.
@@ -280,7 +279,6 @@ pub mod binary_ops_example {
     }
 }
 
-
 #[wgsl]
 #[allow(dead_code, unused_assignments)]
 pub mod assignment_example {
@@ -397,7 +395,6 @@ pub mod while_loop_example {
     }
 }
 
-
 #[wgsl]
 #[allow(dead_code)]
 pub mod if_example {
@@ -457,6 +454,70 @@ pub mod if_example {
             }
         }
         vec4f(result, 0.0, 0.0, 1.0)
+    }
+}
+
+/// Demonstrates break statement support.
+#[wgsl]
+#[allow(dead_code, unused_assignments)]
+pub mod break_example {
+    use wgsl_rs::std::*;
+
+    #[fragment]
+    pub fn test_break_in_while() -> Vec4f {
+        let mut i = 0;
+        let mut sum = 0.0;
+
+        while i < 100 {
+            if i >= 10 {
+                break;
+            }
+            sum += f32(i);
+            i += 1;
+        }
+
+        vec4f(sum / 100.0, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_break_with_condition() -> Vec4f {
+        let mut value = 1.0;
+        let mut iterations = 0;
+
+        while iterations < 100 {
+            value *= 1.1;
+            iterations += 1;
+
+            if value > 50.0 {
+                break;
+            }
+        }
+
+        vec4f(value / 100.0, f32(iterations) / 100.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_nested_break() -> Vec4f {
+        let mut i = 0;
+        let mut j = 0;
+        let mut found = 0;
+
+        while i < 10 {
+            j = 0;
+            while j < 10 {
+                if i * 10 + j == 55 {
+                    found = 1;
+                    break;
+                }
+                j += 1;
+            }
+            if found == 1 {
+                break;
+            }
+            i += 1;
+        }
+
+        vec4f(f32(i) / 10.0, f32(j) / 10.0, f32(found), 1.0)
     }
 }
 
@@ -797,6 +858,7 @@ pub fn main() {
     validate_and_print_source(&assignment_example::WGSL_MODULE);
     validate_and_print_source(&while_loop_example::WGSL_MODULE);
     validate_and_print_source(&if_example::WGSL_MODULE);
+    validate_and_print_source(&break_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

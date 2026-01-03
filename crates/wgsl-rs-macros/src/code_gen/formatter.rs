@@ -969,6 +969,13 @@ impl GenerateCode for Stmt {
                 }
             }
             Stmt::If(stmt_if) => stmt_if.write_code(code),
+            Stmt::Break {
+                break_token,
+                semi_token,
+            } => {
+                code.write_atom(break_token);
+                code.write_atom(semi_token);
+            }
         }
     }
 }

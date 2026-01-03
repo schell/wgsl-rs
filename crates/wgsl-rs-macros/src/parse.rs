@@ -4104,4 +4104,84 @@ mod test {
             wgsl
         );
     }
+
+    // Break statement tests
+    #[test]
+    fn parse_break_basic() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            break;
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        match stmt {
+            Stmt::Break { .. } => {}
+            _ => panic!("Expected Stmt::Break"),
+        }
+    }
+
+    #[test]
+    fn parse_break_rejects_label() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            break 'outer;
+        };
+        let result = Stmt::try_from(&stmt);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("Labels on break statements are not supported"),
+            "Expected error about labels on break, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn parse_break_rejects_value() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            break 42;
+        };
+        let result = Stmt::try_from(&stmt);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("Break with values is not supported"),
+            "Expected error about break with values, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn break_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            break;
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert_eq!(wgsl, "break;");
+    }
+
+    #[test]
+    fn loop_with_break_generates_wgsl() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn test_loop_with_break() {
+                let mut i: u32 = 0;
+                loop {
+                    i += 1;
+                    if i >= 10 {
+                        break;
+                    }
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("loop {"),
+            "Expected 'loop {{' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("break;"),
+            "Expected 'break;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
 }

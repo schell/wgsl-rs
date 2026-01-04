@@ -977,6 +977,13 @@ impl GenerateCode for Stmt {
                 code.write_atom(semi_token);
             }
             Stmt::For(for_loop) => for_loop.write_code(code),
+            Stmt::Continue {
+                continue_token,
+                semi_token,
+            } => {
+                code.write_atom(continue_token);
+                code.write_atom(semi_token);
+            }
         }
     }
 }

@@ -1432,6 +1432,11 @@ pub enum Stmt {
         break_token: Token![break],
         semi_token: Token![;],
     },
+    /// Continue statement: `continue;`
+    Continue {
+        continue_token: Token![continue],
+        semi_token: Token![;],
+    },
     /// A for-loop statement.
     For(Box<ForLoop>),
 }
@@ -1537,6 +1542,25 @@ impl TryFrom<&syn::Stmt> for Stmt {
                         })?;
                         Ok(Stmt::Break {
                             break_token: *break_token,
+                            semi_token,
+                        })
+                    }
+                    // Continue statement: `continue;`
+                    syn::Expr::Continue(syn::ExprContinue {
+                        attrs: _,
+                        continue_token,
+                        label,
+                    }) => {
+                        util::some_is_unsupported(
+                            label.as_ref(),
+                            "Labels on continue statements are not supported in WGSL",
+                        )?;
+                        let semi_token = semi_token.ok_or_else(|| Error::Unsupported {
+                            span: expr.span(),
+                            note: "Continue statements must end with a semicolon".to_string(),
+                        })?;
+                        Ok(Stmt::Continue {
+                            continue_token: *continue_token,
                             semi_token,
                         })
                     }
@@ -4686,6 +4710,24 @@ mod test {
             wgsl.contains("for (var j = 0; j < 4; j++)"),
             "Expected inner loop in WGSL output, got: {}",
             wgsl
+        );
+    }
+
+    #[test]
+    fn parse_continue_statement() {
+        let stmt: syn::Stmt = syn::parse_quote! { continue; };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert_eq!(wgsl, "continue;");
+    }
+
+    #[test]
+    fn continue_with_label_rejected() {
+        let stmt: syn::Stmt = syn::parse_quote! { continue 'outer; };
+        let result = Stmt::try_from(&stmt);
+        assert!(
+            result.is_err(),
+            "Expected continue with label to be rejected, but it succeeded"
         );
     }
 }

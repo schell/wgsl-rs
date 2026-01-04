@@ -4981,7 +4981,8 @@ mod test {
         );
         assert!(
             wgsl.contains("return x*2;") || wgsl.contains("return x * 2;"),
-            "Expected implicit return converted to 'return x*2;' or 'return x * 2;' in WGSL output, got: {}",
+            "Expected implicit return converted to 'return x*2;' or 'return x * 2;' in WGSL \
+             output, got: {}",
             wgsl
         );
     }

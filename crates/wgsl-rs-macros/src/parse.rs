@@ -4985,4 +4985,29 @@ mod test {
             wgsl
         );
     }
+
+    #[test]
+    fn explicit_return_without_expression_generates_wgsl() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn void_return() {
+                return;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("return;"),
+            "Expected 'return;' in WGSL output for void return, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn return_without_semicolon_rejected() {
+        let result: Result<syn::Stmt, _> = syn::parse_str("return 42");
+        assert!(
+            result.is_err(),
+            "Expected return without semicolon to be rejected during parsing"
+        );
+    }
 }

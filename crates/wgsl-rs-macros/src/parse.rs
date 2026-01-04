@@ -98,6 +98,9 @@ pub enum WarningName {
     /// Non-literal bounds may cause unexpected behavior if the range is
     /// descending.
     NonLiteralLoopBounds,
+    /// Match statement patterns that are not integer literals cannot be
+    /// verified at compile-time to be valid WGSL case selectors.
+    NonLiteralMatchStatementPatterns,
 }
 
 impl std::fmt::Display for WarningName {
@@ -109,6 +112,12 @@ impl std::fmt::Display for WarningName {
                  iterator is ascending, add #[wgsl_allow(non_literal_loop_bounds)] to the \
                  for-loop to suppress this error.",
             ),
+            WarningName::NonLiteralMatchStatementPatterns => f.write_str(
+                "match statement patterns that are not integer literals cannot be verified at \
+                 compile-time to be valid WGSL case selectors. Add \
+                 #[wgsl_allow(non_literal_match_statement_patterns)] to the match statement to \
+                 suppress this warning.",
+            ),
         }
     }
 }
@@ -119,6 +128,9 @@ impl TryFrom<&syn::Ident> for WarningName {
     fn try_from(ident: &syn::Ident) -> Result<Self, Self::Error> {
         match ident.to_string().as_str() {
             "non_literal_loop_bounds" => Ok(WarningName::NonLiteralLoopBounds),
+            "non_literal_match_statement_patterns" => {
+                Ok(WarningName::NonLiteralMatchStatementPatterns)
+            }
             other => UnsupportedSnafu {
                 span: ident.span(),
                 note: format!("Unknown warning name '{other}'"),
@@ -156,8 +168,18 @@ pub(crate) fn emit_warning(_warning: &Warning) {
                 .map(|s| s.unwrap())
                 .unwrap_or_else(proc_macro::Span::call_site);
 
+            let help_msg = match _warning.name {
+                WarningName::NonLiteralLoopBounds => {
+                    "Add #[wgsl_allow(non_literal_loop_bounds)] to suppress this warning"
+                }
+                WarningName::NonLiteralMatchStatementPatterns => {
+                    "Add #[wgsl_allow(non_literal_match_statement_patterns)] to suppress this \
+                     warning"
+                }
+            };
+
             Diagnostic::spanned(span, Level::Warning, format!("{}", _warning.name))
-                .help("Add #[wgsl_allow(non_literal_loop_bounds)] to suppress this warning")
+                .help(help_msg)
                 .emit();
         });
 
@@ -1156,6 +1178,16 @@ impl TryFrom<&syn::Expr> for Expr {
                     fields: parsed_fields,
                 }
             }
+            // Match expressions are not supported - only match statements
+            syn::Expr::Match(expr_match) => {
+                return UnsupportedSnafu {
+                    span: expr_match.match_token.span,
+                    note: "match expressions are not supported in WGSL. WGSL switch is a \
+                           statement, not an expression. Use match as a statement instead (not in \
+                           let bindings or return positions).",
+                }
+                .fail();
+            }
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!("Unexpected expression '{}'", other.into_token_stream()),
@@ -1453,6 +1485,8 @@ pub enum Stmt {
     },
     /// A for-loop statement.
     For(Box<ForLoop>),
+    /// Switch statement (from Rust match)
+    Switch(Box<StmtSwitch>),
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -1594,7 +1628,7 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             semi_token,
                         })
                     }
-                    // Return statement: `return expr;`
+                    // Return statement: `return expr;` or `return;`
                     syn::Expr::Return(syn::ExprReturn {
                         attrs: _,
                         return_token,
@@ -1614,6 +1648,10 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             expr: expr_opt,
                             semi_token,
                         })
+                    }
+                    // Match statement → Switch statement
+                    syn::Expr::Match(expr_match) => {
+                        Ok(Stmt::Switch(Box::new(StmtSwitch::try_from(expr_match)?)))
                     }
                     _ => Ok(Stmt::Expr {
                         expr: Expr::try_from(expr)?,
@@ -1886,6 +1924,246 @@ fn parse_range_expr(expr: &syn::Expr) -> Result<(Expr, bool, Span, Expr), Error>
     }
 }
 
+impl TryFrom<&syn::ExprMatch> for StmtSwitch {
+    type Error = Error;
+
+    fn try_from(value: &syn::ExprMatch) -> Result<Self, Self::Error> {
+        let syn::ExprMatch {
+            attrs,
+            match_token,
+            expr,
+            brace_token,
+            arms,
+        } = value;
+
+        // Parse allowed warnings from attributes
+        let allowed = parse_wgsl_allow(attrs)?;
+
+        // Parse the selector expression
+        let selector = Box::new(Expr::try_from(expr.as_ref())?);
+
+        // Track non-literal pattern spans for warning
+        let mut non_literal_spans = vec![];
+        let mut has_explicit_default = false;
+
+        // Parse each arm
+        let mut switch_arms = vec![];
+        for arm in arms {
+            let (selectors, arm_non_literal_spans, is_default) = parse_match_arm_pattern(&arm.pat)?;
+            non_literal_spans.extend(arm_non_literal_spans);
+
+            if is_default {
+                has_explicit_default = true;
+            }
+
+            // Reject guard clauses
+            if let Some((if_token, _)) = &arm.guard {
+                return UnsupportedSnafu {
+                    span: if_token.span(),
+                    note: "guard clauses in match arms are not supported in WGSL switch statements",
+                }
+                .fail();
+            }
+
+            // Parse the body - must be a block
+            let body = match &*arm.body {
+                syn::Expr::Block(syn::ExprBlock { block, .. }) => Block::try_from(block)?,
+                other => {
+                    return UnsupportedSnafu {
+                        span: other.span(),
+                        note: "match arm bodies must be blocks in WGSL. Use `pattern => { ... }` \
+                               syntax.",
+                    }
+                    .fail();
+                }
+            };
+
+            switch_arms.push(SwitchArm {
+                selectors,
+                fat_arrow_span: arm.fat_arrow_token.span(),
+                body,
+            });
+        }
+
+        // Emit warning for non-literal patterns if not suppressed
+        if !non_literal_spans.is_empty()
+            && !allowed.contains(&WarningName::NonLiteralMatchStatementPatterns)
+        {
+            let warning = Warning {
+                name: WarningName::NonLiteralMatchStatementPatterns,
+                spans: non_literal_spans,
+            };
+
+            if cfg!(nightly) {
+                emit_warning(&warning);
+            } else {
+                return Err(Error::SuppressableWarning { warning });
+            }
+        }
+
+        Ok(StmtSwitch {
+            match_token: *match_token,
+            selector,
+            brace_token: *brace_token,
+            arms: switch_arms,
+            has_explicit_default,
+        })
+    }
+}
+
+/// Parse a match arm pattern into case selectors.
+/// Returns (selectors, non_literal_spans, has_default).
+fn parse_match_arm_pattern(pat: &syn::Pat) -> Result<(Vec<CaseSelector>, Vec<Span>, bool), Error> {
+    let mut selectors = vec![];
+    let mut non_literal_spans = vec![];
+    let mut has_default = false;
+
+    parse_pattern_recursive(
+        pat,
+        &mut selectors,
+        &mut non_literal_spans,
+        &mut has_default,
+    )?;
+
+    Ok((selectors, non_literal_spans, has_default))
+}
+
+fn parse_pattern_recursive(
+    pat: &syn::Pat,
+    selectors: &mut Vec<CaseSelector>,
+    non_literal_spans: &mut Vec<Span>,
+    has_default: &mut bool,
+) -> Result<(), Error> {
+    match pat {
+        // Wildcard: `_` → default
+        syn::Pat::Wild(wild) => {
+            *has_default = true;
+            selectors.push(CaseSelector::Default(wild.underscore_token.span));
+        }
+
+        // Literal pattern: `0`, `42`, etc.
+        syn::Pat::Lit(syn::PatLit { attrs: _, lit }) => {
+            let lit = Lit::try_from(lit)?;
+            selectors.push(CaseSelector::Literal(lit));
+        }
+
+        // Or-pattern: `1 | 2 | 3`
+        syn::Pat::Or(syn::PatOr {
+            attrs: _,
+            leading_vert: _,
+            cases,
+        }) => {
+            for case in cases {
+                parse_pattern_recursive(case, selectors, non_literal_spans, has_default)?;
+            }
+        }
+
+        // Path pattern: `MY_CONST` or `State::Running`
+        syn::Pat::Path(syn::PatPath {
+            attrs: _,
+            qself,
+            path,
+        }) => {
+            util::some_is_unsupported(qself.as_ref(), "QSelf is unsupported in patterns")?;
+
+            // Convert to Expr and mark as non-literal
+            let expr = Expr::try_from(&syn::Expr::Path(syn::ExprPath {
+                attrs: vec![],
+                qself: qself.clone(),
+                path: path.clone(),
+            }))?;
+            non_literal_spans.push(path.span());
+            selectors.push(CaseSelector::Expr(expr));
+        }
+
+        // Identifier pattern: `x` - could be a const binding
+        syn::Pat::Ident(syn::PatIdent {
+            attrs: _,
+            by_ref,
+            mutability,
+            ident,
+            subpat,
+        }) => {
+            // Reject ref/mut bindings
+            util::some_is_unsupported(
+                by_ref.as_ref(),
+                "ref bindings not supported in switch patterns",
+            )?;
+            util::some_is_unsupported(
+                mutability.as_ref(),
+                "mut bindings not supported in switch patterns",
+            )?;
+            // subpat is Option<(Token![@], Box<Pat>)> - check the @ token
+            if let Some((at_token, _)) = subpat {
+                return UnsupportedSnafu {
+                    span: at_token.span(),
+                    note: "subpatterns (@) not supported in switch patterns",
+                }
+                .fail();
+            }
+
+            // Treat as identifier expression (could be a const)
+            let expr = Expr::Ident(ident.clone());
+            non_literal_spans.push(ident.span());
+            selectors.push(CaseSelector::Expr(expr));
+        }
+
+        // Unsupported patterns
+        syn::Pat::Range(range) => {
+            return UnsupportedSnafu {
+                span: range.span(),
+                note: "range patterns are not supported in WGSL switch statements",
+            }
+            .fail();
+        }
+
+        syn::Pat::Struct(s) => {
+            return UnsupportedSnafu {
+                span: s.span(),
+                note: "struct patterns are not supported in WGSL switch statements",
+            }
+            .fail();
+        }
+
+        syn::Pat::Tuple(t) => {
+            return UnsupportedSnafu {
+                span: t.span(),
+                note: "tuple patterns are not supported in WGSL switch statements",
+            }
+            .fail();
+        }
+
+        syn::Pat::TupleStruct(ts) => {
+            return UnsupportedSnafu {
+                span: ts.span(),
+                note: "tuple struct patterns are not supported in WGSL switch statements",
+            }
+            .fail();
+        }
+
+        syn::Pat::Slice(s) => {
+            return UnsupportedSnafu {
+                span: s.span(),
+                note: "slice patterns are not supported in WGSL switch statements",
+            }
+            .fail();
+        }
+
+        other => {
+            return UnsupportedSnafu {
+                span: other.span(),
+                note: format!(
+                    "unsupported pattern in switch statement: '{}'",
+                    other.to_token_stream()
+                ),
+            }
+            .fail();
+        }
+    }
+
+    Ok(())
+}
+
 /// WGSL if statement.
 ///
 /// Unlike Rust, WGSL `if` is a statement, not an expression.
@@ -1945,6 +2223,43 @@ impl TryFrom<&syn::ExprIf> for StmtIf {
             else_branch,
         })
     }
+}
+
+/// WGSL switch statement (transpiled from Rust match).
+///
+/// WGSL switch statements require:
+/// - Selector must be a concrete integer type (i32 or u32)
+/// - Case selectors must be const-expressions
+/// - Exactly one default clause (auto-generated if missing)
+pub struct StmtSwitch {
+    pub match_token: Token![match],
+    pub selector: Box<Expr>,
+    pub brace_token: syn::token::Brace,
+    pub arms: Vec<SwitchArm>,
+    /// Whether a default arm was explicitly provided
+    pub has_explicit_default: bool,
+}
+
+/// A single arm in a switch statement.
+pub struct SwitchArm {
+    /// The case selectors (may contain Default for wildcard patterns)
+    pub selectors: Vec<CaseSelector>,
+    /// Span of the `=>` token (used for code generation)
+    pub fat_arrow_span: Span,
+    /// The arm body (always a block)
+    pub body: Block,
+}
+
+/// A case selector value in a switch arm.
+pub enum CaseSelector {
+    /// Integer literal: `0`, `1`, `42u32`, etc.
+    Literal(Lit),
+    /// Named constant, enum variant, or other expression.
+    /// Examples: `MY_CONST`, `State::Running`
+    /// These emit a warning unless suppressed.
+    Expr(Expr),
+    /// The default case from `_` pattern.
+    Default(Span),
 }
 
 /// WGSL built-in annotations for shader inputs and outputs.

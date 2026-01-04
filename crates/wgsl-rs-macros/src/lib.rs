@@ -427,16 +427,22 @@ pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 
 /// Suppresses specific wgsl-rs warnings/errors on annotated statements.
 ///
-/// Use this attribute on for-loops with non-literal bounds to acknowledge
-/// that the loop may fail at runtime if the range is descending (WGSL only
-/// supports ascending iteration).
+/// Use this attribute to acknowledge cases where the transpiler cannot
+/// guarantee correctness at compile time, but you know the code is valid.
 ///
 /// # Available Warnings
 ///
 /// - `non_literal_loop_bounds`: Suppresses the error for for-loops with
-///   non-literal bounds (e.g., `for i in 0..n` where `n` is a variable).
+///   non-literal bounds (e.g., `for i in 0..n` where `n` is a variable). WGSL
+///   only supports ascending iteration, so the loop may fail at runtime if the
+///   range is descending.
 ///
-/// # Example
+/// - `non_literal_match_statement_patterns`: Suppresses the warning for match
+///   statements with non-literal case selectors (e.g., constants or
+///   identifiers). WGSL requires case selectors to be const-expressions, which
+///   the transpiler cannot always verify.
+///
+/// # Examples
 ///
 /// ```ignore
 /// pub fn sum_to_n(n: i32) -> i32 {
@@ -446,6 +452,22 @@ pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 ///         total += i;
 ///     }
 ///     total
+/// }
+/// ```
+///
+/// ```ignore
+/// const LOW: i32 = 0;
+/// const HIGH: i32 = 1;
+///
+/// pub fn with_const_patterns(level: i32) -> f32 {
+///     let mut result = 0.0;
+///     #[wgsl_allow(non_literal_match_statement_patterns)]
+///     match level {
+///         LOW => { result = 0.1; }
+///         HIGH => { result = 1.0; }
+///         _ => {}
+///     }
+///     result
 /// }
 /// ```
 ///

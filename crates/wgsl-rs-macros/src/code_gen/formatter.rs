@@ -1001,6 +1001,7 @@ impl GenerateCode for Stmt {
                 }
                 code.write_atom(semi_token);
             }
+            Stmt::Switch(stmt_switch) => stmt_switch.write_code(code),
         }
     }
 }
@@ -1129,6 +1130,81 @@ impl GenerateCode for ElseBody {
                 // else if - recursively write the if statement
                 if_stmt.write_code(code);
             }
+        }
+    }
+}
+
+impl GenerateCode for StmtSwitch {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        // Write "switch" (using match_token span for source mapping)
+        code.write_str(self.match_token.span, "switch");
+        code.space();
+
+        // Write selector expression
+        self.selector.write_code(code);
+        code.space();
+
+        // Write arms in braces
+        code.write_surrounded(Surrounded::block(self.brace_token.span.join()), |code| {
+            for arm in &self.arms {
+                arm.write_code(code);
+            }
+
+            // Auto-generate empty default if not explicitly provided
+            if !self.has_explicit_default {
+                code.write_str(self.brace_token.span.close(), "default: {}");
+                code.newline();
+            }
+        });
+        code.newline();
+    }
+}
+
+impl GenerateCode for SwitchArm {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        // Check if this is a default-only arm
+        let is_default_only =
+            self.selectors.len() == 1 && matches!(self.selectors[0], CaseSelector::Default(_));
+
+        if is_default_only {
+            // Write: default { ... }
+            if let CaseSelector::Default(span) = &self.selectors[0] {
+                code.write_str(*span, "default");
+            }
+        } else {
+            // Write: case selector1, selector2 { ... }
+            code.write_str(self.fat_arrow_span, "case");
+            code.space();
+
+            let mut first = true;
+            for selector in &self.selectors {
+                if !first {
+                    code.write_str(self.fat_arrow_span, ",");
+                    code.space();
+                }
+                selector.write_code(code);
+                first = false;
+            }
+        }
+
+        // Write body block (WGSL uses colon before block, but it's optional)
+        code.space();
+        // Use block formatting without trailing newline, then add newline after
+        let brace_token = &self.body.brace_token;
+        let stmts = &self.body.stmt;
+        code.write_surrounded(Surrounded::block(brace_token.span.join()), |code| {
+            code.write_sequenced(Sequenced::newlines(), stmts);
+        });
+        code.newline();
+    }
+}
+
+impl GenerateCode for CaseSelector {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        match self {
+            CaseSelector::Literal(lit) => lit.write_code(code),
+            CaseSelector::Expr(expr) => expr.write_code(code),
+            CaseSelector::Default(span) => code.write_str(*span, "default"),
         }
     }
 }

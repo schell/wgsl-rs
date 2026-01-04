@@ -718,6 +718,104 @@ pub mod return_example {
     }
 }
 
+#[wgsl]
+#[allow(dead_code, unused_assignments)]
+pub mod switch_example {
+    //! Demonstrates switch/match statement support including:
+    //! - Simple integer matching
+    //! - Or-patterns (multiple cases)
+    //! - Default cases
+    //! - Auto-generated default when missing
+    //! - Const patterns (with warning suppression)
+
+    use wgsl_rs::std::*;
+
+    const LOW: i32 = 0;
+    const MID: i32 = 1;
+    const HIGH: i32 = 2;
+
+    #[fragment]
+    pub fn test_simple_switch() -> Vec4f {
+        let x: i32 = 2;
+        let mut result = 0.0;
+        match x {
+            0 => {
+                result = 0.0;
+            }
+            1 => {
+                result = 0.25;
+            }
+            2 => {
+                result = 0.5;
+            }
+            _ => {
+                result = 1.0;
+            }
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    #[allow(clippy::manual_range_patterns)]
+    pub fn test_or_patterns() -> Vec4f {
+        let x: u32 = 5;
+        let mut result = 0.0;
+        match x {
+            1 | 2 | 3 => {
+                result = 0.25;
+            }
+            4 | 5 | 6 => {
+                result = 0.5;
+            }
+            _ => {
+                result = 1.0;
+            }
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_missing_default() -> Vec4f {
+        let x: i32 = 1;
+        let mut result = 0.0;
+        // No default arm - WGSL will get auto-generated `default: {}`
+        // But Rust requires exhaustive matching, so we use a catch-all underscore
+        // that will be optimized out in the test below
+        match x {
+            0 => {
+                result = 0.0;
+            }
+            1 => {
+                result = 1.0;
+            }
+            _ => {}
+        }
+        vec4f(result, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_const_patterns() -> Vec4f {
+        let level: i32 = 1;
+        let mut brightness = 0.0;
+        #[wgsl_allow(non_literal_match_statement_patterns)]
+        match level {
+            LOW => {
+                brightness = 0.0;
+            }
+            MID => {
+                brightness = 0.5;
+            }
+            HIGH => {
+                brightness = 1.0;
+            }
+            _ => {
+                brightness = 0.0;
+            }
+        }
+        vec4f(brightness, 0.0, 0.0, 1.0)
+    }
+}
+
 fn validate_and_print_source(module: &wgsl_rs::Module) {
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
@@ -1059,6 +1157,7 @@ pub fn main() {
     validate_and_print_source(&break_example::WGSL_MODULE);
     validate_and_print_source(&for_loop_example::WGSL_MODULE);
     validate_and_print_source(&return_example::WGSL_MODULE);
+    validate_and_print_source(&switch_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

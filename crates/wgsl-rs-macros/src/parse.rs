@@ -1947,7 +1947,6 @@ impl TryFrom<&syn::ExprIf> for StmtIf {
     }
 }
 
-
 /// WGSL built-in annotations for shader inputs and outputs.
 pub enum BuiltIn {
     VertexIndex(Ident),
@@ -4537,7 +4536,6 @@ mod test {
         );
     }
 
-
     #[test]
     fn break_with_label_rejected() {
         let stmt: syn::Stmt = syn::parse_quote! { break 'outer; };
@@ -4627,7 +4625,6 @@ mod test {
             err
         );
     }
-
 
     #[test]
     fn for_loop_rejects_wildcard_pattern() {
@@ -4898,7 +4895,12 @@ mod test {
         };
         let stmt = Stmt::try_from(&stmt).unwrap();
         let wgsl = stmt.to_wgsl();
-        assert_eq!(wgsl.trim(), "return 42;", "Expected 'return 42;', got: {}", wgsl);
+        assert_eq!(
+            wgsl.trim(),
+            "return 42;",
+            "Expected 'return 42;', got: {}",
+            wgsl
+        );
     }
 
     #[test]

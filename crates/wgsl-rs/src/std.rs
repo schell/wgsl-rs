@@ -13,7 +13,7 @@
 use std::sync::{Arc, LazyLock, RwLock};
 
 pub use wgsl_rs_macros::{
-    builtin, compute, fragment, input, output, storage, uniform, vertex, workgroup_size,
+    builtin, compute, fragment, input, output, storage, uniform, vertex, wgsl_allow, workgroup_size,
 };
 
 mod numeric_builtin_functions;

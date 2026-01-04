@@ -12,6 +12,7 @@
 // See the WGSL spec
 // [subsection](https://gpuweb.github.io/gpuweb/wgsl/#grammar-recursive-descent)
 // on grammar for help implementing this module.
+use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
 use syn::{Ident, Token, parenthesized, parse::Parse, spanned::Spanned};
@@ -53,6 +54,9 @@ pub enum Error {
         span: proc_macro2::Span,
         message: String,
     },
+
+    #[snafu(display("{}", warning.name))]
+    SuppressableWarning { warning: Warning },
 }
 
 impl From<syn::Error> for Error {
@@ -73,6 +77,11 @@ impl Error {
             Error::UnsupportedIfThen { span } => *span,
             Error::InProgress { span, message: _ } => *span,
             Error::Visibility { span, .. } => *span,
+            Error::SuppressableWarning { warning } => warning
+                .spans
+                .first()
+                .copied()
+                .unwrap_or_else(Span::call_site),
         }
     }
 }
@@ -83,7 +92,80 @@ impl From<Error> for syn::Error {
     }
 }
 
-#[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WarningName {
+    /// For-loops in WGSL only support ascending iteration (i++).
+    /// Non-literal bounds may cause unexpected behavior if the range is
+    /// descending.
+    NonLiteralLoopBounds,
+}
+
+impl std::fmt::Display for WarningName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WarningName::NonLiteralLoopBounds => f.write_str(
+                "for-loops with non-literal bounds cannot be verified at compile-time. \
+                 Additionally, only ascending iteration is supported. If you are sure this loop's \
+                 iterator is ascending, add #[wgsl_allow(non_literal_loop_bounds)] to the \
+                 for-loop to suppress this error.",
+            ),
+        }
+    }
+}
+
+impl TryFrom<&syn::Ident> for WarningName {
+    type Error = Error;
+
+    fn try_from(ident: &syn::Ident) -> Result<Self, Self::Error> {
+        match ident.to_string().as_str() {
+            "non_literal_loop_bounds" => Ok(WarningName::NonLiteralLoopBounds),
+            other => UnsupportedSnafu {
+                span: ident.span(),
+                note: format!("Unknown warning name '{other}'"),
+            }
+            .fail(),
+        }
+    }
+}
+
+#[derive(Debug)]
+/// A warning that can be emitted during WGSL code generation.
+pub struct Warning {
+    pub name: WarningName,
+    /// Spans that generated the warning
+    pub spans: Vec<Span>,
+}
+
+/// Emits a warning diagnostic on nightly, no-op on stable.
+///
+/// On nightly, this uses `proc_macro::Diagnostic` to emit a proper compiler
+/// warning. If called outside of a proc macro context (e.g., in unit tests),
+/// this is a no-op.
+pub(crate) fn emit_warning(_warning: &Warning) {
+    #[cfg(nightly)]
+    {
+        use proc_macro::{Diagnostic, Level};
+
+        // proc_macro::Span is only available during actual proc macro expansion.
+        // In unit tests, attempting to use it will panic. We catch this and silently
+        // ignore the warning in test contexts.
+        let result = std::panic::catch_unwind(|| {
+            let span = _warning
+                .spans
+                .first()
+                .map(|s| s.unwrap())
+                .unwrap_or_else(proc_macro::Span::call_site);
+
+            Diagnostic::spanned(span, Level::Warning, format!("{}", _warning.name))
+                .help("Add #[wgsl_allow(non_literal_loop_bounds)] to suppress this warning")
+                .emit();
+        });
+
+        // Silently ignore if we're not in a proc macro context (e.g., unit tests)
+        let _ = result;
+    }
+}
+
 pub(crate) mod util {
     use super::*;
 
@@ -102,6 +184,7 @@ pub(crate) mod util {
         }
     }
 
+    #[allow(dead_code, reason = "Used in development")]
     pub fn in_progress<X, T: Spanned + std::fmt::Debug>(t: &T) -> Result<X, Error> {
         InProgressSnafu {
             span: t.span(),
@@ -1082,6 +1165,79 @@ impl TryFrom<&syn::Expr> for Expr {
     }
 }
 
+impl Expr {
+    /// Returns true if this expression is a literal value.
+    pub fn is_literal(&self) -> bool {
+        matches!(self, Expr::Lit(_))
+    }
+
+    /// Returns the span of this expression.
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Lit(lit) => match lit {
+                Lit::Bool(b) => b.span(),
+                Lit::Float(f) => f.span(),
+                Lit::Int(i) => i.span(),
+            },
+            Expr::Ident(ident) => ident.span(),
+            Expr::Array { bracket_token, .. } => bracket_token.span.join(),
+            Expr::Paren { paren_token, .. } => paren_token.span.join(),
+            Expr::Binary { lhs, rhs, .. } => {
+                lhs.span().join(rhs.span()).unwrap_or_else(|| lhs.span())
+            }
+            Expr::Unary { op, expr } => {
+                let op_span = match op {
+                    UnOp::Not(t) => t.span,
+                    UnOp::Neg(t) => t.span,
+                };
+                op_span.join(expr.span()).unwrap_or(op_span)
+            }
+            Expr::ArrayIndexing {
+                lhs, bracket_token, ..
+            } => lhs
+                .span()
+                .join(bracket_token.span.join())
+                .unwrap_or_else(|| lhs.span()),
+            Expr::Swizzle { lhs, swizzle, .. } => lhs
+                .span()
+                .join(swizzle.span())
+                .unwrap_or_else(|| lhs.span()),
+            Expr::Cast { lhs, ty } => {
+                let ty_span = match ty.as_ref() {
+                    Type::Scalar { ident, .. } => ident.span(),
+                    Type::Vector { ident, .. } => ident.span(),
+                    Type::Matrix { ident, .. } => ident.span(),
+                    Type::Array { bracket_token, .. } => bracket_token.span.join(),
+                    Type::Struct { ident } => ident.span(),
+                };
+                lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
+            }
+            Expr::FnCall {
+                path, paren_token, ..
+            } => {
+                let path_span = match path {
+                    FnPath::Ident(ident) => ident.span(),
+                    FnPath::TypeMethod { ty, .. } => ty.span(),
+                };
+                path_span.join(paren_token.span.join()).unwrap_or(path_span)
+            }
+            Expr::Struct {
+                ident, brace_token, ..
+            } => ident
+                .span()
+                .join(brace_token.span.join())
+                .unwrap_or_else(|| ident.span()),
+            Expr::FieldAccess { base, field, .. } => base
+                .span()
+                .join(field.span())
+                .unwrap_or_else(|| base.span()),
+            Expr::TypePath { ty, member, .. } => {
+                ty.span().join(member.span()).unwrap_or_else(|| ty.span())
+            }
+        }
+    }
+}
+
 // TODO: BuiltIn and Location should be built when a vertex or fragment shader
 // are annotated with certain attributes:
 //
@@ -1263,9 +1419,10 @@ pub enum Stmt {
         condition: Expr,
         body: Block,
     },
+    /// Any expression.
     Expr {
         expr: Expr,
-        /// If `None`, this expression is a return statement
+        /// If `None`, this expression is considered a return statement.
         semi_token: Option<Token![;]>,
     },
     /// If statement (with optional else/else-if chains)
@@ -1275,6 +1432,8 @@ pub enum Stmt {
         break_token: Token![break],
         semi_token: Token![;],
     },
+    /// A for-loop statement.
+    For(Box<ForLoop>),
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -1294,8 +1453,12 @@ impl TryFrom<&syn::Stmt> for Stmt {
                 .fail(),
             },
             syn::Stmt::Expr(expr, semi_token) => {
-                // Check for assignment expressions
                 match expr {
+                    // Handle for-loops
+                    syn::Expr::ForLoop(for_loop) => {
+                        Ok(Stmt::For(Box::new(ForLoop::try_from(for_loop)?)))
+                    }
+                    // Handle assignments
                     syn::Expr::Assign(syn::ExprAssign {
                         attrs: _,
                         left,
@@ -1413,6 +1576,241 @@ impl TryFrom<&syn::Block> for Block {
     }
 }
 
+/// A for-loop statement.
+///
+/// Supports Rust range-based for-loops:
+/// - `for i in from..to { ... }` (exclusive upper bound)
+/// - `for i in from..=to { ... }` (inclusive upper bound)
+///
+/// Transpiles to WGSL:
+/// - `for (var i = from; i < to; i++)` (exclusive)
+/// - `for (var i = from; i <= to; i++)` (inclusive)
+///
+/// # Limitations
+/// - Only ascending iteration is supported (WGSL uses `i++`)
+/// - Labels are not supported
+/// - Only range expressions are supported (no arbitrary iterators)
+/// - The loop variable cannot be `_`
+pub struct ForLoop {
+    pub for_token: Token![for],
+    /// The loop variable identifier
+    pub ident: Ident,
+    /// Optional explicit type annotation for the loop variable
+    // Note: Rust doesn't support type annotations in for-loop patterns like `for i:
+    // u32 in 0..10`. The type is inferred from the range expression.
+    // We keep the ty field in ForLoop for potential future use or manual
+    // construction, but it will always be None when parsing from Rust source.
+    pub ty: Option<(Token![:], Type)>,
+    pub _in_token: Token![in],
+    /// The starting value of the range
+    pub from: Expr,
+    /// If true, the range is inclusive (`..=`), otherwise exclusive (`..`)
+    pub inclusive: bool,
+    /// The span of the range operator for error reporting
+    pub range_span: Span,
+    /// The ending value of the range
+    pub to: Expr,
+    /// The loop body
+    pub body: Block,
+}
+
+impl TryFrom<&syn::ExprForLoop> for ForLoop {
+    type Error = Error;
+
+    fn try_from(value: &syn::ExprForLoop) -> Result<Self, Self::Error> {
+        let syn::ExprForLoop {
+            attrs,
+            label,
+            for_token,
+            pat,
+            in_token,
+            expr,
+            body,
+        } = value;
+
+        // Parse allowed warnings from attributes on the for-loop itself
+        let allowed = parse_wgsl_allow(attrs)?;
+
+        // Reject labels
+        if let Some(label) = label {
+            return UnsupportedSnafu {
+                span: label.span(),
+                note: "Labels on for-loops are not supported in WGSL",
+            }
+            .fail();
+        }
+
+        // Parse the pattern to get ident and optional type
+        let (ident, ty) = parse_for_loop_pattern(pat)?;
+
+        // Parse the range expression
+        let (from, inclusive, range_span, to) = parse_range_expr(expr)?;
+
+        // Check for non-literal bounds and emit warning/error if not suppressed
+        let mut non_literal_spans = vec![];
+        if !from.is_literal() {
+            non_literal_spans.push(from.span());
+        }
+        if !to.is_literal() {
+            non_literal_spans.push(to.span());
+        }
+
+        if !non_literal_spans.is_empty() && !allowed.contains(&WarningName::NonLiteralLoopBounds) {
+            let warning = Warning {
+                name: WarningName::NonLiteralLoopBounds,
+                spans: non_literal_spans,
+            };
+
+            if cfg!(nightly) {
+                // Emit the warning and continue parsing on nightly
+                emit_warning(&warning);
+            } else {
+                return Err(Error::SuppressableWarning { warning });
+            }
+        }
+
+        // Parse the body
+        let body = Block::try_from(body)?;
+
+        Ok(ForLoop {
+            for_token: *for_token,
+            ident,
+            ty,
+            _in_token: *in_token,
+            from,
+            inclusive,
+            range_span,
+            to,
+            body,
+        })
+    }
+}
+
+/// Parse `#[wgsl_allow(warning1, warning2, ...)]` attributes.
+/// Returns the list of warning names that should be suppressed.
+fn parse_wgsl_allow(attrs: &[syn::Attribute]) -> Result<Vec<WarningName>, Error> {
+    let mut allowed = vec![];
+    for attr in attrs {
+        if attr.path().is_ident("wgsl_allow") {
+            let list = attr.meta.require_list()?;
+            let idents = list.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated,
+            )?;
+            for ident in idents {
+                allowed.push(WarningName::try_from(&ident)?);
+            }
+        }
+    }
+    Ok(allowed)
+}
+
+/// Parse a for-loop pattern to extract the identifier and optional type
+/// annotation.
+fn parse_for_loop_pattern(pat: &syn::Pat) -> Result<(Ident, Option<(Token![:], Type)>), Error> {
+    match pat {
+        syn::Pat::Ident(syn::PatIdent {
+            attrs: _,
+            by_ref,
+            mutability: _,
+            ident,
+            subpat,
+        }) => {
+            // Reject `ref` bindings
+            if let Some(by_ref) = by_ref {
+                return UnsupportedSnafu {
+                    span: by_ref.span(),
+                    note: "WGSL does not support 'ref' in for-loop patterns",
+                }
+                .fail();
+            }
+
+            // Reject subpatterns
+            if let Some((at, _)) = subpat {
+                return UnsupportedSnafu {
+                    span: at.span(),
+                    note: "WGSL does not support '@' patterns in for-loops",
+                }
+                .fail();
+            }
+
+            // Reject wildcard patterns
+            if ident == "_" {
+                return UnsupportedSnafu {
+                    span: ident.span(),
+                    note: "WGSL for-loops require a named loop variable, not '_'",
+                }
+                .fail();
+            }
+
+            Ok((ident.clone(), None))
+        }
+        syn::Pat::Type(syn::PatType {
+            attrs: _,
+            pat,
+            colon_token,
+            ty,
+        }) => {
+            // Recursively parse the inner pattern
+            let (ident, _) = parse_for_loop_pattern(pat)?;
+            let parsed_ty = Type::try_from(ty.as_ref())?;
+            Ok((ident, Some((*colon_token, parsed_ty))))
+        }
+        syn::Pat::Wild(wild) => UnsupportedSnafu {
+            span: wild.span(),
+            note: "WGSL for-loops require a named loop variable, not '_'",
+        }
+        .fail(),
+        other => UnsupportedSnafu {
+            span: other.span(),
+            note: format!(
+                "Unsupported pattern in for-loop: '{}'. Only simple identifiers are supported.",
+                other.into_token_stream()
+            ),
+        }
+        .fail(),
+    }
+}
+
+/// Parse a range expression to extract from, to, and whether it's inclusive.
+fn parse_range_expr(expr: &syn::Expr) -> Result<(Expr, bool, Span, Expr), Error> {
+    match expr {
+        syn::Expr::Range(syn::ExprRange {
+            attrs: _,
+            start,
+            limits,
+            end,
+        }) => {
+            let from = start.as_ref().ok_or_else(|| Error::Unsupported {
+                span: expr.span(),
+                note: "For-loops require a start value (e.g., `0..10`, not `..10`)".to_string(),
+            })?;
+
+            let to = end.as_ref().ok_or_else(|| Error::Unsupported {
+                span: expr.span(),
+                note: "For-loops require an end value (e.g., `0..10`, not `0..`)".to_string(),
+            })?;
+
+            let (inclusive, range_span) = match limits {
+                syn::RangeLimits::HalfOpen(dot2) => (false, dot2.span()),
+                syn::RangeLimits::Closed(dot2eq) => (true, dot2eq.span()),
+            };
+
+            let from = Expr::try_from(from.as_ref())?;
+            let to = Expr::try_from(to.as_ref())?;
+
+            Ok((from, inclusive, range_span, to))
+        }
+        other => UnsupportedSnafu {
+            span: other.span(),
+            note: format!(
+                "For-loops only support range expressions (e.g., `0..10` or `0..=9`). Saw: '{}'",
+                other.into_token_stream()
+            ),
+        }
+        .fail(),
+    }
+}
+
 /// WGSL if statement.
 ///
 /// Unlike Rust, WGSL `if` is a statement, not an expression.
@@ -1473,6 +1871,7 @@ impl TryFrom<&syn::ExprIf> for StmtIf {
         })
     }
 }
+
 
 /// WGSL built-in annotations for shader inputs and outputs.
 pub enum BuiltIn {
@@ -1857,7 +2256,7 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                     "compute" => {
                         stage = Some(("compute", ident.clone()));
                     }
-                    // Skip workgroup_size and other attributes in this pass
+                    // Skip workgroup_size in this pass (handled separately for compute)
                     "workgroup_size" => {}
                     other => UnsupportedSnafu {
                         span: ident.span(),
@@ -4000,6 +4399,7 @@ mod test {
         );
     }
 
+
     #[test]
     fn break_with_label_rejected() {
         let stmt: syn::Stmt = syn::parse_quote! { break 'outer; };
@@ -4017,6 +4417,275 @@ mod test {
         assert!(
             result.is_err(),
             "Expected break with value to be rejected, but it succeeded"
+        );
+    }
+
+    #[test]
+    fn for_loop_exclusive_range_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            for i in 0..10 {
+                let x = i;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var i = 0; i < 10; i++)"),
+            "Expected 'for (var i = 0; i < 10; i++)' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn for_loop_inclusive_range_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            for i in 0..=9 {
+                let x = i;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var i = 0; i <= 9; i++)"),
+            "Expected 'for (var i = 0; i <= 9; i++)' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn for_loop_with_expressions_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            #[wgsl_allow(non_literal_loop_bounds)]
+            for i in start..end {
+                let x = i;
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var i = start; i < end; i++)"),
+            "Expected 'for (var i = start; i < end; i++)' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn for_loop_rejects_labels() {
+        let expr: syn::Expr = syn::parse_quote! {
+            'outer: for i in 0..10 {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("Labels") || err.contains("label"),
+            "Expected error about labels, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn for_loop_rejects_wildcard_pattern() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for _ in 0..10 {
+                let x = 0;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("_") || err.contains("named"),
+            "Expected error about wildcard pattern, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn for_loop_rejects_unbounded_start() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in ..10 {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("start"),
+            "Expected error about missing start, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn for_loop_rejects_unbounded_end() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in 0.. {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("end"),
+            "Expected error about missing end, got: {}",
+            err
+        );
+    }
+
+    // On stable, non-literal loop bounds return an error (SuppressableWarning)
+    #[test]
+    #[cfg(not(nightly))]
+    fn for_loop_error_with_non_literal_bounds() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in start..end {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_err(), "Expected error for non-literal bounds");
+        let err = result.err().unwrap();
+        assert!(
+            matches!(err, Error::SuppressableWarning { .. }),
+            "Expected SuppressableWarning, got: {:?}",
+            err
+        );
+    }
+
+    // On nightly, non-literal loop bounds emit a warning diagnostic and parsing
+    // succeeds. The emit_warning function gracefully handles being called
+    // outside of a proc macro context (like in unit tests) by catching the
+    // panic and continuing.
+    #[test]
+    #[cfg(nightly)]
+    fn for_loop_warning_with_non_literal_bounds_nightly() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in start..end {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        // On nightly, parsing succeeds (warning would be emitted during real macro
+        // expansion)
+        let result = ForLoop::try_from(for_loop);
+        assert!(
+            result.is_ok(),
+            "Expected success on nightly, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn for_loop_suppressed_with_wgsl_allow() {
+        let expr: syn::Expr = syn::parse_quote! {
+            #[wgsl_allow(non_literal_loop_bounds)]
+            for i in start..end {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_ok(), "Expected success with wgsl_allow");
+    }
+
+    #[test]
+    fn for_loop_no_error_with_literal_bounds() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in 0..10 {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let result = ForLoop::try_from(for_loop);
+        assert!(result.is_ok(), "Expected success for literal bounds");
+    }
+
+    #[test]
+    fn for_loop_parses_correctly() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for i in 0..10 {
+                let x = i;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let for_loop = ForLoop::try_from(for_loop).unwrap();
+        assert_eq!("i", for_loop.ident.to_string());
+        assert!(!for_loop.inclusive);
+        assert!(for_loop.ty.is_none());
+    }
+
+    #[test]
+    fn for_loop_inclusive_parses_correctly() {
+        let expr: syn::Expr = syn::parse_quote! {
+            for j in 1..=100 {
+                let y = j;
+            }
+        };
+        let for_loop = match &expr {
+            syn::Expr::ForLoop(f) => f,
+            _ => panic!("Expected ForLoop"),
+        };
+        let for_loop = ForLoop::try_from(for_loop).unwrap();
+        assert_eq!("j", for_loop.ident.to_string());
+        assert!(for_loop.inclusive);
+    }
+
+    #[test]
+    fn for_loop_nested_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            for i in 0..4 {
+                for j in 0..4 {
+                    let x = i + j;
+                }
+            }
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var i = 0; i < 4; i++)"),
+            "Expected outer loop in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("for (var j = 0; j < 4; j++)"),
+            "Expected inner loop in WGSL output, got: {}",
+            wgsl
         );
     }
 }

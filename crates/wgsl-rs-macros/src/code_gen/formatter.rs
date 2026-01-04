@@ -976,7 +976,66 @@ impl GenerateCode for Stmt {
                 code.write_atom(break_token);
                 code.write_atom(semi_token);
             }
+            Stmt::For(for_loop) => for_loop.write_code(code),
         }
+    }
+}
+
+impl GenerateCode for ForLoop {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let ForLoop {
+            for_token,
+            ident,
+            ty,
+            _in_token: _,
+            from,
+            inclusive,
+            range_span,
+            to,
+            body,
+        } = self;
+
+        // Write: for (var ident[: type] = from; ident < to; ident++)
+        code.write_atom(for_token);
+        code.space();
+        code.write_surrounded(Surrounded::parens().with_span(*range_span), |code| {
+            // Initializer: var ident[: type] = from
+            code.write_str(for_token.span, "var");
+            code.space();
+            ident.write_code(code);
+            if let Some((colon_token, loop_ty)) = ty {
+                code.write_atom(colon_token);
+                code.space();
+                loop_ty.write_code(code);
+            }
+            code.space();
+            code.write_str(for_token.span, "=");
+            code.space();
+            from.write_code(code);
+
+            // Condition: ; ident < to or ; ident <= to
+            code.write_str(*range_span, ";");
+            code.space();
+            ident.write_code(code);
+            code.space();
+            if *inclusive {
+                code.write_str(*range_span, "<=");
+            } else {
+                code.write_str(*range_span, "<");
+            }
+            code.space();
+            to.write_code(code);
+
+            // Update: ; ident++
+            code.write_str(*range_span, ";");
+            code.space();
+            ident.write_code(code);
+            code.write_str(ident.span(), "++");
+        });
+        code.space();
+
+        // Body block
+        body.write_code(code);
     }
 }
 

@@ -22,6 +22,6 @@ reqwest = { version = "0.12", features = ["blocking"] }
 scraper = "0.22"
 quote = "1.0"
 snafu = "0.8.9"
-syn = { version = "2.0", features = ["full", "printing", "extra-traits"] }
+syn = { version = "2.0", features = ["full", "printing", "extra-traits", "visit-mut"] }
 wgpu = "28"
 winit = "0.30"

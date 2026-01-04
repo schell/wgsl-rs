@@ -513,10 +513,14 @@ pub mod loop_example {
             loop {
                 result += 1.0;
                 j += 1;
-                // REQUIRED in real WGSL: if j >= 5 { break; }
+                if j >= 5 {
+                    break;
+                }
             }
             i += 1;
-            // REQUIRED in real WGSL: if i >= 5 { break; }
+            if i >= 5 {
+                break;
+            }
         }
 
         vec4f(result / 25.0, 0.0, 0.0, 1.0)
@@ -528,10 +532,11 @@ pub mod loop_example {
         let mut iterations: u32 = 0;
 
         loop {
-            value = value * 1.5;
+            value *= 1.5;
             iterations += 1;
-            // REQUIRED in real WGSL: if value >= 100.0 || iterations >= 20 {
-            // break; }
+            if value >= 100.0 || iterations >= 20 {
+                break;
+            }
         }
 
         vec4f(value / 100.0, f32(iterations) / 20.0, 0.0, 1.0)

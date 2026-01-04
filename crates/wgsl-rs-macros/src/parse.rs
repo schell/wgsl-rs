@@ -1445,6 +1445,12 @@ pub enum Stmt {
         continue_token: Token![continue],
         semi_token: Token![;],
     },
+    /// Return statement with optional expression: `return;` or `return expr;`
+    Return {
+        return_token: Token![return],
+        expr: Option<Expr>,
+        semi_token: Token![;],
+    },
     /// A for-loop statement.
     For(Box<ForLoop>),
 }
@@ -1585,6 +1591,27 @@ impl TryFrom<&syn::Stmt> for Stmt {
                         })?;
                         Ok(Stmt::Continue {
                             continue_token: *continue_token,
+                            semi_token,
+                        })
+                    }
+                    // Return statement: `return expr;`
+                    syn::Expr::Return(syn::ExprReturn {
+                        attrs: _,
+                        return_token,
+                        expr: return_expr,
+                    }) => {
+                        let semi_token = semi_token.ok_or_else(|| Error::Unsupported {
+                            span: expr.span(),
+                            note: "Return statements must end with a semicolon".to_string(),
+                        })?;
+                        let expr_opt = if let Some(e) = return_expr {
+                            Some(Expr::try_from(e.as_ref())?)
+                        } else {
+                            None
+                        };
+                        Ok(Stmt::Return {
+                            return_token: *return_token,
+                            expr: expr_opt,
                             semi_token,
                         })
                     }
@@ -1919,7 +1946,6 @@ impl TryFrom<&syn::ExprIf> for StmtIf {
         })
     }
 }
-
 
 /// WGSL built-in annotations for shader inputs and outputs.
 pub enum BuiltIn {
@@ -4510,7 +4536,6 @@ mod test {
         );
     }
 
-
     #[test]
     fn break_with_label_rejected() {
         let stmt: syn::Stmt = syn::parse_quote! { break 'outer; };
@@ -4600,7 +4625,6 @@ mod test {
             err
         );
     }
-
 
     #[test]
     fn for_loop_rejects_wildcard_pattern() {
@@ -4861,6 +4885,130 @@ mod test {
             wgsl.contains("x += 1u;"),
             "Expected 'x += 1u;' in WGSL output, got: {}",
             wgsl
+        );
+    }
+
+    #[test]
+    fn explicit_return_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            return 42;
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert_eq!(
+            wgsl.trim(),
+            "return 42;",
+            "Expected 'return 42;', got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn explicit_return_with_expression_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            return x + y;
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("return"),
+            "Expected 'return' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("x+y") || wgsl.contains("x + y"),
+            "Expected 'x+y' or 'x + y' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn explicit_return_in_function_generates_wgsl() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn test_return(x: i32) -> i32 {
+                if x > 0 {
+                    return x;
+                }
+                return 0;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("return x;"),
+            "Expected 'return x;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("return 0;"),
+            "Expected 'return 0;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn implicit_return_still_works() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn test_implicit(x: i32) -> i32 {
+                x + 1
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("return x+1;") || wgsl.contains("return x + 1;"),
+            "Expected 'return x+1;' or 'return x + 1;' in WGSL output for implicit return, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn explicit_and_implicit_return_can_coexist() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn test_mixed(x: i32) -> i32 {
+                if x < 0 {
+                    return 0;
+                }
+                x * 2
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("return 0;"),
+            "Expected explicit 'return 0;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("return x*2;") || wgsl.contains("return x * 2;"),
+            "Expected implicit return converted to 'return x*2;' or 'return x * 2;' in WGSL \
+             output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn explicit_return_without_expression_generates_wgsl() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn void_return() {
+                return;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("return;"),
+            "Expected 'return;' in WGSL output for void return, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn return_without_semicolon_rejected() {
+        let result: Result<syn::Stmt, _> = syn::parse_str("return 42");
+        assert!(
+            result.is_err(),
+            "Expected return without semicolon to be rejected during parsing"
         );
     }
 }

@@ -278,7 +278,6 @@ pub mod binary_ops_example {
     }
 }
 
-
 #[wgsl]
 pub mod for_loop_example {
     //! Demonstrates for-loop support with range expressions.
@@ -543,7 +542,6 @@ pub mod loop_example {
     }
 }
 
-
 #[wgsl]
 #[allow(dead_code)]
 pub mod if_example {
@@ -667,6 +665,56 @@ pub mod break_example {
         }
 
         vec4f(f32(i) / 10.0, f32(j) / 10.0, f32(found), 1.0)
+    }
+}
+
+/// Demonstrates explicit return statement support.
+#[wgsl]
+#[allow(dead_code, clippy::needless_return, clippy::mixed_attributes_style)]
+pub mod return_example {
+    //! Demonstrates explicit return statements including:
+    //! - Early returns from functions
+    //! - Return with expressions
+    //! - Mixed explicit and implicit returns
+    use wgsl_rs::std::*;
+
+    // Helper function with early return
+    pub fn clamp_positive(x: f32) -> f32 {
+        if x < 0.0 {
+            return 0.0;
+        }
+        return x;
+    }
+
+    // Function with multiple return paths
+    pub fn sign(x: f32) -> f32 {
+        if x > 0.0 {
+            return 1.0;
+        }
+        if x < 0.0 {
+            return -1.0;
+        }
+        return 0.0;
+    }
+
+    // Mixed explicit and implicit return
+    pub fn abs_or_zero(x: f32, threshold: f32) -> f32 {
+        if abs(x) < threshold {
+            return 0.0;
+        }
+        abs(x)
+    }
+
+    #[fragment]
+    pub fn test_explicit_returns() -> Vec4f {
+        let pos = clamp_positive(-5.0); // 0.0
+        let neg = clamp_positive(3.0); // 3.0
+        let s1 = sign(5.0); // 1.0
+        let s2 = sign(-2.0); // -1.0
+        let a1 = abs_or_zero(0.1, 0.5); // 0.0
+        let a2 = abs_or_zero(2.0, 0.5); // 2.0
+
+        vec4f(pos + neg / 10.0, s1 + s2, a1 + a2 / 10.0, 1.0)
     }
 }
 
@@ -1010,6 +1058,7 @@ pub fn main() {
     validate_and_print_source(&if_example::WGSL_MODULE);
     validate_and_print_source(&break_example::WGSL_MODULE);
     validate_and_print_source(&for_loop_example::WGSL_MODULE);
+    validate_and_print_source(&return_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

@@ -1445,7 +1445,7 @@ pub enum Stmt {
         continue_token: Token![continue],
         semi_token: Token![;],
     },
-    /// Return statement: `return expr;`
+    /// Return statement with optional expression: `return;` or `return expr;`
     Return {
         return_token: Token![return],
         expr: Option<Expr>,

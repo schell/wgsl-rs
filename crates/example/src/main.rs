@@ -435,8 +435,12 @@ pub mod while_loop_example {
         let mut sum = 0.0;
 
         while i < 10 {
-            sum += f32(i);
             i += 1;
+            // Skip even numbers using continue
+            if i % 2 == 0 {
+                continue;
+            }
+            sum += f32(i);
         }
 
         vec4f(sum / 10.0, 0.0, 0.0, 1.0)

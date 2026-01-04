@@ -954,6 +954,11 @@ impl GenerateCode for Stmt {
                 code.space();
                 body.write_code(code);
             }
+            Stmt::Loop { loop_token, body } => {
+                code.write_atom(loop_token);
+                code.space();
+                body.write_code(code);
+            }
             Stmt::Expr { expr, semi_token } => {
                 if let Some(semi) = semi_token {
                     expr.write_code(code);

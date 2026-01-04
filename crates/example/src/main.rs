@@ -479,6 +479,72 @@ pub mod while_loop_example {
 }
 
 #[wgsl]
+#[allow(dead_code, unused_assignments)]
+pub mod loop_example {
+    //! Demonstrates WGSL loop statements (infinite loops).
+    //! Note: These are demonstration examples only.
+
+    use wgsl_rs::std::*;
+
+    #[fragment]
+    pub fn test_simple_loop() -> Vec4f {
+        let mut counter: u32 = 0;
+        let mut sum: f32 = 0.0;
+
+        loop {
+            sum += f32(counter);
+            counter += 1;
+            if counter >= 10 {
+                break;
+            }
+        }
+
+        vec4f(sum / 10.0, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_nested_loop() -> Vec4f {
+        let mut i: u32 = 0;
+        let mut j: u32 = 0;
+        let mut result: f32 = 0.0;
+
+        loop {
+            j = 0;
+            loop {
+                result += 1.0;
+                j += 1;
+                if j >= 5 {
+                    break;
+                }
+            }
+            i += 1;
+            if i >= 5 {
+                break;
+            }
+        }
+
+        vec4f(result / 25.0, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn test_loop_with_operations() -> Vec4f {
+        let mut value: f32 = 1.0;
+        let mut iterations: u32 = 0;
+
+        loop {
+            value *= 1.5;
+            iterations += 1;
+            if value >= 100.0 || iterations >= 20 {
+                break;
+            }
+        }
+
+        vec4f(value / 100.0, f32(iterations) / 20.0, 0.0, 1.0)
+    }
+}
+
+
+#[wgsl]
 #[allow(dead_code)]
 pub mod if_example {
     //! Demonstrates if statements including:
@@ -940,6 +1006,7 @@ pub fn main() {
     validate_and_print_source(&binary_ops_example::WGSL_MODULE);
     validate_and_print_source(&assignment_example::WGSL_MODULE);
     validate_and_print_source(&while_loop_example::WGSL_MODULE);
+    validate_and_print_source(&loop_example::WGSL_MODULE);
     validate_and_print_source(&if_example::WGSL_MODULE);
     validate_and_print_source(&break_example::WGSL_MODULE);
     validate_and_print_source(&for_loop_example::WGSL_MODULE);

@@ -989,6 +989,18 @@ impl GenerateCode for Stmt {
                 code.write_atom(continue_token);
                 code.write_atom(semi_token);
             }
+            Stmt::Return {
+                return_token,
+                expr,
+                semi_token,
+            } => {
+                code.write_atom(return_token);
+                if let Some(e) = expr {
+                    code.space();
+                    e.write_code(code);
+                }
+                code.write_atom(semi_token);
+            }
         }
     }
 }

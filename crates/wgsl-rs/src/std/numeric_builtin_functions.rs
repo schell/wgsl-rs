@@ -11,7 +11,7 @@
 //! |x| fn asinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the inverse hyperbolic sine (sinh-1) of e, as a hyperbolic angle in radians. That is, approximates x such that sinh(x) = e. <br>       Component-wise when T is a vector. |
 //! |x| fn atan(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the principal value, in radians, of the inverse tangent (tan-1) of e. That is, approximates x with π/2 ≤ x ≤ π/2, such that tan(x) = e. <br>       Component-wise when T is a vector. |
 //! |x| fn atanh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful when abs(e) ≥ 1. |
-//! | | fn atan2(y: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns an angle, in radians, in the interval [-π, π] whose tangent is y÷x. <br>       The quadrant selected by the result depends on the signs of y and x.<br>    For example, the function may be implemented as:<br>       <br>        <br>         atan(y/x) when x > 0<br>        <br>         atan(y/x) + π when (x < 0) and (y > 0)<br>        <br>         atan(y/x) - π when (x < 0) and (y < 0)<br>       <br>       Note: atan2 is ill-defined when y/x is ill-defined, at the origin (x,y) = (0,0), and when y is non-normal or infinite.<br>       Component-wise when T is a vector. |
+//! |x| fn atan2(y: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns an angle, in radians, in the interval [-π, π] whose tangent is y÷x. <br>       The quadrant selected by the result depends on the signs of y and x.<br>    For example, the function may be implemented as:<br>       <br>        <br>         atan(y/x) when x > 0<br>        <br>         atan(y/x) + π when (x < 0) and (y > 0)<br>        <br>         atan(y/x) - π when (x < 0) and (y < 0)<br>       <br>       Note: atan2 is ill-defined when y/x is ill-defined, at the origin (x,y) = (0,0), and when y is non-normal or infinite.<br>       Component-wise when T is a vector. |
 //! |x| fn ceil(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the ceiling of e. Component-wise when T is a vector. |
 //! |x| fn clamp(e: T, low: T, high: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Restricts the value of e within a range. <br>       If T is an integer type, then the result is min(max(e, low), high).<br>       If T is a floating-point type, then the result is either min(max(e, low), high), or the median of the three values e, low, high.<br>       Component-wise when T is a vector.<br>       If low is greater than high, then:<br>       <br>        <br>         It is a shader-creation error if low and high are const-expressions.<br>        <br>         It is a pipeline-creation error if low and high are override-expressions. |
 //! |x| fn cos(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the cosine of e, where e is in radians. Component-wise when T is a vector. |
@@ -22,13 +22,13 @@
 //! |x| fn cross(e1: vec3<T>, e2: vec3<T>) -> vec3<T> | T is AbstractFloat, f32, or f16 | Returns the cross product of e1 and e2. |
 //! |x| fn degrees(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts radians to degrees, approximating e1 × 180 ÷ π. Component-wise when T is a vector |
 //! | | fn determinant(e: matCxC<T>) -> T | T is AbstractFloat, f32, or f16 | Returns the determinant of e. |
-//! | | fn distance(e1: T, e2: T) -> S | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the distance between e1 and e2 (e.g. length(e1 - e2)). |
+//! |x| fn distance(e1: T, e2: T) -> S | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the distance between e1 and e2 (e.g. length(e1 - e2)). |
 //! |x| fn dot(e1: vecN<T>, e2: vecN<T>) -> T | T is AbstractInt, AbstractFloat, i32, u32, f32, or f16 | Returns the dot product of e1 and e2. |
 //! |x| fn exp(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the natural exponentiation of e1 (e.g. ee1). Component-wise when T is a vector. |
 //! |x| fn exp2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns 2 raised to the power e (e.g. 2e). Component-wise when T is a vector. |
 //! | | fn extractBits(e: T, offset: u32, count: u32) -> T | T is i32 or vecN<i32> | Reads bits from an integer, with sign extension. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is 0 if c is 0. <br>        Otherwise, bits 0..c - 1 of the result are copied from bits o..o + c - 1 of e.<br>       Other bits of the result are the same as bit c - 1 of the result. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
 //! | | fn extractBits(e: T, offset: u32, count: u32) -> T | T is u32 or vecN<u32> | Reads bits from an integer, without sign extension. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is 0 if c is 0. <br>        Otherwise, bits 0..c - 1 of the result are copied from bits o..o + c - 1 of e.<br>       Other bits of the result are 0. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
-//! | | fn faceForward(e1: T, e2: T, e3: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | Returns e1 if dot(e2, e3) is negative, and -e1 otherwise. |
+//! |x| fn faceForward(e1: T, e2: T, e3: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | Returns e1 if dot(e2, e3) is negative, and -e1 otherwise. |
 //! | | fn firstLeadingBit(e: T) -> T | T is i32 or vecN<i32> | Note: Since signed integers use twos-complement representation,<br>the sign bit appears in the most significant bit position. |
 //! | | fn firstLeadingBit(e: T) -> T | T is u32 or vecN<u32> | For scalar T, the result is: <br>       <br>        T(-1) if e is zero. <br>        Otherwise the position of the most significant 1<br>            bit in e. <br>       <br>        Component-wise when T is a vector. |
 //! | | fn firstTrailingBit(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | For scalar T, the result is: <br>       <br>        T(-1) if e is zero. <br>        Otherwise the position of the least significant 1<br>            bit in e. <br>       <br>        Component-wise when T is a vector. |
@@ -55,7 +55,7 @@
 //! |x| fn pow(e1: T, e2: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 raised to the power e2. Component-wise when T is a vector. |
 //! | | fn quantizeToF16(e: T) -> T | T is f32 or vecN<f32> | Note: The vec2<f32> case is the same as unpack2x16float(pack2x16float(e)). |
 //! |x| fn radians(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts degrees to radians, approximating e1 × π ÷ 180. Component-wise when T is a vector |
-//! | | fn reflect(e1: T, e2: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | For the incident vector e1 and surface orientation e2, returns the reflection direction e1 - 2 * dot(e2, e1) * e2. |
+//! |x| fn reflect(e1: T, e2: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | For the incident vector e1 and surface orientation e2, returns the reflection direction e1 - 2 * dot(e2, e1) * e2. |
 //! | | fn refract(e1: T, e2: T, e3: I) -> T | T is vecN<I> I is AbstractFloat, f32, or f16 | For the incident vector e1 and surface normal e2, and the ratio of<br>    indices of refraction e3,<br>    let k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1)).<br>    If k < 0.0, returns the refraction vector 0.0, otherwise return the refraction vector e3 * e1 - (e3 * dot(e2, e1) + sqrt(k)) * e2. |
 //! | | fn reverseBits(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | Reverses the bits in e:  The bit at position k of the result equals the<br>        bit at position 31 -k of e. Component-wise when T is a vector. |
 //! |x| fn round(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Result is the integer k nearest to e, as a floating point value. When e lies halfway between integers k and k + 1,<br>        the result is k when k is even, and k + 1 when k is odd. Component-wise when T is a vector. |
@@ -63,7 +63,7 @@
 //! |x| fn sign(e: T) -> T | S is AbstractInt, AbstractFloat, i32, f32, or f16. T is S, or vecN<S> | Result is: <br>       <br>         1 when e > 0 <br>         0 when e = 0 <br>         -1 when e < 0 <br>       <br>       Component-wise when T is a vector. |
 //! |x| fn sin(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the sine of e, where e is in radians. Component-wise when T is a vector. |
 //! |x| fn sinh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic sine of e, where e is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function<br>    (earg − e−arg)÷2,<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector. |
-//! | | fn smoothstep(low: T, high: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the smooth Hermite interpolation between 0 and 1. Component-wise when T is a vector. <br>       For scalar T, the result is t * t * (3.0 - 2.0 * t),<br>    where t = clamp((x - low) / (high - low), 0.0, 1.0). |
+//! |x| fn smoothstep(low: T, high: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the smooth Hermite interpolation between 0 and 1. Component-wise when T is a vector. <br>       For scalar T, the result is t * t * (3.0 - 2.0 * t),<br>    where t = clamp((x - low) / (high - low), 0.0, 1.0). |
 //! |x| fn sqrt(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the square root of e. Component-wise when T is a vector. |
 //! |x| fn step(edge: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns 1.0 if edge ≤ x, and 0.0 otherwise. Component-wise when T is a vector. |
 //! |x| fn tan(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the tangent of e, where e is in radians. Component-wise when T is a vector. |
@@ -1536,6 +1536,296 @@ mod any {
     }
 }
 
+/// Provides the numeric built-in function `distance`.
+pub trait NumericBuiltinDistance {
+    /// Returns the distance between e1 and e2.
+    /// Evaluates to length(e1 - e2).
+    fn distance(self, e2: Self) -> f32;
+}
+
+/// Returns the distance between e1 and e2.
+/// Evaluates to length(e1 - e2).
+pub fn distance<T: NumericBuiltinDistance>(e1: T, e2: T) -> f32 {
+    <T as NumericBuiltinDistance>::distance(e1, e2)
+}
+
+mod distance {
+    use super::*;
+    impl NumericBuiltinDistance for f32 {
+        fn distance(self, e2: Self) -> f32 {
+            (self - e2).abs()
+        }
+    }
+    impl NumericBuiltinDistance for Vec2f {
+        fn distance(self, e2: Self) -> f32 {
+            (self - e2).length()
+        }
+    }
+    impl NumericBuiltinDistance for Vec3f {
+        fn distance(self, e2: Self) -> f32 {
+            (self - e2).length()
+        }
+    }
+    impl NumericBuiltinDistance for Vec4f {
+        fn distance(self, e2: Self) -> f32 {
+            (self - e2).length()
+        }
+    }
+}
+
+/// Provides the numeric built-in function `smoothstep`.
+pub trait NumericBuiltinSmoothstep {
+    /// Returns the smooth Hermite interpolation between 0 and 1.
+    /// Component-wise when T is a vector.
+    /// For scalar T, the result is t * t * (3.0 - 2.0 * t),
+    /// where t = clamp((x - low) / (high - low), 0.0, 1.0).
+    fn smoothstep(low: Self, high: Self, x: Self) -> Self;
+}
+
+/// Returns the smooth Hermite interpolation between 0 and 1.
+/// Component-wise when T is a vector.
+pub fn smoothstep<T: NumericBuiltinSmoothstep>(low: T, high: T, x: T) -> T {
+    <T as NumericBuiltinSmoothstep>::smoothstep(low, high, x)
+}
+
+mod smoothstep {
+    use super::*;
+    impl NumericBuiltinSmoothstep for f32 {
+        fn smoothstep(low: Self, high: Self, x: Self) -> Self {
+            let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        }
+    }
+    impl NumericBuiltinSmoothstep for Vec2f {
+        fn smoothstep(low: Self, high: Self, x: Self) -> Self {
+            let t_inner = ((x.inner - low.inner) / (high.inner - low.inner))
+                .clamp(glam::Vec2::splat(0.0), glam::Vec2::splat(1.0));
+            let result =
+                t_inner * t_inner * (glam::Vec2::splat(3.0) - glam::Vec2::splat(2.0) * t_inner);
+            Self { inner: result }
+        }
+    }
+    impl NumericBuiltinSmoothstep for Vec3f {
+        fn smoothstep(low: Self, high: Self, x: Self) -> Self {
+            let t_inner = ((x.inner - low.inner) / (high.inner - low.inner))
+                .clamp(glam::Vec3::splat(0.0), glam::Vec3::splat(1.0));
+            let result =
+                t_inner * t_inner * (glam::Vec3::splat(3.0) - glam::Vec3::splat(2.0) * t_inner);
+            Self { inner: result }
+        }
+    }
+    impl NumericBuiltinSmoothstep for Vec4f {
+        fn smoothstep(low: Self, high: Self, x: Self) -> Self {
+            let t_inner = ((x.inner - low.inner) / (high.inner - low.inner))
+                .clamp(glam::Vec4::splat(0.0), glam::Vec4::splat(1.0));
+            let result =
+                t_inner * t_inner * (glam::Vec4::splat(3.0) - glam::Vec4::splat(2.0) * t_inner);
+            Self { inner: result }
+        }
+    }
+}
+
+/// Provides the numeric built-in function `atan2`.
+pub trait NumericBuiltinAtan2 {
+    /// Returns an angle, in radians, in the interval [-π, π] whose tangent is
+    /// y÷x. Component-wise when T is a vector.
+    fn atan2(y: Self, x: Self) -> Self;
+}
+
+/// Returns an angle, in radians, in the interval [-π, π] whose tangent is y÷x.
+/// Component-wise when T is a vector.
+pub fn atan2<T: NumericBuiltinAtan2>(y: T, x: T) -> T {
+    <T as NumericBuiltinAtan2>::atan2(y, x)
+}
+
+mod atan2 {
+    use super::*;
+    impl NumericBuiltinAtan2 for f32 {
+        fn atan2(y: Self, x: Self) -> Self {
+            y.atan2(x)
+        }
+    }
+    impl NumericBuiltinAtan2 for Vec2f {
+        fn atan2(y: Self, x: Self) -> Self {
+            let y_arr = y.inner.to_array();
+            let x_arr = x.inner.to_array();
+            let result = [y_arr[0].atan2(x_arr[0]), y_arr[1].atan2(x_arr[1])];
+            Self {
+                inner: result.into(),
+            }
+        }
+    }
+    impl NumericBuiltinAtan2 for Vec3f {
+        fn atan2(y: Self, x: Self) -> Self {
+            let y_arr = y.inner.to_array();
+            let x_arr = x.inner.to_array();
+            let result = [
+                y_arr[0].atan2(x_arr[0]),
+                y_arr[1].atan2(x_arr[1]),
+                y_arr[2].atan2(x_arr[2]),
+            ];
+            Self {
+                inner: result.into(),
+            }
+        }
+    }
+    impl NumericBuiltinAtan2 for Vec4f {
+        fn atan2(y: Self, x: Self) -> Self {
+            let y_arr = y.inner.to_array();
+            let x_arr = x.inner.to_array();
+            let result = [
+                y_arr[0].atan2(x_arr[0]),
+                y_arr[1].atan2(x_arr[1]),
+                y_arr[2].atan2(x_arr[2]),
+                y_arr[3].atan2(x_arr[3]),
+            ];
+            Self {
+                inner: result.into(),
+            }
+        }
+    }
+}
+
+/// Provides the numeric built-in function `fma`.
+pub trait NumericBuiltinFma {
+    /// Returns e1 * e2 + e3 (fused multiply-add).
+    /// Component-wise when T is a vector.
+    fn fma(e1: Self, e2: Self, e3: Self) -> Self;
+}
+
+/// Returns e1 * e2 + e3 (fused multiply-add).
+/// Component-wise when T is a vector.
+pub fn fma<T: NumericBuiltinFma>(e1: T, e2: T, e3: T) -> T {
+    <T as NumericBuiltinFma>::fma(e1, e2, e3)
+}
+
+mod fma {
+    use super::*;
+    impl NumericBuiltinFma for f32 {
+        fn fma(e1: Self, e2: Self, e3: Self) -> Self {
+            e1.mul_add(e2, e3)
+        }
+    }
+    macro_rules! impl_fma_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinFma for $ty {
+                fn fma(e1: Self, e2: Self, e3: Self) -> Self {
+                    Self {
+                        inner: e1.inner.mul_add(e2.inner, e3.inner),
+                    }
+                }
+            }
+        };
+    }
+    impl_fma_vec!(Vec2f);
+    impl_fma_vec!(Vec3f);
+    impl_fma_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `reflect`.
+pub trait NumericBuiltinReflect {
+    /// For the incident vector e1 and surface orientation e2, returns the
+    /// reflection direction e1 - 2 * dot(e2, e1) * e2.
+    fn reflect(e1: Self, e2: Self) -> Self;
+}
+
+/// For the incident vector e1 and surface orientation e2, returns the
+/// reflection direction e1 - 2 * dot(e2, e1) * e2.
+pub fn reflect<T: NumericBuiltinReflect>(e1: T, e2: T) -> T {
+    <T as NumericBuiltinReflect>::reflect(e1, e2)
+}
+
+mod reflect {
+    use super::*;
+    macro_rules! impl_reflect_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinReflect for $ty {
+                fn reflect(e1: Self, e2: Self) -> Self {
+                    let dot_val = e2.inner.dot(e1.inner);
+                    Self {
+                        inner: e1.inner - 2.0 * dot_val * e2.inner,
+                    }
+                }
+            }
+        };
+    }
+    impl_reflect_vec!(Vec2f);
+    impl_reflect_vec!(Vec3f);
+    impl_reflect_vec!(Vec4f);
+}
+
+/// Provides the numeric built-in function `refract`.
+pub trait NumericBuiltinRefract {
+    /// For the incident vector e1 and surface normal e2, and the ratio of
+    /// indices of refraction e3, returns the refraction vector.
+    /// If k < 0.0, returns the refraction vector 0.0, otherwise returns
+    /// e3 * e1 - (e3 * dot(e2, e1) + sqrt(k)) * e2,
+    /// where k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1)).
+    fn refract(e1: Self, e2: Self, e3: f32) -> Self;
+}
+
+/// For the incident vector e1 and surface normal e2, and the ratio of indices
+/// of refraction e3, returns the refraction vector.
+pub fn refract<T: NumericBuiltinRefract>(e1: T, e2: T, e3: f32) -> T {
+    <T as NumericBuiltinRefract>::refract(e1, e2, e3)
+}
+
+mod refract {
+    use super::*;
+    macro_rules! impl_refract_vec {
+        ($ty:ty, $zero:expr) => {
+            impl NumericBuiltinRefract for $ty {
+                fn refract(e1: Self, e2: Self, e3: f32) -> Self {
+                    let dot_e2_e1 = e2.inner.dot(e1.inner);
+                    let k = 1.0 - e3 * e3 * (1.0 - dot_e2_e1 * dot_e2_e1);
+                    if k < 0.0 {
+                        Self { inner: $zero }
+                    } else {
+                        Self {
+                            inner: e3 * e1.inner - (e3 * dot_e2_e1 + k.sqrt()) * e2.inner,
+                        }
+                    }
+                }
+            }
+        };
+    }
+    impl_refract_vec!(Vec2f, glam::Vec2::ZERO);
+    impl_refract_vec!(Vec3f, glam::Vec3::ZERO);
+    impl_refract_vec!(Vec4f, glam::Vec4::ZERO);
+}
+
+/// Provides the numeric built-in function `faceForward`.
+pub trait NumericBuiltinFaceForward {
+    /// Returns e1 if dot(e2, e3) is negative, and -e1 otherwise.
+    fn face_forward(e1: Self, e2: Self, e3: Self) -> Self;
+}
+
+/// Returns e1 if dot(e2, e3) is negative, and -e1 otherwise.
+pub fn face_forward<T: NumericBuiltinFaceForward>(e1: T, e2: T, e3: T) -> T {
+    <T as NumericBuiltinFaceForward>::face_forward(e1, e2, e3)
+}
+
+mod face_forward {
+    use super::*;
+    macro_rules! impl_face_forward_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinFaceForward for $ty {
+                fn face_forward(e1: Self, e2: Self, e3: Self) -> Self {
+                    let dot_val = e2.inner.dot(e3.inner);
+                    if dot_val < 0.0 {
+                        e1
+                    } else {
+                        Self { inner: -e1.inner }
+                    }
+                }
+            }
+        };
+    }
+    impl_face_forward_vec!(Vec2f);
+    impl_face_forward_vec!(Vec3f);
+    impl_face_forward_vec!(Vec4f);
+}
+
 /// Provides the logical built-in function `select`.
 pub trait LogicalBuiltinSelect<Condition> {
     /// Returns t if cond is true, else f.
@@ -1916,5 +2206,88 @@ mod test {
             select(vec2f(0.0, 1.0), vec2f(10.0, 11.0), vec2b(true, false)),
             vec2f(10.0, 1.0)
         );
+    }
+
+    #[test]
+    fn sanity_distance() {
+        let a = 1.0f32;
+        let b = 4.0f32;
+        assert_eq!(distance(a, b), 3.0);
+
+        let v1 = vec3f(1.0, 0.0, 0.0);
+        let v2 = vec3f(4.0, 0.0, 0.0);
+        assert_eq!(distance(v1, v2), 3.0);
+    }
+
+    #[test]
+    fn sanity_smoothstep() {
+        let result = smoothstep(0.0f32, 1.0, 0.5);
+        assert!((result - 0.5).abs() < 1e-6);
+
+        let result_at_edge = smoothstep(0.0f32, 1.0, 0.0);
+        assert_eq!(result_at_edge, 0.0);
+
+        let result_at_high = smoothstep(0.0f32, 1.0, 1.0);
+        assert_eq!(result_at_high, 1.0);
+    }
+
+    #[test]
+    fn sanity_atan2() {
+        let result = atan2(1.0f32, 1.0);
+        assert!((result - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
+
+        let result_zero = atan2(0.0f32, 1.0);
+        assert_eq!(result_zero, 0.0);
+    }
+
+    #[test]
+    fn sanity_fma() {
+        let result = fma(2.0f32, 3.0, 4.0);
+        assert_eq!(result, 10.0); // 2 * 3 + 4 = 10
+
+        let v1 = vec2f(2.0, 3.0);
+        let v2 = vec2f(4.0, 5.0);
+        let v3 = vec2f(1.0, 2.0);
+        let result_vec = fma(v1, v2, v3);
+        assert_eq!(result_vec.x(), 9.0); // 2 * 4 + 1 = 9
+        assert_eq!(result_vec.y(), 17.0); // 3 * 5 + 2 = 17
+    }
+
+    #[test]
+    fn sanity_reflect() {
+        let incident = vec3f(1.0, -1.0, 0.0);
+        let normal = vec3f(0.0, 1.0, 0.0);
+        let reflected = reflect(incident, normal);
+        assert!((reflected.x() - 1.0).abs() < 1e-6);
+        assert!((reflected.y() - 1.0).abs() < 1e-6);
+        assert!((reflected.z() - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sanity_refract() {
+        let incident = vec3f(0.0, -1.0, 0.0);
+        let normal = vec3f(0.0, 1.0, 0.0);
+        let eta = 0.5;
+        let refracted = refract(incident, normal, eta);
+        // For straight-down incident, refraction should be straight through
+        assert!((refracted.y()).abs() > 0.0); // Should have some y component
+    }
+
+    #[test]
+    fn sanity_face_forward() {
+        let n = vec3f(0.0, 1.0, 0.0);
+        let i = vec3f(0.0, -1.0, 0.0);
+        let nref = vec3f(0.0, 1.0, 0.0);
+        let result = face_forward(n, i, nref);
+        // dot(i, nref) = -1, which is negative, so result should be n
+        assert_eq!(result.x(), 0.0);
+        assert_eq!(result.y(), 1.0);
+        assert_eq!(result.z(), 0.0);
+
+        let result2 = face_forward(n, nref, i);
+        // dot(nref, i) = -1, which is negative, so result should be n
+        assert_eq!(result2.x(), 0.0);
+        assert_eq!(result2.y(), 1.0);
+        assert_eq!(result2.z(), 0.0);
     }
 }

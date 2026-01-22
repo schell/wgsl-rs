@@ -4,6 +4,7 @@
 //! that require name translation during code generation.
 
 /// Lookup table for builtin functions that need name translation.
+///
 /// Format: (rust_snake_case, wgsl_camelCase)
 ///
 /// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
@@ -43,6 +44,7 @@ pub static BUILTIN_NAME_MAP: &[(&str, &str)] = &[
 ];
 
 /// Looks up the WGSL name for a Rust function name.
+///
 /// Returns `Some(wgsl_name)` if translation is needed, `None` if the name
 /// should be used as-is.
 pub fn lookup_wgsl_name(rust_name: &str) -> Option<&'static str> {
@@ -53,6 +55,7 @@ pub fn lookup_wgsl_name(rust_name: &str) -> Option<&'static str> {
 }
 
 /// Checks if a name (either Rust or WGSL form) is reserved for a builtin.
+///
 /// Returns `Some((rust_name, wgsl_name))` if reserved, `None` otherwise.
 pub fn is_reserved_builtin(name: &str) -> Option<(&'static str, &'static str)> {
     BUILTIN_NAME_MAP

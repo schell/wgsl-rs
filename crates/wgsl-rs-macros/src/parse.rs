@@ -2786,16 +2786,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             }
         );
 
-        // Check if function name conflicts with a WGSL builtin
-        let fn_name = sig.ident.to_string();
-        if let Some((_rust_name, wgsl_name)) = crate::builtins::is_reserved_builtin(&fn_name) {
-            return ReservedBuiltinNameSnafu {
-                span: sig.ident.span(),
-                name: fn_name,
-                wgsl_name,
-            }
-            .fail();
-        }
+        ensure_ident_is_not_shadowing_builtin(&sig.ident)?;
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
@@ -2870,16 +2861,7 @@ impl ItemFn {
             }
         );
 
-        // Check if function name conflicts with a WGSL builtin
-        let fn_name = sig.ident.to_string();
-        if let Some((_rust_name, wgsl_name)) = crate::builtins::is_reserved_builtin(&fn_name) {
-            return ReservedBuiltinNameSnafu {
-                span: sig.ident.span(),
-                name: fn_name,
-                wgsl_name,
-            }
-            .fail();
-        }
+        ensure_ident_is_not_shadowing_builtin(&sig.ident)?;
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
@@ -2924,6 +2906,21 @@ impl ItemFn {
             return_type,
             block: Block::try_from(block)?,
         })
+    }
+}
+
+fn ensure_ident_is_not_shadowing_builtin(ident: &Ident) -> Result<(), Error> {
+    let fn_name = ident.to_string();
+    // Check if function name conflicts with a WGSL builtin
+    if let Some((_rust_name, wgsl_name)) = crate::builtins::is_reserved_builtin(&fn_name) {
+        ReservedBuiltinNameSnafu {
+            span: ident.span(),
+            name: fn_name,
+            wgsl_name,
+        }
+        .fail()
+    } else {
+        Ok(())
     }
 }
 

@@ -9,6 +9,7 @@ use syn::visit_mut::{self, VisitMut};
 use crate::code_gen::GeneratedWgslCode;
 use crate::parse::InterStageIo;
 
+mod builtins;
 mod code_gen;
 #[cfg(feature = "linkage-wgpu")]
 mod linkage;

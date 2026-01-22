@@ -481,7 +481,15 @@ impl GenerateCode for Ident {
 impl GenerateCode for FnPath {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         match self {
-            FnPath::Ident(ident) => ident.write_code(code),
+            FnPath::Ident(ident) => {
+                // Check if this is a builtin that needs name translation
+                let rust_name = ident.to_string();
+                if let Some(wgsl_name) = crate::builtins::lookup_wgsl_name(&rust_name) {
+                    code.write_str(ident.span(), wgsl_name);
+                } else {
+                    ident.write_code(code);
+                }
+            }
             FnPath::TypeMethod {
                 ty,
                 colon2_token,

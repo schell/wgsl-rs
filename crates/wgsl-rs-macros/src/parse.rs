@@ -57,6 +57,15 @@ pub enum Error {
 
     #[snafu(display("{}", warning.name))]
     SuppressableWarning { warning: Warning },
+
+    #[snafu(display(
+        "Cannot define function '{name}': this name is reserved for the WGSL builtin '{wgsl_name}'"
+    ))]
+    ReservedBuiltinName {
+        span: proc_macro2::Span,
+        name: String,
+        wgsl_name: &'static str,
+    },
 }
 
 impl From<syn::Error> for Error {
@@ -82,6 +91,7 @@ impl Error {
                 .first()
                 .copied()
                 .unwrap_or_else(Span::call_site),
+            Error::ReservedBuiltinName { span, .. } => *span,
         }
     }
 }
@@ -2775,6 +2785,18 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
                 item: "Functions"
             }
         );
+
+        // Check if function name conflicts with a WGSL builtin
+        let fn_name = sig.ident.to_string();
+        if let Some((_rust_name, wgsl_name)) = crate::builtins::is_reserved_builtin(&fn_name) {
+            return ReservedBuiltinNameSnafu {
+                span: sig.ident.span(),
+                name: fn_name,
+                wgsl_name,
+            }
+            .fail();
+        }
+
         let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
@@ -2847,6 +2869,17 @@ impl ItemFn {
                 item: "Impl methods"
             }
         );
+
+        // Check if function name conflicts with a WGSL builtin
+        let fn_name = sig.ident.to_string();
+        if let Some((_rust_name, wgsl_name)) = crate::builtins::is_reserved_builtin(&fn_name) {
+            return ReservedBuiltinNameSnafu {
+                span: sig.ident.span(),
+                name: fn_name,
+                wgsl_name,
+            }
+            .fail();
+        }
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
@@ -5325,5 +5358,77 @@ mod test {
             result.is_err(),
             "Expected return without semicolon to be rejected during parsing"
         );
+    }
+
+    #[test]
+    fn builtin_function_call_translates_to_wgsl_name() {
+        // Test that snake_case builtin function calls are translated to camelCase WGSL
+        let expr: syn::Expr = syn::parse_quote! {
+            count_leading_zeros(x)
+        };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert_eq!(
+            wgsl, "countLeadingZeros(x)",
+            "Expected snake_case builtin to be translated to camelCase"
+        );
+    }
+
+    #[test]
+    fn non_builtin_function_call_unchanged() {
+        // Test that non-builtin function calls are not modified
+        let expr: syn::Expr = syn::parse_quote! {
+            my_custom_function(a, b)
+        };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert_eq!(
+            wgsl, "my_custom_function(a, b)",
+            "Expected non-builtin function name to remain unchanged"
+        );
+    }
+
+    #[test]
+    fn defining_function_with_snake_case_builtin_name_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn count_leading_zeros(x: u32) -> u32 {
+                x
+            }
+        };
+        let result = Item::try_from(&item);
+        match result {
+            Ok(_) => panic!("Expected error when defining function with reserved builtin name"),
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("count_leading_zeros") && msg.contains("countLeadingZeros"),
+                    "Error message should mention both Rust and WGSL names, got: {}",
+                    msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn defining_function_with_camel_case_builtin_name_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn countLeadingZeros(x: u32) -> u32 {
+                x
+            }
+        };
+        let result = Item::try_from(&item);
+        match result {
+            Ok(_) => {
+                panic!("Expected error when defining function with reserved WGSL builtin name")
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("countLeadingZeros"),
+                    "Error message should mention the WGSL name, got: {}",
+                    msg
+                );
+            }
+        }
     }
 }

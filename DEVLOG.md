@@ -188,3 +188,10 @@ For-loops with non-literal bounds (where the bounds cannot be verified at compil
 emit a compile error on stable, since warnings can't be emitted (there's a hack to emit them as deprecations, but it's hacky).
 On nightly it emits a warning.
 Use `#[wgsl_allow(non_literal_loop_bounds)]` on the for-loop to suppress these errors/warnings.
+
+### 2026-01-24: RuntimeArray<T> support
+
+Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without size parameter).
+These are used in storage buffers, typically as the last field of a struct.
+On CPU, `RuntimeArray<T>` is backed by `Vec<T>` with full indexing support.
+Transpiles to `array<T>` in WGSL.

@@ -344,6 +344,15 @@ pub enum Type {
         len: Expr,
     },
 
+    /// Runtime-sized array type: RuntimeArray<T>
+    /// Transpiles to array<T> in WGSL (no size parameter)
+    RuntimeArray {
+        ident: Ident,
+        lt_token: Token![<],
+        elem: Box<Type>,
+        gt_token: Token![>],
+    },
+
     /// Struct type: eg. MyStruct
     Struct { ident: Ident },
 }
@@ -519,9 +528,23 @@ impl TryFrom<&syn::Type> for Type {
                         _ => None,
                     };
 
+                    // Check for RuntimeArray
+                    let is_runtime_array = ident_str == "RuntimeArray";
+
                     let arg = args.first().expect("checked that len was 1");
                     match arg {
                         syn::GenericArgument::Type(ty) => {
+                            // Handle RuntimeArray<T> first - it can take any element type
+                            if is_runtime_array {
+                                let elem_type = Type::try_from(ty)?;
+                                return Ok(Type::RuntimeArray {
+                                    ident: ident.clone(),
+                                    lt_token: *lt_token,
+                                    elem: Box::new(elem_type),
+                                    gt_token: *gt_token,
+                                });
+                            }
+
                             if let Type::Scalar {
                                 ty: scalar_ty,
                                 ident: scalar_ident,
@@ -553,7 +576,7 @@ impl TryFrom<&syn::Type> for Type {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3 or Mat4",
+                                               Vec3, Vec4, Mat2, Mat3, Mat4, or RuntimeArray",
                                     }
                                     .fail()
                                 }
@@ -1250,6 +1273,7 @@ impl Expr {
                     Type::Vector { ident, .. } => ident.span(),
                     Type::Matrix { ident, .. } => ident.span(),
                     Type::Array { bracket_token, .. } => bracket_token.span.join(),
+                    Type::RuntimeArray { ident, .. } => ident.span(),
                     Type::Struct { ident } => ident.span(),
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())

@@ -582,6 +582,18 @@ impl GenerateCode for Type {
                     },
                 );
             }
+            Type::RuntimeArray {
+                ident,
+                lt_token,
+                elem,
+                gt_token,
+            } => {
+                // WGSL format: array<T> (no size parameter)
+                code.write_str(ident.span(), "array");
+                code.write_atom(lt_token);
+                elem.write_code(code);
+                code.write_atom(gt_token);
+            }
             Type::Struct { ident } => code.write_atom(ident),
             Type::Matrix {
                 size,

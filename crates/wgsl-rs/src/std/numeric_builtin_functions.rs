@@ -831,7 +831,11 @@ mod step {
     use super::*;
     impl NumericBuiltinStep for f32 {
         fn step(self, x: Self) -> Self {
-            if x >= self { 1.0 } else { 0.0 }
+            if x >= self {
+                1.0
+            } else {
+                0.0
+            }
         }
     }
     macro_rules! impl_step_vec {
@@ -1847,7 +1851,11 @@ mod select {
         ($ty:ty) => {
             impl LogicalBuiltinSelect<bool> for $ty {
                 fn select(f: Self, t: Self, cond: bool) -> Self {
-                    if cond { t } else { f }
+                    if cond {
+                        t
+                    } else {
+                        f
+                    }
                 }
             }
         };

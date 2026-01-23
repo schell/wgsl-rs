@@ -10,6 +10,8 @@
 /// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
 /// are NOT included here since they don't need translation.
 pub static BUILTIN_NAME_MAP: &[(&str, &str)] = &[
+    // Arrays
+    ("array_length", "arrayLength"),
     // Bit manipulation
     ("count_leading_zeros", "countLeadingZeros"),
     ("count_one_bits", "countOneBits"),

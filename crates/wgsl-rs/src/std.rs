@@ -25,6 +25,11 @@ pub use vectors::*;
 mod matrices;
 pub use matrices::*;
 
+/// A workgroup variable.
+pub struct WorkgroupVariable<T> {
+    pub value: Arc<RwLock<Option<T>>>,
+}
+
 /// A shader uniform, backed by a storage buffer on the CPU.
 pub struct UniformVariable<T> {
     pub group: u32,
@@ -87,4 +92,38 @@ pub fn u32(t: impl Convert<u32>) -> u32 {
 /// Returns the input cast to i32.
 pub fn i32(t: impl Convert<i32>) -> i32 {
     t.convert()
+}
+
+/// A runtime-sized array.
+pub struct RuntimeArray<T> {
+    inner: std::vec::Vec<T>,
+}
+
+pub trait ArrayLength {
+    fn array_length(self) -> u32;
+}
+
+impl<T> ArrayLength for &RuntimeArray<T> {
+    fn array_length(self) -> u32 {
+        self.inner.len() as u32
+    }
+}
+
+pub fn array_length(array: impl ArrayLength) -> u32 {
+    array.array_length()
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn sanity_storage_array_length() {
+        use crate::wgsl;
+
+        #[wgsl]
+        mod sanity {
+            use wgsl_rs::std::*;
+
+            storage!(group(0), binding(0), FLOATS: RuntimeArray<f32>);
+        }
+    }
 }

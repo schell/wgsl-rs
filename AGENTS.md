@@ -3,6 +3,25 @@
 Rust-to-WGSL transpiler using proc macros.
 Workspace with `wgsl-rs`, `wgsl-rs-macros`, `example`, and `xtask` crates.
 
+`wgsl-rs` maintains
+
+## Project Lore
+
+Historical data, insights, affirmations, etc.
+
+### The Two Worlds Problem
+
+A key insight is that `wgsl-rs` maintains two parallel representations:
+
+1. Rust World: The code must compile as valid Rust (design decision #1 in DEVLOG.md) **that runs on the CPU**.
+2. WGSL World: The proc-macro transpiles to WGSL **that runs on the GPU**.
+
+These are fundamentally different execution contexts with different memory models, and yet running a `wgsl-rs`
+program should produce roughly the same results in both "worlds".
+
+Program setup (or preamble, if you will) and the runtime behavior is expected to be different for each world,
+but the results should match, within reason.
+
 ## Commands
 
 ```bash

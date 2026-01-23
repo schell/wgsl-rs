@@ -139,4 +139,12 @@ mod test {
         ];
         assert_eq!(&expected, &source);
     }
+
+    #[test]
+    fn runtime_sized_array_playground() {
+        struct Data {
+            count: u32,
+            data: [f32],
+        }
+    }
 }

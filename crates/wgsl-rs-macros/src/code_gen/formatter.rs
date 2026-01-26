@@ -839,6 +839,11 @@ impl GenerateCode for Expr {
                 code.write_str(colon2_token.span(), "_");
                 member.write_code(code);
             }
+            Expr::Reference { and_token, expr } => {
+                // &expr -> &expr in WGSL (same syntax)
+                code.write_atom(and_token);
+                expr.write_code(code);
+            }
         }
     }
 }

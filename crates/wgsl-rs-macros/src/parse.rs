@@ -946,6 +946,14 @@ pub enum Expr {
         colon2_token: Token![::],
         member: Ident,
     },
+    /// A reference expression like `&expr`.
+    ///
+    /// In WGSL, this is used to create pointers, particularly for builtin
+    /// functions like `arrayLength` that require pointer arguments.
+    Reference {
+        and_token: Token![&],
+        expr: Box<Expr>,
+    },
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -1221,6 +1229,57 @@ impl TryFrom<&syn::Expr> for Expr {
                 }
                 .fail();
             }
+            // Reference expressions like `&expr` - used for pointers in WGSL
+            syn::Expr::Reference(syn::ExprReference {
+                attrs: _,
+                and_token,
+                mutability,
+                expr,
+            }) => {
+                // WGSL doesn't distinguish between `&` and `&mut` at the syntax level
+                // (mutability is determined by the address space and access mode)
+                let _ = mutability;
+                Self::Reference {
+                    and_token: *and_token,
+                    expr: Box::new(Expr::try_from(expr.as_ref())?),
+                }
+            }
+            // Handle get_mut!(IDENT) - strip the macro, return just the ident for WGSL
+            syn::Expr::Macro(syn::ExprMacro { attrs: _, mac }) => {
+                let trigger_unsupported = || {
+                    UnsupportedSnafu {
+                        span: mac.path.span(),
+                        note: format!(
+                            "unsupported macro '{}!' in expression position, only mutate! is \
+                             supported",
+                            mac.path.to_token_stream()
+                        ),
+                    }
+                    .fail()
+                };
+                // Some macros have no meaning in WGSL, and we will simply strip them
+                let noop_macros = ["get_mut", "get"];
+                if let Some(macro_ident) = mac.path.get_ident() {
+                    let macro_ident_str = macro_ident.to_string();
+                    if noop_macros.contains(&macro_ident_str.as_str()) {
+                        // Parse the tokens inside the macro as a single identifier
+                        let ident: Ident = syn::parse2(mac.tokens.clone()).map_err(|e| {
+                            UnsupportedSnafu {
+                                span: mac.path.span(),
+                                note: format!(
+                                    "{macro_ident_str}! expects a single identifier, got: {e}"
+                                ),
+                            }
+                            .build()
+                        })?;
+                        Self::Ident(ident)
+                    } else {
+                        return trigger_unsupported();
+                    }
+                } else {
+                    return trigger_unsupported();
+                }
+            }
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!("Unexpected expression '{}'", other.into_token_stream()),
@@ -1300,6 +1359,10 @@ impl Expr {
             Expr::TypePath { ty, member, .. } => {
                 ty.span().join(member.span()).unwrap_or_else(|| ty.span())
             }
+            Expr::Reference { and_token, expr } => and_token
+                .span
+                .join(expr.span())
+                .unwrap_or_else(|| and_token.span),
         }
     }
 }

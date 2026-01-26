@@ -10,7 +10,11 @@
 //! These types include (but are not limited to) vector types like `Vec2f`,
 //! `Vec3f`, etc. and constructors like `vec2`, `vec2f` and `vec3i`, etc.
 
-use std::sync::{Arc, LazyLock, RwLock};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
+};
 
 pub use wgsl_rs_macros::{
     builtin, compute, fragment, input, output, storage, uniform, vertex, wgsl_allow, workgroup_size,
@@ -24,6 +28,78 @@ pub use vectors::*;
 
 mod matrices;
 pub use matrices::*;
+
+pub use crate::{get, get_mut};
+
+/// Wrapper for a `RwLockReadGuard<'a, Option<T>>` that dereferences
+/// to `&T`.
+struct ModuleVarReadGuard<'a, T> {
+    inner: RwLockReadGuard<'a, Option<T>>,
+}
+
+impl<T> Deref for ModuleVarReadGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+            .as_ref()
+            .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"))
+    }
+}
+
+/// Wrapper for a `RwLockWriteGuard<'a, Option<T>>` that dereferences
+/// to `&T` and `&mut T`.
+struct ModuleVarWriteGuard<'a, T> {
+    inner: RwLockWriteGuard<'a, Option<T>>,
+}
+
+impl<T> Deref for ModuleVarWriteGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+            .as_ref()
+            .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"))
+    }
+}
+
+impl<T> DerefMut for ModuleVarWriteGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
+            .as_mut()
+            .unwrap_or_else(|| panic!("Mutably accessed an uninitialized module variable"))
+    }
+}
+
+/// Thread-safe module level variable that can be read from or written
+/// to from anywhere.
+struct ModuleVar<T> {
+    inner: LazyLock<Arc<RwLock<Option<T>>>>,
+}
+
+impl<T> ModuleVar<T> {
+    pub const fn new() -> Self {
+        Self {
+            inner: LazyLock::new(Default::default),
+        }
+    }
+
+    pub fn read(&self) -> impl Deref<Target = T> + '_ {
+        let lock = self
+            .inner
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on a module variable"));
+        ModuleVarReadGuard { inner: lock }
+    }
+
+    pub fn write(&self) -> impl DerefMut<Target = T> + '_ {
+        let lock = self
+            .inner
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
+        ModuleVarWriteGuard { inner: lock }
+    }
+}
 
 /// A workgroup variable.
 pub struct WorkgroupVariable<T> {
@@ -39,15 +115,95 @@ pub struct UniformVariable<T> {
 
 pub type Uniform<T> = LazyLock<UniformVariable<T>>;
 
-/// A shader storage buffer, backed by a storage buffer on the CPU.
-pub struct StorageVariable<T> {
-    pub group: u32,
-    pub binding: u32,
-    pub read_write: bool,
-    pub value: Arc<RwLock<Option<T>>>,
+/// Marker type for read-only access-mode.
+pub struct Read;
+
+/// Marker type for readwrite access-mode.
+pub struct ReadWrite;
+
+/// A shader storage buffer, backed by a `T`.
+pub struct Storage<T, AM = Read> {
+    group: u32,
+    binding: u32,
+    access_mode: PhantomData<AM>,
+    data: ModuleVar<T>,
 }
 
-pub type Storage<T> = LazyLock<StorageVariable<T>>;
+/// Marker trait for read or readwrite storage.
+pub trait AccessMode {}
+
+impl AccessMode for Read {}
+impl AccessMode for ReadWrite {}
+
+impl<T, AM: AccessMode> Storage<T, AM> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Storage {
+            data: ModuleVar::new(),
+            group,
+            binding,
+            access_mode: PhantomData,
+        }
+    }
+
+    /// Get a reference to the inner `T`.
+    pub fn get(&self) -> impl Deref<Target = T> + '_ {
+        self.data.read()
+    }
+
+    /// Get a mutable reference to the inner `T`.
+    pub fn get_mut(&self) -> impl DerefMut<Target = T> + '_ {
+        self.data.write()
+    }
+
+    /// Returns the group index of this storage variable.
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    /// Returns the binding index within its group of this storage variable.
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// Provides access to a storage variable.
+///
+/// Since storage variables are `static` and implemented with locks,
+/// normal borrows aren't possible.
+///
+/// # Example
+/// ```ignore
+/// storage!(group(0), binding(0), read_write, OUTPUT: [f32; 256]);
+///
+/// let value = get!(OUTPUT)[idx];
+/// let value = get!(OUTPUT).field;
+/// ```
+#[macro_export]
+macro_rules! get {
+    ($var:ident) => {
+        $var.get()
+    };
+}
+
+/// Provides mutable access to a storage variable.
+///
+/// Since storage variables are `static` and implemented with locks,
+/// normal mutable borrows aren't possible.
+/// This macro uses interior mutability to enable writes.
+///
+/// # Example
+/// ```ignore
+/// storage!(group(0), binding(0), read_write, OUTPUT: [f32; 256]);
+///
+/// get_mut!(OUTPUT)[idx] = value;
+/// get_mut!(OUTPUT).field = value;
+/// ```
+#[macro_export]
+macro_rules! get_mut {
+    ($var:ident) => {
+        $var.get_mut()
+    };
+}
 
 /// Used to provide WGSL type conversion functions like `f32(...)`, etc.
 pub trait Convert<T> {

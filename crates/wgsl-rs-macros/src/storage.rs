@@ -1,4 +1,7 @@
 //! Provides the `storage!` macro in `wgsl_rs::std`.
+//!
+//! The `storage!` macro defines the Rust binding as well as the WGSL binding.
+//! It also creates linkage.
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
@@ -15,10 +18,13 @@ pub fn storage(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input as ItemStorage);
 
-    let internal_name = format_ident!("__{}", name);
     let name_str = name.to_string();
 
-    let is_read_write = matches!(access, StorageAccess::ReadWrite);
+    let access_mode = if matches!(access, StorageAccess::ReadWrite) {
+        quote! { ReadWrite }
+    } else {
+        quote! { Read }
+    };
 
     // Generate buffer descriptor constant name: INPUT -> INPUT_BUFFER_DESCRIPTOR
     let buffer_descriptor_name = format_ident!("{}_BUFFER_DESCRIPTOR", name);
@@ -28,15 +34,10 @@ pub fn storage(input: TokenStream) -> TokenStream {
     let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
 
     let expanded = quote! {
-        static #internal_name: std::sync::LazyLock<StorageVariable<#rust_ty>> =
-            std::sync::LazyLock::new(|| StorageVariable {
-                group: #group,
-                binding: #binding,
-                read_write: #is_read_write,
-                value: Default::default(),
-            });
-        static #name: &std::sync::LazyLock<StorageVariable<#rust_ty>> = &#internal_name;
-
+        pub static #name: Storage<#rust_ty, #access_mode> = Storage::new(
+            #group,
+            #binding,
+        );
         /// Buffer descriptor for the storage variable.
         ///
         /// This descriptor defines the properties of the GPU buffer that will store

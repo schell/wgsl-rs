@@ -200,12 +200,26 @@ pub mod enum_example {
         WaitangiDay,
     }
 
-    storage!(group(0), binding(0), INPUT: [Holidays; 256]);
+    storage!(group(0), binding(0), read_write, INPUT: [Holidays; 256]);
 
 
     #[compute]
     #[workgroup_size(16)]
-    pub fn compute_holidays(#[builtin(global_invocation_id)] global_id: Vec3u) {}
+    pub fn compute_holidays(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let index = global_id.x();
+
+        let holiday = &mut get_mut!(INPUT)[index as usize];
+
+        #[wgsl_allow(non_literal_match_statement_patterns)]
+        match *holiday {
+            Holidays::AprilFoolsDay => {
+                *holiday = Holidays::WaitangiDay;
+            }
+            Holidays::WaitangiDay => {
+                *holiday = Holidays::AprilFoolsDay;
+            }
+        }
+    }
 }
 
 #[wgsl]

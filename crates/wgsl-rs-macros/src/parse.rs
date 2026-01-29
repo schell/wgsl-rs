@@ -4883,6 +4883,11 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
         assert!(
+            wgsl.contains("alias State = u32;"),
+            "Expected 'alias State = u32;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
             wgsl.contains("const State_Idle: u32 = 0u;"),
             "Expected 'const State_Idle: u32 = 0u;' in WGSL output, got: {}",
             wgsl
@@ -4911,6 +4916,11 @@ mod test {
         };
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("alias Priority = u32;"),
+            "Expected 'alias Priority = u32;' in WGSL output, got: {}",
+            wgsl
+        );
         assert!(
             wgsl.contains("const Priority_Low: u32 = 1u;"),
             "Expected 'const Priority_Low: u32 = 1u;' in WGSL output, got: {}",
@@ -4941,6 +4951,11 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
         assert!(
+            wgsl.contains("alias Mixed = u32;"),
+            "Expected 'alias Mixed = u32;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
             wgsl.contains("const Mixed_A: u32 = 0u;"),
             "Expected 'const Mixed_A: u32 = 0u;' in WGSL output, got: {}",
             wgsl
@@ -4965,6 +4980,69 @@ mod test {
         let expr = Expr::try_from(&expr).unwrap();
         let wgsl = expr.to_wgsl();
         assert_eq!(wgsl, "State_Running");
+    }
+
+    #[test]
+    fn enum_and_struct_types_in_arrays() {
+        // Test that both enum and struct types can be used in array types.
+        // The enum should generate an alias that makes it usable as a type.
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod test_module {
+                #[repr(u32)]
+                pub enum Priority {
+                    Low,
+                    High,
+                }
+
+                pub struct Task {
+                    pub priority: u32,
+                    pub id: u32,
+                }
+
+                pub fn use_arrays(
+                    priorities: [Priority; 10],
+                    tasks: [Task; 10],
+                ) {}
+            }
+        };
+        let item_mod = ItemMod::try_from(&item_mod).unwrap();
+        let wgsl = item_mod.to_wgsl();
+
+        // Enum should generate alias and constants
+        assert!(
+            wgsl.contains("alias Priority = u32;"),
+            "Expected 'alias Priority = u32;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Priority_Low: u32 = 0u;"),
+            "Expected 'const Priority_Low: u32 = 0u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Priority_High: u32 = 1u;"),
+            "Expected 'const Priority_High: u32 = 1u;' in WGSL output, got: {}",
+            wgsl
+        );
+
+        // Struct should be generated normally
+        assert!(
+            wgsl.contains("struct Task"),
+            "Expected 'struct Task' in WGSL output, got: {}",
+            wgsl
+        );
+
+        // Array types should use the type names
+        assert!(
+            wgsl.contains("array<Priority, 10>"),
+            "Expected 'array<Priority, 10>' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("array<Task, 10>"),
+            "Expected 'array<Task, 10>' in WGSL output, got: {}",
+            wgsl
+        );
     }
 
     // Loop statement tests

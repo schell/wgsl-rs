@@ -1726,6 +1726,15 @@ impl GenerateCode for ItemEnum {
             variants,
         } = self;
 
+        // Generate type alias first: alias EnumName = u32;
+        // This allows the enum name to be used as a type (e.g., in arrays)
+        code.write_str(enum_token.span(), "alias");
+        code.space();
+        enum_ident.write_code(code);
+        code.write_str(enum_token.span(), " = u32;");
+        code.newline();
+
+        // Generate constants for each variant
         let mut current_discriminant: u32 = 0;
 
         for variant in variants {

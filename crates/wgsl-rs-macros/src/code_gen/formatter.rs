@@ -582,6 +582,18 @@ impl GenerateCode for Type {
                     },
                 );
             }
+            Type::RuntimeArray {
+                ident,
+                lt_token,
+                elem,
+                gt_token,
+            } => {
+                // WGSL format: array<T> (no size parameter)
+                code.write_str(ident.span(), "array");
+                code.write_atom(lt_token);
+                elem.write_code(code);
+                code.write_atom(gt_token);
+            }
             Type::Struct { ident } => code.write_atom(ident),
             Type::Matrix {
                 size,
@@ -597,6 +609,23 @@ impl GenerateCode for Type {
                 } else {
                     code.write_str(ident.span(), "f");
                 }
+            }
+            Type::Ptr {
+                address_space,
+                elem,
+                span,
+            } => {
+                // WGSL format: ptr<address_space, T>
+                // Note: access mode is not written for function/private (it's always
+                // read_write)
+                code.write_str(*span, "ptr<");
+                match address_space {
+                    AddressSpace::Function => code.write_str(*span, "function"),
+                    AddressSpace::Private => code.write_str(*span, "private"),
+                }
+                code.write_str(*span, ", ");
+                elem.write_code(code);
+                code.write_str(*span, ">");
             }
         }
     }
@@ -636,6 +665,7 @@ impl GenerateCode for UnOp {
         match self {
             UnOp::Not(t) => code.write_atom(t),
             UnOp::Neg(t) => code.write_atom(t),
+            UnOp::Deref(t) => code.write_atom(t),
         }
     }
 }
@@ -826,6 +856,11 @@ impl GenerateCode for Expr {
                 ty.write_code(code);
                 code.write_str(colon2_token.span(), "_");
                 member.write_code(code);
+            }
+            Expr::Reference { and_token, expr } => {
+                // &expr -> &expr in WGSL (same syntax)
+                code.write_atom(and_token);
+                expr.write_code(code);
             }
         }
     }
@@ -1691,6 +1726,15 @@ impl GenerateCode for ItemEnum {
             variants,
         } = self;
 
+        // Generate type alias first: alias EnumName = u32;
+        // This allows the enum name to be used as a type (e.g., in arrays)
+        code.write_str(enum_token.span(), "alias");
+        code.space();
+        enum_ident.write_code(code);
+        code.write_str(enum_token.span(), " = u32;");
+        code.newline();
+
+        // Generate constants for each variant
         let mut current_discriminant: u32 = 0;
 
         for variant in variants {

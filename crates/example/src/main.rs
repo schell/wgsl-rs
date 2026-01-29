@@ -182,6 +182,7 @@ pub mod impl_example {
 #[wgsl]
 pub mod enum_example {
     //! Limited support for enums.
+    use wgsl_rs::std::*;
 
     /// Analytical lighting types.
     #[repr(u32)]
@@ -196,7 +197,15 @@ pub mod enum_example {
         // Syntax error!
         // Halloween = -23,
         AprilFoolsDay,
+        WaitangiDay,
     }
+
+    storage!(group(0), binding(0), INPUT: [Holidays; 256]);
+
+
+    #[compute]
+    #[workgroup_size(16)]
+    pub fn compute_holidays(#[builtin(global_invocation_id)] global_id: Vec3u) {}
 }
 
 #[wgsl]
@@ -861,6 +870,50 @@ pub mod runtime_array_example {
     // }
 }
 
+#[wgsl]
+#[allow(dead_code, clippy::manual_swap, clippy::assign_op_pattern)]
+pub mod ptr_example {
+    //! Demonstrates pointer types in function parameters.
+    use wgsl_rs::std::*;
+
+    // Increment a value through a pointer.
+    pub fn increment(p: ptr!(function, i32)) {
+        *p += 1;
+    }
+
+    // Swap two values through pointers.
+    // Note: We use manual swap because std::mem::swap is not available in WGSL.
+    pub fn swap(a: ptr!(function, f32), b: ptr!(function, f32)) {
+        let tmp = *a;
+        *a = *b;
+        *b = tmp;
+    }
+
+    // Double a value in-place through a pointer.
+    // Note: We use *p = *p * 2.0 instead of *p *= 2.0 to demonstrate dereference.
+    pub fn double_value(p: ptr!(function, f32)) {
+        *p = *p * 2.0;
+    }
+
+    #[fragment]
+    pub fn test_ptr() -> Vec4f {
+        let mut x: i32 = 5;
+        increment(&mut x);
+        // x is now 6
+
+        let mut a: f32 = 1.0;
+        let mut b: f32 = 2.0;
+        swap(&mut a, &mut b);
+        // a is now 2.0, b is now 1.0
+
+        let mut c: f32 = 3.0;
+        double_value(&mut c);
+        // c is now 6.0
+
+        vec4f(f32(x), a, b, c / 10.0)
+    }
+}
+
 fn validate_and_print_source(module: &wgsl_rs::Module) {
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
@@ -1204,6 +1257,7 @@ pub fn main() {
     validate_and_print_source(&return_example::WGSL_MODULE);
     validate_and_print_source(&switch_example::WGSL_MODULE);
     validate_and_print_source(&runtime_array_example::WGSL_MODULE);
+    validate_and_print_source(&ptr_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

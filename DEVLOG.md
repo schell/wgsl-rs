@@ -189,6 +189,27 @@ emit a compile error on stable, since warnings can't be emitted (there's a hack 
 On nightly it emits a warning.
 Use `#[wgsl_allow(non_literal_loop_bounds)]` on the for-loop to suppress these errors/warnings.
 
+### 2026-01-29: Pointer type support (`ptr!` macro)
+
+Added `ptr!(address_space, T)` macro for WGSL pointer types in function parameters.
+- Supports `function` and `private` address spaces (the only ones passable to functions without extensions)
+- Expands to `&mut T` in Rust for CPU execution
+- Transpiles to `ptr<function, T>` or `ptr<private, T>` in WGSL
+- Added dereference operator (`*`) support for pointer indirection
+- Both `&x` and `&mut x` transpile to `&x` in WGSL (mutability is determined by access mode)
+
+Example:
+```rust
+pub fn increment(p: ptr!(function, i32)) {
+    *p += 1;
+}
+
+fn main() {
+    let mut x: i32 = 5;
+    increment(&mut x);  // x is now 6
+}
+```
+
 ### 2026-01-24: RuntimeArray<T> support
 
 Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without size parameter).

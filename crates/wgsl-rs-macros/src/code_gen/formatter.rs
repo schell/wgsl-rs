@@ -610,6 +610,23 @@ impl GenerateCode for Type {
                     code.write_str(ident.span(), "f");
                 }
             }
+            Type::Ptr {
+                address_space,
+                elem,
+                span,
+            } => {
+                // WGSL format: ptr<address_space, T>
+                // Note: access mode is not written for function/private (it's always
+                // read_write)
+                code.write_str(*span, "ptr<");
+                match address_space {
+                    AddressSpace::Function => code.write_str(*span, "function"),
+                    AddressSpace::Private => code.write_str(*span, "private"),
+                }
+                code.write_str(*span, ", ");
+                elem.write_code(code);
+                code.write_str(*span, ">");
+            }
         }
     }
 }
@@ -648,6 +665,7 @@ impl GenerateCode for UnOp {
         match self {
             UnOp::Not(t) => code.write_atom(t),
             UnOp::Neg(t) => code.write_atom(t),
+            UnOp::Deref(t) => code.write_atom(t),
         }
     }
 }

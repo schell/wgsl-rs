@@ -303,6 +303,35 @@ impl TryFrom<&syn::Ident> for ScalarType {
     }
 }
 
+/// WGSL address spaces for pointer types.
+///
+/// Only `function` and `private` are supported because they are the only
+/// address spaces that can be passed to functions without extensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressSpace {
+    /// The `function` address space - local function variables.
+    Function,
+    /// The `private` address space - module-scope private variables.
+    Private,
+}
+
+/// Helper struct for parsing `ptr!(address_space, Type)` macro arguments.
+struct PtrMacroArgs {
+    address_space: Ident,
+    _comma: Token![,],
+    store_type: syn::Type,
+}
+
+impl Parse for PtrMacroArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(PtrMacroArgs {
+            address_space: input.parse()?,
+            _comma: input.parse()?,
+            store_type: input.parse()?,
+        })
+    }
+}
+
 /// Types.
 pub enum Type {
     /// Concrete scalar types:
@@ -355,6 +384,18 @@ pub enum Type {
 
     /// Struct type: eg. MyStruct
     Struct { ident: Ident },
+
+    /// Pointer type: ptr<address_space, T>
+    /// Created from `ptr!(address_space, T)` macro invocations.
+    ///
+    /// In WGSL, pointers allow passing mutable references to functions.
+    /// Only `function` and `private` address spaces are supported.
+    Ptr {
+        address_space: AddressSpace,
+        elem: Box<Type>,
+        /// Span of the original macro for error reporting
+        span: proc_macro2::Span,
+    },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -604,6 +645,48 @@ impl TryFrom<&syn::Type> for Type {
                 }
                 .fail(),
             }
+        } else if let syn::Type::Macro(syn::TypeMacro { mac }) = ty {
+            // Handle macro types like ptr!(function, i32)
+            let macro_name = mac.path.get_ident().map(|i| i.to_string());
+
+            if macro_name.as_deref() == Some("ptr") {
+                // Parse the macro tokens: address_space, Type
+                let tokens = mac.tokens.clone();
+                let parsed: PtrMacroArgs = syn::parse2(tokens)?;
+
+                let address_space = match parsed.address_space.to_string().as_str() {
+                    "function" => AddressSpace::Function,
+                    "private" => AddressSpace::Private,
+                    other => {
+                        return UnsupportedSnafu {
+                            span: parsed.address_space.span(),
+                            note: format!(
+                                "unsupported address space '{}', only 'function' and 'private' \
+                                 are supported",
+                                other
+                            ),
+                        }
+                        .fail();
+                    }
+                };
+
+                let elem = Type::try_from(&parsed.store_type)?;
+
+                Ok(Type::Ptr {
+                    address_space,
+                    elem: Box::new(elem),
+                    span: mac.span(),
+                })
+            } else {
+                UnsupportedSnafu {
+                    span: mac.span(),
+                    note: format!(
+                        "unsupported macro '{}!' in type position, only 'ptr!' is supported",
+                        macro_name.unwrap_or_else(|| "unknown".to_string())
+                    ),
+                }
+                .fail()
+            }
         } else {
             UnsupportedSnafu {
                 span,
@@ -811,6 +894,9 @@ fn is_compound_assign_op(op: &syn::BinOp) -> bool {
 pub enum UnOp {
     Not(Token![!]),
     Neg(Token![-]),
+    /// Dereference operator: `*ptr`
+    /// Used to access the value pointed to by a pointer.
+    Deref(Token![*]),
 }
 
 impl TryFrom<&syn::UnOp> for UnOp {
@@ -820,6 +906,7 @@ impl TryFrom<&syn::UnOp> for UnOp {
         Ok(match value {
             syn::UnOp::Not(t) => UnOp::Not(*t),
             syn::UnOp::Neg(t) => UnOp::Neg(*t),
+            syn::UnOp::Deref(t) => UnOp::Deref(*t),
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!("Unsupported unary operator '{}'", other.into_token_stream()),
@@ -1313,6 +1400,7 @@ impl Expr {
                 let op_span = match op {
                     UnOp::Not(t) => t.span,
                     UnOp::Neg(t) => t.span,
+                    UnOp::Deref(t) => t.span,
                 };
                 op_span.join(expr.span()).unwrap_or(op_span)
             }
@@ -1334,6 +1422,7 @@ impl Expr {
                     Type::Array { bracket_token, .. } => bracket_token.span.join(),
                     Type::RuntimeArray { ident, .. } => ident.span(),
                     Type::Struct { ident } => ident.span(),
+                    Type::Ptr { span, .. } => *span,
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }

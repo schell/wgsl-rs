@@ -303,6 +303,35 @@ impl TryFrom<&syn::Ident> for ScalarType {
     }
 }
 
+/// WGSL address spaces for pointer types.
+///
+/// Only `function` and `private` are supported because they are the only
+/// address spaces that can be passed to functions without extensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressSpace {
+    /// The `function` address space - local function variables.
+    Function,
+    /// The `private` address space - module-scope private variables.
+    Private,
+}
+
+/// Helper struct for parsing `ptr!(address_space, Type)` macro arguments.
+struct PtrMacroArgs {
+    address_space: Ident,
+    _comma: Token![,],
+    store_type: syn::Type,
+}
+
+impl Parse for PtrMacroArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(PtrMacroArgs {
+            address_space: input.parse()?,
+            _comma: input.parse()?,
+            store_type: input.parse()?,
+        })
+    }
+}
+
 /// Types.
 pub enum Type {
     /// Concrete scalar types:
@@ -344,8 +373,29 @@ pub enum Type {
         len: Expr,
     },
 
+    /// Runtime-sized array type: RuntimeArray<T>
+    /// Transpiles to array<T> in WGSL (no size parameter)
+    RuntimeArray {
+        ident: Ident,
+        lt_token: Token![<],
+        elem: Box<Type>,
+        gt_token: Token![>],
+    },
+
     /// Struct type: eg. MyStruct
     Struct { ident: Ident },
+
+    /// Pointer type: ptr<address_space, T>
+    /// Created from `ptr!(address_space, T)` macro invocations.
+    ///
+    /// In WGSL, pointers allow passing mutable references to functions.
+    /// Only `function` and `private` address spaces are supported.
+    Ptr {
+        address_space: AddressSpace,
+        elem: Box<Type>,
+        /// Span of the original macro for error reporting
+        span: proc_macro2::Span,
+    },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -519,9 +569,23 @@ impl TryFrom<&syn::Type> for Type {
                         _ => None,
                     };
 
+                    // Check for RuntimeArray
+                    let is_runtime_array = ident_str == "RuntimeArray";
+
                     let arg = args.first().expect("checked that len was 1");
                     match arg {
                         syn::GenericArgument::Type(ty) => {
+                            // Handle RuntimeArray<T> first - it can take any element type
+                            if is_runtime_array {
+                                let elem_type = Type::try_from(ty)?;
+                                return Ok(Type::RuntimeArray {
+                                    ident: ident.clone(),
+                                    lt_token: *lt_token,
+                                    elem: Box::new(elem_type),
+                                    gt_token: *gt_token,
+                                });
+                            }
+
                             if let Type::Scalar {
                                 ty: scalar_ty,
                                 ident: scalar_ident,
@@ -553,7 +617,7 @@ impl TryFrom<&syn::Type> for Type {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3 or Mat4",
+                                               Vec3, Vec4, Mat2, Mat3, Mat4, or RuntimeArray",
                                     }
                                     .fail()
                                 }
@@ -580,6 +644,48 @@ impl TryFrom<&syn::Type> for Type {
                     note: "Unsupported type",
                 }
                 .fail(),
+            }
+        } else if let syn::Type::Macro(syn::TypeMacro { mac }) = ty {
+            // Handle macro types like ptr!(function, i32)
+            let macro_name = mac.path.get_ident().map(|i| i.to_string());
+
+            if macro_name.as_deref() == Some("ptr") {
+                // Parse the macro tokens: address_space, Type
+                let tokens = mac.tokens.clone();
+                let parsed: PtrMacroArgs = syn::parse2(tokens)?;
+
+                let address_space = match parsed.address_space.to_string().as_str() {
+                    "function" => AddressSpace::Function,
+                    "private" => AddressSpace::Private,
+                    other => {
+                        return UnsupportedSnafu {
+                            span: parsed.address_space.span(),
+                            note: format!(
+                                "unsupported address space '{}', only 'function' and 'private' \
+                                 are supported",
+                                other
+                            ),
+                        }
+                        .fail();
+                    }
+                };
+
+                let elem = Type::try_from(&parsed.store_type)?;
+
+                Ok(Type::Ptr {
+                    address_space,
+                    elem: Box::new(elem),
+                    span: mac.span(),
+                })
+            } else {
+                UnsupportedSnafu {
+                    span: mac.span(),
+                    note: format!(
+                        "unsupported macro '{}!' in type position, only 'ptr!' is supported",
+                        macro_name.unwrap_or_else(|| "unknown".to_string())
+                    ),
+                }
+                .fail()
             }
         } else {
             UnsupportedSnafu {
@@ -788,6 +894,9 @@ fn is_compound_assign_op(op: &syn::BinOp) -> bool {
 pub enum UnOp {
     Not(Token![!]),
     Neg(Token![-]),
+    /// Dereference operator: `*ptr`
+    /// Used to access the value pointed to by a pointer.
+    Deref(Token![*]),
 }
 
 impl TryFrom<&syn::UnOp> for UnOp {
@@ -797,6 +906,7 @@ impl TryFrom<&syn::UnOp> for UnOp {
         Ok(match value {
             syn::UnOp::Not(t) => UnOp::Not(*t),
             syn::UnOp::Neg(t) => UnOp::Neg(*t),
+            syn::UnOp::Deref(t) => UnOp::Deref(*t),
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!("Unsupported unary operator '{}'", other.into_token_stream()),
@@ -922,6 +1032,14 @@ pub enum Expr {
         ty: Ident,
         colon2_token: Token![::],
         member: Ident,
+    },
+    /// A reference expression like `&expr`.
+    ///
+    /// In WGSL, this is used to create pointers, particularly for builtin
+    /// functions like `arrayLength` that require pointer arguments.
+    Reference {
+        and_token: Token![&],
+        expr: Box<Expr>,
     },
 }
 
@@ -1198,6 +1316,57 @@ impl TryFrom<&syn::Expr> for Expr {
                 }
                 .fail();
             }
+            // Reference expressions like `&expr` - used for pointers in WGSL
+            syn::Expr::Reference(syn::ExprReference {
+                attrs: _,
+                and_token,
+                mutability,
+                expr,
+            }) => {
+                // WGSL doesn't distinguish between `&` and `&mut` at the syntax level
+                // (mutability is determined by the address space and access mode)
+                let _ = mutability;
+                Self::Reference {
+                    and_token: *and_token,
+                    expr: Box::new(Expr::try_from(expr.as_ref())?),
+                }
+            }
+            // Handle get_mut!(IDENT) - strip the macro, return just the ident for WGSL
+            syn::Expr::Macro(syn::ExprMacro { attrs: _, mac }) => {
+                let trigger_unsupported = || {
+                    UnsupportedSnafu {
+                        span: mac.path.span(),
+                        note: format!(
+                            "unsupported macro '{}!' in expression position, only mutate! is \
+                             supported",
+                            mac.path.to_token_stream()
+                        ),
+                    }
+                    .fail()
+                };
+                // Some macros have no meaning in WGSL, and we will simply strip them
+                let noop_macros = ["get_mut", "get"];
+                if let Some(macro_ident) = mac.path.get_ident() {
+                    let macro_ident_str = macro_ident.to_string();
+                    if noop_macros.contains(&macro_ident_str.as_str()) {
+                        // Parse the tokens inside the macro as a single identifier
+                        let ident: Ident = syn::parse2(mac.tokens.clone()).map_err(|e| {
+                            UnsupportedSnafu {
+                                span: mac.path.span(),
+                                note: format!(
+                                    "{macro_ident_str}! expects a single identifier, got: {e}"
+                                ),
+                            }
+                            .build()
+                        })?;
+                        Self::Ident(ident)
+                    } else {
+                        return trigger_unsupported();
+                    }
+                } else {
+                    return trigger_unsupported();
+                }
+            }
             other => UnsupportedSnafu {
                 span: other.span(),
                 note: format!("Unexpected expression '{}'", other.into_token_stream()),
@@ -1231,6 +1400,7 @@ impl Expr {
                 let op_span = match op {
                     UnOp::Not(t) => t.span,
                     UnOp::Neg(t) => t.span,
+                    UnOp::Deref(t) => t.span,
                 };
                 op_span.join(expr.span()).unwrap_or(op_span)
             }
@@ -1250,7 +1420,9 @@ impl Expr {
                     Type::Vector { ident, .. } => ident.span(),
                     Type::Matrix { ident, .. } => ident.span(),
                     Type::Array { bracket_token, .. } => bracket_token.span.join(),
+                    Type::RuntimeArray { ident, .. } => ident.span(),
                     Type::Struct { ident } => ident.span(),
+                    Type::Ptr { span, .. } => *span,
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }
@@ -1276,6 +1448,10 @@ impl Expr {
             Expr::TypePath { ty, member, .. } => {
                 ty.span().join(member.span()).unwrap_or_else(|| ty.span())
             }
+            Expr::Reference { and_token, expr } => and_token
+                .span
+                .join(expr.span())
+                .unwrap_or_else(|| and_token.span),
         }
     }
 }
@@ -4707,6 +4883,11 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
         assert!(
+            wgsl.contains("alias State = u32;"),
+            "Expected 'alias State = u32;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
             wgsl.contains("const State_Idle: u32 = 0u;"),
             "Expected 'const State_Idle: u32 = 0u;' in WGSL output, got: {}",
             wgsl
@@ -4735,6 +4916,11 @@ mod test {
         };
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("alias Priority = u32;"),
+            "Expected 'alias Priority = u32;' in WGSL output, got: {}",
+            wgsl
+        );
         assert!(
             wgsl.contains("const Priority_Low: u32 = 1u;"),
             "Expected 'const Priority_Low: u32 = 1u;' in WGSL output, got: {}",
@@ -4765,6 +4951,11 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
         assert!(
+            wgsl.contains("alias Mixed = u32;"),
+            "Expected 'alias Mixed = u32;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
             wgsl.contains("const Mixed_A: u32 = 0u;"),
             "Expected 'const Mixed_A: u32 = 0u;' in WGSL output, got: {}",
             wgsl
@@ -4789,6 +4980,69 @@ mod test {
         let expr = Expr::try_from(&expr).unwrap();
         let wgsl = expr.to_wgsl();
         assert_eq!(wgsl, "State_Running");
+    }
+
+    #[test]
+    fn enum_and_struct_types_in_arrays() {
+        // Test that both enum and struct types can be used in array types.
+        // The enum should generate an alias that makes it usable as a type.
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod test_module {
+                #[repr(u32)]
+                pub enum Priority {
+                    Low,
+                    High,
+                }
+
+                pub struct Task {
+                    pub priority: u32,
+                    pub id: u32,
+                }
+
+                pub fn use_arrays(
+                    priorities: [Priority; 10],
+                    tasks: [Task; 10],
+                ) {}
+            }
+        };
+        let item_mod = ItemMod::try_from(&item_mod).unwrap();
+        let wgsl = item_mod.to_wgsl();
+
+        // Enum should generate alias and constants
+        assert!(
+            wgsl.contains("alias Priority = u32;"),
+            "Expected 'alias Priority = u32;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Priority_Low: u32 = 0u;"),
+            "Expected 'const Priority_Low: u32 = 0u;' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("const Priority_High: u32 = 1u;"),
+            "Expected 'const Priority_High: u32 = 1u;' in WGSL output, got: {}",
+            wgsl
+        );
+
+        // Struct should be generated normally
+        assert!(
+            wgsl.contains("struct Task"),
+            "Expected 'struct Task' in WGSL output, got: {}",
+            wgsl
+        );
+
+        // Array types should use the type names
+        assert!(
+            wgsl.contains("array<Priority, 10>"),
+            "Expected 'array<Priority, 10>' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("array<Task, 10>"),
+            "Expected 'array<Task, 10>' in WGSL output, got: {}",
+            wgsl
+        );
     }
 
     // Loop statement tests

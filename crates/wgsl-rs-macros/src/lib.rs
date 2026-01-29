@@ -14,6 +14,7 @@ mod code_gen;
 #[cfg(feature = "linkage-wgpu")]
 mod linkage;
 mod parse;
+mod ptr;
 mod storage;
 mod swizzle;
 mod uniform;
@@ -489,6 +490,52 @@ pub fn uniform(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn storage(input: TokenStream) -> TokenStream {
     storage::storage(input)
+}
+
+/// Defines a WGSL pointer type for function parameters.
+///
+/// # Syntax
+/// ```ignore
+/// ptr!(address_space, Type)
+/// ```
+///
+/// # Supported Address Spaces
+/// - `function` - For pointers to local function variables
+/// - `private` - For pointers to module-scope private variables
+///
+/// # Rust Expansion
+/// The macro expands to `&mut T` in Rust, allowing the code to compile and run
+/// on the CPU with mutable reference semantics.
+///
+/// # WGSL Output
+/// During transpilation, `ptr!(function, T)` becomes `ptr<function, T>` in
+/// WGSL. The access mode is always `read_write` (the only mode supported by
+/// `function` and `private` address spaces) and is not written in the output.
+///
+/// # Example
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// fn increment(p: ptr!(function, i32)) {
+///     *p += 1;
+/// }
+///
+/// fn test() {
+///     let mut x: i32 = 5;
+///     increment(&mut x);
+///     // x is now 6
+/// }
+/// ```
+///
+/// This transpiles to:
+/// ```wgsl
+/// fn increment(p: ptr<function, i32>) {
+///     *p += 1;
+/// }
+/// ```
+#[proc_macro]
+pub fn ptr(input: TokenStream) -> TokenStream {
+    ptr::ptr(input)
 }
 
 /// Defines an "input" struct.

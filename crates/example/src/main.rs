@@ -873,15 +873,17 @@ pub mod runtime_array_example {
 
     storage!(group(0), binding(0), read_write, PARTICLES: ParticleSystem);
 
-    // #[compute]
-    // #[workgroup_size(16, 16, 1)]
-    // pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
-    //     let num_particles = array_length(&PARTICLES.particles);
-    //     let index = global_id.y() * 16 + global_id.x;
-    //     if num_particles < index {
-    //         PARTICLES.particles[index].position +=
-    // PARTICLES.particles[index].velocity;     }
-    // }
+    #[compute]
+    #[workgroup_size(16, 16, 1)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let num_particles = array_length(&get!(PARTICLES).particles);
+        let index = global_id.y() * 16 + global_id.x();
+        if num_particles < index {
+            let velocity = get!(PARTICLES).particles[index].velocity;
+            let position = &mut get_mut!(PARTICLES).particles[index].position;
+            *position = *position + velocity;
+        }
+    }
 }
 
 #[wgsl]

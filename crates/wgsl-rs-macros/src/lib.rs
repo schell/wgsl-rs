@@ -18,6 +18,7 @@ mod ptr;
 mod storage;
 mod swizzle;
 mod uniform;
+mod workgroup;
 
 /// Visitor that strips `#[wgsl_allow(...)]` attributes from expressions.
 /// These attributes are used by wgsl-rs during parsing but should not appear
@@ -490,6 +491,55 @@ pub fn uniform(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn storage(input: TokenStream) -> TokenStream {
     storage::storage(input)
+}
+
+/// Defines a workgroup-scoped variable shared between invocations in a compute
+/// shader workgroup.
+///
+/// # Syntax
+/// ```ignore
+/// workgroup!(NAME: TYPE);
+/// ```
+///
+/// # Description
+/// Workgroup variables are shared between all invocations in a compute shader
+/// workgroup. They can only be used in compute shaders and are useful for
+/// inter-invocation communication and shared temporary storage.
+///
+/// # WGSL Output
+/// The macro transpiles to `var<workgroup> NAME: TYPE;` in WGSL.
+///
+/// # Rust Expansion
+/// On the Rust side, the variable is backed by a thread-safe `RwLock` to
+/// simulate the shared nature of workgroup memory.
+///
+/// # Example
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// workgroup!(SHARED_COUNTER: Atomic<u32>);
+/// workgroup!(TEMP_DATA: [f32; 64]);
+///
+/// #[compute]
+/// #[workgroup_size(64)]
+/// pub fn main(#[builtin(local_invocation_id)] local_id: Vec3u) {
+///     // Access workgroup variables...
+/// }
+/// ```
+///
+/// This transpiles to:
+/// ```wgsl
+/// var<workgroup> SHARED_COUNTER: atomic<u32>;
+/// var<workgroup> TEMP_DATA: array<f32, 64>;
+///
+/// @compute @workgroup_size(64)
+/// fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
+///     // Access workgroup variables...
+/// }
+/// ```
+#[proc_macro]
+pub fn workgroup(input: TokenStream) -> TokenStream {
+    workgroup::workgroup(input)
 }
 
 /// Defines a WGSL pointer type for function parameters.

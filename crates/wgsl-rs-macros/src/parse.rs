@@ -303,16 +303,18 @@ impl TryFrom<&syn::Ident> for ScalarType {
     }
 }
 
-/// WGSL address spaces for pointer types.
-///
-/// Only `function` and `private` are supported because they are the only
-/// address spaces that can be passed to functions without extensions.
+/// WGSL address spaces for pointer and variable types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Workgroup is used for workgroup variables, not pointer types (yet)
 pub enum AddressSpace {
     /// The `function` address space - local function variables.
     Function,
     /// The `private` address space - module-scope private variables.
     Private,
+    /// The `workgroup` address space - shared within a compute shader
+    /// workgroup. Variables in this address space are shared between
+    /// invocations in the same workgroup.
+    Workgroup,
 }
 
 /// Helper struct for parsing `ptr!(address_space, Type)` macro arguments.
@@ -376,6 +378,17 @@ pub enum Type {
     /// Runtime-sized array type: RuntimeArray<T>
     /// Transpiles to array<T> in WGSL (no size parameter)
     RuntimeArray {
+        ident: Ident,
+        lt_token: Token![<],
+        elem: Box<Type>,
+        gt_token: Token![>],
+    },
+
+    /// Atomic type: atomic<T> where T is i32 or u32
+    /// Used for thread-safe atomic operations in workgroup/storage address
+    /// spaces. Only the atomic builtin functions can operate on atomic
+    /// types.
+    Atomic {
         ident: Ident,
         lt_token: Token![<],
         elem: Box<Type>,
@@ -572,6 +585,9 @@ impl TryFrom<&syn::Type> for Type {
                     // Check for RuntimeArray
                     let is_runtime_array = ident_str == "RuntimeArray";
 
+                    // Check for Atomic
+                    let is_atomic = ident_str == "Atomic";
+
                     let arg = args.first().expect("checked that len was 1");
                     match arg {
                         syn::GenericArgument::Type(ty) => {
@@ -584,6 +600,31 @@ impl TryFrom<&syn::Type> for Type {
                                     elem: Box::new(elem_type),
                                     gt_token: *gt_token,
                                 });
+                            }
+
+                            // Handle Atomic<T> - only i32 or u32 allowed
+                            if is_atomic {
+                                let elem_type = Type::try_from(ty)?;
+                                match &elem_type {
+                                    Type::Scalar {
+                                        ty: ScalarType::I32 | ScalarType::U32,
+                                        ..
+                                    } => {
+                                        return Ok(Type::Atomic {
+                                            ident: ident.clone(),
+                                            lt_token: *lt_token,
+                                            elem: Box::new(elem_type),
+                                            gt_token: *gt_token,
+                                        });
+                                    }
+                                    _ => {
+                                        return UnsupportedSnafu {
+                                            span: ty.span(),
+                                            note: "Atomic<T> requires T to be i32 or u32",
+                                        }
+                                        .fail();
+                                    }
+                                }
                             }
 
                             if let Type::Scalar {
@@ -617,7 +658,8 @@ impl TryFrom<&syn::Type> for Type {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3, Mat4, or RuntimeArray",
+                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, or \
+                                               Atomic",
                                     }
                                     .fail()
                                 }
@@ -1421,6 +1463,7 @@ impl Expr {
                     Type::Matrix { ident, .. } => ident.span(),
                     Type::Array { bracket_token, .. } => bracket_token.span.join(),
                     Type::RuntimeArray { ident, .. } => ident.span(),
+                    Type::Atomic { ident, .. } => ident.span(),
                     Type::Struct { ident } => ident.span(),
                     Type::Ptr { span, .. } => *span,
                 };
@@ -3539,6 +3582,67 @@ impl TryFrom<&syn::ItemMacro> for ItemStorage {
     }
 }
 
+/// Workgroup variable declaration parsed from `workgroup!(NAME: TYPE)`.
+///
+/// Transpiles to:
+/// ```wgsl
+/// var<workgroup> NAME: TYPE;
+/// ```
+///
+/// Workgroup variables are shared between all invocations in a compute shader
+/// workgroup. They can only be used in compute shaders.
+pub(crate) struct ItemWorkgroup {
+    pub name: syn::Ident,
+    pub colon_token: Token![:],
+    pub ty: Type,
+    /// We keep the Rust type around for the Rust-side expansion
+    pub rust_ty: syn::Type,
+}
+
+impl syn::parse::Parse for ItemWorkgroup {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name: syn::Ident = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
+        let rust_ty: syn::Type = input.parse()?;
+        let ty = Type::try_from(&rust_ty)?;
+
+        Ok(ItemWorkgroup {
+            name,
+            colon_token,
+            ty,
+            rust_ty,
+        })
+    }
+}
+
+impl TryFrom<&syn::ItemMacro> for ItemWorkgroup {
+    type Error = Error;
+
+    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
+        // Ensure it's the "workgroup" macro
+        if item_macro
+            .mac
+            .path
+            .get_ident()
+            .map(|id| id != "workgroup")
+            .unwrap_or(true)
+        {
+            return UnsupportedSnafu {
+                span: item_macro.span(),
+                note: "Only 'workgroup!' macro is supported as a workgroup declaration.",
+            }
+            .fail();
+        }
+
+        syn::parse2::<ItemWorkgroup>(item_macro.mac.tokens.clone()).map_err(|e| {
+            Error::Unsupported {
+                span: item_macro.span(),
+                note: format!("{e}"),
+            }
+        })
+    }
+}
+
 pub struct Field {
     pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
@@ -3935,6 +4039,7 @@ pub enum Item {
     Const(Box<ItemConst>),
     Uniform(Box<ItemUniform>),
     Storage(Box<ItemStorage>),
+    Workgroup(Box<ItemWorkgroup>),
     Fn(Box<ItemFn>),
     Mod(ItemMod),
     Use(ItemUse),
@@ -3959,6 +4064,9 @@ impl TryFrom<&syn::Item> for Item {
                     Some("storage") => {
                         Ok(Item::Storage(Box::new(ItemStorage::try_from(item_macro)?)))
                     }
+                    Some("workgroup") => Ok(Item::Workgroup(Box::new(ItemWorkgroup::try_from(
+                        item_macro,
+                    )?))),
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
                         note: format!(
@@ -5681,5 +5789,89 @@ mod test {
                 );
             }
         }
+    }
+
+    #[test]
+    fn parse_type_atomic_i32() {
+        let ty: syn::Type = syn::parse_str("Atomic<i32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("atomic<i32>", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_type_atomic_u32() {
+        let ty: syn::Type = syn::parse_str("Atomic<u32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("atomic<u32>", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_type_atomic_f32_fails() {
+        let ty: syn::Type = syn::parse_str("Atomic<f32>").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(result.is_err(), "Atomic<f32> should fail to parse");
+        // Check error message contains expected text
+        if let Err(err) = result {
+            let msg = err.to_string();
+            assert!(
+                msg.contains("i32 or u32"),
+                "Error message should mention allowed types, got: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn parse_type_atomic_bool_fails() {
+        let ty: syn::Type = syn::parse_str("Atomic<bool>").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_workgroup_simple() {
+        let workgroup: ItemWorkgroup = syn::parse_str("COUNTER: u32").unwrap();
+        assert_eq!("COUNTER", workgroup.name.to_string());
+    }
+
+    #[test]
+    fn parse_workgroup_atomic() {
+        let workgroup: ItemWorkgroup = syn::parse_str("SHARED: Atomic<u32>").unwrap();
+        assert_eq!("SHARED", workgroup.name.to_string());
+        let wgsl = workgroup.to_wgsl();
+        assert!(
+            wgsl.contains("var<workgroup>"),
+            "Expected var<workgroup> in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("atomic<u32>"),
+            "Expected atomic<u32> in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn parse_workgroup_array() {
+        let workgroup: ItemWorkgroup = syn::parse_str("TEMP_DATA: [f32; 64]").unwrap();
+        assert_eq!("TEMP_DATA", workgroup.name.to_string());
+        let wgsl = workgroup.to_wgsl();
+        assert!(
+            wgsl.contains("var<workgroup>"),
+            "Expected var<workgroup>, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("array<f32, 64>"),
+            "Expected array<f32, 64>, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn workgroup_to_wgsl() {
+        let workgroup: ItemWorkgroup = syn::parse_str("FLAGS: Atomic<i32>").unwrap();
+        let wgsl = workgroup.to_wgsl();
+        assert_eq!("var<workgroup> FLAGS: atomic<i32>;", wgsl.trim());
     }
 }

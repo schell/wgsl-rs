@@ -210,6 +210,16 @@ fn main() {
 }
 ```
 
+### 2026-01-31: Atomic types and workgroup variables
+
+Added `Atomic<T>` type for thread-safe atomic operations (WGSL `atomic<T>` where T is `i32` or `u32`).
+Added `workgroup!` macro for declaring workgroup-scoped variables shared across compute shader invocations.
+- `Atomic<T>` on CPU is backed by `std::sync::atomic::{AtomicI32, AtomicU32}` with full atomic operations
+- `workgroup!(NAME: TYPE)` transpiles to `var<workgroup> NAME: TYPE;` in WGSL
+- Workgroup variables on CPU are backed by `LazyLock<RwLock<T>>` for thread-safe shared state
+- Added `AddressSpace::Workgroup` variant for future pointer support
+- Atomic builtin functions (atomicLoad, atomicStore, etc.) will be added in a future update
+
 ### 2026-01-24: RuntimeArray<T> support
 
 Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without size parameter).

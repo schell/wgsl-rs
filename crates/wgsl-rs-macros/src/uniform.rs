@@ -14,7 +14,6 @@ pub fn uniform(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input as ItemUniform);
 
-    let internal_name = format_ident!("__{}", name);
     let name_str = name.to_string();
 
     // Generate buffer descriptor constant name: FRAME -> FRAME_BUFFER_DESCRIPTOR
@@ -25,13 +24,7 @@ pub fn uniform(input: TokenStream) -> TokenStream {
     let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
 
     let expanded = quote! {
-        static #internal_name: std::sync::LazyLock<UniformVariable<#rust_ty>> =
-            std::sync::LazyLock::new(|| UniformVariable {
-                group: #group,
-                binding: #binding,
-                value: Default::default(),
-            });
-        static #name: &std::sync::LazyLock<UniformVariable<#rust_ty>> = &#internal_name;
+        static #name: Uniform<#rust_ty> = Uniform::new(#group, #binding);
 
         /// Buffer descriptor for the uniform variable.
         ///

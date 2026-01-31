@@ -32,9 +32,8 @@ pub use matrices::*;
 
 pub use crate::{get, get_mut};
 
-/// Wrapper for a `RwLockReadGuard<'a, Option<T>>` that dereferences
-/// to `&T`.
-struct ModuleVarReadGuard<'a, T> {
+/// Shared reference to a uniform, storage or workgroup variable.
+pub struct ModuleVarReadGuard<'a, T> {
     inner: RwLockReadGuard<'a, Option<T>>,
 }
 
@@ -48,9 +47,8 @@ impl<T> Deref for ModuleVarReadGuard<'_, T> {
     }
 }
 
-/// Wrapper for a `RwLockWriteGuard<'a, Option<T>>` that dereferences
-/// to `&T` and `&mut T`.
-struct ModuleVarWriteGuard<'a, T> {
+/// Exclusive reference to a storage or workgroup variable.
+pub struct ModuleVarWriteGuard<'a, T> {
     inner: RwLockWriteGuard<'a, Option<T>>,
 }
 
@@ -85,7 +83,7 @@ impl<T> ModuleVar<T> {
         }
     }
 
-    pub fn read(&self) -> impl Deref<Target = T> + '_ {
+    pub fn read(&self) -> ModuleVarReadGuard<'_, T> {
         let lock = self
             .inner
             .read()
@@ -93,7 +91,7 @@ impl<T> ModuleVar<T> {
         ModuleVarReadGuard { inner: lock }
     }
 
-    pub fn write(&self) -> impl DerefMut<Target = T> + '_ {
+    pub fn write(&self) -> ModuleVarWriteGuard<'_, T> {
         let lock = self
             .inner
             .write()
@@ -117,12 +115,12 @@ impl<T> Workgroup<T> {
     }
 
     /// Get a reference to the inner `T`.
-    pub fn get(&self) -> impl Deref<Target = T> + '_ {
+    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
         self.data.read()
     }
 
     /// Get a mutable reference to the inner `T`.
-    pub fn get_mut(&self) -> impl DerefMut<Target = T> + '_ {
+    pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
         self.data.write()
     }
 }
@@ -145,12 +143,18 @@ impl<T> Uniform<T> {
     }
 
     /// Get a reference to the inner `T`.
-    pub fn get(&self) -> impl Deref<Target = T> + '_ {
+    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
         self.data.read()
     }
 
-    /// Get a mutable reference to the inner `T`.
-    pub fn get_mut(&self) -> impl DerefMut<Target = T> + '_ {
+    /// Set the inner `T`.
+    ///
+    /// ## Note
+    /// Though this method is public, using it in a `#[wgsl]` module triggers
+    /// a parse error.
+    /// This is because uniform values are read-only from a shader.
+    /// This method still exists to set the value for Rust CPU shader testing.
+    pub fn set(&self) -> ModuleVarWriteGuard<'_, T> {
         self.data.write()
     }
 }
@@ -186,12 +190,12 @@ impl<T, AM: AccessMode> Storage<T, AM> {
     }
 
     /// Get a reference to the inner `T`.
-    pub fn get(&self) -> impl Deref<Target = T> + '_ {
+    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
         self.data.read()
     }
 
     /// Get a mutable reference to the inner `T`.
-    pub fn get_mut(&self) -> impl DerefMut<Target = T> + '_ {
+    pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
         self.data.write()
     }
 
@@ -254,6 +258,18 @@ impl<A: Clone + Convert<B>, B> Convert<B> for &A {
     fn convert(self) -> B {
         let a = self.clone();
         a.convert()
+    }
+}
+
+impl<A: Clone + Convert<B>, B> Convert<B> for ModuleVarReadGuard<'_, A> {
+    fn convert(self) -> B {
+        self.clone().convert()
+    }
+}
+
+impl<A: Clone + Convert<B>, B> Convert<B> for ModuleVarWriteGuard<'_, A> {
+    fn convert(self) -> B {
+        self.clone().convert()
     }
 }
 

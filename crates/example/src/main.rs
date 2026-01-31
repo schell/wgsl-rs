@@ -21,8 +21,7 @@ pub mod hello_triangle {
 
     #[fragment]
     pub fn frag_main() -> Vec4f {
-        let frame = get!(FRAME);
-        vec4f(1.0, sin(f32(frame) / 128.0), 0.0, 1.0)
+        vec4f(1.0, sin(f32(get!(FRAME)) / 128.0), 0.0, 1.0)
     }
 }
 

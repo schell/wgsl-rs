@@ -25,13 +25,14 @@ but the results should match, within reason.
 ## Commands
 
 ```bash
-cargo build                    # Build all crates
-cargo test                     # Run all tests
-cargo test -p wgsl-rs-macros   # Test specific crate (wgsl-rs-macros in this case)
-cargo test -- test_name        # Run a single test by name
-cargo fmt && cargo clippy      # Format and lint
-cargo run -p example           # Run the example
-cargo expand -p example        # Expand the example which uses the `wgsl` macro, showing the generated WGSL_MODULE
+cargo build                             # Build all crates
+cargo test                              # Run all tests
+cargo test -p wgsl-rs-macros            # Test specific crate (wgsl-rs-macros in this case)
+cargo test -- test_name                 # Run a single test by name
+cargo fmt && cargo clippy               # Format and lint
+cargo run -p example                    # Run the example
+cargo run -p -- --module example_module # Only validate and print a single example's WGSL source
+cargo expand -p example                 # Expand the example which uses the `wgsl` macro, showing the generated WGSL_MODULE
 ```
 
 ### xtask - development tools for agents

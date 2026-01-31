@@ -628,6 +628,7 @@ dependencies = [
 name = "example"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "futures",
  "glam",
  "naga 27.0.3",

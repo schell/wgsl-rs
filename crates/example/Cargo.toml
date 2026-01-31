@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap.workspace = true
 futures.workspace = true
 glam.workspace = true
 naga.workspace = true

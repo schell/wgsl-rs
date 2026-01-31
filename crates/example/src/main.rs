@@ -1,4 +1,61 @@
+use clap::Parser;
 use wgsl_rs::wgsl;
+
+#[derive(Parser)]
+#[command(
+    name = "example",
+    about = "WGSL module examples and hello_triangle shader demo"
+)]
+struct Cli {
+    /// Print only the specified module (by exact Rust module name)
+    #[arg(long, short, group = "mode")]
+    module: Option<String>,
+
+    /// Only run the hello_triangle shader, skip printing modules
+    #[arg(long, group = "mode")]
+    run_only: bool,
+
+    /// Only print linkage API information
+    #[arg(long, group = "mode")]
+    print_linkage_only: bool,
+}
+
+const AVAILABLE_MODULES: &[(&str, &wgsl_rs::Module)] = &[
+    ("hello_triangle", &hello_triangle::WGSL_MODULE),
+    ("structs", &structs::WGSL_MODULE),
+    ("compute_shader", &compute_shader::WGSL_MODULE),
+    ("matrix_example", &matrix_example::WGSL_MODULE),
+    ("impl_example", &impl_example::WGSL_MODULE),
+    ("enum_example", &enum_example::WGSL_MODULE),
+    ("binary_ops_example", &binary_ops_example::WGSL_MODULE),
+    ("for_loop_example", &for_loop_example::WGSL_MODULE),
+    ("assignment_example", &assignment_example::WGSL_MODULE),
+    ("while_loop_example", &while_loop_example::WGSL_MODULE),
+    ("loop_example", &loop_example::WGSL_MODULE),
+    ("if_example", &if_example::WGSL_MODULE),
+    ("break_example", &break_example::WGSL_MODULE),
+    ("return_example", &return_example::WGSL_MODULE),
+    ("switch_example", &switch_example::WGSL_MODULE),
+    ("runtime_array_example", &runtime_array_example::WGSL_MODULE),
+    ("ptr_example", &ptr_example::WGSL_MODULE),
+    ("atomic_example", &atomic_example::WGSL_MODULE),
+];
+
+fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
+    for (module_name, module) in AVAILABLE_MODULES {
+        if *module_name == name {
+            return Some(module);
+        }
+    }
+    None
+}
+
+fn print_available_modules() {
+    eprintln!("Available modules:");
+    for (name, _) in AVAILABLE_MODULES {
+        eprintln!("  {name}");
+    }
+}
 
 #[wgsl]
 pub mod hello_triangle {
@@ -1284,7 +1341,7 @@ fn build_linkage() {
     event_loop.run_app(&mut app).unwrap();
 }
 
-pub fn main() {
+fn print_all_modules() {
     validate_and_print_source(&hello_triangle::WGSL_MODULE);
     validate_and_print_source(&structs::WGSL_MODULE);
     validate_and_print_source(&compute_shader::WGSL_MODULE);
@@ -1303,7 +1360,28 @@ pub fn main() {
     validate_and_print_source(&runtime_array_example::WGSL_MODULE);
     validate_and_print_source(&ptr_example::WGSL_MODULE);
     validate_and_print_source(&atomic_example::WGSL_MODULE);
+}
 
-    print_linkage();
-    build_linkage();
+pub fn main() {
+    let cli = Cli::parse();
+
+    if cli.run_only {
+        build_linkage();
+    } else if cli.print_linkage_only {
+        print_linkage();
+    } else if let Some(name) = cli.module {
+        match get_module_by_name(&name) {
+            Some(module) => validate_and_print_source(module),
+            None => {
+                eprintln!("Unknown module: {name}");
+                print_available_modules();
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // Default: print all modules, print linkage, run shader
+        print_all_modules();
+        print_linkage();
+        build_linkage();
+    }
 }

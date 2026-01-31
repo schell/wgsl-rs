@@ -594,6 +594,18 @@ impl GenerateCode for Type {
                 elem.write_code(code);
                 code.write_atom(gt_token);
             }
+            Type::Atomic {
+                ident,
+                lt_token,
+                elem,
+                gt_token,
+            } => {
+                // WGSL format: atomic<T>
+                code.write_str(ident.span(), "atomic");
+                code.write_atom(lt_token);
+                elem.write_code(code);
+                code.write_atom(gt_token);
+            }
             Type::Struct { ident } => code.write_atom(ident),
             Type::Matrix {
                 size,
@@ -622,6 +634,7 @@ impl GenerateCode for Type {
                 match address_space {
                     AddressSpace::Function => code.write_str(*span, "function"),
                     AddressSpace::Private => code.write_str(*span, "private"),
+                    AddressSpace::Workgroup => code.write_str(*span, "workgroup"),
                 }
                 code.write_str(*span, ", ");
                 elem.write_code(code);
@@ -1585,6 +1598,27 @@ impl GenerateCode for ItemStorage {
     }
 }
 
+impl GenerateCode for ItemWorkgroup {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let Self {
+            name,
+            colon_token,
+            ty,
+            rust_ty: _,
+        } = self;
+
+        // var<workgroup> NAME: TYPE;
+        code.write_str(name.span(), "var<workgroup> ");
+        name.write_code(code);
+        code.write_atom(colon_token);
+        code.space();
+        ty.write_code(code);
+        code.write_atom(&<syn::Token![;]>::default());
+
+        code.newline();
+    }
+}
+
 impl GenerateCode for Field {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         for io in self.inter_stage_io.iter() {
@@ -1775,6 +1809,7 @@ impl GenerateCode for Item {
             Item::Mod(item_mod) => item_mod.write_code(code),
             Item::Uniform(item_uniform) => item_uniform.write_code(code),
             Item::Storage(item_storage) => item_storage.write_code(code),
+            Item::Workgroup(item_workgroup) => item_workgroup.write_code(code),
             Item::Const(item_const) => item_const.write_code(code),
             Item::Fn(item_fn) => item_fn.write_code(code),
             Item::Use(_item_use) => {

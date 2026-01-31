@@ -21,7 +21,8 @@ pub mod hello_triangle {
 
     #[fragment]
     pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0)
+        let frame = get!(FRAME);
+        vec4f(1.0, sin(f32(frame) / 128.0), 0.0, 1.0)
     }
 }
 
@@ -930,6 +931,34 @@ pub mod ptr_example {
     }
 }
 
+#[wgsl]
+#[allow(dead_code)]
+pub mod atomic_example {
+    //! Demonstrates atomic types and workgroup variables.
+    //!
+    //! Atomic types provide thread-safe operations for concurrent access in
+    //! compute shaders. They can only hold `i32` or `u32` values.
+    //!
+    //! Workgroup variables are shared between all invocations in a workgroup
+    //! and can only be used in compute shaders.
+    use wgsl_rs::std::*;
+
+    // Workgroup variable with atomic counter - shared between all invocations
+    workgroup!(COUNTER: Atomic<u32>);
+
+    // Workgroup variable with atomic flags
+    workgroup!(FLAGS: Atomic<i32>);
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(local_invocation_index)] local_idx: u32) {
+        // Each invocation can access the shared atomic counter
+        // Note: atomicLoad/atomicStore builtins will be added in a future update
+        // For now, this demonstrates the type parsing and code generation
+        let _idx = local_idx;
+    }
+}
+
 fn validate_and_print_source(module: &wgsl_rs::Module) {
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
@@ -1274,6 +1303,7 @@ pub fn main() {
     validate_and_print_source(&switch_example::WGSL_MODULE);
     validate_and_print_source(&runtime_array_example::WGSL_MODULE);
     validate_and_print_source(&ptr_example::WGSL_MODULE);
+    validate_and_print_source(&atomic_example::WGSL_MODULE);
 
     print_linkage();
     build_linkage();

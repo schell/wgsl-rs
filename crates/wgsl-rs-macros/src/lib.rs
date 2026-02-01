@@ -18,6 +18,7 @@ mod ptr;
 mod sampler;
 mod storage;
 mod swizzle;
+mod texture;
 mod uniform;
 mod workgroup;
 
@@ -546,6 +547,82 @@ pub fn storage(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn sampler(input: TokenStream) -> TokenStream {
     sampler::sampler(input)
+}
+
+/// Defines a texture or depth texture for sampling operations.
+///
+/// # Syntax
+/// ```ignore
+/// // Sampled textures (with type parameter: f32, i32, or u32)
+/// texture!(group(G), binding(B), NAME: Texture2D<f32>);
+/// texture!(group(G), binding(B), NAME: TextureCube<i32>);
+///
+/// // Depth textures (no type parameter)
+/// texture!(group(G), binding(B), NAME: TextureDepth2D);
+/// texture!(group(G), binding(B), NAME: TextureDepthCube);
+/// ```
+///
+/// # Supported Texture Types
+///
+/// ## Sampled Textures
+/// - `Texture1D<T>` - 1D texture
+/// - `Texture2D<T>` - 2D texture
+/// - `Texture2DArray<T>` - 2D texture array
+/// - `Texture3D<T>` - 3D texture
+/// - `TextureCube<T>` - Cube texture
+/// - `TextureCubeArray<T>` - Cube texture array
+/// - `TextureMultisampled2D<T>` - Multisampled 2D texture
+///
+/// Where `T` is one of `f32`, `i32`, or `u32`.
+///
+/// ## Depth Textures
+/// - `TextureDepth2D` - 2D depth texture
+/// - `TextureDepth2DArray` - 2D depth texture array
+/// - `TextureDepthCube` - Cube depth texture
+/// - `TextureDepthCubeArray` - Cube depth texture array
+/// - `TextureDepthMultisampled2D` - Multisampled 2D depth texture
+///
+/// # WGSL Output
+/// The macro transpiles to:
+/// - `@group(G) @binding(B) var NAME: texture_2d<f32>;` for sampled textures
+/// - `@group(G) @binding(B) var NAME: texture_depth_2d;` for depth textures
+///
+/// # Rust Expansion
+/// On the Rust side, the macro generates:
+/// - A static texture handle instance
+/// - A `TextureViewDescriptor` constant for creating views
+/// - A convenience function to create a texture view
+///
+/// # Example
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
+/// texture!(group(0), binding(1), SHADOW_MAP: TextureDepth2D);
+/// sampler!(group(0), binding(2), TEX_SAMPLER: Sampler);
+///
+/// #[fragment]
+/// pub fn main() -> Vec4f {
+///     // Sample the diffuse texture...
+///     Vec4f::ZERO
+/// }
+/// ```
+///
+/// This transpiles to:
+/// ```wgsl
+/// @group(0) @binding(0) var DIFFUSE_TEX: texture_2d<f32>;
+/// @group(0) @binding(1) var SHADOW_MAP: texture_depth_2d;
+/// @group(0) @binding(2) var TEX_SAMPLER: sampler;
+///
+/// @fragment
+/// fn main() -> vec4<f32> {
+///     // Sample the diffuse texture...
+///     return vec4<f32>(0.0);
+/// }
+/// ```
+#[proc_macro]
+pub fn texture(input: TokenStream) -> TokenStream {
+    texture::texture(input)
 }
 
 /// Defines a workgroup-scoped variable shared between invocations in a compute

@@ -8,7 +8,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use crate::parse::{
-    FnAttrs, Item, ItemMod, ItemSampler, ItemStorage, ItemUniform, StorageAccess, Type,
+    FnAttrs, Item, ItemMod, ItemSampler, ItemStorage, ItemTexture, ItemUniform, StorageAccess,
+    TextureDepthKind, TextureKind, Type,
 };
 
 /// Information about a binding (uniform or storage buffer).
@@ -21,8 +22,42 @@ pub struct BindingInfo {
 /// The kind of binding.
 pub enum BindingKind {
     Uniform,
-    Storage { read_only: bool },
-    Sampler { comparison: bool },
+    Storage {
+        read_only: bool,
+    },
+    Sampler {
+        comparison: bool,
+    },
+    /// Sampled texture binding (texture_1d, texture_2d, etc.)
+    Texture {
+        view_dimension: TextureViewDimension,
+        sample_type: TextureSampleType,
+        multisampled: bool,
+    },
+    /// Depth texture binding (texture_depth_2d, etc.)
+    DepthTexture {
+        view_dimension: TextureViewDimension,
+        multisampled: bool,
+    },
+}
+
+/// Texture view dimensions for binding layout entries.
+#[derive(Debug, Clone, Copy)]
+pub enum TextureViewDimension {
+    D1,
+    D2,
+    D2Array,
+    D3,
+    Cube,
+    CubeArray,
+}
+
+/// Sample type for texture bindings.
+#[derive(Debug, Clone, Copy)]
+pub enum TextureSampleType {
+    Float,
+    Sint,
+    Uint,
 }
 
 /// Information about a compute shader entry point.
@@ -66,6 +101,7 @@ impl LinkageInfo {
                 Item::Uniform(u) => info.add_uniform(u),
                 Item::Storage(s) => info.add_storage(s),
                 Item::Sampler(s) => info.add_sampler(s),
+                Item::Texture(t) => info.add_texture(t),
                 Item::Fn(f) => info.add_fn(f),
                 _ => {}
             }
@@ -115,6 +151,49 @@ impl LinkageInfo {
                 binding,
                 name: s.name.clone(),
                 kind: BindingKind::Sampler { comparison },
+            });
+    }
+
+    fn add_texture(&mut self, t: &ItemTexture) {
+        let group: u32 = t.group.base10_parse().unwrap_or(0);
+        let binding: u32 = t.binding.base10_parse().unwrap_or(0);
+
+        let kind = match &t.ty {
+            Type::Texture {
+                kind, sampled_type, ..
+            } => {
+                let view_dimension = texture_kind_to_view_dimension(*kind);
+                let sample_type = match sampled_type {
+                    crate::parse::ScalarType::F32 => TextureSampleType::Float,
+                    crate::parse::ScalarType::I32 => TextureSampleType::Sint,
+                    crate::parse::ScalarType::U32 => TextureSampleType::Uint,
+                    crate::parse::ScalarType::Bool => TextureSampleType::Uint, // Shouldn't happen
+                };
+                let multisampled = matches!(kind, TextureKind::TextureMultisampled2D);
+                BindingKind::Texture {
+                    view_dimension,
+                    sample_type,
+                    multisampled,
+                }
+            }
+            Type::TextureDepth { kind, .. } => {
+                let view_dimension = texture_depth_kind_to_view_dimension(*kind);
+                let multisampled = matches!(kind, TextureDepthKind::DepthMultisampled2D);
+                BindingKind::DepthTexture {
+                    view_dimension,
+                    multisampled,
+                }
+            }
+            _ => return, // Shouldn't happen since ItemTexture validates the type
+        };
+
+        self.bind_groups
+            .entry(group)
+            .or_default()
+            .push(BindingInfo {
+                binding,
+                name: t.name.clone(),
+                kind,
             });
     }
 
@@ -240,6 +319,35 @@ fn generate_bind_group_modules(info: &LinkageInfo, module_name: &str) -> TokenSt
                             };
                             quote! {
                                 wgpu::BindingType::Sampler(#sampler_binding_type)
+                            }
+                        }
+                        BindingKind::Texture {
+                            view_dimension,
+                            sample_type,
+                            multisampled,
+                        } => {
+                            let view_dim = view_dimension_to_tokens(*view_dimension);
+                            let sample = sample_type_to_tokens(*sample_type);
+                            quote! {
+                                wgpu::BindingType::Texture {
+                                    sample_type: #sample,
+                                    view_dimension: #view_dim,
+                                    multisampled: #multisampled,
+                                }
+                            }
+                        }
+                        BindingKind::DepthTexture {
+                            view_dimension,
+                            multisampled,
+                        } => {
+                            let view_dim = view_dimension_to_tokens(*view_dimension);
+                            // Depth textures use Depth sample type for comparison
+                            quote! {
+                                wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Depth,
+                                    view_dimension: #view_dim,
+                                    multisampled: #multisampled,
+                                }
                             }
                         }
                     };
@@ -477,5 +585,52 @@ fn generate_compute_entry_modules(entries: &[ComputeEntry], module_name: &str) -
 
     quote! {
         #(#modules)*
+    }
+}
+
+/// Convert a TextureKind to our TextureViewDimension enum.
+fn texture_kind_to_view_dimension(kind: TextureKind) -> TextureViewDimension {
+    match kind {
+        TextureKind::Texture1D => TextureViewDimension::D1,
+        TextureKind::Texture2D | TextureKind::TextureMultisampled2D => TextureViewDimension::D2,
+        TextureKind::Texture2DArray => TextureViewDimension::D2Array,
+        TextureKind::Texture3D => TextureViewDimension::D3,
+        TextureKind::TextureCube => TextureViewDimension::Cube,
+        TextureKind::TextureCubeArray => TextureViewDimension::CubeArray,
+    }
+}
+
+/// Convert a TextureDepthKind to our TextureViewDimension enum.
+fn texture_depth_kind_to_view_dimension(kind: TextureDepthKind) -> TextureViewDimension {
+    match kind {
+        TextureDepthKind::Depth2D | TextureDepthKind::DepthMultisampled2D => {
+            TextureViewDimension::D2
+        }
+        TextureDepthKind::Depth2DArray => TextureViewDimension::D2Array,
+        TextureDepthKind::DepthCube => TextureViewDimension::Cube,
+        TextureDepthKind::DepthCubeArray => TextureViewDimension::CubeArray,
+    }
+}
+
+/// Convert our TextureViewDimension to wgpu token stream.
+fn view_dimension_to_tokens(dim: TextureViewDimension) -> TokenStream {
+    match dim {
+        TextureViewDimension::D1 => quote! { wgpu::TextureViewDimension::D1 },
+        TextureViewDimension::D2 => quote! { wgpu::TextureViewDimension::D2 },
+        TextureViewDimension::D2Array => quote! { wgpu::TextureViewDimension::D2Array },
+        TextureViewDimension::D3 => quote! { wgpu::TextureViewDimension::D3 },
+        TextureViewDimension::Cube => quote! { wgpu::TextureViewDimension::Cube },
+        TextureViewDimension::CubeArray => quote! { wgpu::TextureViewDimension::CubeArray },
+    }
+}
+
+/// Convert our TextureSampleType to wgpu token stream.
+fn sample_type_to_tokens(sample: TextureSampleType) -> TokenStream {
+    match sample {
+        TextureSampleType::Float => {
+            quote! { wgpu::TextureSampleType::Float { filterable: true } }
+        }
+        TextureSampleType::Sint => quote! { wgpu::TextureSampleType::Sint },
+        TextureSampleType::Uint => quote! { wgpu::TextureSampleType::Uint },
     }
 }

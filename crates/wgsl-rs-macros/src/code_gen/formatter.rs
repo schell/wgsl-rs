@@ -648,6 +648,21 @@ impl GenerateCode for Type {
                 // WGSL format: sampler_comparison
                 code.write_str(ident.span(), "sampler_comparison");
             }
+            Type::Texture {
+                kind,
+                sampled_type,
+                ident,
+            } => {
+                // WGSL format: texture_1d<f32>, texture_2d<i32>, etc.
+                code.write_str(ident.span(), kind.wgsl_name());
+                code.write_str(ident.span(), "<");
+                code.write_str(ident.span(), sampled_type.wgsl_name());
+                code.write_str(ident.span(), ">");
+            }
+            Type::TextureDepth { kind, ident } => {
+                // WGSL format: texture_depth_2d, texture_depth_cube, etc.
+                code.write_str(ident.span(), kind.wgsl_name());
+            }
         }
     }
 }
@@ -1676,6 +1691,55 @@ impl GenerateCode for ItemSampler {
     }
 }
 
+impl GenerateCode for ItemTexture {
+    fn write_code(&self, code: &mut GeneratedWgslCode) {
+        let Self {
+            group_ident,
+            group_paren_token,
+            group,
+            binding_ident,
+            binding_paren_token,
+            binding,
+            name,
+            colon_token,
+            ty,
+            rust_ty: _,
+        } = self;
+
+        // @group(#group) @binding(#binding) var #name: texture_2d<f32>;
+
+        code.write_annotation(group_ident);
+        code.write_surrounded(
+            Surrounded::parens().with_span(group_paren_token.span.join()),
+            |code| {
+                group.write_code(code);
+            },
+        );
+        code.space();
+
+        code.write_annotation(binding_ident);
+        code.write_surrounded(
+            Surrounded::parens().with_span(binding_paren_token.span.join()),
+            |code| {
+                binding.write_code(code);
+            },
+        );
+        code.space();
+
+        // Textures don't need an address space qualifier like uniform/storage
+        code.write_str(Span::call_site(), "var");
+        code.space();
+
+        name.write_code(code);
+        code.write_atom(colon_token);
+        code.space();
+        ty.write_code(code);
+        code.write_atom(&<syn::Token![;]>::default());
+
+        code.newline();
+    }
+}
+
 impl GenerateCode for Field {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         for io in self.inter_stage_io.iter() {
@@ -1868,6 +1932,7 @@ impl GenerateCode for Item {
             Item::Storage(item_storage) => item_storage.write_code(code),
             Item::Workgroup(item_workgroup) => item_workgroup.write_code(code),
             Item::Sampler(item_sampler) => item_sampler.write_code(code),
+            Item::Texture(item_texture) => item_texture.write_code(code),
             Item::Const(item_const) => item_const.write_code(code),
             Item::Fn(item_fn) => item_fn.write_code(code),
             Item::Use(_item_use) => {

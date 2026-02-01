@@ -17,8 +17,8 @@ use std::{
 };
 
 pub use wgsl_rs_macros::{
-    builtin, compute, fragment, input, output, ptr, sampler, storage, uniform, vertex, wgsl_allow,
-    workgroup, workgroup_size,
+    builtin, compute, fragment, input, output, ptr, sampler, storage, texture, uniform, vertex,
+    wgsl_allow, workgroup, workgroup_size,
 };
 
 pub use crate::{get, get_mut};
@@ -304,6 +304,492 @@ impl SamplerComparison {
     }
 
     /// Returns the binding index within its group of this sampler.
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+// =============================================================================
+// Texture Types
+// =============================================================================
+
+/// A custom TextureViewDescriptor that can be used to create texture views.
+///
+/// This is a workaround because wgpu's `TextureViewDescriptor` doesn't support
+/// `const` construction easily. This struct mirrors the same fields and
+/// provides `Into<wgpu::TextureViewDescriptor>` conversion.
+#[derive(Debug, Clone)]
+pub struct TextureViewDescriptor<'a> {
+    /// Debug label of the texture view.
+    pub label: Option<&'a str>,
+    /// Format of the texture view.
+    pub format: Option<wgpu::TextureFormat>,
+    /// The dimension of the texture view.
+    pub dimension: Option<wgpu::TextureViewDimension>,
+    /// Allowed usages for the texture view.
+    pub usage: Option<wgpu::TextureUsages>,
+    /// Aspect of the texture to view.
+    pub aspect: wgpu::TextureAspect,
+    /// Base mip level.
+    pub base_mip_level: u32,
+    /// Mip level count.
+    pub mip_level_count: Option<u32>,
+    /// Base array layer.
+    pub base_array_layer: u32,
+    /// Array layer count.
+    pub array_layer_count: Option<u32>,
+}
+
+impl<'a> From<TextureViewDescriptor<'a>> for wgpu::TextureViewDescriptor<'a> {
+    fn from(desc: TextureViewDescriptor<'a>) -> Self {
+        wgpu::TextureViewDescriptor {
+            label: desc.label,
+            format: desc.format,
+            dimension: desc.dimension,
+            usage: desc.usage,
+            aspect: desc.aspect,
+            base_mip_level: desc.base_mip_level,
+            mip_level_count: desc.mip_level_count,
+            base_array_layer: desc.base_array_layer,
+            array_layer_count: desc.array_layer_count,
+        }
+    }
+}
+
+impl<'a> From<&TextureViewDescriptor<'a>> for wgpu::TextureViewDescriptor<'a> {
+    fn from(desc: &TextureViewDescriptor<'a>) -> Self {
+        wgpu::TextureViewDescriptor {
+            label: desc.label,
+            format: desc.format,
+            dimension: desc.dimension,
+            usage: desc.usage,
+            aspect: desc.aspect,
+            base_mip_level: desc.base_mip_level,
+            mip_level_count: desc.mip_level_count,
+            base_array_layer: desc.base_array_layer,
+            array_layer_count: desc.array_layer_count,
+        }
+    }
+}
+
+// =============================================================================
+// Sampled Texture Types
+// =============================================================================
+
+/// A 1D sampled texture.
+///
+/// In WGSL, this transpiles to `texture_1d<T>` where T is f32, i32, or u32.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), LUT_TEX: Texture1D<f32>);
+/// ```
+pub struct Texture1D<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Texture1D<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 2D sampled texture.
+///
+/// In WGSL, this transpiles to `texture_2d<T>` where T is f32, i32, or u32.
+/// This is the most common texture type, used for diffuse maps, normal maps,
+/// etc.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
+/// sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+///
+/// // In shader code, you would sample like:
+/// // let color = textureSample(DIFFUSE_TEX, TEX_SAMPLER, uv);
+/// ```
+pub struct Texture2D<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Texture2D<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 2D sampled texture array.
+///
+/// In WGSL, this transpiles to `texture_2d_array<T>` where T is f32, i32, or
+/// u32. Useful for texture atlases or animated textures.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), TEXTURE_ARRAY: Texture2DArray<f32>);
+/// ```
+pub struct Texture2DArray<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Texture2DArray<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 3D sampled texture (volume texture).
+///
+/// In WGSL, this transpiles to `texture_3d<T>` where T is f32, i32, or u32.
+/// Useful for volumetric effects, 3D lookup tables, etc.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), VOLUME_TEX: Texture3D<f32>);
+/// ```
+pub struct Texture3D<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Texture3D<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A cube sampled texture.
+///
+/// In WGSL, this transpiles to `texture_cube<T>` where T is f32, i32, or u32.
+/// Used for environment mapping, skyboxes, etc.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), SKYBOX: TextureCube<f32>);
+/// ```
+pub struct TextureCube<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> TextureCube<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A cube sampled texture array.
+///
+/// In WGSL, this transpiles to `texture_cube_array<T>` where T is f32, i32, or
+/// u32.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), CUBE_ARRAY: TextureCubeArray<f32>);
+/// ```
+pub struct TextureCubeArray<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> TextureCubeArray<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A multisampled 2D texture.
+///
+/// In WGSL, this transpiles to `texture_multisampled_2d<T>` where T is f32,
+/// i32, or u32. Used for MSAA (multisample anti-aliasing) render targets.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), MSAA_TEX: TextureMultisampled2D<f32>);
+/// ```
+pub struct TextureMultisampled2D<T> {
+    pub group: u32,
+    pub binding: u32,
+    _marker: PhantomData<T>,
+}
+
+impl<T> TextureMultisampled2D<T> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+// =============================================================================
+// Depth Texture Types
+// =============================================================================
+
+/// A 2D depth texture.
+///
+/// In WGSL, this transpiles to `texture_depth_2d`.
+/// Used for shadow mapping and depth buffer access.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), SHADOW_MAP: TextureDepth2D);
+/// sampler!(group(0), binding(1), SHADOW_SAMPLER: SamplerComparison);
+///
+/// // In shader code, you would sample like:
+/// // let shadow = textureSampleCompare(SHADOW_MAP, SHADOW_SAMPLER, uv, depth);
+/// ```
+pub struct TextureDepth2D {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl TextureDepth2D {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 2D depth texture array.
+///
+/// In WGSL, this transpiles to `texture_depth_2d_array`.
+/// Used for cascaded shadow maps or multiple shadow maps.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), CASCADE_SHADOW_MAP: TextureDepth2DArray);
+/// ```
+pub struct TextureDepth2DArray {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl TextureDepth2DArray {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A cube depth texture.
+///
+/// In WGSL, this transpiles to `texture_depth_cube`.
+/// Used for omnidirectional shadow mapping (point light shadows).
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), POINT_SHADOW: TextureDepthCube);
+/// ```
+pub struct TextureDepthCube {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl TextureDepthCube {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A cube depth texture array.
+///
+/// In WGSL, this transpiles to `texture_depth_cube_array`.
+/// Used for multiple omnidirectional shadow maps.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), POINT_SHADOWS: TextureDepthCubeArray);
+/// ```
+pub struct TextureDepthCubeArray {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl TextureDepthCubeArray {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A multisampled 2D depth texture.
+///
+/// In WGSL, this transpiles to `texture_depth_multisampled_2d`.
+/// Used for MSAA depth buffers.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// texture!(group(0), binding(0), MSAA_DEPTH: TextureDepthMultisampled2D);
+/// ```
+pub struct TextureDepthMultisampled2D {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl TextureDepthMultisampled2D {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
     pub fn binding(&self) -> u32 {
         self.binding
     }

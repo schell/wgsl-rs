@@ -17,7 +17,7 @@ use std::{
 };
 
 pub use wgsl_rs_macros::{
-    builtin, compute, fragment, input, output, ptr, storage, uniform, vertex, wgsl_allow,
+    builtin, compute, fragment, input, output, ptr, sampler, storage, uniform, vertex, wgsl_allow,
     workgroup, workgroup_size,
 };
 
@@ -207,6 +207,103 @@ impl<T, AM: AccessMode> Storage<T, AM> {
     }
 
     /// Returns the binding index within its group of this storage variable.
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A shader sampler for texture sampling operations.
+///
+/// In WGSL, this transpiles to the `sampler` type. Samplers control how
+/// textures are sampled, including filtering modes and address wrapping
+/// behavior.
+///
+/// On the CPU side, this is a marker type that stores the group and binding
+/// indices for resource binding purposes. Actual texture sampling operations
+/// are handled by the GPU.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+///
+/// // In WGSL, you would use the sampler with texture sampling functions:
+/// // let color = textureSample(my_texture, TEX_SAMPLER, uv);
+/// ```
+///
+/// # WGSL Output
+///
+/// ```wgsl
+/// @group(0) @binding(1) var TEX_SAMPLER: sampler;
+/// ```
+pub struct Sampler {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl Sampler {
+    /// Creates a new sampler with the given group and binding indices.
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    /// Returns the group index of this sampler.
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    /// Returns the binding index within its group of this sampler.
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A shader comparison sampler for depth texture sampling operations.
+///
+/// In WGSL, this transpiles to the `sampler_comparison` type. Comparison
+/// samplers are used for depth texture comparisons, typically in shadow
+/// mapping where a depth value is compared against a reference value.
+///
+/// On the CPU side, this is a marker type that stores the group and binding
+/// indices for resource binding purposes. Actual comparison operations
+/// are handled by the GPU.
+///
+/// # Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// sampler!(group(0), binding(2), SHADOW_SAMPLER: SamplerComparison);
+///
+/// // In WGSL, you would use the sampler with comparison sampling functions:
+/// // let shadow = textureSampleCompare(shadow_map, SHADOW_SAMPLER, uv, depth);
+/// ```
+///
+/// # WGSL Output
+///
+/// ```wgsl
+/// @group(0) @binding(2) var SHADOW_SAMPLER: sampler_comparison;
+/// ```
+pub struct SamplerComparison {
+    pub group: u32,
+    pub binding: u32,
+}
+
+impl SamplerComparison {
+    /// Creates a new comparison sampler with the given group and binding
+    /// indices.
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self { group, binding }
+    }
+
+    /// Returns the group index of this sampler.
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    /// Returns the binding index within its group of this sampler.
     pub fn binding(&self) -> u32 {
         self.binding
     }

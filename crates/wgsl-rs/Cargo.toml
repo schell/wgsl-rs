@@ -10,6 +10,7 @@ linkage-wgpu = ["dep:wgpu", "wgsl-rs-macros/linkage-wgpu"]
 
 [dependencies]
 glam.workspace = true
+image = { version = "0.25", default-features = false }
 naga = { workspace = true, optional = true }
 paste = "1"
 wgpu = { workspace = true, optional = true }

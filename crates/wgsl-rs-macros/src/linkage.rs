@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::parse::{FnAttrs, Item, ItemMod, ItemStorage, ItemUniform, StorageAccess};
+use crate::parse::{
+    FnAttrs, Item, ItemMod, ItemSampler, ItemStorage, ItemUniform, StorageAccess, Type,
+};
 
 /// Information about a binding (uniform or storage buffer).
 pub struct BindingInfo {
@@ -20,6 +22,7 @@ pub struct BindingInfo {
 pub enum BindingKind {
     Uniform,
     Storage { read_only: bool },
+    Sampler { comparison: bool },
 }
 
 /// Information about a compute shader entry point.
@@ -62,6 +65,7 @@ impl LinkageInfo {
             match item {
                 Item::Uniform(u) => info.add_uniform(u),
                 Item::Storage(s) => info.add_storage(s),
+                Item::Sampler(s) => info.add_sampler(s),
                 Item::Fn(f) => info.add_fn(f),
                 _ => {}
             }
@@ -96,6 +100,21 @@ impl LinkageInfo {
                 binding,
                 name: s.name.clone(),
                 kind: BindingKind::Storage { read_only },
+            });
+    }
+
+    fn add_sampler(&mut self, s: &ItemSampler) {
+        let group: u32 = s.group.base10_parse().unwrap_or(0);
+        let binding: u32 = s.binding.base10_parse().unwrap_or(0);
+        let comparison = matches!(s.ty, Type::SamplerComparison { .. });
+
+        self.bind_groups
+            .entry(group)
+            .or_default()
+            .push(BindingInfo {
+                binding,
+                name: s.name.clone(),
+                kind: BindingKind::Sampler { comparison },
             });
     }
 
@@ -213,6 +232,16 @@ fn generate_bind_group_modules(info: &LinkageInfo, module_name: &str) -> TokenSt
                                 min_binding_size: None,
                             }
                         },
+                        BindingKind::Sampler { comparison } => {
+                            let sampler_binding_type = if *comparison {
+                                quote! { wgpu::SamplerBindingType::Comparison }
+                            } else {
+                                quote! { wgpu::SamplerBindingType::Filtering }
+                            };
+                            quote! {
+                                wgpu::BindingType::Sampler(#sampler_binding_type)
+                            }
+                        }
                     };
 
                     quote! {

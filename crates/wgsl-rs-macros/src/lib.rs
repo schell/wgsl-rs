@@ -15,6 +15,7 @@ mod code_gen;
 mod linkage;
 mod parse;
 mod ptr;
+mod sampler;
 mod storage;
 mod swizzle;
 mod uniform;
@@ -491,6 +492,60 @@ pub fn uniform(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn storage(input: TokenStream) -> TokenStream {
     storage::storage(input)
+}
+
+/// Defines a sampler or comparison sampler for texture sampling operations.
+///
+/// # Syntax
+/// ```ignore
+/// sampler!(group(G), binding(B), NAME: Sampler);
+/// sampler!(group(G), binding(B), NAME: SamplerComparison);
+/// ```
+///
+/// # Description
+/// Samplers control how textures are sampled in shaders, including filtering
+/// modes and address wrapping behavior. Comparison samplers are used for
+/// depth texture sampling operations like shadow mapping.
+///
+/// # WGSL Output
+/// The macro transpiles to:
+/// - `@group(G) @binding(B) var NAME: sampler;` for regular samplers
+/// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison samplers
+///
+/// # Rust Expansion
+/// On the Rust side, the macro generates:
+/// - A static `Sampler` or `SamplerComparison` instance
+/// - A `SamplerDescriptor` constant for creating the sampler
+/// - A convenience function to create the sampler
+///
+/// # Example
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+/// sampler!(group(0), binding(2), SHADOW_SAMPLER: SamplerComparison);
+///
+/// #[fragment]
+/// pub fn main() -> Vec4f {
+///     // Use samplers for texture sampling...
+///     Vec4f::ZERO
+/// }
+/// ```
+///
+/// This transpiles to:
+/// ```wgsl
+/// @group(0) @binding(1) var TEX_SAMPLER: sampler;
+/// @group(0) @binding(2) var SHADOW_SAMPLER: sampler_comparison;
+///
+/// @fragment
+/// fn main() -> vec4<f32> {
+///     // Use samplers for texture sampling...
+///     return vec4<f32>(0.0);
+/// }
+/// ```
+#[proc_macro]
+pub fn sampler(input: TokenStream) -> TokenStream {
+    sampler::sampler(input)
 }
 
 /// Defines a workgroup-scoped variable shared between invocations in a compute

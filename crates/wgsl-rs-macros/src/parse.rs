@@ -409,6 +409,20 @@ pub enum Type {
         /// Span of the original macro for error reporting
         span: proc_macro2::Span,
     },
+
+    /// Sampler type: sampler
+    /// Used for texture sampling operations.
+    /// This is a handle to a GPU sampler object that controls how textures are sampled.
+    Sampler {
+        ident: Ident,
+    },
+
+    /// Comparison sampler type: sampler_comparison
+    /// Used for depth texture comparison sampling operations.
+    /// Returns a comparison result rather than a filtered sample.
+    SamplerComparison {
+        ident: Ident,
+    },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -466,6 +480,13 @@ impl TryFrom<&syn::Type> for Type {
                         "usize" => Type::Scalar {
                             ty: ScalarType::U32,
                             ident: Ident::new("u32", ident.span()),
+                        },
+                        // Sampler types
+                        "Sampler" => Type::Sampler {
+                            ident: ident.clone(),
+                        },
+                        "SamplerComparison" => Type::SamplerComparison {
+                            ident: ident.clone(),
                         },
                         other => {
                             // Check for vec
@@ -1466,6 +1487,8 @@ impl Expr {
                     Type::Atomic { ident, .. } => ident.span(),
                     Type::Struct { ident } => ident.span(),
                     Type::Ptr { span, .. } => *span,
+                    Type::Sampler { ident } => ident.span(),
+                    Type::SamplerComparison { ident } => ident.span(),
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }
@@ -3582,6 +3605,107 @@ impl TryFrom<&syn::ItemMacro> for ItemStorage {
     }
 }
 
+/// A sampler declaration.
+///
+/// ```rust,ignore
+/// sampler!(group(0), binding(1), MY_SAMPLER: Sampler);
+/// sampler!(group(0), binding(2), MY_CMP_SAMPLER: SamplerComparison);
+/// ```
+///
+/// ```wgsl
+/// @group(0) @binding(1) var MY_SAMPLER: sampler;
+/// @group(0) @binding(2) var MY_CMP_SAMPLER: sampler_comparison;
+/// ```
+pub(crate) struct ItemSampler {
+    pub group_ident: Ident,
+    pub group_paren_token: syn::token::Paren,
+    pub group: syn::LitInt,
+
+    pub binding_ident: Ident,
+    pub binding_paren_token: syn::token::Paren,
+    pub binding: syn::LitInt,
+
+    pub name: syn::Ident,
+    pub colon_token: Token![:],
+    pub ty: Type,
+
+    // We keep the Rust type around
+    pub rust_ty: syn::Type,
+}
+
+impl syn::parse::Parse for ItemSampler {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // group
+        let group_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let group_paren_token = parenthesized!(content in input);
+        let group = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        // binding
+        let binding_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let binding_paren_token = parenthesized!(content in input);
+        let binding = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        let name: syn::Ident = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
+        let rust_ty: syn::Type = input.parse()?;
+        let ty = Type::try_from(&rust_ty)?;
+
+        // Validate that the type is a sampler type
+        match &ty {
+            Type::Sampler { .. } | Type::SamplerComparison { .. } => {}
+            _ => {
+                return Err(syn::Error::new(
+                    rust_ty.span(),
+                    "sampler! macro requires a Sampler or SamplerComparison type",
+                ));
+            }
+        }
+
+        Ok(ItemSampler {
+            group,
+            binding,
+            name,
+            colon_token,
+            ty,
+            rust_ty,
+            group_ident,
+            group_paren_token,
+            binding_ident,
+            binding_paren_token,
+        })
+    }
+}
+
+impl TryFrom<&syn::ItemMacro> for ItemSampler {
+    type Error = Error;
+
+    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
+        // Ensure it's the "sampler" macro
+        if item_macro
+            .mac
+            .path
+            .get_ident()
+            .map(|id| id != "sampler")
+            .unwrap_or(true)
+        {
+            return UnsupportedSnafu {
+                span: item_macro.span(),
+                note: "Only 'sampler!' macro is supported as a sampler declaration.",
+            }
+            .fail();
+        }
+
+        syn::parse2::<ItemSampler>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
+            span: item_macro.span(),
+            note: format!("{e}"),
+        })
+    }
+}
+
 /// Workgroup variable declaration parsed from `workgroup!(NAME: TYPE)`.
 ///
 /// Transpiles to:
@@ -4040,6 +4164,7 @@ pub enum Item {
     Uniform(Box<ItemUniform>),
     Storage(Box<ItemStorage>),
     Workgroup(Box<ItemWorkgroup>),
+    Sampler(Box<ItemSampler>),
     Fn(Box<ItemFn>),
     Mod(ItemMod),
     Use(ItemUse),
@@ -4067,6 +4192,9 @@ impl TryFrom<&syn::Item> for Item {
                     Some("workgroup") => Ok(Item::Workgroup(Box::new(ItemWorkgroup::try_from(
                         item_macro,
                     )?))),
+                    Some("sampler") => {
+                        Ok(Item::Sampler(Box::new(ItemSampler::try_from(item_macro)?)))
+                    }
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
                         note: format!(
@@ -5873,5 +6001,79 @@ mod test {
         let workgroup: ItemWorkgroup = syn::parse_str("FLAGS: Atomic<i32>").unwrap();
         let wgsl = workgroup.to_wgsl();
         assert_eq!("var<workgroup> FLAGS: atomic<i32>;", wgsl.trim());
+    }
+
+    #[test]
+    fn parse_sampler_basic() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(1), TEX_SAMPLER: Sampler").unwrap();
+        assert_eq!("TEX_SAMPLER", sampler.name.to_string());
+        assert!(matches!(sampler.ty, Type::Sampler { .. }));
+    }
+
+    #[test]
+    fn parse_sampler_comparison() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(2), SHADOW_SAMPLER: SamplerComparison").unwrap();
+        assert_eq!("SHADOW_SAMPLER", sampler.name.to_string());
+        assert!(matches!(sampler.ty, Type::SamplerComparison { .. }));
+    }
+
+    #[test]
+    fn sampler_to_wgsl() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(1), MY_SAMPLER: Sampler").unwrap();
+        let wgsl = sampler.to_wgsl();
+        assert!(
+            wgsl.contains("@group(0)"),
+            "Expected @group(0) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@binding(1)"),
+            "Expected @binding(1) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("var MY_SAMPLER"),
+            "Expected 'var MY_SAMPLER' in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(": sampler;"),
+            "Expected ': sampler;' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn sampler_comparison_to_wgsl() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(1), binding(3), CMP_SAMPLER: SamplerComparison").unwrap();
+        let wgsl = sampler.to_wgsl();
+        assert!(
+            wgsl.contains("@group(1)"),
+            "Expected @group(1) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@binding(3)"),
+            "Expected @binding(3) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(": sampler_comparison;"),
+            "Expected ': sampler_comparison;' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn sampler_rejects_non_sampler_type() {
+        let result = syn::parse_str::<ItemSampler>("group(0), binding(0), BAD: u32");
+        assert!(
+            result.is_err(),
+            "Expected error when using non-sampler type, but parsing succeeded"
+        );
     }
 }

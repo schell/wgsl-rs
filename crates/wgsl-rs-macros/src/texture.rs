@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
-use crate::parse::{to_snake_case, ItemTexture, ScalarType, TextureDepthKind, TextureKind, Type};
+use crate::parse::{ItemTexture, ScalarType, TextureDepthKind, TextureKind, Type, to_snake_case};
 
 pub fn texture(input: TokenStream) -> TokenStream {
     let ItemTexture {

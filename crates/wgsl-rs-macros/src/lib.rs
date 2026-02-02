@@ -511,7 +511,8 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// # WGSL Output
 /// The macro transpiles to:
 /// - `@group(G) @binding(B) var NAME: sampler;` for regular samplers
-/// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison samplers
+/// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison
+///   samplers
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:

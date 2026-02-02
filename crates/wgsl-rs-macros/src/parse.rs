@@ -331,7 +331,8 @@ pub enum AddressSpace {
 }
 
 /// Sampled texture dimensionality/kind.
-/// These correspond to WGSL's texture_* types that are generic over a sample type.
+/// These correspond to WGSL's texture_* types that are generic over a sample
+/// type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureKind {
     /// texture_1d<T>
@@ -380,8 +381,8 @@ impl TextureKind {
 }
 
 /// Depth texture dimensionality/kind.
-/// These correspond to WGSL's texture_depth_* types which have no type parameter
-/// (they implicitly use f32 for depth values).
+/// These correspond to WGSL's texture_depth_* types which have no type
+/// parameter (they implicitly use f32 for depth values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureDepthKind {
     /// texture_depth_2d
@@ -516,17 +517,14 @@ pub enum Type {
 
     /// Sampler type: sampler
     /// Used for texture sampling operations.
-    /// This is a handle to a GPU sampler object that controls how textures are sampled.
-    Sampler {
-        ident: Ident,
-    },
+    /// This is a handle to a GPU sampler object that controls how textures are
+    /// sampled.
+    Sampler { ident: Ident },
 
     /// Comparison sampler type: sampler_comparison
     /// Used for depth texture comparison sampling operations.
     /// Returns a comparison result rather than a filtered sample.
-    SamplerComparison {
-        ident: Ident,
-    },
+    SamplerComparison { ident: Ident },
 
     /// Sampled texture types: texture_1d<T>, texture_2d<T>, etc.
     /// T must be f32, i32, or u32 (the sample type).
@@ -779,19 +777,23 @@ impl TryFrom<&syn::Type> for Type {
                                 let elem_type = Type::try_from(ty)?;
                                 match &elem_type {
                                     Type::Scalar {
-                                        ty: sampled_type @ (ScalarType::F32 | ScalarType::I32 | ScalarType::U32),
+                                        ty:
+                                            sampled_type @ (ScalarType::F32
+                                            | ScalarType::I32
+                                            | ScalarType::U32),
                                         ..
                                     } => {
                                         return Ok(Type::Texture {
                                             kind: texture_kind,
-                                            sampled_type: sampled_type.clone(),
+                                            sampled_type: *sampled_type,
                                             ident: ident.clone(),
                                         });
                                     }
                                     _ => {
                                         return UnsupportedSnafu {
                                             span: ty.span(),
-                                            note: "Sampled texture type parameter must be f32, i32, or u32",
+                                            note: "Sampled texture type parameter must be f32, \
+                                                   i32, or u32",
                                         }
                                         .fail();
                                     }
@@ -829,8 +831,9 @@ impl TryFrom<&syn::Type> for Type {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, Atomic, \
-                                               or a texture type (Texture1D, Texture2D, etc.)",
+                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, \
+                                               Atomic, or a texture type (Texture1D, Texture2D, \
+                                               etc.)",
                                     }
                                     .fail()
                                 }
@@ -3782,6 +3785,7 @@ pub(crate) struct ItemSampler {
     pub ty: Type,
 
     // We keep the Rust type around
+    #[expect(dead_code, reason = "Will be used eventually")]
     pub rust_ty: syn::Type,
 }
 
@@ -3885,6 +3889,7 @@ pub(crate) struct ItemTexture {
     pub ty: Type,
 
     // We keep the Rust type around
+    #[expect(dead_code, reason = "Might be used later")]
     pub rust_ty: syn::Type,
 }
 

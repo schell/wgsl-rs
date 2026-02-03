@@ -56,7 +56,7 @@ pub fn sampler(input: TokenStream) -> TokenStream {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             lod_min_clamp: 0.0,
             lod_max_clamp: 32.0,
             compare: if #is_comparison { Some(wgpu::CompareFunction::Less) } else { None },

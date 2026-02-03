@@ -46,7 +46,7 @@ pub fn texture(input: TokenStream) -> TokenStream {
                 /// This descriptor defines how the texture should be viewed. By default, it
                 /// creates a view that matches the texture's format and dimensionality.
                 /// You can modify these settings or create a custom descriptor as needed.
-                pub const #view_descriptor_name: TextureViewDescriptor<'static> = TextureViewDescriptor {
+                pub const #view_descriptor_name: wgpu::TextureViewDescriptor<'static> = wgpu::TextureViewDescriptor {
                     label: Some(#name_str),
                     format: None,  // Inherit from texture
                     dimension: Some(#view_dimension),

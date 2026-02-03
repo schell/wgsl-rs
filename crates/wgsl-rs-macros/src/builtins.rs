@@ -5,13 +5,25 @@
 
 /// Lookup table for builtin functions that need name translation.
 ///
-/// Format: (rust_snake_case, wgsl_camelCase)
+/// Format: (rust_snake_case, wgslCamelCase)
 ///
 /// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
 /// are NOT included here since they don't need translation.
-pub static BUILTIN_NAME_MAP: &[(&str, &str)] = &[
+pub static BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     // Arrays
     ("array_length", "arrayLength"),
+    // Atomic operations
+    ("atomic_add", "atomicAdd"),
+    ("atomic_and", "atomicAnd"),
+    ("atomic_compare_exchange_weak", "atomicCompareExchangeWeak"),
+    ("atomic_exchange", "atomicExchange"),
+    ("atomic_load", "atomicLoad"),
+    ("atomic_max", "atomicMax"),
+    ("atomic_min", "atomicMin"),
+    ("atomic_or", "atomicOr"),
+    ("atomic_store", "atomicStore"),
+    ("atomic_sub", "atomicSub"),
+    ("atomic_xor", "atomicXor"),
     // Bit manipulation
     ("count_leading_zeros", "countLeadingZeros"),
     ("count_one_bits", "countOneBits"),
@@ -50,7 +62,7 @@ pub static BUILTIN_NAME_MAP: &[(&str, &str)] = &[
 /// Returns `Some(wgsl_name)` if translation is needed, `None` if the name
 /// should be used as-is.
 pub fn lookup_wgsl_name(rust_name: &str) -> Option<&'static str> {
-    BUILTIN_NAME_MAP
+    BUILTIN_CASE_NAME_MAP
         .iter()
         .find(|(rust, _)| *rust == rust_name)
         .map(|(_, wgsl)| *wgsl)
@@ -60,7 +72,7 @@ pub fn lookup_wgsl_name(rust_name: &str) -> Option<&'static str> {
 ///
 /// Returns `Some((rust_name, wgsl_name))` if reserved, `None` otherwise.
 pub fn is_reserved_builtin(name: &str) -> Option<(&'static str, &'static str)> {
-    BUILTIN_NAME_MAP
+    BUILTIN_CASE_NAME_MAP
         .iter()
         .find(|(rust, wgsl)| *rust == name || *wgsl == name)
         .copied()

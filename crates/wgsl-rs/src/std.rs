@@ -21,16 +21,18 @@ pub use wgsl_rs_macros::{
     workgroup, workgroup_size,
 };
 
-mod numeric_builtin_functions;
-pub use numeric_builtin_functions::*;
+pub use crate::{get, get_mut};
 
+mod atomic;
+mod matrices;
+mod numeric_builtin_functions;
 mod vectors;
+
+pub use atomic::*;
+pub use matrices::*;
+pub use numeric_builtin_functions::*;
 pub use vectors::*;
 
-mod matrices;
-pub use matrices::*;
-
-pub use crate::{get, get_mut};
 
 /// Shared reference to a uniform, storage or workgroup variable.
 pub struct ModuleVarReadGuard<'a, T> {
@@ -447,67 +449,4 @@ impl<T> ArrayLength for &RuntimeArray<T> {
 /// ```
 pub fn array_length(array: impl ArrayLength) -> u32 {
     array.array_length()
-}
-
-/// Marker trait that denotes what atomic type a certain value takes
-/// on the Rust side.
-pub trait AtomicScalar {
-    type AtomicType: Default;
-}
-
-impl AtomicScalar for u32 {
-    type AtomicType = std::sync::atomic::AtomicU32;
-}
-
-impl AtomicScalar for i32 {
-    type AtomicType = std::sync::atomic::AtomicI32;
-}
-
-/// An atomic type for thread-safe operations.
-///
-/// In WGSL, this transpiles to `atomic<T>` where T is either `i32` or `u32`.
-/// Atomic types can only be used in workgroup or storage address spaces with
-/// `read_write` access mode.
-///
-/// On the CPU side, this wraps Rust's `std::sync::atomic` types to provide
-/// thread-safe operations that match WGSL's atomic semantics.
-///
-/// # WGSL Atomic Operations
-///
-/// WGSL provides the following atomic operations (to be added as builtin
-/// functions):
-/// - `atomicLoad` - Load a value from an atomic
-/// - `atomicStore` - Store a value to an atomic
-/// - `atomicAdd` - Add and return old value
-/// - `atomicSub` - Subtract and return old value
-/// - `atomicMax` - Maximum and return old value
-/// - `atomicMin` - Minimum and return old value
-/// - `atomicAnd` - Bitwise AND and return old value
-/// - `atomicOr` - Bitwise OR and return old value
-/// - `atomicXor` - Bitwise XOR and return old value
-/// - `atomicExchange` - Exchange and return old value
-/// - `atomicCompareExchangeWeak` - Compare and exchange
-///
-/// # Example
-///
-/// ```ignore
-/// use wgsl_rs::std::*;
-///
-/// // In a storage buffer or workgroup variable
-/// workgroup!(COUNTER: Atomic<u32>);
-///
-/// // Atomic operations will be available as builtin functions
-/// ```
-#[derive(Debug)]
-pub struct Atomic<T: AtomicScalar> {
-    #[expect(dead_code, reason = "not used yet")]
-    inner: T::AtomicType,
-}
-
-impl<T: AtomicScalar> Default for Atomic<T> {
-    fn default() -> Self {
-        Self {
-            inner: <T as AtomicScalar>::AtomicType::default(),
-        }
-    }
 }

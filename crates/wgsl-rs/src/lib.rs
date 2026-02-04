@@ -20,6 +20,9 @@ pub use wgsl_rs_macros::{wgsl, wgsl_allow};
 ///     }
 /// }
 pub struct Module {
+    /// Name of the module.
+    pub name: &'static str,
+
     /// Imports of other WGSL modules.
     pub imports: &'static [&'static Module],
 

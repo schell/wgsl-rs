@@ -15,6 +15,7 @@ pub fn texture(input: TokenStream) -> TokenStream {
     } = parse_macro_input!(input as ItemTexture);
 
     // Generate the Rust-side type and wgpu types based on the texture type
+    // TODO(schell): expand the linkage generated
     let expanded = match &ty {
         Type::Texture {
             kind, sampled_type, ..

@@ -24,6 +24,7 @@ pub fn sampler(input: TokenStream) -> TokenStream {
         quote! { Sampler }
     };
 
+    // TODO(schell): expand the linkage generated
     let expanded = quote! {
         static #name: #sampler_type = #sampler_type::new(#group, #binding);
     };

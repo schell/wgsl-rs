@@ -1,9 +1,5 @@
 //! WGSL abstract syntax tree-ish.
 //!
-//! There's a lot of hand-waving going on here, but that's ok
-//! because in practice this stuff is already type checked by Rust at the
-//! time it's constructed.
-//!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
 // HEY!
 //
@@ -6341,8 +6337,6 @@ mod test {
         );
     }
 
-    // ========== Texture Type Tests ==========
-
     #[test]
     fn parse_texture_type_texture2d_f32() {
         let ty: syn::Type = syn::parse_str("Texture2D<f32>").unwrap();
@@ -6410,8 +6404,6 @@ mod test {
         assert_eq!("texture_multisampled_2d<f32>", ty.to_wgsl());
     }
 
-    // ========== Depth Texture Type Tests ==========
-
     #[test]
     fn parse_texture_depth_2d() {
         let ty: syn::Type = syn::parse_str("TextureDepth2D").unwrap();
@@ -6450,8 +6442,6 @@ mod test {
         let ty = Type::try_from(&ty).unwrap();
         assert_eq!("texture_depth_multisampled_2d", ty.to_wgsl());
     }
-
-    // ========== ItemTexture Parsing Tests ==========
 
     #[test]
     fn parse_texture_item_basic() {

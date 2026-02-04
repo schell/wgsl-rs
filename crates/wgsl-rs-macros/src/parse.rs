@@ -1,9 +1,5 @@
 //! WGSL abstract syntax tree-ish.
 //!
-//! There's a lot of hand-waving going on here, but that's ok
-//! because in practice this stuff is already type checked by Rust at the
-//! time it's constructed.
-//!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
 // HEY!
 //
@@ -275,6 +271,7 @@ pub fn to_snake_case(s: &str) -> String {
     result
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScalarType {
     I32,
     U32,
@@ -303,6 +300,18 @@ impl TryFrom<&syn::Ident> for ScalarType {
     }
 }
 
+impl ScalarType {
+    /// Returns the WGSL name for this scalar type.
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            ScalarType::I32 => "i32",
+            ScalarType::U32 => "u32",
+            ScalarType::F32 => "f32",
+            ScalarType::Bool => "bool",
+        }
+    }
+}
+
 /// WGSL address spaces for pointer and variable types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // Workgroup is used for workgroup variables, not pointer types (yet)
@@ -315,6 +324,98 @@ pub enum AddressSpace {
     /// workgroup. Variables in this address space are shared between
     /// invocations in the same workgroup.
     Workgroup,
+}
+
+/// Sampled texture dimensionality/kind.
+/// These correspond to WGSL's texture_* types that are generic over a sample
+/// type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureKind {
+    /// texture_1d<T>
+    Texture1D,
+    /// texture_2d<T>
+    Texture2D,
+    /// texture_2d_array<T>
+    Texture2DArray,
+    /// texture_3d<T>
+    Texture3D,
+    /// texture_cube<T>
+    TextureCube,
+    /// texture_cube_array<T>
+    TextureCubeArray,
+    /// texture_multisampled_2d<T>
+    TextureMultisampled2D,
+}
+
+impl TextureKind {
+    /// Returns the WGSL type name for this texture kind.
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            TextureKind::Texture1D => "texture_1d",
+            TextureKind::Texture2D => "texture_2d",
+            TextureKind::Texture2DArray => "texture_2d_array",
+            TextureKind::Texture3D => "texture_3d",
+            TextureKind::TextureCube => "texture_cube",
+            TextureKind::TextureCubeArray => "texture_cube_array",
+            TextureKind::TextureMultisampled2D => "texture_multisampled_2d",
+        }
+    }
+
+    /// Parse a Rust type name into a TextureKind.
+    pub fn from_rust_name(name: &str) -> Option<Self> {
+        match name {
+            "Texture1D" => Some(TextureKind::Texture1D),
+            "Texture2D" => Some(TextureKind::Texture2D),
+            "Texture2DArray" => Some(TextureKind::Texture2DArray),
+            "Texture3D" => Some(TextureKind::Texture3D),
+            "TextureCube" => Some(TextureKind::TextureCube),
+            "TextureCubeArray" => Some(TextureKind::TextureCubeArray),
+            "TextureMultisampled2D" => Some(TextureKind::TextureMultisampled2D),
+            _ => None,
+        }
+    }
+}
+
+/// Depth texture dimensionality/kind.
+/// These correspond to WGSL's texture_depth_* types which have no type
+/// parameter (they implicitly use f32 for depth values).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureDepthKind {
+    /// texture_depth_2d
+    Depth2D,
+    /// texture_depth_2d_array
+    Depth2DArray,
+    /// texture_depth_cube
+    DepthCube,
+    /// texture_depth_cube_array
+    DepthCubeArray,
+    /// texture_depth_multisampled_2d
+    DepthMultisampled2D,
+}
+
+impl TextureDepthKind {
+    /// Returns the WGSL type name for this depth texture kind.
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            TextureDepthKind::Depth2D => "texture_depth_2d",
+            TextureDepthKind::Depth2DArray => "texture_depth_2d_array",
+            TextureDepthKind::DepthCube => "texture_depth_cube",
+            TextureDepthKind::DepthCubeArray => "texture_depth_cube_array",
+            TextureDepthKind::DepthMultisampled2D => "texture_depth_multisampled_2d",
+        }
+    }
+
+    /// Parse a Rust type name into a TextureDepthKind.
+    pub fn from_rust_name(name: &str) -> Option<Self> {
+        match name {
+            "TextureDepth2D" => Some(TextureDepthKind::Depth2D),
+            "TextureDepth2DArray" => Some(TextureDepthKind::Depth2DArray),
+            "TextureDepthCube" => Some(TextureDepthKind::DepthCube),
+            "TextureDepthCubeArray" => Some(TextureDepthKind::DepthCubeArray),
+            "TextureDepthMultisampled2D" => Some(TextureDepthKind::DepthMultisampled2D),
+            _ => None,
+        }
+    }
 }
 
 /// Helper struct for parsing `ptr!(address_space, Type)` macro arguments.
@@ -409,6 +510,32 @@ pub enum Type {
         /// Span of the original macro for error reporting
         span: proc_macro2::Span,
     },
+
+    /// Sampler type: sampler
+    /// Used for texture sampling operations.
+    /// This is a handle to a GPU sampler object that controls how textures are
+    /// sampled.
+    Sampler { ident: Ident },
+
+    /// Comparison sampler type: sampler_comparison
+    /// Used for depth texture comparison sampling operations.
+    /// Returns a comparison result rather than a filtered sample.
+    SamplerComparison { ident: Ident },
+
+    /// Sampled texture types: texture_1d<T>, texture_2d<T>, etc.
+    /// T must be f32, i32, or u32 (the sample type).
+    Texture {
+        kind: TextureKind,
+        sampled_type: ScalarType,
+        ident: Ident,
+    },
+
+    /// Depth texture types: texture_depth_2d, etc.
+    /// No type parameter (implicitly f32 for depth values).
+    TextureDepth {
+        kind: TextureDepthKind,
+        ident: Ident,
+    },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -466,6 +593,13 @@ impl TryFrom<&syn::Type> for Type {
                         "usize" => Type::Scalar {
                             ty: ScalarType::U32,
                             ident: Ident::new("u32", ident.span()),
+                        },
+                        // Sampler types
+                        "Sampler" => Type::Sampler {
+                            ident: ident.clone(),
+                        },
+                        "SamplerComparison" => Type::SamplerComparison {
+                            ident: ident.clone(),
                         },
                         other => {
                             // Check for vec
@@ -533,6 +667,12 @@ impl TryFrom<&syn::Type> for Type {
                                     size,
                                     ident: ident.clone(),
                                     scalar: None,
+                                }
+                            } else if let Some(kind) = TextureDepthKind::from_rust_name(other) {
+                                // Depth texture types (no type parameter)
+                                Type::TextureDepth {
+                                    kind,
+                                    ident: ident.clone(),
                                 }
                             } else {
                                 // We assume this is a struct
@@ -627,6 +767,35 @@ impl TryFrom<&syn::Type> for Type {
                                 }
                             }
 
+                            // Handle sampled texture types: Texture1D<T>, Texture2D<T>, etc.
+                            // T must be f32, i32, or u32
+                            if let Some(texture_kind) = TextureKind::from_rust_name(&ident_str) {
+                                let elem_type = Type::try_from(ty)?;
+                                match &elem_type {
+                                    Type::Scalar {
+                                        ty:
+                                            sampled_type @ (ScalarType::F32
+                                            | ScalarType::I32
+                                            | ScalarType::U32),
+                                        ..
+                                    } => {
+                                        return Ok(Type::Texture {
+                                            kind: texture_kind,
+                                            sampled_type: *sampled_type,
+                                            ident: ident.clone(),
+                                        });
+                                    }
+                                    _ => {
+                                        return UnsupportedSnafu {
+                                            span: ty.span(),
+                                            note: "Sampled texture type parameter must be f32, \
+                                                   i32, or u32",
+                                        }
+                                        .fail();
+                                    }
+                                }
+                            }
+
                             if let Type::Scalar {
                                 ty: scalar_ty,
                                 ident: scalar_ident,
@@ -658,8 +827,9 @@ impl TryFrom<&syn::Type> for Type {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, or \
-                                               Atomic",
+                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, \
+                                               Atomic, or a texture type (Texture1D, Texture2D, \
+                                               etc.)",
                                     }
                                     .fail()
                                 }
@@ -1466,6 +1636,10 @@ impl Expr {
                     Type::Atomic { ident, .. } => ident.span(),
                     Type::Struct { ident } => ident.span(),
                     Type::Ptr { span, .. } => *span,
+                    Type::Sampler { ident } => ident.span(),
+                    Type::SamplerComparison { ident } => ident.span(),
+                    Type::Texture { ident, .. } => ident.span(),
+                    Type::TextureDepth { ident, .. } => ident.span(),
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }
@@ -3582,6 +3756,212 @@ impl TryFrom<&syn::ItemMacro> for ItemStorage {
     }
 }
 
+/// A sampler declaration.
+///
+/// ```rust,ignore
+/// sampler!(group(0), binding(1), MY_SAMPLER: Sampler);
+/// sampler!(group(0), binding(2), MY_CMP_SAMPLER: SamplerComparison);
+/// ```
+///
+/// ```wgsl
+/// @group(0) @binding(1) var MY_SAMPLER: sampler;
+/// @group(0) @binding(2) var MY_CMP_SAMPLER: sampler_comparison;
+/// ```
+pub(crate) struct ItemSampler {
+    pub group_ident: Ident,
+    pub group_paren_token: syn::token::Paren,
+    pub group: syn::LitInt,
+
+    pub binding_ident: Ident,
+    pub binding_paren_token: syn::token::Paren,
+    pub binding: syn::LitInt,
+
+    pub name: syn::Ident,
+    pub colon_token: Token![:],
+    pub ty: Type,
+
+    // We keep the Rust type around
+    #[expect(dead_code, reason = "Will be used eventually")]
+    pub rust_ty: syn::Type,
+}
+
+impl syn::parse::Parse for ItemSampler {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // group
+        let group_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let group_paren_token = parenthesized!(content in input);
+        let group = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        // binding
+        let binding_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let binding_paren_token = parenthesized!(content in input);
+        let binding = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        let name: syn::Ident = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
+        let rust_ty: syn::Type = input.parse()?;
+        let ty = Type::try_from(&rust_ty)?;
+
+        // Validate that the type is a sampler type
+        match &ty {
+            Type::Sampler { .. } | Type::SamplerComparison { .. } => {}
+            _ => {
+                return Err(syn::Error::new(
+                    rust_ty.span(),
+                    "sampler! macro requires a Sampler or SamplerComparison type",
+                ));
+            }
+        }
+
+        Ok(ItemSampler {
+            group,
+            binding,
+            name,
+            colon_token,
+            ty,
+            rust_ty,
+            group_ident,
+            group_paren_token,
+            binding_ident,
+            binding_paren_token,
+        })
+    }
+}
+
+impl TryFrom<&syn::ItemMacro> for ItemSampler {
+    type Error = Error;
+
+    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
+        // Ensure it's the "sampler" macro
+        if item_macro
+            .mac
+            .path
+            .get_ident()
+            .map(|id| id != "sampler")
+            .unwrap_or(true)
+        {
+            return UnsupportedSnafu {
+                span: item_macro.span(),
+                note: "Only 'sampler!' macro is supported as a sampler declaration.",
+            }
+            .fail();
+        }
+
+        syn::parse2::<ItemSampler>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
+            span: item_macro.span(),
+            note: format!("{e}"),
+        })
+    }
+}
+
+/// Texture variable declaration parsed from `texture!` macro.
+///
+/// Supports both sampled textures (with type parameter) and depth textures:
+///
+/// ```rust,ignore
+/// texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
+/// texture!(group(1), binding(0), SHADOW_MAP: TextureDepth2D);
+/// ```
+///
+/// ```wgsl
+/// @group(0) @binding(0) var DIFFUSE_TEX: texture_2d<f32>;
+/// @group(1) @binding(0) var SHADOW_MAP: texture_depth_2d;
+/// ```
+pub(crate) struct ItemTexture {
+    pub group_ident: Ident,
+    pub group_paren_token: syn::token::Paren,
+    pub group: syn::LitInt,
+
+    pub binding_ident: Ident,
+    pub binding_paren_token: syn::token::Paren,
+    pub binding: syn::LitInt,
+
+    pub name: syn::Ident,
+    pub colon_token: Token![:],
+    pub ty: Type,
+
+    // We keep the Rust type around
+    #[expect(dead_code, reason = "Might be used later")]
+    pub rust_ty: syn::Type,
+}
+
+impl syn::parse::Parse for ItemTexture {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // group
+        let group_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let group_paren_token = parenthesized!(content in input);
+        let group = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        // binding
+        let binding_ident = input.parse::<syn::Ident>()?;
+        let content;
+        let binding_paren_token = parenthesized!(content in input);
+        let binding = content.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        let name: syn::Ident = input.parse()?;
+        let colon_token: syn::Token![:] = input.parse()?;
+        let rust_ty: syn::Type = input.parse()?;
+        let ty = Type::try_from(&rust_ty)?;
+
+        // Validate that the type is a texture type
+        match &ty {
+            Type::Texture { .. } | Type::TextureDepth { .. } => {}
+            _ => {
+                return Err(syn::Error::new(
+                    rust_ty.span(),
+                    "texture! macro requires a texture type (Texture2D<f32>, TextureDepth2D, etc.)",
+                ));
+            }
+        }
+
+        Ok(ItemTexture {
+            group,
+            binding,
+            name,
+            colon_token,
+            ty,
+            rust_ty,
+            group_ident,
+            group_paren_token,
+            binding_ident,
+            binding_paren_token,
+        })
+    }
+}
+
+impl TryFrom<&syn::ItemMacro> for ItemTexture {
+    type Error = Error;
+
+    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
+        // Ensure it's the "texture" macro
+        if item_macro
+            .mac
+            .path
+            .get_ident()
+            .map(|id| id != "texture")
+            .unwrap_or(true)
+        {
+            return UnsupportedSnafu {
+                span: item_macro.span(),
+                note: "Only 'texture!' macro is supported as a texture declaration.",
+            }
+            .fail();
+        }
+
+        syn::parse2::<ItemTexture>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
+            span: item_macro.span(),
+            note: format!("{e}"),
+        })
+    }
+}
+
 /// Workgroup variable declaration parsed from `workgroup!(NAME: TYPE)`.
 ///
 /// Transpiles to:
@@ -4040,6 +4420,8 @@ pub enum Item {
     Uniform(Box<ItemUniform>),
     Storage(Box<ItemStorage>),
     Workgroup(Box<ItemWorkgroup>),
+    Sampler(Box<ItemSampler>),
+    Texture(Box<ItemTexture>),
     Fn(Box<ItemFn>),
     Mod(ItemMod),
     Use(ItemUse),
@@ -4067,6 +4449,12 @@ impl TryFrom<&syn::Item> for Item {
                     Some("workgroup") => Ok(Item::Workgroup(Box::new(ItemWorkgroup::try_from(
                         item_macro,
                     )?))),
+                    Some("sampler") => {
+                        Ok(Item::Sampler(Box::new(ItemSampler::try_from(item_macro)?)))
+                    }
+                    Some("texture") => {
+                        Ok(Item::Texture(Box::new(ItemTexture::try_from(item_macro)?)))
+                    }
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
                         note: format!(
@@ -5873,5 +6261,268 @@ mod test {
         let workgroup: ItemWorkgroup = syn::parse_str("FLAGS: Atomic<i32>").unwrap();
         let wgsl = workgroup.to_wgsl();
         assert_eq!("var<workgroup> FLAGS: atomic<i32>;", wgsl.trim());
+    }
+
+    #[test]
+    fn parse_sampler_basic() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(1), TEX_SAMPLER: Sampler").unwrap();
+        assert_eq!("TEX_SAMPLER", sampler.name.to_string());
+        assert!(matches!(sampler.ty, Type::Sampler { .. }));
+    }
+
+    #[test]
+    fn parse_sampler_comparison() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(2), SHADOW_SAMPLER: SamplerComparison").unwrap();
+        assert_eq!("SHADOW_SAMPLER", sampler.name.to_string());
+        assert!(matches!(sampler.ty, Type::SamplerComparison { .. }));
+    }
+
+    #[test]
+    fn sampler_to_wgsl() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(1), MY_SAMPLER: Sampler").unwrap();
+        let wgsl = sampler.to_wgsl();
+        assert!(
+            wgsl.contains("@group(0)"),
+            "Expected @group(0) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@binding(1)"),
+            "Expected @binding(1) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("var MY_SAMPLER"),
+            "Expected 'var MY_SAMPLER' in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(": sampler;"),
+            "Expected ': sampler;' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn sampler_comparison_to_wgsl() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(1), binding(3), CMP_SAMPLER: SamplerComparison").unwrap();
+        let wgsl = sampler.to_wgsl();
+        assert!(
+            wgsl.contains("@group(1)"),
+            "Expected @group(1) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@binding(3)"),
+            "Expected @binding(3) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(": sampler_comparison;"),
+            "Expected ': sampler_comparison;' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn sampler_rejects_non_sampler_type() {
+        let result = syn::parse_str::<ItemSampler>("group(0), binding(0), BAD: u32");
+        assert!(
+            result.is_err(),
+            "Expected error when using non-sampler type, but parsing succeeded"
+        );
+    }
+
+    #[test]
+    fn parse_texture_type_texture2d_f32() {
+        let ty: syn::Type = syn::parse_str("Texture2D<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert!(
+            matches!(ty, Type::Texture { .. }),
+            "Expected Type::Texture variant"
+        );
+        assert_eq!("texture_2d<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture2d_i32() {
+        let ty: syn::Type = syn::parse_str("Texture2D<i32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_2d<i32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture2d_u32() {
+        let ty: syn::Type = syn::parse_str("Texture2D<u32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_2d<u32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture1d() {
+        let ty: syn::Type = syn::parse_str("Texture1D<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_1d<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture2d_array() {
+        let ty: syn::Type = syn::parse_str("Texture2DArray<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_2d_array<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture3d() {
+        let ty: syn::Type = syn::parse_str("Texture3D<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_3d<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture_cube() {
+        let ty: syn::Type = syn::parse_str("TextureCube<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_cube<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture_cube_array() {
+        let ty: syn::Type = syn::parse_str("TextureCubeArray<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_cube_array<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_type_texture_multisampled_2d() {
+        let ty: syn::Type = syn::parse_str("TextureMultisampled2D<f32>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_multisampled_2d<f32>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_depth_2d() {
+        let ty: syn::Type = syn::parse_str("TextureDepth2D").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert!(
+            matches!(ty, Type::TextureDepth { .. }),
+            "Expected Type::TextureDepth variant"
+        );
+        assert_eq!("texture_depth_2d", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_depth_2d_array() {
+        let ty: syn::Type = syn::parse_str("TextureDepth2DArray").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_depth_2d_array", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_depth_cube() {
+        let ty: syn::Type = syn::parse_str("TextureDepthCube").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_depth_cube", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_depth_cube_array() {
+        let ty: syn::Type = syn::parse_str("TextureDepthCubeArray").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_depth_cube_array", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_depth_multisampled_2d() {
+        let ty: syn::Type = syn::parse_str("TextureDepthMultisampled2D").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_depth_multisampled_2d", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_item_basic() {
+        let texture: ItemTexture =
+            syn::parse_str("group(0), binding(1), DIFFUSE_TEX: Texture2D<f32>").unwrap();
+        assert_eq!("DIFFUSE_TEX", texture.name.to_string());
+        assert!(matches!(texture.ty, Type::Texture { .. }));
+    }
+
+    #[test]
+    fn parse_texture_item_depth() {
+        let texture: ItemTexture =
+            syn::parse_str("group(1), binding(0), SHADOW_MAP: TextureDepth2D").unwrap();
+        assert_eq!("SHADOW_MAP", texture.name.to_string());
+        assert!(matches!(texture.ty, Type::TextureDepth { .. }));
+    }
+
+    #[test]
+    fn texture_to_wgsl() {
+        let texture: ItemTexture =
+            syn::parse_str("group(0), binding(2), MY_TEXTURE: Texture2D<f32>").unwrap();
+        let wgsl = texture.to_wgsl();
+        assert!(
+            wgsl.contains("@group(0)"),
+            "Expected @group(0) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@binding(2)"),
+            "Expected @binding(2) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("var MY_TEXTURE"),
+            "Expected 'var MY_TEXTURE' in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(": texture_2d<f32>;"),
+            "Expected ': texture_2d<f32>;' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn texture_depth_to_wgsl() {
+        let texture: ItemTexture =
+            syn::parse_str("group(1), binding(3), DEPTH_TEX: TextureDepth2D").unwrap();
+        let wgsl = texture.to_wgsl();
+        assert!(
+            wgsl.contains("@group(1)"),
+            "Expected @group(1) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("@binding(3)"),
+            "Expected @binding(3) in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains(": texture_depth_2d;"),
+            "Expected ': texture_depth_2d;' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn texture_rejects_non_texture_type() {
+        let result = syn::parse_str::<ItemTexture>("group(0), binding(0), BAD: u32");
+        assert!(
+            result.is_err(),
+            "Expected error when using non-texture type, but parsing succeeded"
+        );
+    }
+
+    #[test]
+    fn texture_rejects_sampler_type() {
+        let result = syn::parse_str::<ItemTexture>("group(0), binding(0), BAD: Sampler");
+        assert!(
+            result.is_err(),
+            "Expected error when using Sampler in texture! macro, but parsing succeeded"
+        );
     }
 }

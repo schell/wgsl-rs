@@ -631,7 +631,7 @@ dependencies = [
  "clap",
  "futures",
  "glam",
- "naga 27.0.3",
+ "naga",
  "wgpu",
  "wgsl-rs",
  "winit",
@@ -1562,31 +1562,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "naga"
-version = "27.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "066cf25f0e8b11ee0df221219010f213ad429855f57c494f995590c861a9a7d8"
-dependencies = [
- "arrayvec",
- "bit-set",
- "bitflags 2.10.0",
- "cfg-if",
- "cfg_aliases",
- "codespan-reporting",
- "half",
- "hashbrown 0.16.1",
- "hexf-parse",
- "indexmap",
- "libm",
- "log",
- "num-traits",
- "once_cell",
- "rustc-hash",
- "thiserror 2.0.17",
- "unicode-ident",
 ]
 
 [[package]]
@@ -3457,7 +3432,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "js-sys",
  "log",
- "naga 28.0.0",
+ "naga",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -3488,7 +3463,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "log",
- "naga 28.0.0",
+ "naga",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -3558,7 +3533,7 @@ dependencies = [
  "libloading",
  "log",
  "metal",
- "naga 28.0.0",
+ "naga",
  "ndk-sys",
  "objc",
  "once_cell",
@@ -3597,7 +3572,7 @@ name = "wgsl-rs"
 version = "0.1.0"
 dependencies = [
  "glam",
- "naga 27.0.3",
+ "naga",
  "paste",
  "wgpu",
  "wgsl-rs-macros",
@@ -3608,7 +3583,7 @@ name = "wgsl-rs-macros"
 version = "0.1.0"
 dependencies = [
  "itertools",
- "naga 27.0.3",
+ "naga",
  "proc-macro2",
  "quote",
  "snafu",

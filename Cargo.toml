@@ -15,7 +15,7 @@ futures = "0.3"
 glam = "0.30.9"
 itertools = "0.14.0"
 log = "0.4"
-naga = { version = "27.0.3", features = ["wgsl-in", "wgsl-out"] }
+naga = { version = "28", features = ["wgsl-in", "wgsl-out"] }
 html2text = "0.16.5"
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
 reqwest = { version = "0.12", features = ["blocking"] }

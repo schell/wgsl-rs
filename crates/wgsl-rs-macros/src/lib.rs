@@ -246,12 +246,14 @@ fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<()
 }
 
 fn gen_wgsl_module(
+    name: &syn::Ident,
     crate_path: &syn::Path,
     imports: &[proc_macro2::TokenStream],
     source_lines: &[String],
 ) -> proc_macro2::TokenStream {
     quote! {
         pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {
+            name: stringify!(#name),
             imports: &[
                 #(&#imports),*
             ],
@@ -288,7 +290,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 
     let code = code_gen::generate_wgsl(&wgsl_module);
     let source_lines = code.source_lines();
-    let module_fragment = gen_wgsl_module(&crate_path, &imports, &source_lines);
+    let module_fragment = gen_wgsl_module(&wgsl_module.ident, &crate_path, &imports, &source_lines);
 
     // Generate validation test for modules with imports (unless skip_validation is
     // set)

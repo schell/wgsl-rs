@@ -26,12 +26,10 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
-    for module in EXAMPLE_MODULES {
-        if module.name == name {
-            return Some(module);
-        }
-    }
-    None
+    EXAMPLE_MODULES
+        .iter()
+        .find(|&module| module.name == name)
+        .map(|v| v as _)
 }
 
 

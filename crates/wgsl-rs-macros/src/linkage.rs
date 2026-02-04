@@ -167,7 +167,9 @@ impl LinkageInfo {
                     crate::parse::ScalarType::F32 => TextureSampleType::Float,
                     crate::parse::ScalarType::I32 => TextureSampleType::Sint,
                     crate::parse::ScalarType::U32 => TextureSampleType::Uint,
-                    crate::parse::ScalarType::Bool => TextureSampleType::Uint, // Shouldn't happen
+                    crate::parse::ScalarType::Bool => {
+                        unreachable!("Shouldn't happen since only f32, i32 or u32 are parsed")
+                    }
                 };
                 let multisampled = matches!(kind, TextureKind::TextureMultisampled2D);
                 BindingKind::Texture {
@@ -184,7 +186,7 @@ impl LinkageInfo {
                     multisampled,
                 }
             }
-            _ => return, // Shouldn't happen since ItemTexture validates the type
+            _ => unreachable!("Shouldn't happen since ItemTexture validates the type"),
         };
 
         self.bind_groups

@@ -988,7 +988,6 @@ pub mod ptr_example {
 }
 
 #[wgsl]
-#[allow(dead_code)]
 pub mod atomic_example {
     //! Demonstrates atomic types and workgroup variables.
     //!
@@ -1013,6 +1012,18 @@ pub mod atomic_example {
         // For now, this demonstrates the type parsing and code generation
         let _idx = local_idx;
     }
+}
+
+#[wgsl]
+pub mod texture_example {
+    //! Demonstrates using textures.
+    //!
+    //! Currently we only support defining texture types.
+    //! Texture builtin functions are coming as a later step.
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), TEX: Texture2D<f32>);
+    sampler!(group(0), binding(1), SAMPLER: Sampler);
 }
 
 fn validate_and_print_source(module: &wgsl_rs::Module) {

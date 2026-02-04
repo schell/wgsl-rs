@@ -17,20 +17,23 @@ use std::{
 };
 
 pub use wgsl_rs_macros::{
-    builtin, compute, fragment, input, output, ptr, storage, uniform, vertex, wgsl_allow,
-    workgroup, workgroup_size,
+    builtin, compute, fragment, input, output, ptr, sampler, storage, texture, uniform, vertex,
+    wgsl_allow, workgroup, workgroup_size,
 };
 
 pub use crate::{get, get_mut};
 
+
 mod atomic;
 mod matrices;
 mod numeric_builtin_functions;
+mod texture;
 mod vectors;
 
 pub use atomic::*;
 pub use matrices::*;
 pub use numeric_builtin_functions::*;
+pub use texture::*;
 pub use vectors::*;
 
 

@@ -26,6 +26,7 @@ pub use crate::{get, get_mut};
 
 mod atomic;
 mod matrices;
+// TODO: Move this to numeric and numeric::builtins
 mod numeric_builtin_functions;
 mod texture;
 mod vectors;
@@ -87,7 +88,11 @@ impl<T> ModuleVar<T> {
             inner: LazyLock::new(Default::default),
         }
     }
-
+    /// Returns a reference to the inner `T`.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn read(&self) -> ModuleVarReadGuard<'_, T> {
         let lock = self
             .inner
@@ -96,12 +101,22 @@ impl<T> ModuleVar<T> {
         ModuleVarReadGuard { inner: lock }
     }
 
+    /// Returns a mutable reference to the inner `T`.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn write(&self) -> ModuleVarWriteGuard<'_, T> {
         let lock = self
             .inner
             .write()
             .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
         ModuleVarWriteGuard { inner: lock }
+    }
+
+    /// Set the inner `T`.
+    pub fn set(&self, data: T) {
+        *self.inner.write().unwrap() = Some(data);
     }
 }
 
@@ -120,13 +135,32 @@ impl<T> Workgroup<T> {
     }
 
     /// Get a reference to the inner `T`.
+    ///
+    /// Not available in WGSL.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
         self.data.read()
     }
 
     /// Get a mutable reference to the inner `T`.
+    ///
+    /// Not available in WGSL.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
         self.data.write()
+    }
+
+    /// Set the inner `T`.
+    ///
+    /// Not available in WGSL.
+    pub fn set(&self, data: T) {
+        self.data.set(data);
     }
 }
 
@@ -147,20 +181,28 @@ impl<T> Uniform<T> {
         }
     }
 
-    /// Get a reference to the inner `T`.
+    /// Returns a reference to the inner `T`.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
         self.data.read()
     }
 
     /// Set the inner `T`.
     ///
+    /// Not avaliable in WGSL.
+    ///
     /// ## Note
     /// Though this method is public, using it in a `#[wgsl]` module triggers
     /// a parse error.
-    /// This is because uniform values are read-only from a shader.
+    ///
+    /// This is fine because uniform values are read-only from a shader.
+    ///
     /// This method still exists to set the value for Rust CPU shader testing.
-    pub fn set(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.data.write()
+    pub fn set(&self, data: T) {
+        self.data.set(data);
     }
 }
 
@@ -194,12 +236,24 @@ impl<T, AM: AccessMode> Storage<T, AM> {
         }
     }
 
-    /// Get a reference to the inner `T`.
+    /// Returns a reference to the inner `T`.
+    ///
+    /// Not available in WGSL. Use [`get!`] instead.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
         self.data.read()
     }
 
-    /// Get a mutable reference to the inner `T`.
+    /// Returns a mutable reference to the inner `T`.
+    ///
+    /// Not available in WGSL. Use [`get_mut!`] instead.
+    ///
+    /// ## Panics
+    /// Dereferencing the returned guard will panic if it has not previously
+    /// been set.
     pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
         self.data.write()
     }

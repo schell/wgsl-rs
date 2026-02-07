@@ -81,17 +81,15 @@ impl<T> TextureData1D<T> {
 
     /// Set a pixel at the given coordinate and mip level.
     pub fn set_pixel(&mut self, x: u32, level: u32, value: [T; 4]) {
-        if let Some(mip) = self.mips.get_mut(level as usize) {
-            if let Some(pixel) = mip.get_mut(x as usize) {
-                *pixel = value;
-            }
+        if let Some(mip) = self.mips.get_mut(level as usize)
+            && let Some(pixel) = mip.get_mut(x as usize)
+        {
+            *pixel = value;
         }
     }
 }
 
 /// CPU-side texture data for 2D textures.
-///
-/// Uses `image::ImageBuffer` for each mip level.
 #[derive(Clone)]
 pub struct TextureData2D<T> {
     /// Mip levels, each containing a 2D image
@@ -140,12 +138,11 @@ impl<T> TextureData2D<T> {
 
     /// Set a pixel at the given coordinate and mip level.
     pub fn set_pixel(&mut self, x: u32, y: u32, level: u32, value: [T; 4]) {
-        if let Some(mip) = self.mips.get_mut(level as usize) {
-            if let Some(row) = mip.get_mut(y as usize) {
-                if let Some(pixel) = row.get_mut(x as usize) {
-                    *pixel = value;
-                }
-            }
+        if let Some(mip) = self.mips.get_mut(level as usize)
+            && let Some(row) = mip.get_mut(y as usize)
+            && let Some(pixel) = row.get_mut(x as usize)
+        {
+            *pixel = value;
         }
     }
 }

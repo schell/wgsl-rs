@@ -1,6 +1,6 @@
 //! Provides the `texture!` macro in `wgsl_rs::std`.
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
 use crate::parse::{ItemTexture, ScalarType, TextureDepthKind, TextureKind, Type};
@@ -14,6 +14,12 @@ pub fn texture(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input as ItemTexture);
 
+    // Generate a hidden inner static and a public const reference.
+    // This allows users to pass the texture directly (without &) to texture
+    // functions, while WGSL sees just the variable name without any reference
+    // syntax.
+    let inner_name = format_ident!("__{}", name);
+
     // Generate the Rust-side type and wgpu types based on the texture type
     // TODO(schell): expand the linkage generated
     let expanded = match &ty {
@@ -24,14 +30,18 @@ pub fn texture(input: TokenStream) -> TokenStream {
             let sample_type = scalar_type_to_token(*sampled_type);
 
             quote! {
-                static #name: #rust_type<#sample_type> = #rust_type::new(#group, #binding);
+                #[doc(hidden)]
+                static #inner_name: #rust_type<#sample_type> = #rust_type::new(#group, #binding);
+                const #name: &'static #rust_type<#sample_type> = &#inner_name;
             }
         }
         Type::TextureDepth { kind, .. } => {
             let rust_type = texture_depth_kind_to_rust_type(*kind);
 
             quote! {
-                static #name: #rust_type = #rust_type::new(#group, #binding);
+                #[doc(hidden)]
+                static #inner_name: #rust_type = #rust_type::new(#group, #binding);
+                const #name: &'static #rust_type = &#inner_name;
             }
         }
         _ => {

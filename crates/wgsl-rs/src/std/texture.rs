@@ -1623,14 +1623,13 @@ mod tests {
             ..Default::default()
         });
 
-        // Reference depth 0.6 > sampled depth 0.5, so Less comparison returns 1.0
-        // (sample < reference means 0.5 < 0.6 = true = 1.0)
-        let result = texture_sample_compare(&tex, &sampler, vec2f(0.5, 0.5), 0.6);
+        // Per WebGPU spec, Less passes when depth_ref < sampled_depth.
+        // Sampled depth is 0.5, depth_ref is 0.3: 0.3 < 0.5 => true => 1.0
+        let result = texture_sample_compare(&tex, &sampler, vec2f(0.5, 0.5), 0.3);
         assert!((result - 1.0).abs() < 0.001);
 
-        // Reference depth 0.3 < sampled depth 0.5, so Less comparison returns 0.0
-        // (sample < reference means 0.5 < 0.3 = false = 0.0)
-        let result = texture_sample_compare(&tex, &sampler, vec2f(0.5, 0.5), 0.3);
+        // Sampled depth is 0.5, depth_ref is 0.6: 0.6 < 0.5 => false => 0.0
+        let result = texture_sample_compare(&tex, &sampler, vec2f(0.5, 0.5), 0.6);
         assert!((result - 0.0).abs() < 0.001);
     }
 
@@ -1686,10 +1685,14 @@ mod tests {
 
     #[test]
     fn test_compare_function() {
-        assert!((CompareFunction::Less.compare(0.3, 0.5) - 1.0).abs() < 0.001);
-        assert!((CompareFunction::Less.compare(0.7, 0.5) - 0.0).abs() < 0.001);
-        assert!((CompareFunction::Greater.compare(0.7, 0.5) - 1.0).abs() < 0.001);
-        assert!((CompareFunction::Greater.compare(0.3, 0.5) - 0.0).abs() < 0.001);
+        // Per WebGPU spec, compare(sample, reference) passes when reference <op>
+        // sample. Less: reference < sample
+        assert!((CompareFunction::Less.compare(0.5, 0.3) - 1.0).abs() < 0.001); // 0.3 < 0.5
+        assert!((CompareFunction::Less.compare(0.3, 0.5) - 0.0).abs() < 0.001); // 0.5 not < 0.3
+        // Greater: reference > sample
+        assert!((CompareFunction::Greater.compare(0.3, 0.5) - 1.0).abs() < 0.001); // 0.5 > 0.3
+        assert!((CompareFunction::Greater.compare(0.5, 0.3) - 0.0).abs() < 0.001); // 0.3 not > 0.5
+        // Equal, LessEqual, GreaterEqual are symmetric or pass at equality
         assert!((CompareFunction::Equal.compare(0.5, 0.5) - 1.0).abs() < 0.001);
         assert!((CompareFunction::LessEqual.compare(0.5, 0.5) - 1.0).abs() < 0.001);
         assert!((CompareFunction::GreaterEqual.compare(0.5, 0.5) - 1.0).abs() < 0.001);
@@ -1783,29 +1786,30 @@ mod tests {
 
         // Sample near (0.25, 0.25) on a 4x4 texture.
         // The 4 gathered texels should be the 2x2 block at (0,0),(1,0),(0,1),(1,1).
-        // With depth_ref = 0.5 and Less comparison (sample < reference):
-        //   (0,0)=0.2 < 0.5 => 1.0   (u_min, v_min) => w component
-        //   (1,0)=0.4 < 0.5 => 1.0   (u_max, v_min) => z component
-        //   (0,1)=0.6 < 0.5 => 0.0   (u_min, v_max) => x component
-        //   (1,1)=0.8 < 0.5 => 0.0   (u_max, v_max) => y component
+        // Per WebGPU spec, Less comparison passes when depth_ref < sampled_depth:
+        //   (0,0)=0.2: 0.5 < 0.2 => false => 0.0   (u_min, v_min) => w component
+        //   (1,0)=0.4: 0.5 < 0.4 => false => 0.0   (u_max, v_min) => z component
+        //   (0,1)=0.6: 0.5 < 0.6 => true  => 1.0   (u_min, v_max) => x component
+        //   (1,1)=0.8: 0.5 < 0.8 => true  => 1.0   (u_max, v_max) => y component
         let result = texture_gather_compare(&tex, &sampler, vec2f(0.25, 0.25), 0.5);
-        assert!((result.x() - 0.0).abs() < 0.001); // (u_min, v_max): 0.6 not < 0.5
-        assert!((result.y() - 0.0).abs() < 0.001); // (u_max, v_max): 0.8 not < 0.5
-        assert!((result.z() - 1.0).abs() < 0.001); // (u_max, v_min): 0.4 < 0.5
-        assert!((result.w() - 1.0).abs() < 0.001); // (u_min, v_min): 0.2 < 0.5
+        assert!((result.x() - 1.0).abs() < 0.001); // (u_min, v_max): 0.5 < 0.6
+        assert!((result.y() - 1.0).abs() < 0.001); // (u_max, v_max): 0.5 < 0.8
+        assert!((result.z() - 0.0).abs() < 0.001); // (u_max, v_min): 0.5 not < 0.4
+        assert!((result.w() - 0.0).abs() < 0.001); // (u_min, v_min): 0.5 not < 0.2
 
-        // With depth_ref = 0.9, all texels should pass (all < 0.9)
+        // With depth_ref = 0.9, no texels should pass (0.9 is not < any of
+        // 0.2,0.4,0.6,0.8)
         let result = texture_gather_compare(&tex, &sampler, vec2f(0.25, 0.25), 0.9);
-        assert!((result.x() - 1.0).abs() < 0.001);
-        assert!((result.y() - 1.0).abs() < 0.001);
-        assert!((result.z() - 1.0).abs() < 0.001);
-        assert!((result.w() - 1.0).abs() < 0.001);
-
-        // With depth_ref = 0.1, no texels should pass (none < 0.1)
-        let result = texture_gather_compare(&tex, &sampler, vec2f(0.25, 0.25), 0.1);
         assert!((result.x() - 0.0).abs() < 0.001);
         assert!((result.y() - 0.0).abs() < 0.001);
         assert!((result.z() - 0.0).abs() < 0.001);
         assert!((result.w() - 0.0).abs() < 0.001);
+
+        // With depth_ref = 0.1, all texels should pass (0.1 < all of 0.2,0.4,0.6,0.8)
+        let result = texture_gather_compare(&tex, &sampler, vec2f(0.25, 0.25), 0.1);
+        assert!((result.x() - 1.0).abs() < 0.001);
+        assert!((result.y() - 1.0).abs() < 0.001);
+        assert!((result.z() - 1.0).abs() < 0.001);
+        assert!((result.w() - 1.0).abs() < 0.001);
     }
 }

@@ -725,16 +725,22 @@ pub enum CompareFunction {
 }
 
 impl CompareFunction {
-    /// Evaluate the comparison function.
+    /// Evaluate the comparison function per WebGPU spec semantics.
+    ///
+    /// The `reference` (depth_ref, the "provided value") is compared against
+    /// the `sample` (fetched texel, the "sampled value"). Per the WebGPU spec,
+    /// `Less` passes when `reference < sample`, etc.
+    ///
+    /// See <https://www.w3.org/TR/webgpu/#enumdef-gpucomparefunction>.
     pub fn compare(self, sample: f32, reference: f32) -> f32 {
         let result = match self {
             CompareFunction::Never => false,
-            CompareFunction::Less => sample < reference,
+            CompareFunction::Less => reference < sample,
             CompareFunction::Equal => (sample - reference).abs() < f32::EPSILON,
-            CompareFunction::LessEqual => sample <= reference,
-            CompareFunction::Greater => sample > reference,
+            CompareFunction::LessEqual => reference <= sample,
+            CompareFunction::Greater => reference > sample,
             CompareFunction::NotEqual => (sample - reference).abs() >= f32::EPSILON,
-            CompareFunction::GreaterEqual => sample >= reference,
+            CompareFunction::GreaterEqual => reference >= sample,
             CompareFunction::Always => true,
         };
         if result { 1.0 } else { 0.0 }

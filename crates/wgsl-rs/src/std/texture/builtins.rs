@@ -882,14 +882,16 @@ pub trait TextureSampleCompare<Coords, DepthRef> {
 }
 
 /// Trait for textures that support `textureSampleCompareLevel`.
-pub trait TextureSampleCompareLevel<Coords, DepthRef, Level> {
-    /// Sample the depth texture with comparison at explicit LOD.
+///
+/// Per the WGSL spec, `textureSampleCompareLevel` always samples at mip level
+/// 0. There is no level parameter.
+pub trait TextureSampleCompareLevel<Coords, DepthRef> {
+    /// Sample the depth texture with comparison at mip level 0.
     fn sample_compare_level(
         &self,
         sampler: &SamplerComparison,
         coords: Coords,
         depth_ref: DepthRef,
-        level: Level,
     ) -> f32;
 }
 
@@ -930,6 +932,383 @@ pub trait TextureGatherCompare<Coords, DepthRef> {
         coords: Coords,
         depth_ref: DepthRef,
     ) -> Vec4f;
+}
+
+/// Trait for array textures that support `textureSample` with array index and
+/// offset.
+pub trait TextureSampleArrayOffset<Coords, ArrayIndex, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates, array index, and offset.
+    fn sample_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for textures that support `textureSampleLevel` with offset.
+pub trait TextureSampleLevelOffset<Coords, Level, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates and explicit LOD with
+    /// offset.
+    fn sample_level_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        level: Level,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureSampleLevel` with array index.
+pub trait TextureSampleLevelArray<Coords, ArrayIndex, Level> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates, array index, and explicit
+    /// LOD.
+    fn sample_level_array(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        level: Level,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureSampleLevel` with array index
+/// and offset.
+pub trait TextureSampleLevelArrayOffset<Coords, ArrayIndex, Level, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates, array index, explicit LOD,
+    /// and offset.
+    fn sample_level_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        level: Level,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for textures that support `textureSampleBias` with offset.
+pub trait TextureSampleBiasOffset<Coords, Bias, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates with LOD bias and offset.
+    fn sample_bias_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        bias: Bias,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureSampleBias` with array index.
+pub trait TextureSampleBiasArray<Coords, ArrayIndex, Bias> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates, array index, with LOD bias.
+    fn sample_bias_array(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        bias: Bias,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureSampleBias` with array index
+/// and offset.
+pub trait TextureSampleBiasArrayOffset<Coords, ArrayIndex, Bias, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture at the given coordinates, array index, LOD bias, and
+    /// offset.
+    fn sample_bias_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        bias: Bias,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for textures that support `textureSampleGrad` with offset.
+pub trait TextureSampleGradOffset<Coords, Ddx, Ddy, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture with explicit gradients and offset.
+    fn sample_grad_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        ddx: Ddx,
+        ddy: Ddy,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureSampleGrad` with array index.
+pub trait TextureSampleGradArray<Coords, ArrayIndex, Ddx, Ddy> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture with explicit gradients and array index.
+    fn sample_grad_array(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        ddx: Ddx,
+        ddy: Ddy,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureSampleGrad` with array index
+/// and offset.
+pub trait TextureSampleGradArrayOffset<Coords, ArrayIndex, Ddx, Ddy, Offset> {
+    /// The output type
+    type Output;
+
+    /// Sample the texture with explicit gradients, array index, and offset.
+    fn sample_grad_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        ddx: Ddx,
+        ddy: Ddy,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for depth textures that support `textureSampleCompare` with offset.
+pub trait TextureSampleCompareOffset<Coords, DepthRef, Offset> {
+    /// Sample the depth texture with comparison and offset.
+    fn sample_compare_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        depth_ref: DepthRef,
+        offset: Offset,
+    ) -> f32;
+}
+
+/// Trait for depth array textures that support `textureSampleCompare` with
+/// array index.
+pub trait TextureSampleCompareArray<Coords, ArrayIndex, DepthRef> {
+    /// Sample the depth array texture with comparison.
+    fn sample_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        array_index: ArrayIndex,
+        depth_ref: DepthRef,
+    ) -> f32;
+}
+
+/// Trait for depth array textures that support `textureSampleCompare` with
+/// array index and offset.
+pub trait TextureSampleCompareArrayOffset<Coords, ArrayIndex, DepthRef, Offset> {
+    /// Sample the depth array texture with comparison and offset.
+    fn sample_compare_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        array_index: ArrayIndex,
+        depth_ref: DepthRef,
+        offset: Offset,
+    ) -> f32;
+}
+
+/// Trait for depth textures that support `textureSampleCompareLevel` with
+/// offset.
+pub trait TextureSampleCompareLevelOffset<Coords, DepthRef, Offset> {
+    /// Sample the depth texture with comparison at mip level 0, with offset.
+    fn sample_compare_level_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        depth_ref: DepthRef,
+        offset: Offset,
+    ) -> f32;
+}
+
+/// Trait for depth array textures that support `textureSampleCompareLevel` with
+/// array index.
+pub trait TextureSampleCompareLevelArray<Coords, ArrayIndex, DepthRef> {
+    /// Sample the depth array texture with comparison at mip level 0.
+    fn sample_compare_level_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        array_index: ArrayIndex,
+        depth_ref: DepthRef,
+    ) -> f32;
+}
+
+/// Trait for depth array textures that support `textureSampleCompareLevel` with
+/// array index and offset.
+pub trait TextureSampleCompareLevelArrayOffset<Coords, ArrayIndex, DepthRef, Offset> {
+    /// Sample the depth array texture with comparison at mip level 0, with
+    /// offset.
+    fn sample_compare_level_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        array_index: ArrayIndex,
+        depth_ref: DepthRef,
+        offset: Offset,
+    ) -> f32;
+}
+
+/// Trait for textures that support `textureGather` with offset.
+pub trait TextureGatherOffset<Coords, Offset> {
+    /// The output type
+    type Output;
+
+    /// Gather one component from 4 texels with offset.
+    fn gather_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Coords,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureGather` with array index.
+pub trait TextureGatherArray<Coords, ArrayIndex> {
+    /// The output type
+    type Output;
+
+    /// Gather one component from 4 texels with array index.
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+    ) -> Self::Output;
+}
+
+/// Trait for array textures that support `textureGather` with array index and
+/// offset.
+pub trait TextureGatherArrayOffset<Coords, ArrayIndex, Offset> {
+    /// The output type
+    type Output;
+
+    /// Gather one component from 4 texels with array index and offset.
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        offset: Offset,
+    ) -> Self::Output;
+}
+
+/// Trait for depth textures that support `textureGather` with offset (no
+/// component).
+pub trait TextureGatherDepthOffset<Coords, Offset> {
+    /// Gather depth values from 4 texels with offset.
+    fn gather_depth_offset(&self, sampler: &Sampler, coords: Coords, offset: Offset) -> Vec4f;
+}
+
+/// Trait for depth array textures that support `textureGather` with array index
+/// (no component).
+pub trait TextureGatherDepthArray<Coords, ArrayIndex> {
+    /// Gather depth values from 4 texels with array index.
+    fn gather_depth_array(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+    ) -> Vec4f;
+}
+
+/// Trait for depth array textures that support `textureGather` with array index
+/// and offset.
+pub trait TextureGatherDepthArrayOffset<Coords, ArrayIndex, Offset> {
+    /// Gather depth values from 4 texels with array index and offset.
+    fn gather_depth_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Coords,
+        array_index: ArrayIndex,
+        offset: Offset,
+    ) -> Vec4f;
+}
+
+/// Trait for depth textures that support `textureGatherCompare` with offset.
+pub trait TextureGatherCompareOffset<Coords, DepthRef, Offset> {
+    /// Gather depth values with comparison from 4 texels, with offset.
+    fn gather_compare_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        depth_ref: DepthRef,
+        offset: Offset,
+    ) -> Vec4f;
+}
+
+/// Trait for depth array textures that support `textureGatherCompare` with
+/// array index.
+pub trait TextureGatherCompareArray<Coords, ArrayIndex, DepthRef> {
+    /// Gather depth values with comparison from 4 texels, with array index.
+    fn gather_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        array_index: ArrayIndex,
+        depth_ref: DepthRef,
+    ) -> Vec4f;
+}
+
+/// Trait for depth array textures that support `textureGatherCompare` with
+/// array index and offset.
+pub trait TextureGatherCompareArrayOffset<Coords, ArrayIndex, DepthRef, Offset> {
+    /// Gather depth values with comparison from 4 texels, with array index and
+    /// offset.
+    fn gather_compare_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Coords,
+        array_index: ArrayIndex,
+        depth_ref: DepthRef,
+        offset: Offset,
+    ) -> Vec4f;
+}
+
+/// Trait for storage textures that support `textureStore`.
+pub trait TextureStore<Coords, Value> {
+    /// Store a value to the storage texture at the given coordinates.
+    fn store(&self, coords: Coords, value: Value);
+}
+
+/// Trait for storage array textures that support `textureStore` with array
+/// index.
+pub trait TextureStoreArray<Coords, ArrayIndex, Value> {
+    /// Store a value to the storage array texture at the given coordinates and
+    /// array index.
+    fn store_array(&self, coords: Coords, array_index: ArrayIndex, value: Value);
 }
 
 /// Trait for types that can be used as texture coordinates.
@@ -1185,24 +1564,27 @@ where
     t.sample_compare(s, coords, depth_ref)
 }
 
-/// Samples a depth texture at an explicit mip level and compares the result.
+/// Samples a depth texture at mip level 0 and compares the result.
+///
+/// Per the WGSL spec, `textureSampleCompareLevel` always samples at mip level
+/// 0. Unlike `textureSampleCompare`, this function may be invoked in any shader
+/// stage.
 ///
 /// # WGSL Equivalent
 ///
 /// ```wgsl
-/// let shadow = textureSampleCompareLevel(shadow_map, shadow_sampler, uv, depth_ref, 0);
+/// let shadow = textureSampleCompareLevel(shadow_map, shadow_sampler, uv, depth_ref);
 /// ```
-pub fn texture_sample_compare_level<T, C, R, L>(
+pub fn texture_sample_compare_level<T, C, R>(
     t: &T,
     s: &SamplerComparison,
     coords: C,
     depth_ref: R,
-    level: L,
 ) -> f32
 where
-    T: TextureSampleCompareLevel<C, R, L>,
+    T: TextureSampleCompareLevel<C, R>,
 {
-    t.sample_compare_level(s, coords, depth_ref, level)
+    t.sample_compare_level(s, coords, depth_ref)
 }
 
 /// Samples a texture at its base mip level with coordinates clamped to the
@@ -1269,6 +1651,533 @@ where
     T: TextureGatherCompare<C, R>,
 {
     t.gather_compare(s, coords, depth_ref)
+}
+
+/// Samples a texture array with an offset applied.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSample(my_array_tex, my_sampler, uv, array_index, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_array_offset<T, C, A, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleArrayOffset<C, A, O>,
+{
+    t.sample_array_offset(s, coords, array_index, offset)
+}
+
+/// Samples a texture at an explicit mip level with an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleLevel(my_texture, my_sampler, uv, 2.0, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_level_offset<T, C, L, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    level: L,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleLevelOffset<C, L, O>,
+{
+    t.sample_level_offset(s, coords, level, offset)
+}
+
+/// Samples a texture array at an explicit mip level.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleLevel(my_array_tex, my_sampler, uv, array_index, 2.0);
+/// ```
+pub fn texture_sample_level_array<T, C, A, L>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    level: L,
+) -> T::Output
+where
+    T: TextureSampleLevelArray<C, A, L>,
+{
+    t.sample_level_array(s, coords, array_index, level)
+}
+
+/// Samples a texture array at an explicit mip level with an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleLevel(my_array_tex, my_sampler, uv, idx, 2.0, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_level_array_offset<T, C, A, L, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    level: L,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleLevelArrayOffset<C, A, L, O>,
+{
+    t.sample_level_array_offset(s, coords, array_index, level, offset)
+}
+
+/// Samples a texture with a bias and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleBias(my_texture, my_sampler, uv, 1.0, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_bias_offset<T, C, B, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    bias: B,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleBiasOffset<C, B, O>,
+{
+    t.sample_bias_offset(s, coords, bias, offset)
+}
+
+/// Samples a texture array with a bias.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleBias(my_array_tex, my_sampler, uv, array_index, 1.0);
+/// ```
+pub fn texture_sample_bias_array<T, C, A, B>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    bias: B,
+) -> T::Output
+where
+    T: TextureSampleBiasArray<C, A, B>,
+{
+    t.sample_bias_array(s, coords, array_index, bias)
+}
+
+/// Samples a texture array with a bias and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleBias(my_array_tex, my_sampler, uv, idx, 1.0, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_bias_array_offset<T, C, A, B, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    bias: B,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleBiasArrayOffset<C, A, B, O>,
+{
+    t.sample_bias_array_offset(s, coords, array_index, bias, offset)
+}
+
+/// Samples a texture with explicit gradients and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleGrad(my_texture, my_sampler, uv, ddx, ddy, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_grad_offset<T, C, D, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    ddx: D,
+    ddy: D,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleGradOffset<C, D, D, O>,
+{
+    t.sample_grad_offset(s, coords, ddx, ddy, offset)
+}
+
+/// Samples a texture array with explicit gradients.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleGrad(my_array_tex, my_sampler, uv, array_index, ddx, ddy);
+/// ```
+pub fn texture_sample_grad_array<T, C, A, D>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    ddx: D,
+    ddy: D,
+) -> T::Output
+where
+    T: TextureSampleGradArray<C, A, D, D>,
+{
+    t.sample_grad_array(s, coords, array_index, ddx, ddy)
+}
+
+/// Samples a texture array with explicit gradients and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let color = textureSampleGrad(my_arr, my_sampler, uv, idx, ddx, ddy, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_grad_array_offset<T, C, A, D, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    ddx: D,
+    ddy: D,
+    offset: O,
+) -> T::Output
+where
+    T: TextureSampleGradArrayOffset<C, A, D, D, O>,
+{
+    t.sample_grad_array_offset(s, coords, array_index, ddx, ddy, offset)
+}
+
+/// Samples a depth texture with comparison and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let shadow = textureSampleCompare(shadow_map, sampler, uv, depth_ref, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_compare_offset<T, C, R, O>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    depth_ref: R,
+    offset: O,
+) -> f32
+where
+    T: TextureSampleCompareOffset<C, R, O>,
+{
+    t.sample_compare_offset(s, coords, depth_ref, offset)
+}
+
+/// Samples a depth array texture with comparison.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let shadow = textureSampleCompare(shadow_map, sampler, uv, array_index, depth_ref);
+/// ```
+pub fn texture_sample_compare_array<T, C, A, R>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    array_index: A,
+    depth_ref: R,
+) -> f32
+where
+    T: TextureSampleCompareArray<C, A, R>,
+{
+    t.sample_compare_array(s, coords, array_index, depth_ref)
+}
+
+/// Samples a depth array texture with comparison and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let shadow = textureSampleCompare(map, s, uv, idx, depth_ref, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_compare_array_offset<T, C, A, R, O>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    array_index: A,
+    depth_ref: R,
+    offset: O,
+) -> f32
+where
+    T: TextureSampleCompareArrayOffset<C, A, R, O>,
+{
+    t.sample_compare_array_offset(s, coords, array_index, depth_ref, offset)
+}
+
+/// Samples a depth texture at mip level 0 with comparison and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let shadow = textureSampleCompareLevel(map, sampler, uv, depth_ref, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_compare_level_offset<T, C, R, O>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    depth_ref: R,
+    offset: O,
+) -> f32
+where
+    T: TextureSampleCompareLevelOffset<C, R, O>,
+{
+    t.sample_compare_level_offset(s, coords, depth_ref, offset)
+}
+
+/// Samples a depth array texture at mip level 0 with comparison.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let shadow = textureSampleCompareLevel(map, sampler, uv, array_index, depth_ref);
+/// ```
+pub fn texture_sample_compare_level_array<T, C, A, R>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    array_index: A,
+    depth_ref: R,
+) -> f32
+where
+    T: TextureSampleCompareLevelArray<C, A, R>,
+{
+    t.sample_compare_level_array(s, coords, array_index, depth_ref)
+}
+
+/// Samples a depth array texture at mip level 0 with comparison and an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let shadow = textureSampleCompareLevel(map, s, uv, idx, depth_ref, vec2<i32>(1, 0));
+/// ```
+pub fn texture_sample_compare_level_array_offset<T, C, A, R, O>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    array_index: A,
+    depth_ref: R,
+    offset: O,
+) -> f32
+where
+    T: TextureSampleCompareLevelArrayOffset<C, A, R, O>,
+{
+    t.sample_compare_level_array_offset(s, coords, array_index, depth_ref, offset)
+}
+
+/// Gathers one component from 4 texels with an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGather(0, my_texture, my_sampler, uv, vec2<i32>(1, 0));
+/// ```
+pub fn texture_gather_offset<T, C, O>(
+    component: impl IntoCoord,
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    offset: O,
+) -> T::Output
+where
+    T: TextureGatherOffset<C, O>,
+{
+    t.gather_offset(component.into_u32(), s, coords, offset)
+}
+
+/// Gathers one component from 4 texels of an array texture.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGather(0, my_array_tex, my_sampler, uv, array_index);
+/// ```
+pub fn texture_gather_array<T, C, A>(
+    component: impl IntoCoord,
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+) -> T::Output
+where
+    T: TextureGatherArray<C, A>,
+{
+    t.gather_array(component.into_u32(), s, coords, array_index)
+}
+
+/// Gathers one component from 4 texels of an array texture with an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGather(0, my_arr, my_sampler, uv, idx, vec2<i32>(1, 0));
+/// ```
+pub fn texture_gather_array_offset<T, C, A, O>(
+    component: impl IntoCoord,
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    offset: O,
+) -> T::Output
+where
+    T: TextureGatherArrayOffset<C, A, O>,
+{
+    t.gather_array_offset(component.into_u32(), s, coords, array_index, offset)
+}
+
+/// Gathers depth values from 4 texels with an offset (no component).
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGather(depth_texture, my_sampler, uv, vec2<i32>(1, 0));
+/// ```
+pub fn texture_gather_depth_offset<T, C, O>(t: &T, s: &Sampler, coords: C, offset: O) -> Vec4f
+where
+    T: TextureGatherDepthOffset<C, O>,
+{
+    t.gather_depth_offset(s, coords, offset)
+}
+
+/// Gathers depth values from 4 texels of an array texture (no component).
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGather(depth_array_texture, my_sampler, uv, array_index);
+/// ```
+pub fn texture_gather_depth_array<T, C, A>(t: &T, s: &Sampler, coords: C, array_index: A) -> Vec4f
+where
+    T: TextureGatherDepthArray<C, A>,
+{
+    t.gather_depth_array(s, coords, array_index)
+}
+
+/// Gathers depth values from 4 texels of an array texture with an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGather(depth_arr, my_sampler, uv, idx, vec2<i32>(1, 0));
+/// ```
+pub fn texture_gather_depth_array_offset<T, C, A, O>(
+    t: &T,
+    s: &Sampler,
+    coords: C,
+    array_index: A,
+    offset: O,
+) -> Vec4f
+where
+    T: TextureGatherDepthArrayOffset<C, A, O>,
+{
+    t.gather_depth_array_offset(s, coords, array_index, offset)
+}
+
+/// Gathers depth values with comparison from 4 texels, with an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGatherCompare(depth_tex, sampler, uv, depth_ref, vec2<i32>(1, 0));
+/// ```
+pub fn texture_gather_compare_offset<T, C, R, O>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    depth_ref: R,
+    offset: O,
+) -> Vec4f
+where
+    T: TextureGatherCompareOffset<C, R, O>,
+{
+    t.gather_compare_offset(s, coords, depth_ref, offset)
+}
+
+/// Gathers depth values with comparison from 4 texels of an array texture.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGatherCompare(depth_arr, sampler, uv, array_index, depth_ref);
+/// ```
+pub fn texture_gather_compare_array<T, C, A, R>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    array_index: A,
+    depth_ref: R,
+) -> Vec4f
+where
+    T: TextureGatherCompareArray<C, A, R>,
+{
+    t.gather_compare_array(s, coords, array_index, depth_ref)
+}
+
+/// Gathers depth values with comparison from 4 texels of an array texture, with
+/// an offset.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let gathered = textureGatherCompare(arr, sampler, uv, idx, depth_ref, vec2<i32>(1, 0));
+/// ```
+pub fn texture_gather_compare_array_offset<T, C, A, R, O>(
+    t: &T,
+    s: &SamplerComparison,
+    coords: C,
+    array_index: A,
+    depth_ref: R,
+    offset: O,
+) -> Vec4f
+where
+    T: TextureGatherCompareArrayOffset<C, A, R, O>,
+{
+    t.gather_compare_array_offset(s, coords, array_index, depth_ref, offset)
+}
+
+/// Stores a value to a storage texture.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// textureStore(my_storage_texture, coords, value);
+/// ```
+pub fn texture_store<T, C, V>(t: &T, coords: C, value: V)
+where
+    T: TextureStore<C, V>,
+{
+    t.store(coords, value)
+}
+
+/// Stores a value to a storage array texture.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// textureStore(my_storage_array_texture, coords, array_index, value);
+/// ```
+pub fn texture_store_array<T, C, A, V>(t: &T, coords: C, array_index: A, value: V)
+where
+    T: TextureStoreArray<C, A, V>,
+{
+    t.store_array(coords, array_index, value)
 }
 
 /// Helper function for bilinear interpolation.

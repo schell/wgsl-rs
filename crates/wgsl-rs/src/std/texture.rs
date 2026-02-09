@@ -10,8 +10,8 @@
 //! On the GPU side, these types transpile to their WGSL equivalents.
 
 use crate::std::{
-    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3u, Vec4f, Vec4i, Vec4u, vec2u, vec3u,
-    vec4f, vec4i, vec4u,
+    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3u, Vec4f, Vec4i, Vec4u, vec2f, vec2u,
+    vec3u, vec4f, vec4i, vec4u,
 };
 
 mod builtins;
@@ -224,7 +224,6 @@ impl<T: Default + Copy> Texture1D<T> {
     }
 }
 
-// Implement query traits for Texture1D
 impl<T> TextureDimensionsQuery for Texture1D<T> {
     type Output = u32;
 
@@ -239,10 +238,6 @@ impl<T> TextureNumLevelsQuery for Texture1D<T> {
     }
 }
 
-// Implement load for Texture1D - only for f32 since that's the most common case
-// WGSL requires texture_load to return vec4<T> where T matches the texture
-// type, but our Vec4<T> requires ScalarCompOfVec<4>. We implement for concrete
-// types.
 impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<f32> {
     type Output = Vec4f;
 
@@ -270,7 +265,6 @@ impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<f32> {
     }
 }
 
-// TextureLoad implementations for Texture1D<i32>
 impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<i32> {
     type Output = Vec4i;
 
@@ -298,7 +292,6 @@ impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<i32> {
     }
 }
 
-// TextureLoad implementations for Texture1D<u32>
 impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<u32> {
     type Output = Vec4u;
 
@@ -402,7 +395,6 @@ impl<T: Default + Copy> Texture2D<T> {
     }
 }
 
-// Implement query traits for Texture2D
 impl<T> TextureDimensionsQuery for Texture2D<T> {
     type Output = Vec2u;
 
@@ -418,7 +410,6 @@ impl<T> TextureNumLevelsQuery for Texture2D<T> {
     }
 }
 
-// Implement load for Texture2D - concrete implementations for f32
 impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<f32> {
     type Output = Vec4f;
 
@@ -450,7 +441,6 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<f32> {
     }
 }
 
-// TextureLoad implementations for Texture2D<i32>
 impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<i32> {
     type Output = Vec4i;
 
@@ -482,7 +472,6 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<i32> {
     }
 }
 
-// TextureLoad implementations for Texture2D<u32>
 impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<u32> {
     type Output = Vec4u;
 
@@ -519,7 +508,6 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<u32> {
     }
 }
 
-// TextureSample implementation for Texture2D<f32>
 impl TextureSample<Vec2f> for Texture2D<f32> {
     type Output = Vec4f;
 
@@ -531,7 +519,6 @@ impl TextureSample<Vec2f> for Texture2D<f32> {
     }
 }
 
-// TextureSampleLevel implementation for Texture2D<f32>
 impl TextureSampleLevel<Vec2f, f32> for Texture2D<f32> {
     type Output = Vec4f;
 
@@ -567,7 +554,6 @@ impl TextureSampleLevel<Vec2f, u32> for Texture2D<f32> {
     }
 }
 
-// TextureSampleBaseClampToEdge implementation for Texture2D<f32>
 impl TextureSampleBaseClampToEdge<Vec2f> for Texture2D<f32> {
     type Output = Vec4f;
 
@@ -583,6 +569,170 @@ impl TextureSampleBaseClampToEdge<Vec2f> for Texture2D<f32> {
         let v = coords.y().clamp(half_texel_v, 1.0 - half_texel_v);
         let result = sample_texture_2d(&data, &sampler_state, u, v, 0);
         vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleOffset<Vec2f, Vec2i> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn sample_offset(&self, sampler: &Sampler, coords: Vec2f, offset: Vec2i) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        // Apply offset in texel space: convert normalized coords to texels,
+        // add offset, convert back.
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let result = sample_texture_2d(&data, &sampler_state, u, v, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevelOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        level: f32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let (w, h) = data.dimensions(level);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let result = sample_texture_2d(&data, &sampler_state, u, v, level);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+
+impl TextureSampleBias<Vec2f, f32> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    // On CPU, bias is effectively ignored (no mip chain selection from
+    // derivatives).
+    fn sample_bias(&self, sampler: &Sampler, coords: Vec2f, _bias: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleBiasOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        _bias: f32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let result = sample_texture_2d(&data, &sampler_state, u, v, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGrad<Vec2f, Vec2f, Vec2f> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        _ddx: Vec2f,
+        _ddy: Vec2f,
+    ) -> Self::Output {
+        // TODO: do thes comments still make sense?
+        // * On CPU, gradients are used to approximate mip level selection.
+        // * On CPU, we approximate by sampling at level 0 (gradients would select mip
+        //   level on GPU).
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGradOffset<Vec2f, Vec2f, Vec2f, Vec2i> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        _ddx: Vec2f,
+        _ddy: Vec2f,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let result = sample_texture_2d(&data, &sampler_state, u, v, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureGather<Vec2f> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        if w == 0 || h == 0 {
+            return vec4f(0.0, 0.0, 0.0, 0.0);
+        }
+        let u = SamplerState::apply_address_mode(sampler_state.address_mode_u, coords.x());
+        let v = SamplerState::apply_address_mode(sampler_state.address_mode_v, coords.y());
+        let texel_x = (u * w as f32 - 0.5).floor();
+        let texel_y = (v * h as f32 - 0.5).floor();
+        let c = component.min(3) as usize;
+        let get = |x: f32, y: f32| -> f32 {
+            let xi = (x as i32).clamp(0, w as i32 - 1) as u32;
+            let yi = (y as i32).clamp(0, h as i32 - 1) as u32;
+            data.get_pixel(xi, yi, 0).map(|p| p[c]).unwrap_or(0.0)
+        };
+        // WGSL gather component order:
+        // x = (u_min, v_max), y = (u_max, v_max), z = (u_max, v_min), w = (u_min,
+        // v_min)
+        vec4f(
+            get(texel_x, texel_y + 1.0),
+            get(texel_x + 1.0, texel_y + 1.0),
+            get(texel_x + 1.0, texel_y),
+            get(texel_x, texel_y),
+        )
+    }
+}
+
+impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<f32> {
+    type Output = Vec4f;
+
+    fn gather_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let offset_u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let offset_v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        drop(data);
+        self.gather(component, sampler, vec2f(offset_u, offset_v))
     }
 }
 
@@ -643,7 +793,6 @@ impl<T: Default + Copy> Texture2DArray<T> {
     }
 }
 
-// Implement query traits for Texture2DArray
 impl<T> TextureDimensionsQuery for Texture2DArray<T> {
     type Output = Vec2u;
 
@@ -662,6 +811,212 @@ impl<T> TextureNumLayersQuery for Texture2DArray<T> {
 impl<T: Default + Clone> TextureNumLevelsQuery for Texture2DArray<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
+    }
+}
+
+impl TextureSampleArray<Vec2f, u32> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_array(&self, sampler: &Sampler, coords: Vec2f, array_index: u32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let result = sample_texture_2d(layer_data, &sampler_state, coords.x(), coords.y(), 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleArray<Vec2f, i32> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_array(&self, sampler: &Sampler, coords: Vec2f, array_index: i32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = (array_index.max(0) as u32).min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let result = sample_texture_2d(layer_data, &sampler_state, coords.x(), coords.y(), 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let result = sample_texture_2d(layer_data, &sampler_state, u, v, 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleLevelArray<Vec2f, u32, f32> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_level_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        level: f32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let result =
+                sample_texture_2d(layer_data, &sampler_state, coords.x(), coords.y(), level);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleLevelArrayOffset<Vec2f, u32, f32, Vec2i> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_level_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        level: f32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(level);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let result = sample_texture_2d(layer_data, &sampler_state, u, v, level);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleBiasArray<Vec2f, u32, f32> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        _bias: f32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let result = sample_texture_2d(layer_data, &sampler_state, coords.x(), coords.y(), 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleBiasArrayOffset<Vec2f, u32, f32, Vec2i> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        _bias: f32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let result = sample_texture_2d(layer_data, &sampler_state, u, v, 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleGradArray<Vec2f, u32, Vec2f, Vec2f> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        _ddx: Vec2f,
+        _ddy: Vec2f,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let result = sample_texture_2d(layer_data, &sampler_state, coords.x(), coords.y(), 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureSampleGradArrayOffset<Vec2f, u32, Vec2f, Vec2f, Vec2i> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        _ddx: Vec2f,
+        _ddy: Vec2f,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let result = sample_texture_2d(layer_data, &sampler_state, u, v, 0);
+            vec4f(result[0], result[1], result[2], result[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
     }
 }
 
@@ -724,7 +1079,6 @@ impl<T> Texture3D<T> {
     }
 }
 
-// Implement query traits for Texture3D
 impl<T: Default + Clone> TextureDimensionsQuery for Texture3D<T> {
     type Output = Vec3u;
 
@@ -797,7 +1151,6 @@ impl<T: Default + Copy> TextureCube<T> {
     }
 }
 
-// Implement query traits for TextureCube
 impl<T: Default + Copy> TextureDimensionsQuery for TextureCube<T> {
     type Output = Vec2u;
 
@@ -870,7 +1223,6 @@ impl<T: Default + Copy> TextureCubeArray<T> {
     }
 }
 
-// Implement query traits for TextureCubeArray
 impl<T> TextureDimensionsQuery for TextureCubeArray<T> {
     type Output = Vec2u;
 
@@ -949,7 +1301,6 @@ impl<T: Default + Copy> TextureMultisampled2D<T> {
     }
 }
 
-// Implement query traits for TextureMultisampled2D
 impl<T> TextureDimensionsQuery for TextureMultisampled2D<T> {
     type Output = Vec2u;
 
@@ -962,6 +1313,123 @@ impl<T> TextureDimensionsQuery for TextureMultisampled2D<T> {
 impl<T: Default + Clone> TextureNumSamplesQuery for TextureMultisampled2D<T> {
     fn query_num_samples(&self) -> u32 {
         self.get().num_samples()
+    }
+}
+
+impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<f32> {
+    type Output = Vec4f;
+
+    fn load_multisampled(&self, coords: Vec2u, sample_index: u32) -> Self::Output {
+        self.get()
+            .get_sample(coords.x(), coords.y(), sample_index)
+            .map(|p| vec4f(p[0], p[1], p[2], p[3]))
+            .unwrap_or(vec4f(0.0, 0.0, 0.0, 0.0))
+    }
+}
+
+impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<f32> {
+    type Output = Vec4f;
+
+    fn load_multisampled(&self, coords: Vec2u, sample_index: i32) -> Self::Output {
+        self.load_multisampled(coords, sample_index.max(0) as u32)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<f32> {
+    type Output = Vec4f;
+
+    fn load_multisampled(&self, coords: Vec2i, sample_index: u32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.load_multisampled(vec2u(x, y), sample_index)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<f32> {
+    type Output = Vec4f;
+
+    fn load_multisampled(&self, coords: Vec2i, sample_index: i32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.load_multisampled(vec2u(x, y), sample_index.max(0) as u32)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<i32> {
+    type Output = Vec4i;
+
+    fn load_multisampled(&self, coords: Vec2u, sample_index: u32) -> Self::Output {
+        self.get()
+            .get_sample(coords.x(), coords.y(), sample_index)
+            .map(|p| vec4i(p[0], p[1], p[2], p[3]))
+            .unwrap_or(vec4i(0, 0, 0, 0))
+    }
+}
+
+impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<i32> {
+    type Output = Vec4i;
+
+    fn load_multisampled(&self, coords: Vec2u, sample_index: i32) -> Self::Output {
+        self.load_multisampled(coords, sample_index.max(0) as u32)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<i32> {
+    type Output = Vec4i;
+
+    fn load_multisampled(&self, coords: Vec2i, sample_index: u32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.load_multisampled(vec2u(x, y), sample_index)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<i32> {
+    type Output = Vec4i;
+
+    fn load_multisampled(&self, coords: Vec2i, sample_index: i32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.load_multisampled(vec2u(x, y), sample_index.max(0) as u32)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<u32> {
+    type Output = Vec4u;
+
+    fn load_multisampled(&self, coords: Vec2u, sample_index: u32) -> Self::Output {
+        self.get()
+            .get_sample(coords.x(), coords.y(), sample_index)
+            .map(|p| vec4u(p[0], p[1], p[2], p[3]))
+            .unwrap_or(vec4u(0, 0, 0, 0))
+    }
+}
+
+impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<u32> {
+    type Output = Vec4u;
+
+    fn load_multisampled(&self, coords: Vec2u, sample_index: i32) -> Self::Output {
+        self.load_multisampled(coords, sample_index.max(0) as u32)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<u32> {
+    type Output = Vec4u;
+
+    fn load_multisampled(&self, coords: Vec2i, sample_index: u32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.load_multisampled(vec2u(x, y), sample_index)
+    }
+}
+
+impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<u32> {
+    type Output = Vec4u;
+
+    fn load_multisampled(&self, coords: Vec2i, sample_index: i32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.load_multisampled(vec2u(x, y), sample_index.max(0) as u32)
     }
 }
 
@@ -1024,7 +1492,6 @@ impl TextureDepth2D {
     }
 }
 
-// Implement query traits for TextureDepth2D
 impl TextureDimensionsQuery for TextureDepth2D {
     type Output = Vec2u;
 
@@ -1040,7 +1507,6 @@ impl TextureNumLevelsQuery for TextureDepth2D {
     }
 }
 
-// Implement load for TextureDepth2D
 impl<L: IntoLevel> TextureLoad<Vec2u, L> for TextureDepth2D {
     type Output = f32;
 
@@ -1072,7 +1538,6 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for TextureDepth2D {
     }
 }
 
-// TextureSampleCompare implementation for TextureDepth2D
 impl TextureSampleCompare<Vec2f, f32> for TextureDepth2D {
     fn sample_compare(&self, sampler: &SamplerComparison, coords: Vec2f, depth_ref: f32) -> f32 {
         let sampler_state = sampler.get();
@@ -1087,35 +1552,12 @@ impl TextureSampleCompare<Vec2f, f32> for TextureDepth2D {
     }
 }
 
-// TextureSampleCompareLevel implementation for TextureDepth2D
-impl TextureSampleCompareLevel<Vec2f, f32, f32> for TextureDepth2D {
+impl TextureSampleCompareLevel<Vec2f, f32> for TextureDepth2D {
     fn sample_compare_level(
         &self,
         sampler: &SamplerComparison,
         coords: Vec2f,
         depth_ref: f32,
-        level: f32,
-    ) -> f32 {
-        let sampler_state = sampler.get();
-        let level = level.floor() as u32;
-        let sampled_depth = sample_depth_texture_2d(
-            &self.get(),
-            &sampler_state.sampler,
-            coords.x(),
-            coords.y(),
-            level,
-        );
-        sampler_state.compare.compare(sampled_depth, depth_ref)
-    }
-}
-
-impl TextureSampleCompareLevel<Vec2f, f32, u32> for TextureDepth2D {
-    fn sample_compare_level(
-        &self,
-        sampler: &SamplerComparison,
-        coords: Vec2f,
-        depth_ref: f32,
-        level: u32,
     ) -> f32 {
         let sampler_state = sampler.get();
         let sampled_depth = sample_depth_texture_2d(
@@ -1123,40 +1565,99 @@ impl TextureSampleCompareLevel<Vec2f, f32, u32> for TextureDepth2D {
             &sampler_state.sampler,
             coords.x(),
             coords.y(),
-            level,
+            // Per the WGSL spec, textureSampleCompareLevel always samples at mip level 0.
+            0,
         );
         sampler_state.compare.compare(sampled_depth, depth_ref)
     }
 }
 
-impl TextureSampleCompareLevel<Vec2f, f32, i32> for TextureDepth2D {
-    fn sample_compare_level(
-        &self,
-        sampler: &SamplerComparison,
-        coords: Vec2f,
-        depth_ref: f32,
-        level: i32,
-    ) -> f32 {
-        let sampler_state = sampler.get();
-        let level = if level < 0 { 0u32 } else { level as u32 };
-        let sampled_depth = sample_depth_texture_2d(
-            &self.get(),
-            &sampler_state.sampler,
-            coords.x(),
-            coords.y(),
-            level,
-        );
-        sampler_state.compare.compare(sampled_depth, depth_ref)
-    }
-}
-
-// TextureGatherCompare implementation for TextureDepth2D
 impl TextureGatherCompare<Vec2f, f32> for TextureDepth2D {
     fn gather_compare(&self, sampler: &SamplerComparison, coords: Vec2f, depth_ref: f32) -> Vec4f {
         let sampler_state = sampler.get();
         let data = self.get();
         let texels = gather_4_depth_texels(&data, &sampler_state.sampler, coords.x(), coords.y());
         // Perform depth comparison on each of the 4 gathered texels.
+        vec4f(
+            sampler_state.compare.compare(texels[0], depth_ref),
+            sampler_state.compare.compare(texels[1], depth_ref),
+            sampler_state.compare.compare(texels[2], depth_ref),
+            sampler_state.compare.compare(texels[3], depth_ref),
+        )
+    }
+}
+
+impl TextureSampleCompareOffset<Vec2f, f32, Vec2i> for TextureDepth2D {
+    fn sample_compare_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let sampled_depth = sample_depth_texture_2d(&data, &sampler_state.sampler, u, v, 0);
+        sampler_state.compare.compare(sampled_depth, depth_ref)
+    }
+}
+
+impl TextureSampleCompareLevelOffset<Vec2f, f32, Vec2i> for TextureDepth2D {
+    fn sample_compare_level_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let sampled_depth = sample_depth_texture_2d(&data, &sampler_state.sampler, u, v, 0);
+        sampler_state.compare.compare(sampled_depth, depth_ref)
+    }
+}
+
+impl TextureGatherDepth<Vec2f> for TextureDepth2D {
+    fn gather_depth(&self, sampler: &Sampler, coords: Vec2f) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let texels = gather_4_depth_texels(&data, &sampler_state, coords.x(), coords.y());
+        vec4f(texels[0], texels[1], texels[2], texels[3])
+    }
+}
+
+impl TextureGatherDepthOffset<Vec2f, Vec2i> for TextureDepth2D {
+    fn gather_depth_offset(&self, sampler: &Sampler, coords: Vec2f, offset: Vec2i) -> Vec4f {
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let sampler_state = sampler.get();
+        let texels = gather_4_depth_texels(&data, &sampler_state, u, v);
+        vec4f(texels[0], texels[1], texels[2], texels[3])
+    }
+}
+
+impl TextureGatherCompareOffset<Vec2f, f32, Vec2i> for TextureDepth2D {
+    fn gather_compare_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let texels = gather_4_depth_texels(&data, &sampler_state.sampler, u, v);
         vec4f(
             sampler_state.compare.compare(texels[0], depth_ref),
             sampler_state.compare.compare(texels[1], depth_ref),
@@ -1221,7 +1722,6 @@ impl TextureDepth2DArray {
     }
 }
 
-// Implement query traits for TextureDepth2DArray
 impl TextureDimensionsQuery for TextureDepth2DArray {
     type Output = Vec2u;
 
@@ -1240,6 +1740,226 @@ impl TextureNumLayersQuery for TextureDepth2DArray {
 impl TextureNumLevelsQuery for TextureDepth2DArray {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
+    }
+}
+
+impl TextureSampleCompareArray<Vec2f, u32, f32> for TextureDepth2DArray {
+    fn sample_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: u32,
+        depth_ref: f32,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let sampled_depth = sample_depth_texture_2d(
+                layer_data,
+                &sampler_state.sampler,
+                coords.x(),
+                coords.y(),
+                0,
+            );
+            sampler_state.compare.compare(sampled_depth, depth_ref)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl TextureSampleCompareArray<Vec2f, i32, f32> for TextureDepth2DArray {
+    fn sample_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: i32,
+        depth_ref: f32,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = (array_index.max(0) as u32).min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let sampled_depth = sample_depth_texture_2d(
+                layer_data,
+                &sampler_state.sampler,
+                coords.x(),
+                coords.y(),
+                0,
+            );
+            sampler_state.compare.compare(sampled_depth, depth_ref)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl TextureSampleCompareArrayOffset<Vec2f, u32, f32, Vec2i> for TextureDepth2DArray {
+    fn sample_compare_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: u32,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let sampled_depth =
+                sample_depth_texture_2d(layer_data, &sampler_state.sampler, u, v, 0);
+            sampler_state.compare.compare(sampled_depth, depth_ref)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl TextureSampleCompareLevelArray<Vec2f, u32, f32> for TextureDepth2DArray {
+    fn sample_compare_level_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: u32,
+        depth_ref: f32,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let sampled_depth = sample_depth_texture_2d(
+                layer_data,
+                &sampler_state.sampler,
+                coords.x(),
+                coords.y(),
+                0,
+            );
+            sampler_state.compare.compare(sampled_depth, depth_ref)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl TextureSampleCompareLevelArrayOffset<Vec2f, u32, f32, Vec2i> for TextureDepth2DArray {
+    fn sample_compare_level_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: u32,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> f32 {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let sampled_depth =
+                sample_depth_texture_2d(layer_data, &sampler_state.sampler, u, v, 0);
+            sampler_state.compare.compare(sampled_depth, depth_ref)
+        } else {
+            0.0
+        }
+    }
+}
+
+impl TextureGatherCompareArray<Vec2f, u32, f32> for TextureDepth2DArray {
+    fn gather_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: u32,
+        depth_ref: f32,
+    ) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let texels =
+                gather_4_depth_texels(layer_data, &sampler_state.sampler, coords.x(), coords.y());
+            vec4f(
+                sampler_state.compare.compare(texels[0], depth_ref),
+                sampler_state.compare.compare(texels[1], depth_ref),
+                sampler_state.compare.compare(texels[2], depth_ref),
+                sampler_state.compare.compare(texels[3], depth_ref),
+            )
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureGatherCompareArrayOffset<Vec2f, u32, f32, Vec2i> for TextureDepth2DArray {
+    fn gather_compare_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: u32,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let texels = gather_4_depth_texels(layer_data, &sampler_state.sampler, u, v);
+            vec4f(
+                sampler_state.compare.compare(texels[0], depth_ref),
+                sampler_state.compare.compare(texels[1], depth_ref),
+                sampler_state.compare.compare(texels[2], depth_ref),
+                sampler_state.compare.compare(texels[3], depth_ref),
+            )
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureGatherDepthArray<Vec2f, u32> for TextureDepth2DArray {
+    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec2f, array_index: u32) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let texels = gather_4_depth_texels(layer_data, &sampler_state, coords.x(), coords.y());
+            vec4f(texels[0], texels[1], texels[2], texels[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+impl TextureGatherDepthArrayOffset<Vec2f, u32, Vec2i> for TextureDepth2DArray {
+    fn gather_depth_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        offset: Vec2i,
+    ) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        if let Some(layer_data) = data.layers.get(layer as usize) {
+            let (w, h) = layer_data.dimensions(0);
+            let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+            let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+            let texels = gather_4_depth_texels(layer_data, &sampler_state, u, v);
+            vec4f(texels[0], texels[1], texels[2], texels[3])
+        } else {
+            vec4f(0.0, 0.0, 0.0, 0.0)
+        }
     }
 }
 
@@ -1297,8 +2017,6 @@ impl TextureDepthCube {
         self.set(TextureDataDepthCube::new(size))
     }
 }
-
-// Implement query traits for TextureDepthCube
 impl TextureDimensionsQuery for TextureDepthCube {
     type Output = Vec2u;
 
@@ -1369,7 +2087,6 @@ impl TextureDepthCubeArray {
     }
 }
 
-// Implement query traits for TextureDepthCubeArray
 impl TextureDimensionsQuery for TextureDepthCubeArray {
     type Output = Vec2u;
 
@@ -1450,7 +2167,6 @@ impl TextureDepthMultisampled2D {
     }
 }
 
-// Implement query traits for TextureDepthMultisampled2D
 impl TextureDimensionsQuery for TextureDepthMultisampled2D {
     type Output = Vec2u;
 
@@ -1811,5 +2527,351 @@ mod tests {
         assert!((result.y() - 1.0).abs() < 0.001);
         assert!((result.z() - 1.0).abs() < 0.001);
         assert!((result.w() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_2d_sample_offset() {
+        let tex: Texture2D<f32> = Texture2D::new(0, 0);
+        tex.init(4, 4);
+
+        // Set pixel at (2, 1) to a distinct color
+        tex.set_pixel(2, 1, [0.8, 0.6, 0.4, 1.0]);
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init(); // Nearest filtering
+
+        // Sample at (0.25, 0.25) which maps to texel (1, 1) on a 4x4 texture.
+        // With offset (1, 0), the effective texel is (2, 1).
+        let color = texture_sample_offset(&tex, &sampler, vec2f(0.375, 0.375), vec2i(1, 0));
+        assert!((color.x() - 0.8).abs() < 0.001);
+        assert!((color.y() - 0.6).abs() < 0.001);
+        assert!((color.z() - 0.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_2d_sample_level_offset() {
+        let tex: Texture2D<f32> = Texture2D::new(0, 0);
+        tex.init(4, 4);
+
+        tex.set_pixel(3, 2, [0.1, 0.2, 0.3, 0.4]);
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Sample at texel (2, 2) with offset (1, 0) -> texel (3, 2), at level 0
+        let color =
+            texture_sample_level_offset(&tex, &sampler, vec2f(0.625, 0.625), 0.0f32, vec2i(1, 0));
+        assert!((color.x() - 0.1).abs() < 0.001);
+        assert!((color.y() - 0.2).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_2d_sample_bias() {
+        let tex: Texture2D<f32> = Texture2D::new(0, 0);
+        tex.init(2, 2);
+
+        tex.set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // On CPU, bias is ignored, so this should behave like a regular sample.
+        let color = texture_sample_bias(&tex, &sampler, vec2f(0.25, 0.25), 2.0f32);
+        assert!((color.x() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_2d_sample_grad() {
+        let tex: Texture2D<f32> = Texture2D::new(0, 0);
+        tex.init(2, 2);
+
+        tex.set_pixel(1, 1, [0.5, 0.5, 0.5, 1.0]);
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // On CPU, gradients sample at level 0, so this behaves like a regular sample.
+        let color = texture_sample_grad(
+            &tex,
+            &sampler,
+            vec2f(0.75, 0.75),
+            vec2f(1.0, 0.0),
+            vec2f(0.0, 1.0),
+        );
+        assert!((color.x() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_2d_array_sample_array() {
+        let tex: Texture2DArray<f32> = Texture2DArray::new(0, 0);
+        tex.init(2, 2, 3);
+
+        // Set a pixel on layer 1
+        {
+            let mut guard = tex.data.write();
+            guard.layers[1].set_pixel(0, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
+        }
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Sample layer 1 at top-left
+        let color = texture_sample_array(&tex, &sampler, vec2f(0.25, 0.25), 1u32);
+        assert!((color.x() - 0.0).abs() < 0.001);
+        assert!((color.y() - 1.0).abs() < 0.001); // green channel
+    }
+
+    #[test]
+    fn test_texture_2d_array_sample_array_offset() {
+        let tex: Texture2DArray<f32> = Texture2DArray::new(0, 0);
+        tex.init(4, 4, 2);
+
+        // Set pixel at (2, 1) on layer 0
+        {
+            let mut guard = tex.data.write();
+            guard.layers[0].set_pixel(2, 1, 0, [0.3, 0.6, 0.9, 1.0]);
+        }
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Sample layer 0 at texel (1, 1) with offset (1, 0) -> texel (2, 1)
+        let color =
+            texture_sample_array_offset(&tex, &sampler, vec2f(0.375, 0.375), 0u32, vec2i(1, 0));
+        assert!((color.x() - 0.3).abs() < 0.001);
+        assert!((color.y() - 0.6).abs() < 0.001);
+        assert!((color.z() - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_depth_2d_sample_compare_offset() {
+        let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
+        tex.init(4, 4);
+
+        {
+            let mut guard = tex.data.write();
+            // Set all depths to 0.5
+            for row in guard.mips[0].iter_mut() {
+                for depth in row.iter_mut() {
+                    *depth = 0.5;
+                }
+            }
+        }
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        // With offset, the effective sample position shifts by texel offset.
+        // depth_ref = 0.3 < sampled 0.5 => true => 1.0
+        let result =
+            texture_sample_compare_offset(&tex, &sampler, vec2f(0.5, 0.5), 0.3, vec2i(1, 0));
+        assert!((result - 1.0).abs() < 0.001);
+
+        // depth_ref = 0.7 < 0.5 => false => 0.0
+        let result =
+            texture_sample_compare_offset(&tex, &sampler, vec2f(0.5, 0.5), 0.7, vec2i(1, 0));
+        assert!((result - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_depth_2d_sample_compare_level() {
+        let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
+        tex.init(4, 4);
+
+        {
+            let mut guard = tex.data.write();
+            for row in guard.mips[0].iter_mut() {
+                for depth in row.iter_mut() {
+                    *depth = 0.5;
+                }
+            }
+        }
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        // textureSampleCompareLevel always samples at mip 0 (no level param in WGSL)
+        let result = texture_sample_compare_level(&tex, &sampler, vec2f(0.5, 0.5), 0.3);
+        assert!((result - 1.0).abs() < 0.001); // 0.3 < 0.5 => pass
+
+        let result = texture_sample_compare_level(&tex, &sampler, vec2f(0.5, 0.5), 0.7);
+        assert!((result - 0.0).abs() < 0.001); // 0.7 not < 0.5 => fail
+    }
+
+    #[test]
+    fn test_texture_depth_2d_gather_depth() {
+        let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
+        tex.init(4, 4);
+
+        {
+            let mut guard = tex.data.write();
+            // Set a 2x2 block of depth values
+            guard.mips[0][0][0] = 0.1;
+            guard.mips[0][0][1] = 0.2;
+            guard.mips[0][1][0] = 0.3;
+            guard.mips[0][1][1] = 0.4;
+        }
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Gather the 2x2 block of depth values.
+        // The result components follow the WGSL gather pattern:
+        //   x = (u_min, v_max), y = (u_max, v_max),
+        //   z = (u_max, v_min), w = (u_min, v_min)
+        let result = texture_gather_depth(&tex, &sampler, vec2f(0.25, 0.25));
+        assert!((result.x() - 0.3).abs() < 0.001); // (0, 1)
+        assert!((result.y() - 0.4).abs() < 0.001); // (1, 1)
+        assert!((result.z() - 0.2).abs() < 0.001); // (1, 0)
+        assert!((result.w() - 0.1).abs() < 0.001); // (0, 0)
+    }
+
+    #[test]
+    fn test_texture_depth_2d_gather_depth_offset() {
+        let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
+        tex.init(4, 4);
+
+        {
+            let mut guard = tex.data.write();
+            // Set depths at a shifted 2x2 block at (1,0),(2,0),(1,1),(2,1)
+            guard.mips[0][0][1] = 0.15;
+            guard.mips[0][0][2] = 0.25;
+            guard.mips[0][1][1] = 0.35;
+            guard.mips[0][1][2] = 0.45;
+        }
+
+        let sampler: Sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Sample at (0.25, 0.25) with offset (1, 0) shifts the gather window
+        // by 1 texel to the right.
+        let result = texture_gather_depth_offset(&tex, &sampler, vec2f(0.25, 0.25), vec2i(1, 0));
+        assert!((result.x() - 0.35).abs() < 0.001); // (1, 1)
+        assert!((result.y() - 0.45).abs() < 0.001); // (2, 1)
+        assert!((result.z() - 0.25).abs() < 0.001); // (2, 0)
+        assert!((result.w() - 0.15).abs() < 0.001); // (1, 0)
+    }
+
+    #[test]
+    fn test_texture_depth_2d_array_sample_compare_array() {
+        let tex: TextureDepth2DArray = TextureDepth2DArray::new(0, 0);
+        tex.init(4, 4, 2);
+
+        {
+            let mut guard = tex.data.write();
+            // Set all depths on layer 1 to 0.6
+            for row in guard.layers[1].mips[0].iter_mut() {
+                for depth in row.iter_mut() {
+                    *depth = 0.6;
+                }
+            }
+        }
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        // depth_ref = 0.4 < sampled 0.6 on layer 1 => pass => 1.0
+        let result = texture_sample_compare_array(&tex, &sampler, vec2f(0.5, 0.5), 1u32, 0.4);
+        assert!((result - 1.0).abs() < 0.001);
+
+        // depth_ref = 0.8 < 0.6 => fail => 0.0
+        let result = texture_sample_compare_array(&tex, &sampler, vec2f(0.5, 0.5), 1u32, 0.8);
+        assert!((result - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_gather_compare_offset() {
+        let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
+        tex.init(4, 4);
+
+        {
+            let mut guard = tex.data.write();
+            // Set a 2x2 block at (1,0),(2,0),(1,1),(2,1)
+            guard.mips[0][0][1] = 0.2;
+            guard.mips[0][0][2] = 0.4;
+            guard.mips[0][1][1] = 0.6;
+            guard.mips[0][1][2] = 0.8;
+        }
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        // Sample at (0.25, 0.25) with offset (1, 0): gathers the shifted 2x2 block.
+        // depth_ref = 0.5: Less comparison passes when depth_ref < sampled_depth
+        //   (1,0)=0.2: 0.5 < 0.2 => false => 0.0   => w
+        //   (2,0)=0.4: 0.5 < 0.4 => false => 0.0   => z
+        //   (1,1)=0.6: 0.5 < 0.6 => true  => 1.0   => x
+        //   (2,1)=0.8: 0.5 < 0.8 => true  => 1.0   => y
+        let result =
+            texture_gather_compare_offset(&tex, &sampler, vec2f(0.25, 0.25), 0.5, vec2i(1, 0));
+        assert!((result.x() - 1.0).abs() < 0.001);
+        assert!((result.y() - 1.0).abs() < 0.001);
+        assert!((result.z() - 0.0).abs() < 0.001);
+        assert!((result.w() - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_load_multisampled() {
+        let tex: TextureMultisampled2D<f32> = TextureMultisampled2D::new(0, 0);
+        tex.init(4, 4, 4);
+
+        // Set sample 2 at pixel (1, 2) to a distinct color
+        {
+            let mut guard = tex.data.write();
+            guard.samples[2][1][2] = [0.7, 0.3, 0.1, 1.0]; // [y][x][sample]
+        }
+
+        // Load with Vec2u coords and u32 sample index
+        let pixel = texture_load_multisampled(&tex, vec2u(1, 2), 2u32);
+        assert!((pixel.x() - 0.7).abs() < 0.001);
+        assert!((pixel.y() - 0.3).abs() < 0.001);
+        assert!((pixel.z() - 0.1).abs() < 0.001);
+        assert!((pixel.w() - 1.0).abs() < 0.001);
+
+        // Load with Vec2i coords and i32 sample index
+        let pixel = texture_load_multisampled(&tex, vec2i(1, 2), 2i32);
+        assert!((pixel.x() - 0.7).abs() < 0.001);
+
+        // Out-of-bounds should return zero
+        let pixel = texture_load_multisampled(&tex, vec2u(10, 10), 0u32);
+        assert!((pixel.x() - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_sample_compare_level_offset() {
+        let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
+        tex.init(4, 4);
+
+        {
+            let mut guard = tex.data.write();
+            for row in guard.mips[0].iter_mut() {
+                for depth in row.iter_mut() {
+                    *depth = 0.5;
+                }
+            }
+        }
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        // textureSampleCompareLevel with offset: always mip 0
+        let result =
+            texture_sample_compare_level_offset(&tex, &sampler, vec2f(0.5, 0.5), 0.3, vec2i(0, 0));
+        assert!((result - 1.0).abs() < 0.001); // 0.3 < 0.5 => pass
     }
 }

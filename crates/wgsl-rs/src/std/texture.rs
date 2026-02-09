@@ -1477,7 +1477,7 @@ mod tests {
         let tex: Texture2D<f32> = Texture2D::new(0, 0);
         tex.init(64, 32);
 
-        let dims = texture_dimensions(&tex, 0u32);
+        let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 64);
         assert_eq!(dims.y(), 32);
     }
@@ -1638,7 +1638,7 @@ mod tests {
         let tex: Texture2DArray<f32> = Texture2DArray::new(0, 0);
         tex.init(16, 8, 4);
 
-        let dims = texture_dimensions(&tex, 0u32);
+        let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 16);
         assert_eq!(dims.y(), 8);
 
@@ -1654,7 +1654,7 @@ mod tests {
         let tex: Texture3D<f32> = Texture3D::new(0, 0);
         tex.init(8, 4, 2);
 
-        let dims = texture_dimensions(&tex, 0u32);
+        let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 8);
         assert_eq!(dims.y(), 4);
         assert_eq!(dims.z(), 2);
@@ -1665,7 +1665,7 @@ mod tests {
         let tex: TextureCube<f32> = TextureCube::new(0, 0);
         tex.init(32);
 
-        let dims = texture_dimensions(&tex, 0u32);
+        let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 32);
         assert_eq!(dims.y(), 32);
     }
@@ -1675,7 +1675,7 @@ mod tests {
         let tex: TextureMultisampled2D<f32> = TextureMultisampled2D::new(0, 0);
         tex.init(64, 64, 4);
 
-        let dims = texture_dimensions(&tex, 0u32);
+        let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 64);
         assert_eq!(dims.y(), 64);
 

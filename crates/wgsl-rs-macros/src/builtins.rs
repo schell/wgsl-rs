@@ -9,7 +9,7 @@
 ///
 /// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
 /// are NOT included here since they don't need translation.
-pub static BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
+pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     // Arrays
     ("array_length", "arrayLength"),
     // Atomic operations
@@ -38,6 +38,7 @@ pub static BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     ("inverse_sqrt", "inverseSqrt"),
     // Texture functions
     ("texture_dimensions", "textureDimensions"),
+    ("texture_dimensions_level", "textureDimensions"),
     ("texture_gather", "textureGather"),
     ("texture_gather_compare", "textureGatherCompare"),
     ("texture_load", "textureLoad"),

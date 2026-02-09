@@ -973,24 +973,24 @@ impl IntoLevel for u32 {
     }
 }
 
-/// Trait for optional level parameter.
-pub trait OptionalLevel {
-    fn level_or_default(self) -> u32;
-}
-
-impl OptionalLevel for () {
-    fn level_or_default(self) -> u32 {
-        0
-    }
-}
-
-impl<L: IntoLevel> OptionalLevel for L {
-    fn level_or_default(self) -> u32 {
-        self.into_level()
-    }
-}
-
 /// Returns the dimensions of a texture.
+///
+/// For 1D textures, returns `u32`.
+/// For 2D textures, returns `Vec2u`.
+/// For 3D textures, returns `Vec3u`.
+///
+/// To specify a mipmap level use [`texture_dimensions_level`].
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let dims = textureDimensions(my_texture);
+/// ```
+pub fn texture_dimensions<T: TextureDimensionsQuery>(t: &T) -> T::Output {
+    t.query_dimensions(0)
+}
+
+/// Returns the dimensions of a texture at a given mipmap level.
 ///
 /// For 1D textures, returns `u32`.
 /// For 2D textures, returns `Vec2u`.
@@ -999,10 +999,12 @@ impl<L: IntoLevel> OptionalLevel for L {
 /// # WGSL Equivalent
 ///
 /// ```wgsl
-/// let dims = textureDimensions(my_texture);
 /// let dims_at_level = textureDimensions(my_texture, 2);
 /// ```
-pub fn texture_dimensions<T: TextureDimensionsQuery>(t: &T, level: impl IntoLevel) -> T::Output {
+pub fn texture_dimensions_level<T: TextureDimensionsQuery>(
+    t: &T,
+    level: impl IntoLevel,
+) -> T::Output {
     t.query_dimensions(level.into_level())
 }
 

@@ -116,7 +116,11 @@ impl<T> ModuleVar<T> {
 
     /// Set the inner `T`.
     pub fn set(&self, data: T) {
-        *self.inner.write().unwrap() = Some(data);
+        *self
+            .inner
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable")) =
+            Some(data);
     }
 }
 
@@ -192,7 +196,7 @@ impl<T> Uniform<T> {
 
     /// Set the inner `T`.
     ///
-    /// Not avaliable in WGSL.
+    /// Not available in WGSL.
     ///
     /// ## Note
     /// Though this method is public, using it in a `#[wgsl]` module triggers

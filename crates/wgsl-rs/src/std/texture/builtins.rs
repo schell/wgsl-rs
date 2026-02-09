@@ -1296,7 +1296,7 @@ fn normalized_to_texel(coord: f32, size: u32) -> (u32, f32) {
 }
 
 /// Sample a 2D texture at the given normalized coordinates.
-pub fn sample_texture_2d<T: Copy + Default + Into<f32> + From<f32>>(
+pub(crate) fn sample_texture_2d<T: Copy + Default + Into<f32> + From<f32>>(
     data: &TextureData2D<T>,
     sampler_state: &SamplerState,
     u: f32,
@@ -1349,7 +1349,7 @@ pub fn sample_texture_2d<T: Copy + Default + Into<f32> + From<f32>>(
 }
 
 /// Sample a depth 2D texture at the given normalized coordinates.
-pub fn sample_depth_texture_2d(
+pub(crate) fn sample_depth_texture_2d(
     data: &TextureDataDepth2D,
     sampler_state: &SamplerState,
     u: f32,
@@ -1392,7 +1392,7 @@ pub fn sample_depth_texture_2d(
 /// level 0, returning them in the WGSL-specified gather component order:
 ///   x = (u_min, v_max), y = (u_max, v_max),
 ///   z = (u_max, v_min), w = (u_min, v_min).
-pub fn gather_4_depth_texels(
+pub(crate) fn gather_4_depth_texels(
     data: &TextureDataDepth2D,
     sampler_state: &SamplerState,
     u: f32,

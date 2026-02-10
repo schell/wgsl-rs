@@ -4,7 +4,8 @@
 
 1. The user must be able to write regular Rust code.
    No translation of Rust code will occur in the `#[wgsl]` macro.
-   The macro is strictly additive.
+   The macro is strictly additive in that it _adds_ more Rust code
+   to the user's written code.
    Specifically, it will add the transpiled WGSL source code and imports.
 2. The Rust type system should catch as many type errors as possible, so WGSL validation doesn't have to.
    Stated another way, `wgsl-rs` should never produce Rust code that compiles, but produces invalid WGSL.
@@ -12,6 +13,21 @@
 3. Macros are ok, as Rust folks are used to using macros.
    Eg. `uniform!(binding(0), group(0), BRIGHTNESS: f32);` is fine, and in fact we **must** use
    macros for **all** WGSL that can't be represented with Rust syntax.
+4. WGSL builtins can be variadic and can be called with different types, and may return different types.
+   This presents two problems to solve:
+     1. Parameter _types_: When the type of a parameter differs between WGSL
+        builtin "flavors", the support strategy in `wgsl-rs` is to use a trait
+        that allows the parameter types to be dependent on a type parameter.
+        Either in the type implementing the trait, an associated type or to have
+        the parameter `impl AnotherTrait`. So far this has been flexible enough.
+     2. Variadic functions: When a WGSL builtin can be called with varying parameter counts,
+        the strategy in `wgsl-rs` is to create multiple functions - one
+        for each variation. Each Rust function is then mapped to the same WGSL
+        builtin using the `BUILTIN_NAME_CASE_MAP`.
+        For example, (Rust => WGSL):
+          * `texture_sample` => `textureSample`
+          * `texture_sample_array` => `textureSample`
+          * `texture_sample_array_offset` => `textureSample`
 
 ## tradeoffs
 

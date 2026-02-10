@@ -6,34 +6,8 @@
 //! equivalent results in both "Rust world" (CPU) and "WGSL world" (GPU).
 //!
 //! See <https://gpuweb.github.io/gpuweb/wgsl/#texture-builtin-functions>.
-//!
-//! ## Supported Functions
-//!
-//! ### Query Functions
-//! - `texture_dimensions` - Get texture dimensions
-//! - `texture_num_layers` - Get number of array layers
-//! - `texture_num_levels` - Get number of mip levels
-//! - `texture_num_samples` - Get number of samples (multisampled textures)
-//!
-//! ### Load/Store Functions
-//! - `texture_load` - Load texel without sampling
-//! - `texture_store` - Store value to storage texture (requires storage
-//!   textures)
-//!
-//! ### Sampling Functions
-//! - `texture_sample` - Sample with implicit LOD
-//! - `texture_sample_bias` - Sample with LOD bias
-//! - `texture_sample_level` - Sample at explicit LOD
-//! - `texture_sample_grad` - Sample with explicit gradients
-//! - `texture_sample_compare` - Depth comparison sample
-//! - `texture_sample_compare_level` - Depth comparison at explicit LOD
-//! - `texture_sample_base_clamp_to_edge` - Sample at base level with clamping
-//!
-//! ### Gather Functions
-//! - `texture_gather` - Gather single component from 4 texels
-//! - `texture_gather_compare` - Gather with depth comparison
 
-// Note: We use `std::vec::Vec` explicitly throughout this module to avoid
+// Note: Use `std::vec::Vec` explicitly throughout this module to avoid
 // name collision with our `Vec<N, T>` vector type from vectors.rs.
 
 use crate::std::{

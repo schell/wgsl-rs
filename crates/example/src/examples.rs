@@ -992,12 +992,42 @@ pub mod atomic_example {
 
 #[wgsl]
 pub mod texture_example {
-    //! Demonstrates using textures.
+    //! Demonstrates using textures and texture builtin functions.
     //!
-    //! Currently we only support defining texture types.
-    //! Texture builtin functions are coming as a later step.
+    //! WGSL provides several categories of texture operations:
+    //! - **Query functions**: `textureDimensions`, `textureNumLayers`, etc.
+    //! - **Load functions**: `textureLoad` - direct texel access without
+    //!   filtering
+    //! - **Sample functions**: `textureSample` - filtered sampling with a
+    //!   sampler
+    //! - **Depth comparison**: `textureSampleCompare` - for shadow mapping
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), TEX: Texture2D<f32>);
-    sampler!(group(0), binding(1), SAMPLER: Sampler);
+    // A 2D texture for color/albedo
+    texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
+    // A sampler for filtering the texture
+    sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+
+    // Fragment input with texture coordinates
+    #[input]
+    pub struct FragmentInput {
+        #[location(0)]
+        pub uv: Vec2f,
+    }
+
+    // Output struct
+    #[output]
+    pub struct FragmentOutput {
+        #[location(0)]
+        pub color: Vec4f,
+    }
+
+    // Main fragment shader demonstrating texture operations.
+    #[fragment]
+    pub fn frag_main(input: FragmentInput) -> FragmentOutput {
+        // Sample the diffuse texture
+        let albedo = texture_sample(DIFFUSE_TEX, TEX_SAMPLER, input.uv);
+
+        FragmentOutput { color: albedo }
+    }
 }

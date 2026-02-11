@@ -60,6 +60,11 @@ cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
   and use `unreachable!` when encountering an invariant that is impossible. Similarly use `.expect("{reason}")`
   where appropriate.
 - **Spans**: Preserve `proc_macro2::Span` on all parsed types for error mapping back to Rust source
+- **Comments**: *DO NOT* insert C++ style section labels like `// =====` to mark sections of code.
+  Instead, if a new section is absolutely necessary - place the code in a new module with appropriate
+  module level documentation.
+  Please document all functions. If parameters are self explanatory, don't bother writing parameters in
+  documentation.
 
 ## DEVLOG.md file
 

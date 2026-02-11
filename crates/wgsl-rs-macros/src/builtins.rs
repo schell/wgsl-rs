@@ -9,7 +9,7 @@
 ///
 /// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
 /// are NOT included here since they don't need translation.
-pub static BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
+pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     // Arrays
     ("array_length", "arrayLength"),
     // Atomic operations
@@ -38,23 +38,81 @@ pub static BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     ("inverse_sqrt", "inverseSqrt"),
     // Texture functions
     ("texture_dimensions", "textureDimensions"),
+    ("texture_dimensions_level", "textureDimensions"),
+    // textureGather variants
     ("texture_gather", "textureGather"),
+    ("texture_gather_array", "textureGather"),
+    ("texture_gather_array_offset", "textureGather"),
+    ("texture_gather_depth", "textureGather"),
+    ("texture_gather_depth_array", "textureGather"),
+    ("texture_gather_depth_array_offset", "textureGather"),
+    ("texture_gather_depth_offset", "textureGather"),
+    ("texture_gather_offset", "textureGather"),
+    // textureGatherCompare variants
     ("texture_gather_compare", "textureGatherCompare"),
+    ("texture_gather_compare_array", "textureGatherCompare"),
+    (
+        "texture_gather_compare_array_offset",
+        "textureGatherCompare",
+    ),
+    ("texture_gather_compare_offset", "textureGatherCompare"),
+    // textureLoad variants
     ("texture_load", "textureLoad"),
+    ("texture_load_array", "textureLoad"),
+    ("texture_load_multisampled", "textureLoad"),
+    // Query functions
     ("texture_num_layers", "textureNumLayers"),
     ("texture_num_levels", "textureNumLevels"),
     ("texture_num_samples", "textureNumSamples"),
+    // textureSample variants
     ("texture_sample", "textureSample"),
+    ("texture_sample_array", "textureSample"),
+    ("texture_sample_array_offset", "textureSample"),
+    ("texture_sample_offset", "textureSample"),
     (
         "texture_sample_base_clamp_to_edge",
         "textureSampleBaseClampToEdge",
     ),
+    // textureSampleBias variants
     ("texture_sample_bias", "textureSampleBias"),
+    ("texture_sample_bias_array", "textureSampleBias"),
+    ("texture_sample_bias_array_offset", "textureSampleBias"),
+    ("texture_sample_bias_offset", "textureSampleBias"),
+    // textureSampleCompare variants
     ("texture_sample_compare", "textureSampleCompare"),
+    ("texture_sample_compare_array", "textureSampleCompare"),
+    (
+        "texture_sample_compare_array_offset",
+        "textureSampleCompare",
+    ),
+    ("texture_sample_compare_offset", "textureSampleCompare"),
+    // textureSampleCompareLevel variants
     ("texture_sample_compare_level", "textureSampleCompareLevel"),
+    (
+        "texture_sample_compare_level_array",
+        "textureSampleCompareLevel",
+    ),
+    (
+        "texture_sample_compare_level_array_offset",
+        "textureSampleCompareLevel",
+    ),
+    (
+        "texture_sample_compare_level_offset",
+        "textureSampleCompareLevel",
+    ),
+    // textureSampleGrad variants
     ("texture_sample_grad", "textureSampleGrad"),
+    ("texture_sample_grad_array", "textureSampleGrad"),
+    ("texture_sample_grad_array_offset", "textureSampleGrad"),
+    ("texture_sample_grad_offset", "textureSampleGrad"),
+    // textureSampleLevel variants
     ("texture_sample_level", "textureSampleLevel"),
+    ("texture_sample_level_array", "textureSampleLevel"),
+    ("texture_sample_level_array_offset", "textureSampleLevel"),
+    ("texture_sample_level_offset", "textureSampleLevel"),
+    // textureStore variants
     ("texture_store", "textureStore"),
+    ("texture_store_array", "textureStore"),
 ];
 
 /// Looks up the WGSL name for a Rust function name.

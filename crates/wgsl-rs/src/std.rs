@@ -115,6 +115,9 @@ impl<T> ModuleVar<T> {
     }
 
     /// Set the inner `T`.
+    ///
+    /// ## Panics
+    /// Panics if a lock on the inner data has been poisoned.
     pub fn set(&self, data: T) {
         *self
             .inner

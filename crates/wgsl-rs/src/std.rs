@@ -91,8 +91,9 @@ impl<T> ModuleVar<T> {
     /// Returns a reference to the inner `T`.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
     pub fn read(&self) -> ModuleVarReadGuard<'_, T> {
         let lock = self
             .inner
@@ -104,8 +105,9 @@ impl<T> ModuleVar<T> {
     /// Returns a mutable reference to the inner `T`.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
     pub fn write(&self) -> ModuleVarWriteGuard<'_, T> {
         let lock = self
             .inner
@@ -117,7 +119,7 @@ impl<T> ModuleVar<T> {
     /// Set the inner `T`.
     ///
     /// ## Panics
-    /// Panics if a lock on the inner data has been poisoned.
+    /// Panics if the underlying lock on the inner data has been poisoned.
     pub fn set(&self, data: T) {
         *self
             .inner

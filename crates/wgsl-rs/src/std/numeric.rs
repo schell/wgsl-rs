@@ -1,4 +1,4 @@
-//! Traits that provide WGSL's numeric builtin functions.
+//! Numeric builtin functions for `wgsl-rs`'s standard library.
 //!
 //! See <https://gpuweb.github.io/gpuweb/wgsl/#numeric-builtin-functions>.
 //!

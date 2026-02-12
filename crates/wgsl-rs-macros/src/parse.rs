@@ -6180,6 +6180,47 @@ mod test {
     }
 
     #[test]
+    fn bitcast_scalar_translates_to_wgsl() {
+        let expr: syn::Expr = syn::parse_quote! { bitcast_f32(x) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "bitcast<f32>(x)");
+
+        let expr: syn::Expr = syn::parse_quote! { bitcast_u32(y) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "bitcast<u32>(y)");
+
+        let expr: syn::Expr = syn::parse_quote! { bitcast_i32(z) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "bitcast<i32>(z)");
+    }
+
+    #[test]
+    fn bitcast_vector_translates_to_wgsl() {
+        let expr: syn::Expr = syn::parse_quote! { bitcast_vec2f(v) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "bitcast<vec2<f32>>(v)");
+
+        let expr: syn::Expr = syn::parse_quote! { bitcast_vec3u(v) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "bitcast<vec3<u32>>(v)");
+
+        let expr: syn::Expr = syn::parse_quote! { bitcast_vec4i(v) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "bitcast<vec4<i32>>(v)");
+    }
+
+    #[test]
+    fn defining_function_named_bitcast_is_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn bitcast_f32(x: u32) -> f32 {
+                0.0
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err(), "Defining bitcast_f32 should be rejected");
+    }
+
+    #[test]
     fn parse_type_atomic_i32() {
         let ty: syn::Type = syn::parse_str("Atomic<i32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();

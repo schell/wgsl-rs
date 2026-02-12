@@ -831,11 +831,7 @@ mod step {
     use super::*;
     impl NumericBuiltinStep for f32 {
         fn step(self, x: Self) -> Self {
-            if x >= self {
-                1.0
-            } else {
-                0.0
-            }
+            if x >= self { 1.0 } else { 0.0 }
         }
     }
     macro_rules! impl_step_vec {
@@ -1851,11 +1847,7 @@ mod select {
         ($ty:ty) => {
             impl LogicalBuiltinSelect<bool> for $ty {
                 fn select(f: Self, t: Self, cond: bool) -> Self {
-                    if cond {
-                        t
-                    } else {
-                        f
-                    }
+                    if cond { t } else { f }
                 }
             }
         };
@@ -2017,28 +2009,28 @@ mod frexp_impl {
     /// Manual implementation of C's `frexp` for `f32`, which Rust's standard
     /// library does not expose.
     ///
-    /// Splits `value` into a significand and exponent such that
-    /// `value = significand * 2^exponent`, where the significand is in
+    /// Splits `e` into a significand and exponent such that
+    /// `e = significand * 2^exponent`, where the significand is in
     /// `[0.5, 1.0)` for positive values or `(-1.0, -0.5]` for negative values.
     ///
     /// This works by directly manipulating the IEEE-754 binary32 bit layout:
     ///
     /// ```text
     ///   bit 31       bits 30..23       bits 22..0
-    ///  [sign: 1]  [exponent: 8]     [mantissa: 23]
+    ///   [sign: 1]    [exponent: 8]     [mantissa: 23]
     /// ```
     ///
     /// A normal `f32` represents: `(-1)^sign * 1.mantissa * 2^(exponent -
     /// 127)`, where 127 is the exponent bias.
-    fn frexp_f32(value: f32) -> (f32, i32) {
+    fn frexp_f32(e: f32) -> (f32, i32) {
         // Zero, NaN, and infinity have no meaningful decomposition.
         // The WGSL spec says: "when e is zero, the fraction is zero" and
         // "when e is subnormal, NaN, or infinite, the result is indeterminate".
-        if value == 0.0 || value.is_nan() || value.is_infinite() {
-            return (value, 0);
+        if e == 0.0 || e.is_nan() || e.is_infinite() {
+            return (e, 0);
         }
 
-        let bits = value.to_bits();
+        let bits = e.to_bits();
         let sign = bits & 0x8000_0000; // bit 31
         let biased_exp = ((bits >> 23) & 0xFF) as i32; // bits 30..23
         let mantissa = bits & 0x007F_FFFF; // bits 22..0
@@ -2048,7 +2040,7 @@ mod frexp_impl {
         // up by 2^23 (which shifts the mantissa into the normal range), then
         // decompose the normalized value and compensate the exponent.
         if biased_exp == 0 {
-            let normalized = value * (1u32 << 23) as f32;
+            let normalized = e * (1u32 << 23) as f32;
             let (fract, exp) = frexp_f32(normalized);
             return (fract, exp - 23);
         }
@@ -2060,7 +2052,7 @@ mod frexp_impl {
         let fract_bits = sign | (126 << 23) | mantissa;
         let fract = f32::from_bits(fract_bits);
 
-        // The output exponent satisfies: value = fract * 2^exp.
+        // The output exponent satisfies: e = fract * 2^exp.
         // Since fract = 1.mantissa * 2^(-1), and the original value was
         // 1.mantissa * 2^(biased_exp - 127), we get:
         //   exp = (biased_exp - 127) - (-1) = biased_exp - 126

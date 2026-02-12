@@ -21,7 +21,7 @@
 //! |x| fn countTrailingZeros(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | The number of consecutive 0 bits starting from the least significant bit<br>        of e, when T is a scalar type. Component-wise when T is a vector. Also known as "ctz" in some languages. |
 //! |x| fn cross(e1: vec3<T>, e2: vec3<T>) -> vec3<T> | T is AbstractFloat, f32, or f16 | Returns the cross product of e1 and e2. |
 //! |x| fn degrees(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts radians to degrees, approximating e1 × 180 ÷ π. Component-wise when T is a vector |
-//! | | fn determinant(e: matCxC<T>) -> T | T is AbstractFloat, f32, or f16 | Returns the determinant of e. |
+//! |x| fn determinant(e: matCxC<T>) -> T | T is AbstractFloat, f32, or f16 | Returns the determinant of e. (in matrix module) |
 //! |x| fn distance(e1: T, e2: T) -> S | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the distance between e1 and e2 (e.g. length(e1 - e2)). |
 //! |x| fn dot(e1: vecN<T>, e2: vecN<T>) -> T | T is AbstractInt, AbstractFloat, i32, u32, f32, or f16 | Returns the dot product of e1 and e2. |
 //! |x| fn exp(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the natural exponentiation of e1 (e.g. ee1). Component-wise when T is a vector. |
@@ -33,11 +33,11 @@
 //! |x| fn firstLeadingBit(e: T) -> T | T is u32 or vecN<u32> | For scalar T, the result is: <br>       <br>        T(-1) if e is zero. <br>        Otherwise the position of the most significant 1<br>            bit in e. <br>       <br>        Component-wise when T is a vector. |
 //! |x| fn firstTrailingBit(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | For scalar T, the result is: <br>       <br>        T(-1) if e is zero. <br>        Otherwise the position of the least significant 1<br>            bit in e. <br>       <br>        Component-wise when T is a vector. |
 //! |x| fn floor(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the floor of e. Component-wise when T is a vector. |
-//! | | fn fma(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 * e2 + e3. Component-wise when T is a vector. <br>       Note: The name fma is short for "fused multiply add".<br>       Note: The IEEE-754 fusedMultiplyAdd operation computes the intermediate results<br>    as if with unbounded range and precision, and only the final result is rounded<br>    to the destination type.<br>    However, the § 14.6.1 Floating Point Accuracy rule for fma allows an implementation<br>    which performs an ordinary multiply to the target type followed by an ordinary addition.<br>    In this case the intermediate values may overflow or lose accuracy, and the overall<br>    operation is not "fused" at all. |
+//! |x| fn fma(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns e1 * e2 + e3. Component-wise when T is a vector. <br>       Note: The name fma is short for "fused multiply add".<br>       Note: The IEEE-754 fusedMultiplyAdd operation computes the intermediate results<br>    as if with unbounded range and precision, and only the final result is rounded<br>    to the destination type.<br>    However, the § 14.6.1 Floating Point Accuracy rule for fma allows an implementation<br>    which performs an ordinary multiply to the target type followed by an ordinary addition.<br>    In this case the intermediate values may overflow or lose accuracy, and the overall<br>    operation is not "fused" at all. |
 //! |x| fn fract(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: Valid results are in the closed interval [0, 1.0].<br>For example, if e is a very small negative number, then fract(e) may be 1.0. |
 //! |x| fn insertBits(e: T, newbits: T, offset: u32, count: u32) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | Sets bits in an integer. <br>       When T is a scalar type, then:<br>       <br>        w is the bit width of T <br>        o = min(offset, w) <br>        c = min(count, w - o) <br>        The result is e if c is 0. <br>        Otherwise,<br>       bits o..o + c - 1 of the result are copied from bits 0..c - 1 of newbits.<br>       Other bits of the result are copied from e. <br>       <br>        Component-wise when T is a vector. <br>       If count + offset is greater than w, then:<br>       <br>        <br>         It is a shader-creation error if count and offset are const-expressions.<br>        <br>         It is a pipeline-creation error if count and offset are override-expressions. |
 //! |x| fn inverseSqrt(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e ≤ 0. |
-//! | | fn ldexp(e1: T, e2: I) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> I is AbstractInt, i32, vecN<AbstractInt>, or vecN<i32> I is a vector if and only if T is a vector I is concrete if and only if T is a concrete | Returns e1 * 2e2, except: <br>       <br>        <br>         The result may be zero if e2 + bias ≤ 0.<br>        <br>         If e2 > bias + 1<br>         <br>          <br>           It is a shader-creation error if e2 is a const-expression.<br>          <br>           It is a pipeline-creation error if e2 is an override-expression.<br>          <br>           Otherwise the result is an indeterminate value for T.<br>         <br>       <br>       Here, bias is the exponent bias of the floating point format:<br>       <br>        <br>         15 for f16<br>        <br>         127 for f32<br>        <br>         1023 for AbstractFloat, when AbstractFloat is IEEE-754 binary64<br>       <br>       If x is zero or a finite normal value for its type, then:<br>        x = ldexp(frexp(x).fract, frexp(x).exp) <br>       Component-wise when T is a vector.<br>       Note: A mnemonic for the name ldexp is "load exponent".<br>    The name may have been taken from the corresponding instruction in the floating point unit of<br>    the PDP-11. |
+//! |x| fn ldexp(e1: T, e2: I) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> I is AbstractInt, i32, vecN<AbstractInt>, or vecN<i32> I is a vector if and only if T is a vector I is concrete if and only if T is a concrete | Returns e1 * 2e2, except: <br>       <br>        <br>         The result may be zero if e2 + bias ≤ 0.<br>        <br>         If e2 > bias + 1<br>         <br>          <br>           It is a shader-creation error if e2 is a const-expression.<br>          <br>           It is a pipeline-creation error if e2 is an override-expression.<br>          <br>           Otherwise the result is an indeterminate value for T.<br>         <br>       <br>       Here, bias is the exponent bias of the floating point format:<br>       <br>        <br>         15 for f16<br>        <br>         127 for f32<br>        <br>         1023 for AbstractFloat, when AbstractFloat is IEEE-754 binary64<br>       <br>       If x is zero or a finite normal value for its type, then:<br>        x = ldexp(frexp(x).fract, frexp(x).exp) <br>       Component-wise when T is a vector.<br>       Note: A mnemonic for the name ldexp is "load exponent".<br>    The name may have been taken from the corresponding instruction in the floating point unit of<br>    the PDP-11. |
 //! |x| fn length(e: T) -> S | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the length of e. Evaluates to the absolute value of e if T is scalar. Evaluates to sqrt(e[0]2 + e[1]2 + ...) if T is a vector type. <br>       Note: The scalar case may be evaluated as sqrt(e * e),<br>        which may unnecessarily overflow or lose accuracy. |
 //! |x| fn log(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
 //! |x| fn log2(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Note: The result is not mathematically meaningful if e < 0. |
@@ -45,10 +45,10 @@
 //! |x| fn min(e1: T, e2: T) -> T | S is AbstractInt, AbstractFloat, i32, u32, f32, or f16. T is S, or vecN<S> | Returns e2 if e2 is less than e1, and e1 otherwise. Component-wise when T is a vector. <br>       If e1 and e2 are floating-point values, then:<br>       <br>        <br>         If both e1 and e2 are denormalized, then the result may be either value.<br>        <br>         If one operand is a NaN, the other is returned.<br>        <br>         If both operands are NaNs, a NaN is returned. |
 //! |x| fn mix(e1: T, e2: T, e3: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the linear blend of e1 and e2 (e.g. e1 * (1 - e3) + e2 * e3). Component-wise when T is a vector. |
 //! | | fn mix(e1: T2, e2: T2, e3: T) -> T2 | T is AbstractFloat, f32, or f16 T2 is vecN<T> | Returns the component-wise linear blend of e1 and e2,<br>        using scalar blending factor e3 for each component. Same as mix(e1, e2, T2(e3)). |
-//! | | fn modf(e: T) -> __modf_result_f32 | T is f32 | Note: A value cannot be explicitly declared with the type __modf_result_f32,<br>but a value may infer the type. |
+//! |x| fn modf(e: T) -> __modf_result_f32 | T is f32 | Note: A value cannot be explicitly declared with the type __modf_result_f32,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_f16 | T is f16 | Note: A value cannot be explicitly declared with the type __modf_result_f16,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_abstract | T is AbstractFloat | Note: A value cannot be explicitly declared with the type __modf_result_abstract,<br>but a value may infer the type. |
-//! | | fn modf(e: T) -> __modf_result_vecN_f32 | T is vecN<f32> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_f32,<br>but a value may infer the type. |
+//! |x| fn modf(e: T) -> __modf_result_vecN_f32 | T is vecN<f32> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_f32,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_vecN_f16 | T is vecN<f16> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_f16,<br>but a value may infer the type. |
 //! | | fn modf(e: T) -> __modf_result_vecN_abstract | T is vecN<AbstractFloat> | Note: A value cannot be explicitly declared with the type __modf_result_vecN_abstract,<br>but a value may infer the type. |
 //! |x| fn normalize(e: vecN<T> ) -> vecN<T> | T is AbstractFloat, f32, or f16 | Returns a unit vector in the same direction as e. |
@@ -56,7 +56,7 @@
 //! | | fn quantizeToF16(e: T) -> T | T is f32 or vecN<f32> | Note: The vec2<f32> case is the same as unpack2x16float(pack2x16float(e)). |
 //! |x| fn radians(e1: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Converts degrees to radians, approximating e1 × π ÷ 180. Component-wise when T is a vector |
 //! |x| fn reflect(e1: T, e2: T) -> T | T is vecN<AbstractFloat>, vecN<f32>, or vecN<f16> | For the incident vector e1 and surface orientation e2, returns the reflection direction e1 - 2 * dot(e2, e1) * e2. |
-//! | | fn refract(e1: T, e2: T, e3: I) -> T | T is vecN<I> I is AbstractFloat, f32, or f16 | For the incident vector e1 and surface normal e2, and the ratio of<br>    indices of refraction e3,<br>    let k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1)).<br>    If k < 0.0, returns the refraction vector 0.0, otherwise return the refraction vector e3 * e1 - (e3 * dot(e2, e1) + sqrt(k)) * e2. |
+//! |x| fn refract(e1: T, e2: T, e3: I) -> T | T is vecN<I> I is AbstractFloat, f32, or f16 | For the incident vector e1 and surface normal e2, and the ratio of<br>    indices of refraction e3,<br>    let k = 1.0 - e3 * e3 * (1.0 - dot(e2, e1) * dot(e2, e1)).<br>    If k < 0.0, returns the refraction vector 0.0, otherwise return the refraction vector e3 * e1 - (e3 * dot(e2, e1) + sqrt(k)) * e2. |
 //! |x| fn reverseBits(e: T) -> T | T is i32, u32, vecN<i32>, or vecN<u32> | Reverses the bits in e:  The bit at position k of the result equals the<br>        bit at position 31 -k of e. Component-wise when T is a vector. |
 //! |x| fn round(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Result is the integer k nearest to e, as a floating point value. When e lies halfway between integers k and k + 1,<br>        the result is k when k is even, and k + 1 when k is odd. Component-wise when T is a vector. |
 //! |x| fn saturate(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns clamp(e, 0.0, 1.0). Component-wise when T is a vector. |
@@ -68,7 +68,7 @@
 //! |x| fn step(edge: T, x: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns 1.0 if edge ≤ x, and 0.0 otherwise. Component-wise when T is a vector. |
 //! |x| fn tan(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the tangent of e, where e is in radians. Component-wise when T is a vector. |
 //! |x| fn tanh(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns the hyperbolic tangent of e, where e is a hyperbolic angle in radians.<br>    Approximates the pure mathematical function<br>    (earg − e−arg) ÷ (earg + e−arg)<br>    but not necessarily computed that way. <br>       Component-wise when T is a vector. |
-//! | | fn transpose(e: matRxC<T>) -> matCxR<T> | T is AbstractFloat, f32, or f16 | Returns the transpose of e. |
+//! |x| fn transpose(e: matRxC<T>) -> matCxR<T> | T is AbstractFloat, f32, or f16 | Returns the transpose of e. (in matrix module) |
 //! |x| fn trunc(e: T) -> T | S is AbstractFloat, f32, or f16. T is S or vecN<S> | Returns truncate(e), the nearest whole number whose absolute value<br>    is less than or equal to the absolute value of e. Component-wise when T is a vector. |
 
 use crate::std::*;
@@ -1905,6 +1905,236 @@ mod select {
     impl_select_vec!(4, bool);
 }
 
+/// Result of `modf()` — splits a floating-point value into fractional and whole
+/// parts.
+///
+/// In WGSL, this corresponds to `__modf_result_f32`, `__modf_result_vecN_f32`,
+/// etc. These types are inferred by the WGSL compiler and never explicitly
+/// declared.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModfResult<T> {
+    /// The fractional part: `e - trunc(e)`.
+    pub fract: T,
+    /// The whole part: `trunc(e)`.
+    pub whole: T,
+}
+
+/// Provides the numeric built-in function `modf`.
+pub trait NumericBuiltinModf: Sized {
+    /// Splits `self` into fractional and whole parts.
+    /// The whole part is `trunc(e)`, and the fractional part is `e - trunc(e)`.
+    fn modf(self) -> ModfResult<Self>;
+}
+
+/// Splits a floating-point value into fractional and whole parts.
+///
+/// The whole part is `trunc(e)`, and the fractional part is `e - trunc(e)`.
+/// Component-wise when `e` is a vector.
+pub fn modf<T: NumericBuiltinModf>(e: T) -> ModfResult<T> {
+    <T as NumericBuiltinModf>::modf(e)
+}
+
+mod modf_impl {
+    use super::*;
+
+    impl NumericBuiltinModf for f32 {
+        fn modf(self) -> ModfResult<Self> {
+            let whole = self.trunc();
+            ModfResult {
+                fract: self - whole,
+                whole,
+            }
+        }
+    }
+
+    macro_rules! impl_modf_vec {
+        ($ty:ty) => {
+            impl NumericBuiltinModf for $ty {
+                fn modf(self) -> ModfResult<Self> {
+                    let whole_inner = self.inner.trunc();
+                    ModfResult {
+                        fract: Self {
+                            inner: self.inner - whole_inner,
+                        },
+                        whole: Self { inner: whole_inner },
+                    }
+                }
+            }
+        };
+    }
+    impl_modf_vec!(Vec2f);
+    impl_modf_vec!(Vec3f);
+    impl_modf_vec!(Vec4f);
+}
+
+/// Result of `frexp()` — splits a floating-point value into significand and
+/// exponent.
+///
+/// In WGSL, this corresponds to `__frexp_result_f32`,
+/// `__frexp_result_vecN_f32`, etc. These types are inferred by the WGSL
+/// compiler and never explicitly declared.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrexpResult<T, E> {
+    /// The significand (fraction) part, in the range [0.5, 1.0) or (-1.0,
+    /// -0.5] for non-zero normal values.
+    pub fract: T,
+    /// The exponent part, such that `e = fract * 2^exp` for non-zero normal
+    /// values.
+    pub exp: E,
+}
+
+/// Provides the numeric built-in function `frexp`.
+pub trait NumericBuiltinFrexp: Sized {
+    /// The integer type for the exponent (`i32` for scalars, `VecNi` for
+    /// vectors).
+    type Exp;
+
+    /// Splits `self` into a significand and exponent such that
+    /// `self = fract * 2^exp` for non-zero normal values.
+    fn frexp(self) -> FrexpResult<Self, Self::Exp>;
+}
+
+/// Splits a floating-point value into significand and exponent.
+///
+/// For non-zero normal values: `e = result.fract * 2^result.exp`,
+/// where the fraction is in the range [0.5, 1.0) or (-1.0, -0.5].
+/// Component-wise when `e` is a vector.
+pub fn frexp<T: NumericBuiltinFrexp>(e: T) -> FrexpResult<T, T::Exp> {
+    <T as NumericBuiltinFrexp>::frexp(e)
+}
+
+mod frexp_impl {
+    use super::*;
+
+    /// Manual implementation of frexp for f32.
+    ///
+    /// Splits `value` into significand in [0.5, 1.0) and exponent such that
+    /// `value = significand * 2^exponent`.
+    fn frexp_f32(value: f32) -> (f32, i32) {
+        if value == 0.0 || value.is_nan() || value.is_infinite() {
+            return (value, 0);
+        }
+        let bits = value.to_bits();
+        let sign = bits & 0x8000_0000;
+        let exponent = ((bits >> 23) & 0xFF) as i32;
+        let mantissa = bits & 0x007F_FFFF;
+
+        if exponent == 0 {
+            // Subnormal: normalize by multiplying by 2^23 and recursing
+            let normalized = value * (1u32 << 23) as f32;
+            let (fract, exp) = frexp_f32(normalized);
+            return (fract, exp - 23);
+        }
+
+        // Construct significand with exponent = -1 (biased: 126)
+        // This puts the significand in [0.5, 1.0)
+        let fract_bits = sign | (126 << 23) | mantissa;
+        let fract = f32::from_bits(fract_bits);
+        let exp = exponent - 126; // unbias: exponent - 127 + 1
+        (fract, exp)
+    }
+
+    impl NumericBuiltinFrexp for f32 {
+        type Exp = i32;
+
+        fn frexp(self) -> FrexpResult<Self, i32> {
+            let (fract, exp) = frexp_f32(self);
+            FrexpResult { fract, exp }
+        }
+    }
+
+    macro_rules! impl_frexp_vec {
+        ($fty:ty, $ity:ty, $n:literal) => {
+            impl NumericBuiltinFrexp for $fty {
+                type Exp = $ity;
+
+                fn frexp(self) -> FrexpResult<Self, $ity> {
+                    let arr = f32::vec_to_array(self);
+                    let mut fract_arr = [0.0f32; $n];
+                    let mut exp_arr = [0i32; $n];
+                    for i in 0..$n {
+                        let (f, e) = frexp_f32(arr[i]);
+                        fract_arr[i] = f;
+                        exp_arr[i] = e;
+                    }
+                    FrexpResult {
+                        fract: f32::vec_from_array(fract_arr),
+                        exp: i32::vec_from_array(exp_arr),
+                    }
+                }
+            }
+        };
+    }
+    impl_frexp_vec!(Vec2f, Vec2i, 2);
+    impl_frexp_vec!(Vec3f, Vec3i, 3);
+    impl_frexp_vec!(Vec4f, Vec4i, 4);
+}
+
+/// Provides the numeric built-in function `ldexp`.
+pub trait NumericBuiltinLdexp<I> {
+    /// Returns `e1 * 2^e2`.
+    fn ldexp(e1: Self, e2: I) -> Self;
+}
+
+/// Returns `e1 * 2^e2` (load exponent).
+///
+/// Component-wise when the arguments are vectors.
+pub fn ldexp<T: NumericBuiltinLdexp<I>, I>(e1: T, e2: I) -> T {
+    <T as NumericBuiltinLdexp<I>>::ldexp(e1, e2)
+}
+
+mod ldexp_impl {
+    use super::*;
+
+    /// Manual implementation of ldexp for f32.
+    ///
+    /// Returns `value * 2^exp`.
+    fn ldexp_f32(value: f32, exp: i32) -> f32 {
+        // Use successive multiplications to handle large exponent ranges
+        // without overflow in the intermediate 2^exp computation.
+        let mut result = value;
+        let mut remaining = exp;
+
+        while remaining > 0 {
+            let step = Ord::min(remaining, 127);
+            result *= f32::from_bits(((step + 127) as u32) << 23);
+            remaining -= step;
+        }
+        while remaining < 0 {
+            let step = Ord::max(remaining, -126);
+            result *= f32::from_bits(((step + 127) as u32) << 23);
+            remaining -= step;
+        }
+
+        result
+    }
+
+    impl NumericBuiltinLdexp<i32> for f32 {
+        fn ldexp(e1: Self, e2: i32) -> Self {
+            ldexp_f32(e1, e2)
+        }
+    }
+
+    macro_rules! impl_ldexp_vec {
+        ($fty:ty, $ity:ty, $n:literal) => {
+            impl NumericBuiltinLdexp<$ity> for $fty {
+                fn ldexp(e1: Self, e2: $ity) -> Self {
+                    let f_arr = f32::vec_to_array(e1);
+                    let i_arr = i32::vec_to_array(e2);
+                    let mut result = [0.0f32; $n];
+                    for i in 0..$n {
+                        result[i] = ldexp_f32(f_arr[i], i_arr[i]);
+                    }
+                    f32::vec_from_array(result)
+                }
+            }
+        };
+    }
+    impl_ldexp_vec!(Vec2f, Vec2i, 2);
+    impl_ldexp_vec!(Vec3f, Vec3i, 3);
+    impl_ldexp_vec!(Vec4f, Vec4i, 4);
+}
+
 
 #[cfg(test)]
 mod test {
@@ -2293,5 +2523,99 @@ mod test {
         assert_eq!(result2.x(), 0.0);
         assert_eq!(result2.y(), 1.0);
         assert_eq!(result2.z(), 0.0);
+    }
+
+    #[test]
+    fn sanity_modf_scalar() {
+        let r = modf(1.5f32);
+        assert_eq!(r.fract, 0.5);
+        assert_eq!(r.whole, 1.0);
+
+        let r = modf(-1.75f32);
+        assert_eq!(r.fract, -0.75);
+        assert_eq!(r.whole, -1.0);
+
+        let r = modf(0.0f32);
+        assert_eq!(r.fract, 0.0);
+        assert_eq!(r.whole, 0.0);
+    }
+
+    #[test]
+    fn sanity_modf_vec() {
+        let r = modf(vec2f(1.5, -2.25));
+        assert_eq!(r.fract.x(), 0.5);
+        assert_eq!(r.fract.y(), -0.25);
+        assert_eq!(r.whole.x(), 1.0);
+        assert_eq!(r.whole.y(), -2.0);
+
+        let r = modf(vec3f(3.7, 0.0, -0.5));
+        assert!((r.fract.x() - 0.7).abs() < 1e-6);
+        assert_eq!(r.fract.y(), 0.0);
+        assert_eq!(r.fract.z(), -0.5);
+        assert_eq!(r.whole.x(), 3.0);
+        assert_eq!(r.whole.y(), 0.0);
+        assert_eq!(r.whole.z(), 0.0);
+    }
+
+    #[test]
+    fn sanity_frexp_scalar() {
+        let r = frexp(1.0f32);
+        assert_eq!(r.fract, 0.5);
+        assert_eq!(r.exp, 1);
+
+        let r = frexp(0.5f32);
+        assert_eq!(r.fract, 0.5);
+        assert_eq!(r.exp, 0);
+
+        let r = frexp(4.0f32);
+        assert_eq!(r.fract, 0.5);
+        assert_eq!(r.exp, 3);
+
+        let r = frexp(0.0f32);
+        assert_eq!(r.fract, 0.0);
+        assert_eq!(r.exp, 0);
+
+        let r = frexp(-1.5f32);
+        assert_eq!(r.fract, -0.75);
+        assert_eq!(r.exp, 1);
+    }
+
+    #[test]
+    fn sanity_frexp_vec() {
+        let r = frexp(vec2f(1.0, 4.0));
+        assert_eq!(r.fract.x(), 0.5);
+        assert_eq!(r.fract.y(), 0.5);
+        assert_eq!(r.exp.x(), 1);
+        assert_eq!(r.exp.y(), 3);
+    }
+
+    #[test]
+    fn sanity_ldexp_scalar() {
+        assert_eq!(ldexp(0.5f32, 1i32), 1.0);
+        assert_eq!(ldexp(0.5f32, 3i32), 4.0);
+        assert_eq!(ldexp(1.0f32, 0i32), 1.0);
+        assert_eq!(ldexp(0.75f32, 2i32), 3.0);
+    }
+
+    #[test]
+    fn sanity_ldexp_vec() {
+        let result = ldexp(vec2f(0.5, 0.5), vec2i(1, 3));
+        assert_eq!(result.x(), 1.0);
+        assert_eq!(result.y(), 4.0);
+    }
+
+    #[test]
+    fn sanity_frexp_ldexp_roundtrip() {
+        // For finite normal x: x == ldexp(frexp(x).fract, frexp(x).exp)
+        for &x in &[1.0f32, 0.5, 4.0, 100.0, 0.001, -3.14, 1e30, 1e-30] {
+            let r = frexp(x);
+            let reconstructed = ldexp(r.fract, r.exp);
+            assert!(
+                (reconstructed - x).abs() < x.abs() * 1e-6,
+                "roundtrip failed for {x}: frexp gave fract={}, exp={}, ldexp gave {reconstructed}",
+                r.fract,
+                r.exp
+            );
+        }
     }
 }

@@ -25,6 +25,8 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &texture_example::WGSL_MODULE,
     &bitcast_example::WGSL_MODULE,
     &packing_example::WGSL_MODULE,
+    &advanced_numeric_example::WGSL_MODULE,
+    &matrix_builtin_example::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1130,5 +1132,55 @@ pub mod packing_example {
 
     pub fn demo_unpack2x16float(e: u32) -> Vec2f {
         unpack2x16float(e)
+    }
+}
+
+#[wgsl]
+pub mod advanced_numeric_example {
+    //! Demonstrates the advanced numeric builtin functions: `modf`, `frexp`,
+    //! and `ldexp`.
+    use wgsl_rs::std::*;
+
+    pub fn demo_modf_fract(e: f32) -> f32 {
+        let result = modf(e);
+        result.fract
+    }
+
+    pub fn demo_modf_whole(e: f32) -> f32 {
+        modf(e).whole
+    }
+
+    pub fn demo_frexp_fract(e: f32) -> f32 {
+        frexp(e).fract
+    }
+
+    pub fn demo_frexp_exp(e: f32) -> i32 {
+        frexp(e).exp
+    }
+
+    pub fn demo_ldexp(significand: f32, exponent: i32) -> f32 {
+        ldexp(significand, exponent)
+    }
+}
+
+#[wgsl]
+pub mod matrix_builtin_example {
+    //! Demonstrates matrix builtin functions: `determinant` and `transpose`.
+    use wgsl_rs::std::*;
+
+    pub fn demo_determinant_2x2(m: Mat2f) -> f32 {
+        determinant(m)
+    }
+
+    pub fn demo_determinant_3x3(m: Mat3f) -> f32 {
+        determinant(m)
+    }
+
+    pub fn demo_determinant_4x4(m: Mat4f) -> f32 {
+        determinant(m)
+    }
+
+    pub fn demo_transpose_4x4(m: Mat4f) -> Mat4f {
+        transpose(m)
     }
 }

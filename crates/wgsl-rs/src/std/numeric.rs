@@ -831,7 +831,11 @@ mod step {
     use super::*;
     impl NumericBuiltinStep for f32 {
         fn step(self, x: Self) -> Self {
-            if x >= self { 1.0 } else { 0.0 }
+            if x >= self {
+                1.0
+            } else {
+                0.0
+            }
         }
     }
     macro_rules! impl_step_vec {
@@ -1847,7 +1851,11 @@ mod select {
         ($ty:ty) => {
             impl LogicalBuiltinSelect<bool> for $ty {
                 fn select(f: Self, t: Self, cond: bool) -> Self {
-                    if cond { t } else { f }
+                    if cond {
+                        t
+                    } else {
+                        f
+                    }
                 }
             }
         };
@@ -2006,31 +2014,57 @@ pub fn frexp<T: NumericBuiltinFrexp>(e: T) -> FrexpResult<T, T::Exp> {
 mod frexp_impl {
     use super::*;
 
-    /// Manual implementation of frexp for f32.
+    /// Manual implementation of C's `frexp` for `f32`, which Rust's standard
+    /// library does not expose.
     ///
-    /// Splits `value` into significand in [0.5, 1.0) and exponent such that
-    /// `value = significand * 2^exponent`.
+    /// Splits `value` into a significand and exponent such that
+    /// `value = significand * 2^exponent`, where the significand is in
+    /// `[0.5, 1.0)` for positive values or `(-1.0, -0.5]` for negative values.
+    ///
+    /// This works by directly manipulating the IEEE-754 binary32 bit layout:
+    ///
+    /// ```text
+    ///   bit 31       bits 30..23       bits 22..0
+    ///  [sign: 1]  [exponent: 8]     [mantissa: 23]
+    /// ```
+    ///
+    /// A normal `f32` represents: `(-1)^sign * 1.mantissa * 2^(exponent -
+    /// 127)`, where 127 is the exponent bias.
     fn frexp_f32(value: f32) -> (f32, i32) {
+        // Zero, NaN, and infinity have no meaningful decomposition.
+        // The WGSL spec says: "when e is zero, the fraction is zero" and
+        // "when e is subnormal, NaN, or infinite, the result is indeterminate".
         if value == 0.0 || value.is_nan() || value.is_infinite() {
             return (value, 0);
         }
-        let bits = value.to_bits();
-        let sign = bits & 0x8000_0000;
-        let exponent = ((bits >> 23) & 0xFF) as i32;
-        let mantissa = bits & 0x007F_FFFF;
 
-        if exponent == 0 {
-            // Subnormal: normalize by multiplying by 2^23 and recursing
+        let bits = value.to_bits();
+        let sign = bits & 0x8000_0000; // bit 31
+        let biased_exp = ((bits >> 23) & 0xFF) as i32; // bits 30..23
+        let mantissa = bits & 0x007F_FFFF; // bits 22..0
+
+        // Subnormal numbers have a biased exponent of 0 and represent
+        // `(-1)^sign * 0.mantissa * 2^(-126)`. We normalize them by scaling
+        // up by 2^23 (which shifts the mantissa into the normal range), then
+        // decompose the normalized value and compensate the exponent.
+        if biased_exp == 0 {
             let normalized = value * (1u32 << 23) as f32;
             let (fract, exp) = frexp_f32(normalized);
             return (fract, exp - 23);
         }
 
-        // Construct significand with exponent = -1 (biased: 126)
-        // This puts the significand in [0.5, 1.0)
+        // To produce a significand in [0.5, 1.0), we need the result to
+        // represent `1.mantissa * 2^(-1)`. In IEEE-754 that means a biased
+        // exponent of 126 (since 126 - 127 = -1). We keep the original sign
+        // and mantissa bits, replacing only the exponent field.
         let fract_bits = sign | (126 << 23) | mantissa;
         let fract = f32::from_bits(fract_bits);
-        let exp = exponent - 126; // unbias: exponent - 127 + 1
+
+        // The output exponent satisfies: value = fract * 2^exp.
+        // Since fract = 1.mantissa * 2^(-1), and the original value was
+        // 1.mantissa * 2^(biased_exp - 127), we get:
+        //   exp = (biased_exp - 127) - (-1) = biased_exp - 126
+        let exp = biased_exp - 126;
         (fract, exp)
     }
 
@@ -2086,32 +2120,9 @@ pub fn ldexp<T: NumericBuiltinLdexp<I>, I>(e1: T, e2: I) -> T {
 mod ldexp_impl {
     use super::*;
 
-    /// Manual implementation of ldexp for f32.
-    ///
-    /// Returns `value * 2^exp`.
-    fn ldexp_f32(value: f32, exp: i32) -> f32 {
-        // Use successive multiplications to handle large exponent ranges
-        // without overflow in the intermediate 2^exp computation.
-        let mut result = value;
-        let mut remaining = exp;
-
-        while remaining > 0 {
-            let step = Ord::min(remaining, 127);
-            result *= f32::from_bits(((step + 127) as u32) << 23);
-            remaining -= step;
-        }
-        while remaining < 0 {
-            let step = Ord::max(remaining, -126);
-            result *= f32::from_bits(((step + 127) as u32) << 23);
-            remaining -= step;
-        }
-
-        result
-    }
-
     impl NumericBuiltinLdexp<i32> for f32 {
         fn ldexp(e1: Self, e2: i32) -> Self {
-            ldexp_f32(e1, e2)
+            e1 * (2.0f32).powi(e2)
         }
     }
 
@@ -2123,7 +2134,7 @@ mod ldexp_impl {
                     let i_arr = i32::vec_to_array(e2);
                     let mut result = [0.0f32; $n];
                     for i in 0..$n {
-                        result[i] = ldexp_f32(f_arr[i], i_arr[i]);
+                        result[i] = ldexp(f_arr[i], i_arr[i]);
                     }
                     f32::vec_from_array(result)
                 }

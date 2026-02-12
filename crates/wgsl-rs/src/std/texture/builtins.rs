@@ -12,7 +12,7 @@
 
 use crate::std::{
     texture::{Sampler, SamplerComparison},
-    vectors::Vec4f,
+    vector::Vec4f,
 };
 
 /// CPU-side texture data for 1D textures.

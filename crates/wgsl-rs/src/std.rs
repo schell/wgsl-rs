@@ -28,6 +28,7 @@ mod atomic;
 mod bitcast;
 mod matrix;
 mod numeric;
+mod packing;
 mod texture;
 mod vector;
 
@@ -35,6 +36,7 @@ pub use atomic::*;
 pub use bitcast::*;
 pub use matrix::*;
 pub use numeric::*;
+pub use packing::*;
 pub use texture::*;
 pub use vector::*;
 

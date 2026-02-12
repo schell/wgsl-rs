@@ -524,10 +524,6 @@ pub fn atomic_compare_exchange_weak_i32(
 mod atomic_tests {
     use super::*;
 
-    // ========================================================================
-    // u32 tests
-    // ========================================================================
-
     #[test]
     fn test_atomic_load_store_u32() {
         let a: Atomic<u32> = Atomic::default();
@@ -668,10 +664,6 @@ mod atomic_tests {
         assert!(!result.exchanged);
         assert_eq!(atomic_load(&a), 20);
     }
-
-    // ========================================================================
-    // i32 tests
-    // ========================================================================
 
     #[test]
     fn test_atomic_load_store_i32() {

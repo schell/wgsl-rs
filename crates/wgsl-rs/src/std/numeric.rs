@@ -2141,8 +2141,6 @@ mod ldexp_impl {
 
 #[cfg(test)]
 mod test {
-    use core::f32;
-
     use super::*;
 
     #[test]

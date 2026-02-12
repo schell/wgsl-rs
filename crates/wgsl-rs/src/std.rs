@@ -25,15 +25,16 @@ pub use crate::{get, get_mut};
 
 
 mod atomic;
+mod bitcast;
 mod matrices;
-// TODO: Move this to numeric and numeric::builtins
-mod numeric_builtin_functions;
+mod numeric;
 mod texture;
 mod vectors;
 
 pub use atomic::*;
+pub use bitcast::*;
 pub use matrices::*;
-pub use numeric_builtin_functions::*;
+pub use numeric::*;
 pub use texture::*;
 pub use vectors::*;
 

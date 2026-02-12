@@ -12,6 +12,19 @@
 pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     // Arrays
     ("array_length", "arrayLength"),
+    // Bitcast
+    ("bitcast_f32", "bitcast<f32>"),
+    ("bitcast_i32", "bitcast<i32>"),
+    ("bitcast_u32", "bitcast<u32>"),
+    ("bitcast_vec2f", "bitcast<vec2<f32>>"),
+    ("bitcast_vec2i", "bitcast<vec2<i32>>"),
+    ("bitcast_vec2u", "bitcast<vec2<u32>>"),
+    ("bitcast_vec3f", "bitcast<vec3<f32>>"),
+    ("bitcast_vec3i", "bitcast<vec3<i32>>"),
+    ("bitcast_vec3u", "bitcast<vec3<u32>>"),
+    ("bitcast_vec4f", "bitcast<vec4<f32>>"),
+    ("bitcast_vec4i", "bitcast<vec4<i32>>"),
+    ("bitcast_vec4u", "bitcast<vec4<u32>>"),
     // Atomic operations
     ("atomic_add", "atomicAdd"),
     ("atomic_and", "atomicAnd"),
@@ -175,5 +188,28 @@ mod tests {
     fn is_reserved_returns_none_for_non_builtin() {
         assert_eq!(is_reserved_builtin("my_function"), None);
         assert_eq!(is_reserved_builtin("sin"), None);
+    }
+
+    #[test]
+    fn lookup_bitcast_builtins() {
+        assert_eq!(lookup_wgsl_name("bitcast_f32"), Some("bitcast<f32>"));
+        assert_eq!(lookup_wgsl_name("bitcast_u32"), Some("bitcast<u32>"));
+        assert_eq!(lookup_wgsl_name("bitcast_i32"), Some("bitcast<i32>"));
+        assert_eq!(
+            lookup_wgsl_name("bitcast_vec2f"),
+            Some("bitcast<vec2<f32>>")
+        );
+        assert_eq!(
+            lookup_wgsl_name("bitcast_vec4i"),
+            Some("bitcast<vec4<i32>>")
+        );
+    }
+
+    #[test]
+    fn bitcast_names_are_reserved() {
+        assert!(is_reserved_builtin("bitcast_f32").is_some());
+        assert!(is_reserved_builtin("bitcast_u32").is_some());
+        assert!(is_reserved_builtin("bitcast_i32").is_some());
+        assert!(is_reserved_builtin("bitcast_vec3u").is_some());
     }
 }

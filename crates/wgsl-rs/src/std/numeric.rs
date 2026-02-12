@@ -2141,6 +2141,8 @@ mod ldexp_impl {
 
 #[cfg(test)]
 mod test {
+    use core::f32;
+
     use super::*;
 
     #[test]
@@ -2610,12 +2612,13 @@ mod test {
     #[test]
     fn sanity_frexp_ldexp_roundtrip() {
         // For finite normal x: x == ldexp(frexp(x).fract, frexp(x).exp)
-        for &x in &[1.0f32, 0.5, 4.0, 100.0, 0.001, -3.14, 1e30, 1e-30] {
+        for &x in &[1.0f32, 0.5, 4.0, 100.0, 0.001, -3.1, 1e30, 1e-30] {
             let r = frexp(x);
             let reconstructed = ldexp(r.fract, r.exp);
             assert!(
                 (reconstructed - x).abs() < x.abs() * 1e-6,
-                "roundtrip failed for {x}: frexp gave fract={}, exp={}, ldexp gave {reconstructed}",
+                "CPU roundtrip failed for {x}: frexp gave fract={}, exp={}, ldexp gave \
+                 {reconstructed}",
                 r.fract,
                 r.exp
             );

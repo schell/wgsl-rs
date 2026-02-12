@@ -26,17 +26,17 @@ pub use crate::{get, get_mut};
 
 mod atomic;
 mod bitcast;
-mod matrices;
+mod matrix;
 mod numeric;
 mod texture;
-mod vectors;
+mod vector;
 
 pub use atomic::*;
 pub use bitcast::*;
-pub use matrices::*;
+pub use matrix::*;
 pub use numeric::*;
 pub use texture::*;
-pub use vectors::*;
+pub use vector::*;
 
 
 /// Shared reference to a uniform, storage or workgroup variable.

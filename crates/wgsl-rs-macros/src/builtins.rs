@@ -37,6 +37,11 @@ pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     ("atomic_store", "atomicStore"),
     ("atomic_sub", "atomicSub"),
     ("atomic_xor", "atomicXor"),
+    // Synchronization
+    ("storage_barrier", "storageBarrier"),
+    ("texture_barrier", "textureBarrier"),
+    ("workgroup_barrier", "workgroupBarrier"),
+    ("workgroup_uniform_load", "workgroupUniformLoad"),
     // Bit manipulation
     ("count_leading_zeros", "countLeadingZeros"),
     ("count_one_bits", "countOneBits"),

@@ -29,6 +29,7 @@ mod bitcast;
 mod matrix;
 mod numeric;
 mod packing;
+mod synchronization;
 mod texture;
 mod vector;
 
@@ -37,6 +38,7 @@ pub use bitcast::*;
 pub use matrix::*;
 pub use numeric::*;
 pub use packing::*;
+pub use synchronization::*;
 pub use texture::*;
 pub use vector::*;
 

@@ -869,12 +869,13 @@ impl TryFrom<&syn::Type> for Type {
                 let address_space = match parsed.address_space.to_string().as_str() {
                     "function" => AddressSpace::Function,
                     "private" => AddressSpace::Private,
+                    "workgroup" => AddressSpace::Workgroup,
                     other => {
                         return UnsupportedSnafu {
                             span: parsed.address_space.span(),
                             note: format!(
-                                "unsupported address space '{}', only 'function' and 'private' \
-                                 are supported",
+                                "unsupported address space '{}', only 'function', 'private', and \
+                                 'workgroup' are supported",
                                 other
                             ),
                         }

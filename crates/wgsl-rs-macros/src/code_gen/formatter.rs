@@ -1947,6 +1947,12 @@ impl GenerateCode for Item {
             Item::MacroRules => {
                 // macro_rules! definitions are Rust-only and produce no WGSL.
             }
+            Item::Trait => {
+                // Trait definitions are Rust-only and produce no WGSL.
+            }
+            Item::TraitImpl => {
+                // Trait impl blocks are Rust-only and produce no WGSL.
+            }
         }
     }
 }

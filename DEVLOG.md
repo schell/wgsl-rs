@@ -236,6 +236,14 @@ Added `workgroup!` macro for declaring workgroup-scoped variables shared across 
 - Added `AddressSpace::Workgroup` variant for future pointer support
 - Atomic builtin functions (atomicLoad, atomicStore, etc.) will be added in a future update
 
+### 2026-02-13: Synchronization builtin functions
+
+Added `storageBarrier()`, `workgroupBarrier()`, `textureBarrier()`, and `workgroupUniformLoad()` synchronization builtins for compute shader workgroup coordination.
+- Barrier functions are no-ops on the CPU side (no parallel dispatch runtime yet)
+- `workgroup_uniform_load` uses a `WorkgroupUniformLoad` trait with impls for `Workgroup<T: Clone>` and `Workgroup<Atomic<{u32,i32}>>`
+- Extended `ptr!` macro and parser to support `workgroup` address space
+- Added name mappings in `BUILTIN_CASE_NAME_MAP` for all four sync builtins
+
 ### 2026-01-24: RuntimeArray<T> support
 
 Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without size parameter).

@@ -63,10 +63,16 @@ pub fn ptr(input: TokenStream) -> TokenStream {
             // In Rust, this maps to &mut T for mutable access.
             quote! { &mut #store_type }.into()
         }
+        "workgroup" => {
+            // Workgroup address space has read_write access mode by default.
+            // In Rust, this maps to &mut T for mutable access.
+            quote! { &mut #store_type }.into()
+        }
         other => syn::Error::new(
             address_space.span(),
             format!(
-                "unsupported address space '{}', only 'function' and 'private' are supported",
+                "unsupported address space '{}', only 'function', 'private', and 'workgroup' are \
+                 supported",
                 other
             ),
         )

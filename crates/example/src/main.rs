@@ -30,6 +30,8 @@ fn print_available_modules() {
 }
 
 fn validate_and_print_source(module: &wgsl_rs::Module) {
+    println!("## {}", module.name);
+
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
 

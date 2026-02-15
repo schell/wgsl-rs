@@ -4355,14 +4355,10 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             .fail();
         }
 
-        // Reject trait impls
-        if let Some((_, trait_path, _)) = trait_ {
-            return UnsupportedSnafu {
-                span: trait_path.span(),
-                note: "trait impls are not supported in WGSL. Use `impl StructName { ... }` \
-                       instead",
-            }
-            .fail();
+        // Trait impls are caught upstream in `Item::try_from` and returned as
+        // `Item::TraitImpl` before reaching this point.
+        if trait_.is_some() {
+            unreachable!("trait impls should be handled by Item::try_from before reaching ItemImpl");
         }
 
         // Get the struct name (self_ty must be a simple ident)
@@ -4429,6 +4425,12 @@ pub enum Item {
     Struct(ItemStruct),
     Impl(ItemImpl),
     Enum(ItemEnum),
+    /// `macro_rules!` definitions are Rust-only and produce no WGSL output.
+    MacroRules,
+    /// Trait definitions are Rust-only and produce no WGSL output.
+    Trait,
+    /// Trait impl blocks are Rust-only and produce no WGSL output.
+    TraitImpl,
 }
 
 impl TryFrom<&syn::Item> for Item {
@@ -4456,6 +4458,7 @@ impl TryFrom<&syn::Item> for Item {
                     Some("texture") => {
                         Ok(Item::Texture(Box::new(ItemTexture::try_from(item_macro)?)))
                     }
+                    Some("macro_rules") => Ok(Item::MacroRules),
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
                         note: format!(
@@ -4479,8 +4482,17 @@ impl TryFrom<&syn::Item> for Item {
                 semi_token: _,
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
-            syn::Item::Impl(item_impl) => Ok(Item::Impl(ItemImpl::try_from(item_impl)?)),
+            syn::Item::Impl(item_impl) => {
+                // Trait impl blocks (e.g. `impl Foo for Bar { ... }`) are Rust-only
+                // and produce no WGSL. Inherent impl blocks are parsed normally.
+                if item_impl.trait_.is_some() {
+                    Ok(Item::TraitImpl)
+                } else {
+                    Ok(Item::Impl(ItemImpl::try_from(item_impl)?))
+                }
+            }
             syn::Item::Enum(item_enum) => Ok(Item::Enum(ItemEnum::try_from(item_enum)?)),
+            syn::Item::Trait(_) => Ok(Item::Trait),
             _ => UnsupportedSnafu {
                 span: value.span(),
                 note: format!(
@@ -5009,19 +5021,16 @@ mod test {
     }
 
     #[test]
-    fn parse_impl_rejects_traits() {
+    fn parse_trait_impl_passthrough() {
         let item: syn::Item = syn::parse_quote! {
             impl SomeTrait for Light {
                 pub fn foo() {}
             }
         };
         let result = Item::try_from(&item);
-        assert!(result.is_err());
-        let err = format!("{}", result.err().unwrap());
         assert!(
-            err.contains("trait impls are not supported"),
-            "Expected error about trait impls, got: {}",
-            err
+            matches!(result, Ok(Item::TraitImpl)),
+            "trait impl should be accepted as passthrough"
         );
     }
 
@@ -6565,6 +6574,49 @@ mod test {
         assert!(
             result.is_err(),
             "Expected error when using Sampler in texture! macro, but parsing succeeded"
+        );
+    }
+
+    #[test]
+    fn parse_macro_rules_passthrough() {
+        let item: syn::Item = syn::parse_quote! {
+            macro_rules! my_macro {
+                ($x:expr) => { $x }
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Ok(Item::MacroRules)),
+            "macro_rules! should be accepted as passthrough"
+        );
+    }
+
+    #[test]
+    fn parse_trait_definition_passthrough() {
+        let item: syn::Item = syn::parse_quote! {
+            trait MyTrait {
+                fn bar(&self) -> u32;
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Ok(Item::Trait)),
+            "trait definitions should be accepted as passthrough"
+        );
+    }
+
+    #[test]
+    fn parse_struct_with_derive_passthrough() {
+        let item: syn::Item = syn::parse_quote! {
+            #[derive(Clone, Debug)]
+            pub struct Light {
+                pub color: Vec4<f32>,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Ok(Item::Struct(_))),
+            "#[derive(...)] on structs should be silently ignored during WGSL parsing"
         );
     }
 }

@@ -1944,6 +1944,9 @@ impl GenerateCode for Item {
             Item::Struct(item_struct) => item_struct.write_code(code),
             Item::Impl(item_impl) => item_impl.write_code(code),
             Item::Enum(item_enum) => item_enum.write_code(code),
+            Item::MacroRules => {
+                // macro_rules! definitions are Rust-only and produce no WGSL.
+            }
         }
     }
 }

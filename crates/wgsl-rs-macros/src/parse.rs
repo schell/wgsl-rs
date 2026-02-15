@@ -4429,6 +4429,8 @@ pub enum Item {
     Struct(ItemStruct),
     Impl(ItemImpl),
     Enum(ItemEnum),
+    /// `macro_rules!` definitions are Rust-only and produce no WGSL output.
+    MacroRules,
 }
 
 impl TryFrom<&syn::Item> for Item {
@@ -4456,6 +4458,7 @@ impl TryFrom<&syn::Item> for Item {
                     Some("texture") => {
                         Ok(Item::Texture(Box::new(ItemTexture::try_from(item_macro)?)))
                     }
+                    Some("macro_rules") => Ok(Item::MacroRules),
                     other => UnsupportedSnafu {
                         span: item_macro.ident.span(),
                         note: format!(
@@ -6565,6 +6568,20 @@ mod test {
         assert!(
             result.is_err(),
             "Expected error when using Sampler in texture! macro, but parsing succeeded"
+        );
+    }
+
+    #[test]
+    fn parse_macro_rules_passthrough() {
+        let item: syn::Item = syn::parse_quote! {
+            macro_rules! my_macro {
+                ($x:expr) => { $x }
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Ok(Item::MacroRules)),
+            "macro_rules! should be accepted as passthrough"
         );
     }
 }

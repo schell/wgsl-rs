@@ -28,6 +28,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &advanced_numeric_example::WGSL_MODULE,
     &matrix_builtin_example::WGSL_MODULE,
     &synchronization_example::WGSL_MODULE,
+    &macro_rules_definitions::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1234,5 +1235,23 @@ pub mod synchronization_example {
         // All invocations receive the same value.
         let first: [u32; 64] = workgroup_uniform_load(&SCRATCH);
         get_mut!(OUTPUT)[local_idx as usize] = first[0];
+    }
+}
+
+#[wgsl]
+pub mod macro_rules_definitions {
+    //! It is possible to define `macro_rules!` within a WGSL module.
+    //!
+    //! Macros defined this way **will not generate WGSL code**, but will pass
+    //! through to Rust code.
+    //!
+    //! Said another way - `macro_rules!` definitions will be stripped from WGSL
+    //! code generation but will remain in your Rust source.
+
+    #[expect(unused_macros)]
+    macro_rules! my_macro {
+        ($id:ident) => {
+            id
+        };
     }
 }

@@ -1,130 +1,68 @@
-# CPU-Side Shader Dispatch Runtime + Derivative Builtins
+# CPU-Side Shader Dispatch Runtime
 
 **Date**: 2026-02-20
-**Branch**: `derivative-builtins`
+**Branch**: TBD (after `derivative-builtins` merges)
 **Status**: Plan
+**Depends on**: [Derivative Builtins](2026-02-20-derivative-builtins.md)
 
 ## Motivation
 
-WGSL derivative builtins (`dpdx`, `dpdy`, `fwidth` and their coarse/fine variants)
-compute screen-space partial derivatives by comparing values across neighboring
-fragment invocations in a 2x2 quad. On the GPU this is hardware-level. On the CPU,
-we have no equivalent — there is no dispatch infrastructure at all.
+The `wgsl-rs` crate maintains two parallel representations: Rust code that runs on
+the CPU and transpiled WGSL that runs on the GPU. Currently the CPU side has no
+dispatch infrastructure — shader entry points are plain functions with no concept of
+workgroups, invocations, or quads. This means:
 
-The same gap exists for compute shaders: `workgroup_barrier()` is a no-op,
-`workgroup_uniform_load()` works only by accident (single-threaded access),
-and there is no `dispatch_workgroups()` function to invoke a compute shader
-across a grid of invocations with correct builtin values.
+- `workgroup_barrier()` is a no-op (should synchronize invocations)
+- `workgroup_uniform_load()` works only by accident (single-threaded access)
+- Derivative builtins (`dpdx`, `dpdy`, `fwidth`) return zero (should compute
+  real screen-space partial derivatives across 2x2 quads)
+- There is no `dispatch_workgroups()` to run compute shaders across a grid
+- Builtin values (`global_invocation_id`, `local_invocation_id`, etc.) have no
+  injection mechanism
 
-This plan addresses both problems with a unified CPU-side shader dispatch runtime.
+This plan adds a CPU-side dispatch runtime that mirrors `wgpu`'s API and makes
+all of the above functional.
 
 ## Goals
 
-1. Implement all 9 WGSL derivative builtin functions with correct WGSL transpilation
-2. Build a CPU-side dispatch runtime (`dispatch_workgroups`, `dispatch_fragments`)
-   that mirrors `wgpu`'s API
-3. Make synchronization builtins (`workgroup_barrier`, etc.) functional during dispatch
-4. Make derivative builtins functional during fragment dispatch
+1. `dispatch_workgroups()` — compute shader dispatch with correct builtins and barriers
+2. `dispatch_fragments()` — fragment shader dispatch in 2x2 quads
+3. Make synchronization builtins functional during dispatch
+4. Make derivative builtins compute real finite differences during fragment dispatch
 
 ## Non-Goals
 
 - Texture sampling on the CPU (separate concern)
 - Full rasterization pipeline (we dispatch fragments, not triangles)
 - Performance parity with GPU execution
+- Vertex shader dispatch (no inter-stage data flow yet)
 
 ---
 
-## Phase 1: Derivative Builtins (WGSL Transpilation + Stubs)
+## Step 1. Add `rayon` dependency
 
-Ship the GPU-side support immediately. CPU implementations start as zero-returning
-stubs and become functional in Phase 2.
-
-### 1a. New module: `crates/wgsl-rs/src/std/derivative.rs`
-
-9 traits + 9 free functions following the one-trait-per-function pattern.
-
-**Traits**:
-
-| Trait | Method | WGSL Name |
-|-------|--------|-----------|
-| `DerivativeBuiltinDpdx` | `fn dpdx(self) -> Self` | `dpdx` |
-| `DerivativeBuiltinDpdxCoarse` | `fn dpdx_coarse(self) -> Self` | `dpdxCoarse` |
-| `DerivativeBuiltinDpdxFine` | `fn dpdx_fine(self) -> Self` | `dpdxFine` |
-| `DerivativeBuiltinDpdy` | `fn dpdy(self) -> Self` | `dpdy` |
-| `DerivativeBuiltinDpdyCoarse` | `fn dpdy_coarse(self) -> Self` | `dpdyCoarse` |
-| `DerivativeBuiltinDpdyFine` | `fn dpdy_fine(self) -> Self` | `dpdyFine` |
-| `DerivativeBuiltinFwidth` | `fn fwidth(self) -> Self` | `fwidth` |
-| `DerivativeBuiltinFwidthCoarse` | `fn fwidth_coarse(self) -> Self` | `fwidthCoarse` |
-| `DerivativeBuiltinFwidthFine` | `fn fwidth_fine(self) -> Self` | `fwidthFine` |
-
-**Type support**: `f32`, `Vec2f`, `Vec3f`, `Vec4f`
-
-**Phase 1 CPU behavior**: Return zero (`0.0` for scalars, zero vector for vectors).
-Add `// TODO: implement with quad runtime (Phase 2)` comments.
-
-**Free functions** (Rust API):
-```rust
-pub fn dpdx<T: DerivativeBuiltinDpdx>(e: T) -> T { <T as DerivativeBuiltinDpdx>::dpdx(e) }
-pub fn dpdx_coarse<T: DerivativeBuiltinDpdxCoarse>(e: T) -> T { ... }
-pub fn dpdx_fine<T: DerivativeBuiltinDpdxFine>(e: T) -> T { ... }
-pub fn dpdy<T: DerivativeBuiltinDpdy>(e: T) -> T { ... }
-pub fn dpdy_coarse<T: DerivativeBuiltinDpdyCoarse>(e: T) -> T { ... }
-pub fn dpdy_fine<T: DerivativeBuiltinDpdyFine>(e: T) -> T { ... }
-pub fn fwidth<T: DerivativeBuiltinFwidth>(e: T) -> T { ... }
-pub fn fwidth_coarse<T: DerivativeBuiltinFwidthCoarse>(e: T) -> T { ... }
-pub fn fwidth_fine<T: DerivativeBuiltinFwidthFine>(e: T) -> T { ... }
-```
-
-### 1b. Register in `crates/wgsl-rs/src/std.rs`
-
-```rust
-mod derivative;
-pub use derivative::*;
-```
-
-### 1c. Name mappings in `crates/wgsl-rs-macros/src/builtins.rs`
-
-Add 6 entries to `BUILTIN_CASE_NAME_MAP` (the 3 base names `dpdx`, `dpdy`, `fwidth`
-match WGSL already and need no entry):
-
-```rust
-// Derivative builtins
-("dpdx_coarse", "dpdxCoarse"),
-("dpdx_fine", "dpdxFine"),
-("dpdy_coarse", "dpdyCoarse"),
-("dpdy_fine", "dpdyFine"),
-("fwidth_coarse", "fwidthCoarse"),
-("fwidth_fine", "fwidthFine"),
-```
-
-### 1d. Tests
-
-| Test Location | What |
-|---------------|------|
-| `derivative.rs` `#[cfg(test)]` | Verify stubs return zero for all types |
-| `builtins.rs` `#[cfg(test)]` | Verify name lookups and reservation |
-| `parse.rs` `#[cfg(test)]` | Verify `dpdx_coarse(x)` transpiles to `dpdxCoarse(x)` |
-| `examples.rs` | Fragment shader example using all 9 derivative builtins, validated by naga |
-
----
-
-## Phase 2: CPU-Side Dispatch Runtime
-
-### 2a. Dependencies
-
-Add to `crates/wgsl-rs/Cargo.toml`:
+In `crates/wgsl-rs/Cargo.toml`:
 ```toml
 [dependencies]
 rayon = "1"
 ```
 
-### 2b. New module: `crates/wgsl-rs/src/std/runtime.rs`
+Rayon provides a work-stealing thread pool that handles variable-size dispatch
+workloads well. All parallel iteration and scoped thread spawning uses rayon.
 
-Central dispatch infrastructure. Submodules may be warranted but start flat.
+## Step 2. New module: `crates/wgsl-rs/src/std/runtime.rs`
 
-### 2c. Thread-Local Context
+Central dispatch infrastructure. Register in `std.rs`:
+```rust
+mod runtime;
+pub use runtime::*;
+```
 
-The runtime uses thread-local storage to provide context to builtins during dispatch:
+### Thread-Local Context
+
+The runtime communicates with builtins via thread-local storage. Builtins check
+these thread-locals and gracefully degrade outside of dispatch (barriers are
+no-ops, derivatives return zero), preserving backward compatibility.
 
 ```rust
 use std::cell::{Cell, RefCell};
@@ -145,11 +83,7 @@ thread_local! {
 }
 ```
 
-Builtins check these thread-locals. Outside of dispatch, they gracefully degrade
-(barriers are no-ops, derivatives return zero). This preserves backward compatibility
-with direct function calls outside a dispatch context.
-
-### 2d. Compute Dispatch
+## Step 3. Compute Dispatch
 
 ```rust
 /// Builtin values provided to each compute shader invocation.
@@ -233,18 +167,15 @@ where
                         }
                     }
                 });
-
-                // Reset workgroup variables between workgroups
-                // (TBD: mechanism for this)
             }
         }
     }
 }
 ```
 
-### 2e. Update Synchronization Builtins
+## Step 4. Update Synchronization Builtins
 
-Replace no-ops in `synchronization.rs`:
+Replace the no-ops in `synchronization.rs` with context-aware implementations:
 
 ```rust
 pub fn workgroup_barrier() {
@@ -267,7 +198,9 @@ pub fn texture_barrier() {
 }
 ```
 
-### 2f. Fragment Quad Dispatch
+## Step 5. Fragment Quad Dispatch
+
+### QuadContext
 
 ```rust
 /// A 2x2 quad of fragment invocations.
@@ -279,8 +212,9 @@ pub fn texture_barrier() {
 ///
 struct QuadContext {
     /// Value exchange slots. Each derivative call uses a fresh generation.
-    /// Indexed by [quad_member_index], stores the deposited value.
-    slots: [Mutex<[f32; 4]>; 4],  // 4 members, each can deposit up to vec4 (4 components)
+    /// Indexed by [quad_member_index], stores the deposited value as up to
+    /// 4 f32 components (enough for vec4<f32>).
+    slots: [Mutex<[f32; 4]>; 4],
     /// Barrier for synchronizing quad members at derivative call sites.
     barrier: std::sync::Barrier,
 }
@@ -294,18 +228,19 @@ impl QuadContext {
     }
 
     /// Deposit a scalar value and compute dpdx (horizontal finite difference).
+    ///
+    /// Uses the double-barrier pattern:
+    /// 1. All 4 invocations deposit their value
+    /// 2. Barrier — all values visible
+    /// 3. Each invocation computes its result from neighbor values
+    /// 4. Barrier — safe to reuse slots for the next derivative call
     fn dpdx_f32(&self, quad_idx: u8, value: f32) -> f32 {
-        // 1. Store our value
         *self.slots[quad_idx as usize].lock().unwrap() = [value, 0.0, 0.0, 0.0];
-        // 2. Wait for all 4 to deposit
         self.barrier.wait();
-        // 3. Compute horizontal difference
-        //    Quad members 0,2 are left column; 1,3 are right column
         let left_idx = (quad_idx & !1) as usize;   // 0 or 2
         let right_idx = (quad_idx | 1) as usize;   // 1 or 3
         let left = self.slots[left_idx].lock().unwrap()[0];
         let right = self.slots[right_idx].lock().unwrap()[0];
-        // 4. Wait before slots can be reused
         self.barrier.wait();
         right - left
     }
@@ -322,15 +257,27 @@ impl QuadContext {
         bottom - top
     }
 
-    // Vector variants decompose into components and use the same slots.
+    // Vector variants (Vec2f, Vec3f, Vec4f) decompose into components,
+    // deposit all components into the [f32; 4] slot, and reassemble after.
     // fn dpdx_vec2f(...), fn dpdx_vec3f(...), fn dpdx_vec4f(...), etc.
+}
+```
+
+### Fragment Dispatch Function
+
+```rust
+pub struct FragmentBuiltins {
+    /// The fragment's position in window coordinates.
+    pub position: Vec4f,
+    /// Whether this is a front-facing fragment.
+    pub front_facing: bool,
+    /// The sample index (0 for non-multisampled).
+    pub sample_index: u32,
+    /// The sample mask.
+    pub sample_mask: u32,
 }
 
 /// Dispatches fragment shader invocations over a 2D grid, processing in 2x2 quads.
-///
-/// - `width`, `height`: dimensions of the fragment grid
-/// - `input_fn`: generates per-fragment input from (x, y) coordinates
-/// - `shader_fn`: the fragment shader function
 ///
 /// Returns a width x height grid of outputs. Partial quads at edges use helper
 /// invocations (their outputs are discarded).
@@ -350,26 +297,17 @@ where
 
     // Process quads in parallel using rayon
     // Each quad spawns 4 threads via rayon::scope
+    // Set up QuadContext per quad, install in thread-local
     // Results collected into the output grid
     // Fragments outside (width, height) are helper invocations — output discarded
     todo!()
 }
-
-pub struct FragmentBuiltins {
-    /// The fragment's position in window coordinates.
-    pub position: Vec4f,
-    /// Whether this is a front-facing fragment.
-    pub front_facing: bool,
-    /// The sample index (0 for non-multisampled).
-    pub sample_index: u32,
-    /// The sample mask.
-    pub sample_mask: u32,
-}
 ```
 
-### 2g. Update Derivative Implementations
+## Step 6. Update Derivative Implementations
 
-Replace zero-stubs with quad-context-aware code:
+Replace the zero-stubs from the derivative builtins plan with quad-context-aware
+implementations:
 
 ```rust
 impl DerivativeBuiltinDpdx for f32 {
@@ -387,12 +325,12 @@ impl DerivativeBuiltinDpdx for f32 {
 }
 ```
 
-Coarse/fine variants:
-- `dpdx` delegates to either coarse or fine (implementation-defined; we pick fine)
+**Coarse/fine semantics**:
+- `dpdx` delegates to fine (implementation-defined; we pick fine)
 - `dpdx_coarse`: all 4 quad members get the same derivative (use top-left pair)
 - `dpdx_fine`: each row computes its own derivative (per-row difference)
 
-`fwidth` implementations delegate to `dpdx` + `dpdy`:
+**`fwidth` implementation**:
 ```rust
 impl DerivativeBuiltinFwidth for f32 {
     fn fwidth(self) -> Self {
@@ -401,13 +339,11 @@ impl DerivativeBuiltinFwidth for f32 {
 }
 ```
 
-Note on `fwidth`: it requires two synchronization rounds for the same input value `e`.
-Since `e: Copy` for all derivative-supported types, this works — `dpdx(e)` deposits,
-syncs, computes; then `dpdy(e)` deposits the same value again, syncs, computes.
+Note: `fwidth(e)` requires two synchronization rounds (one for `dpdx`, one for
+`dpdy`). Since `e: Copy`, this works — each round independently deposits and
+computes. An optimization to combine into one round is deferred.
 
----
-
-## Phase 3: Tests and Examples
+## Step 7. Tests
 
 ### Compute Dispatch Tests
 
@@ -442,7 +378,7 @@ fn compute_builtins_correct() {
 fn dpdx_linear_ramp() {
     // Input: f(x, y) = x (linear ramp in X)
     // Expected: dpdx = 1.0, dpdy = 0.0
-    dispatch_fragments(4, 4, |x, y| x as f32, |builtins, value| {
+    let results = dispatch_fragments(4, 4, |x, _y| x as f32, |_builtins, value| {
         (dpdx(value), dpdy(value))
     });
     // Verify all fragments report dpdx=1.0, dpdy=0.0
@@ -461,12 +397,6 @@ fn fwidth_diagonal() {
 }
 ```
 
-### Integration Example
-
-A module in `examples.rs` that uses derivative builtins in a fragment shader,
-validated by naga at compile time. The CPU-side test calls the same function
-through `dispatch_fragments` and verifies the results.
-
 ---
 
 ## Open Design Questions
@@ -474,70 +404,49 @@ through `dispatch_fragments` and verifies the results.
 ### 1. Quad Context Type Erasure
 
 Derivative calls can operate on `f32`, `Vec2f`, `Vec3f`, or `Vec4f`. The quad
-context needs to handle all of them. Options:
+context needs to handle all of them.
 
-- **Fixed slots**: Use `[f32; 4]` per quad member (enough for `Vec4f`). Scalar
-  uses slot 0, `Vec2f` uses slots 0-1, etc. Simple but wastes space for scalars.
-- **Type-erased slots**: Use `Box<dyn Any>`. Flexible but has allocation overhead.
-- **Generic context**: `QuadContext<T>` parameterized by type. Clean but requires
-  different context per derivative call site if types differ.
-
-**Recommendation**: Fixed `[f32; 4]` slots. The waste is negligible (16 bytes per
-quad member) and it avoids allocation and type erasure complexity.
+**Recommendation**: Fixed `[f32; 4]` slots per quad member (enough for `Vec4f`).
+Scalar uses component 0, `Vec2f` uses 0-1, etc. The 16-byte waste per quad member
+is negligible and avoids allocation and type erasure complexity.
 
 ### 2. Multiple Derivative Calls Per Invocation
 
 A shader may call `dpdx` multiple times on different values. The double-barrier
 pattern (deposit -> barrier -> compute -> barrier) handles this naturally — each
 derivative call is a self-contained synchronization round. The second barrier
-ensures slots are safe to reuse before the next derivative call.
+ensures slots are safe to reuse before the next call.
 
 ### 3. Helper Invocations at Edges
 
-When the framebuffer dimensions aren't multiples of 2, partial quads at edges
-need helper invocations. The dispatch runtime pads to even dimensions and marks
-edge invocations as helpers. Helper outputs are discarded.
+When framebuffer dimensions aren't multiples of 2, partial quads at edges need
+helper invocations. The dispatch runtime pads to even dimensions and marks edge
+invocations as helpers. Helper outputs are discarded.
 
 ### 4. Workgroup Variable Lifetime
 
-Currently `Workgroup<T>` uses global statics with `LazyLock<Arc<RwLock<Option<T>>>>`.
-In a dispatch runtime, workgroup variables should be scoped per-workgroup (reset
-between workgroups). Options:
+Currently `Workgroup<T>` uses global statics (`LazyLock<Arc<RwLock<Option<T>>>>`).
+In a dispatch runtime, workgroup variables should ideally be scoped per-workgroup.
 
-- **Reset after each workgroup**: After `rayon::scope` completes for a workgroup,
-  set all workgroup variables to `None`. Requires knowing which variables exist.
-- **Per-workgroup allocation**: Create fresh workgroup variables per workgroup.
-  Would require a fundamentally different `Workgroup<T>` design.
-- **User-managed**: Document that users must initialize workgroup variables at the
-  start of their compute shader. Matches GPU behavior (workgroup vars are undefined
-  at workgroup start).
-
-**Recommendation**: User-managed for now. Document that workgroup variables are
-in an undefined state at the start of each workgroup, matching WGSL spec behavior.
+**Recommendation**: User-managed for now. Document that workgroup variables are in
+an undefined state at the start of each workgroup, matching WGSL spec behavior.
 The global statics persist across workgroups, which is incorrect but acceptable as
-a known limitation.
+a known limitation to revisit later.
 
-### 5. Interaction with `fwidth` Implementation
+### 5. fwidth Double-Barrier Cost
 
-`fwidth(e) = abs(dpdx(e)) + abs(dpdy(e))` requires two synchronization rounds
-for the same input value `e`. Since `e: Copy` for all derivative-supported types,
-this works: `dpdx(e)` deposits, syncs, computes; then `dpdy(e)` deposits the same
-value again, syncs, computes. The two rounds are independent.
-
-An optimization would be to deposit once and compute both derivatives in a single
-round, but this adds complexity. Defer this optimization.
+`fwidth(e) = abs(dpdx(e)) + abs(dpdy(e))` requires two barrier rounds. An
+optimization would deposit once and compute both derivatives in a single round.
+Defer this optimization — correctness first.
 
 ---
 
 ## File Changes Summary
 
-| File | Phase | Change |
-|------|-------|--------|
-| `crates/wgsl-rs/Cargo.toml` | 2 | Add `rayon = "1"` |
-| `crates/wgsl-rs/src/std.rs` | 1+2 | Add `mod derivative; mod runtime;` + `pub use` |
-| `crates/wgsl-rs/src/std/derivative.rs` | 1 (stubs), 2 (real) | **New**: 9 traits, 9 free fns, impls for f32/Vec2f/Vec3f/Vec4f |
-| `crates/wgsl-rs/src/std/runtime.rs` | 2 | **New**: dispatch_workgroups, dispatch_fragments, QuadContext, thread-locals |
-| `crates/wgsl-rs/src/std/synchronization.rs` | 2 | Update barriers to use thread-local context |
-| `crates/wgsl-rs-macros/src/builtins.rs` | 1 | Add 6 name mappings + tests |
-| `crates/wgsl-rs-macros/src/parse.rs` | 1 | Add transpilation tests |
-| `crates/example/src/examples.rs` | 1+3 | Add derivative example module + dispatch tests |
+| File | Change |
+|------|--------|
+| `crates/wgsl-rs/Cargo.toml` | Add `rayon = "1"` |
+| `crates/wgsl-rs/src/std.rs` | Add `mod runtime;` + `pub use runtime::*;` |
+| `crates/wgsl-rs/src/std/runtime.rs` | **New**: `dispatch_workgroups`, `dispatch_fragments`, `QuadContext`, `ComputeBuiltins`, `FragmentBuiltins`, thread-locals |
+| `crates/wgsl-rs/src/std/synchronization.rs` | Update barrier functions to use thread-local context |
+| `crates/wgsl-rs/src/std/derivative.rs` | Replace zero-stubs with quad-context-aware implementations |

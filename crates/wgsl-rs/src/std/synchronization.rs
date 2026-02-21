@@ -32,9 +32,14 @@ use super::{
 /// in uniform control flow.
 ///
 /// # CPU-Side Behavior
-/// Currently a no-op. The CPU has no parallel workgroup dispatch runtime.
-// TODO: revisit after implementing a parallel dispatch runtime
-pub fn storage_barrier() {}
+/// When the `dispatch-runtime` feature is enabled and the calling thread is
+/// within a `dispatch_workgroups` invocation, this function synchronizes via
+/// a shared barrier. Otherwise, it is a no-op.
+pub fn storage_barrier() {
+    // On the CPU, all memory is coherent — we just need execution
+    // synchronization, which workgroup_barrier provides.
+    workgroup_barrier();
+}
 
 /// Executes a control barrier synchronization function that affects memory
 /// operations in the handle address space.
@@ -48,9 +53,12 @@ pub fn storage_barrier() {}
 /// in uniform control flow.
 ///
 /// # CPU-Side Behavior
-/// Currently a no-op. The CPU has no parallel workgroup dispatch runtime.
-// TODO: revisit after implementing a parallel dispatch runtime
-pub fn texture_barrier() {}
+/// When the `dispatch-runtime` feature is enabled and the calling thread is
+/// within a `dispatch_workgroups` invocation, this function synchronizes via
+/// a shared barrier. Otherwise, it is a no-op.
+pub fn texture_barrier() {
+    workgroup_barrier();
+}
 
 /// Executes a control barrier synchronization function that affects memory
 /// and atomic operations in the workgroup address space.
@@ -63,9 +71,19 @@ pub fn texture_barrier() {}
 /// in uniform control flow.
 ///
 /// # CPU-Side Behavior
-/// Currently a no-op. The CPU has no parallel workgroup dispatch runtime.
-// TODO: revisit after implementing a parallel dispatch runtime
-pub fn workgroup_barrier() {}
+/// When the `dispatch-runtime` feature is enabled and the calling thread is
+/// within a `dispatch_workgroups` invocation, this function synchronizes via
+/// a shared barrier. Otherwise, it is a no-op.
+pub fn workgroup_barrier() {
+    #[cfg(feature = "dispatch-runtime")]
+    {
+        crate::std::runtime::with_workgroup_barrier(|barrier| {
+            if let Some(b) = barrier {
+                b.wait();
+            }
+        });
+    }
+}
 
 /// Trait for types that support `workgroupUniformLoad`.
 ///

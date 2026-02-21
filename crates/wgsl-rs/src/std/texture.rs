@@ -609,7 +609,6 @@ impl TextureSampleLevelOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
     }
 }
 
-
 impl TextureSampleBias<Vec2f, f32> for Texture2D<f32> {
     type Output = Vec4f;
 
@@ -2331,7 +2330,6 @@ mod tests {
                 }
             }
         }
-
 
         let sampler: SamplerComparison = SamplerComparison::new(0, 0);
         sampler.set(SamplerComparisonState {

@@ -4358,7 +4358,9 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         // Trait impls are caught upstream in `Item::try_from` and returned as
         // `Item::TraitImpl` before reaching this point.
         if trait_.is_some() {
-            unreachable!("trait impls should be handled by Item::try_from before reaching ItemImpl");
+            unreachable!(
+                "trait impls should be handled by Item::try_from before reaching ItemImpl"
+            );
         }
 
         // Get the struct name (self_ty must be a simple ident)

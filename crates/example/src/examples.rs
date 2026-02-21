@@ -38,7 +38,6 @@ pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
         .map(|v| v as _)
 }
 
-
 #[wgsl]
 pub mod hello_triangle {
     //! This is a "hello world" shader that shows a triangle with changing
@@ -240,7 +239,6 @@ pub mod enum_example {
     }
 
     storage!(group(0), binding(0), read_write, INPUT: [Holidays; 256]);
-
 
     #[compute]
     #[workgroup_size(16)]

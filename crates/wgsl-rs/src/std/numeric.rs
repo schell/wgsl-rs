@@ -2138,7 +2138,6 @@ mod ldexp_impl {
     impl_ldexp_vec!(Vec4f, Vec4i, 4);
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;

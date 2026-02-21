@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["validation"]
+default = ["validation", "dispatch-runtime"]
 validation = ["dep:naga"]
+dispatch-runtime = ["dep:rayon"]
 linkage-wgpu = ["dep:wgpu", "wgsl-rs-macros/linkage-wgpu"]
 
 [dependencies]
@@ -13,6 +14,7 @@ glam.workspace = true
 half = "2"
 naga = { workspace = true, optional = true }
 paste = "1"
+rayon = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
 wgsl-rs-macros = { version = "0.1.0", path = "../wgsl-rs-macros" }
 

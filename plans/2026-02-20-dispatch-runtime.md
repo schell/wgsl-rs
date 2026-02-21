@@ -1,9 +1,7 @@
 # CPU-Side Shader Dispatch Runtime
 
 **Date**: 2026-02-20
-**Branch**: TBD (after `derivative-builtins` merges)
 **Status**: Plan
-**Depends on**: [Derivative Builtins](2026-02-20-derivative-builtins.md)
 
 ## Motivation
 
@@ -28,7 +26,7 @@ all of the above functional.
 1. `dispatch_workgroups()` — compute shader dispatch with correct builtins and barriers
 2. `dispatch_fragments()` — fragment shader dispatch in 2x2 quads
 3. Make synchronization builtins functional during dispatch
-4. Make derivative builtins compute real finite differences during fragment dispatch
+4. Allow derivative builtins to compute real finite differences during fragment dispatch, once they are implemented
 
 ## Non-Goals
 

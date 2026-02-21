@@ -23,12 +23,13 @@ pub use wgsl_rs_macros::{
 
 pub use crate::{get, get_mut};
 
-
 mod atomic;
 mod bitcast;
 mod matrix;
 mod numeric;
 mod packing;
+#[cfg(feature = "dispatch-runtime")]
+pub mod runtime;
 mod synchronization;
 mod texture;
 mod vector;
@@ -38,10 +39,11 @@ pub use bitcast::*;
 pub use matrix::*;
 pub use numeric::*;
 pub use packing::*;
+#[cfg(feature = "dispatch-runtime")]
+pub use runtime::*;
 pub use synchronization::*;
 pub use texture::*;
 pub use vector::*;
-
 
 /// Shared reference to a uniform, storage or workgroup variable.
 pub struct ModuleVarReadGuard<'a, T> {

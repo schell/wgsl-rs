@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Mutex};
 
-use super::vector::{vec3u, vec4f, Vec3u, Vec4f};
+use super::vector::{Vec3u, Vec4f, vec3u, vec4f};
 
 thread_local! {
     /// Barrier for workgroup synchronization (compute dispatch).

@@ -111,7 +111,7 @@ impl ToTokens for Swizzling {
                 format_ident!("{}", names.map(|n| n.to_string()).join(""))
             }
 
-            fn constructor(&self) -> proc_macro2::TokenStream {
+            fn get_constructor(&self) -> proc_macro2::TokenStream {
                 let mut components = self
                     .components
                     .iter()
@@ -123,6 +123,17 @@ impl ToTokens for Swizzling {
                     // There's only one component
                     let component = components.pop().unwrap();
                     quote! { self.inner.#component }
+                }
+            }
+
+            fn set_constructor(&self) -> proc_macro2::TokenStream {
+                let components = self
+                    .components
+                    .iter()
+                    .map(|p| p.field.clone())
+                    .collect::<Vec<_>>();
+                quote! {
+                    #(self.inner.#components = value.inner.#components;)*
                 }
             }
 
@@ -138,13 +149,19 @@ impl ToTokens for Swizzling {
 
         impl ToTokens for Swizzle {
             fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-                let fn_ident = self.fn_ident();
-                let constructor = self.constructor();
+                let get_fn_ident = self.fn_ident();
+                let set_fn_ident = format_ident!("set_{get_fn_ident}");
+                let get_constructor = self.get_constructor();
+                let set_constructor = self.set_constructor();
                 let return_ty = self.return_ty();
 
                 quote! {
-                    pub fn #fn_ident(&self) -> #return_ty {
-                        #constructor
+                    pub fn #get_fn_ident(&self) -> #return_ty {
+                        #get_constructor
+                    }
+
+                    pub fn #set_fn_ident(&mut self, value: #return_ty) {
+                        #set_constructor
                     }
                 }
                 .to_tokens(tokens)

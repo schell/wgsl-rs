@@ -1252,4 +1252,69 @@ pub mod macro_rules_definitions {
             id
         };
     }
+
+    // It's also possible to use derive macros.
+    //
+    // Derive macros pass through without generating any extra WGSL.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Data {
+        pub inner: f32,
+    }
+}
+
+#[wgsl]
+pub mod slab_read_write {
+    //! `wgsl-rs` includes macros for reading to and from u32 "slabs".
+    //!
+    //! The slab can be any indexable item such as an array, RuntimeArray,
+    //! storage pointer, etc.
+
+    use wgsl_rs::std::*;
+
+    pub struct Data {
+        pub one: f32,
+        pub two: u32,
+        pub three_four: Vec2f,
+    }
+
+    impl Data {
+        /// `Data`'s slab size.
+        ///
+        /// This is the number of u32 slots it occupies in a u32 slab.
+        pub const SLAB_SIZE: usize = 4;
+
+        /// Convert an array into `Data`.
+        pub fn from_array(arr: [u32; Self::SLAB_SIZE]) -> Self {
+            Self {
+                one: bitcast_f32(arr[0]),
+                two: arr[1],
+                three_four: vec2f(bitcast_f32(arr[2]), bitcast_f32(arr[3])),
+            }
+        }
+
+        /// Convert `Data` into an array.
+        pub fn to_array(data: Self) -> [u32; Self::SLAB_SIZE] {
+            [
+                bitcast_u32(data.one),
+                data.two,
+                bitcast_u32(data.three_four.x()),
+                bitcast_u32(data.three_four.y()),
+            ]
+        }
+    }
+
+    storage!(group(0), binding(0), SLAB: RuntimeArray<u32>);
+
+    #[compute]
+    #[workgroup_size(8)]
+    pub fn slab_example(#[builtin(local_invocation_index)] local_idx: u32) {
+        let index = local_idx;
+
+        let mut data_array = [0u32, Data::SLAB_SIZE as usize];
+        slab_read!(get!(SLAB), index, data_array, Data::SLAB_SIZE);
+
+        let mut data = Data::from_array(data_array);
+        data.three_four.set_x(123.0);
+        slab_write!(get_mut!(SLAB), index, Data::to_array(data));
+    }
 }

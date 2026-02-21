@@ -809,10 +809,32 @@ impl GenerateCode for Expr {
                 lhs,
                 dot_token,
                 swizzle,
+                params,
             } => {
                 lhs.write_code(code);
                 code.write_atom(dot_token);
                 swizzle.write_code(code);
+                if let Some(params) = params {
+                    code.write_str(swizzle.span(), " = ");
+                    code.write_surrounded(
+                        Surrounded {
+                            rust_span: swizzle.span(),
+                            open: "(",
+                            close: ")",
+                            ..Default::default()
+                        },
+                        |code| {
+                            code.write_sequenced(
+                                Sequenced {
+                                    delim: ",",
+                                    use_newlines: false,
+                                    use_delimiter_on_last_line: false,
+                                },
+                                params.pairs().map(|pair| *pair.value()),
+                            );
+                        },
+                    );
+                }
             }
             Expr::FieldAccess {
                 base,
@@ -1081,8 +1103,80 @@ impl GenerateCode for Stmt {
                 code.write_atom(semi_token);
             }
             Stmt::Switch(stmt_switch) => stmt_switch.write_code(code),
+            Stmt::SlabRead {
+                slab,
+                offset,
+                dest,
+                size,
+                span,
+            } => {
+                // Emit: for (var __i: u32 = 0u; __i < size; __i++) {
+                //           dest[__i] = slab[offset + __i];
+                //       }
+                write_slab_for_loop(code, *span, size, |code| {
+                    dest.write_code(code);
+                    code.write_str(*span, "[__i]");
+                    code.space();
+                    code.write_str(*span, "=");
+                    code.space();
+                    slab.write_code(code);
+                    code.write_str(*span, "[");
+                    offset.write_code(code);
+                    code.write_str(*span, " + __i];");
+                });
+            }
+            Stmt::SlabWrite {
+                slab,
+                offset,
+                src,
+                size,
+                span,
+            } => {
+                // Emit: for (var __i: u32 = 0u; __i < size; __i++) {
+                //           slab[offset + __i] = src[__i];
+                //       }
+                write_slab_for_loop(code, *span, size, |code| {
+                    slab.write_code(code);
+                    code.write_str(*span, "[");
+                    offset.write_code(code);
+                    code.write_str(*span, " + __i]");
+                    code.space();
+                    code.write_str(*span, "=");
+                    code.space();
+                    src.write_code(code);
+                    code.write_str(*span, "[__i];");
+                });
+            }
         }
     }
+}
+
+/// Emit the common `for (var __i: u32 = 0u; __i < size; __i++) { body }`
+/// pattern used by `slab_read!` and `slab_write!`.
+fn write_slab_for_loop(
+    code: &mut GeneratedWgslCode,
+    span: Span,
+    size: &Expr,
+    body: impl FnOnce(&mut GeneratedWgslCode),
+) {
+    code.write_str(span, "for");
+    code.space();
+    code.write_surrounded(Surrounded::parens().with_span(span), |code| {
+        code.write_str(span, "var __i: u32 = 0u;");
+        code.space();
+        code.write_str(span, "__i < ");
+        size.write_code(code);
+        code.write_str(span, ";");
+        code.space();
+        code.write_str(span, "__i++");
+    });
+    code.space();
+    code.write_surrounded(Surrounded::block(span), |code| {
+        code.indented(|code| {
+            body(code);
+        });
+    });
+    code.newline();
 }
 
 impl GenerateCode for ForLoop {

@@ -21,7 +21,7 @@ pub use wgsl_rs_macros::{
     wgsl_allow, workgroup, workgroup_size,
 };
 
-pub use crate::{get, get_mut};
+pub use crate::{get, get_mut, slab_read, slab_write};
 
 mod atomic;
 mod bitcast;
@@ -322,6 +322,60 @@ macro_rules! get_mut {
     ($var:ident) => {
         $var.get_mut()
     };
+}
+
+/// Copy `$size` elements from `$slab` starting at `$offset` into `$dst`.
+///
+/// On the GPU side (inside `#[wgsl]` modules), this emits a WGSL `for` loop
+/// that copies from a storage buffer into a local `array<u32, N>`.
+///
+/// On the CPU side, this is a simple element-by-element copy.
+///
+/// # Example
+/// ```ignore
+/// let mut raw = [0u32; 4];
+/// slab_read!(get!(SLAB), offset, raw, 4);
+/// ```
+#[macro_export]
+macro_rules! slab_read {
+    ($slab:expr, $offset:expr, $dst:expr, $size:expr) => {{
+        let offset = $offset as usize;
+        for i in 0..$size as usize {
+            $dst[i] = $slab[offset + i];
+        }
+    }};
+}
+
+/// Copy `$size` elements from `$src` into `$slab` starting at `$offset`.
+///
+/// On the GPU side (inside `#[wgsl]` modules), this emits a WGSL `for` loop
+/// that copies from a local `array<u32, N>` into a storage buffer.
+///
+/// On the CPU side, this is a simple element-by-element copy.
+///
+/// # Example
+/// ```ignore
+/// let arr = [1u32, 2, 3, 4];
+/// slab_write!(get_mut!(SLAB), offset, arr, 4);
+/// ```
+///
+/// The last parameter is optional:
+/// ```ignore
+/// let arr = [1u32, 2, 3, 4];
+/// slab_write!(get_mut!(SLAB), offset, arr);
+/// ```
+#[macro_export]
+macro_rules! slab_write {
+    ($slab:expr, $offset:expr, $src:expr) => {
+        slab_write!($slab, $offset, $src, array_len($src))
+    };
+
+    ($slab:expr, $offset:expr, $src:expr, $size:expr) => {{
+        let offset = $offset as usize;
+        for i in 0..$size as usize {
+            $slab[offset + i] = $src[i];
+        }
+    }};
 }
 
 /// Used to provide WGSL type conversion functions like `f32(...)`, etc.

@@ -1210,6 +1210,7 @@ pub enum Expr {
         lhs: Box<Expr>,
         dot_token: Token![.],
         swizzle: Ident,
+        params: Option<syn::punctuated::Punctuated<Expr, syn::Token![,]>>,
     },
     /// Type conversion.
     ///
@@ -1387,18 +1388,55 @@ impl TryFrom<&syn::Expr> for Expr {
                     turbofish.as_ref(),
                     "Turbofish is not supported in WGSL",
                 )?;
-                util::some_is_unsupported(
-                    args.first(),
-                    "Method call syntax (receiver.method(args)) is only supported for swizzles \
-                     (e.g., v.xyz()). For struct methods, use explicit path syntax: \
-                     Type::method(receiver, args)",
-                )?;
+
+                /// Returns (true, _) if it is a "set_" swizzle (eg "set_xyz").
+                /// Returns (_, true) if it is a swizzle
+                fn is_swizzle(method: &Ident) -> (bool, bool) {
+                    let mut method = method.to_string();
+                    let (is_setter, method) = if method.starts_with("set_") {
+                        (true, method.split_off(4))
+                    } else {
+                        (false, method)
+                    };
+                    for char in method.chars() {
+                        const SWIZZLE_CHARS: &str = "xyzwrgba";
+                        if char.is_lowercase() && SWIZZLE_CHARS.contains(char) {
+                            continue;
+                        } else {
+                            return (is_setter, false);
+                        }
+                    }
+                    (is_setter, true)
+                }
+
+                let (is_setter, is_swizzle) = is_swizzle(method);
+                ensure!(
+                    is_swizzle,
+                    UnsupportedSnafu {
+                        span: method.span(),
+                        note: "Method call syntax (receiver.method(args)) is only supported for \
+                               swizzles (e.g., v.xyz()). For struct methods, use explicit path \
+                               syntax: Type::method(receiver, args)",
+                    }
+                );
                 let lhs = Box::new(Expr::try_from(receiver.as_ref())?);
+                let params = if is_setter {
+                    let param_args = syn::punctuated::Punctuated::new();
+                    for pair in args.pairs() {
+                        let (expr, comma) = pair.into_tuple();
+                        let expr = Expr::try_from(expr)?;
+                        syn::punctuated::Pair::Punctuated(expr, comma);
+                    }
+                    Some(param_args)
+                } else {
+                    None
+                };
                 // Treat as swizzle: receiver.method
                 Self::Swizzle {
                     lhs,
                     dot_token: *dot_token,
                     swizzle: method.clone(),
+                    params,
                 }
             }
             syn::Expr::Binary(syn::ExprBinary {
@@ -1832,6 +1870,25 @@ impl TryFrom<&syn::Local> for Local {
     }
 }
 
+/// Helper for parsing the four comma-separated arguments of `slab_read!` and
+/// `slab_write!` statement macros.
+struct SlabMacroArgs(syn::Expr, syn::Expr, syn::Expr, syn::Expr);
+
+impl Parse for SlabMacroArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let a = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let b = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let c = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let d = input.parse()?;
+        // Allow optional trailing comma
+        let _ = input.parse::<Option<Token![,]>>();
+        Ok(SlabMacroArgs(a, b, c, d))
+    }
+}
+
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
@@ -1891,6 +1948,24 @@ pub enum Stmt {
     For(Box<ForLoop>),
     /// Switch statement (from Rust match)
     Switch(Box<StmtSwitch>),
+    /// `slab_read!(slab, offset, dest, size);` -- copy from storage buffer to
+    /// local array.
+    SlabRead {
+        slab: Expr,
+        offset: Expr,
+        dest: Expr,
+        size: Expr,
+        span: Span,
+    },
+    /// `slab_write!(slab, offset, src, size);` -- copy from local array to
+    /// storage buffer.
+    SlabWrite {
+        slab: Expr,
+        offset: Expr,
+        src: Expr,
+        size: Expr,
+        span: Span,
+    },
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -2063,11 +2138,50 @@ impl TryFrom<&syn::Stmt> for Stmt {
                     }),
                 }
             }
-            _ => UnsupportedSnafu {
-                span: value.span(),
-                note: format!("Unsupported statement: '{}'", value.into_token_stream()),
+            syn::Stmt::Macro(stmt_macro) => {
+                let mac = &stmt_macro.mac;
+                let macro_name = mac
+                    .path
+                    .get_ident()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                let span = mac.path.span();
+                match macro_name.as_str() {
+                    "slab_read" => {
+                        let args: SlabMacroArgs =
+                            syn::parse2(mac.tokens.clone()).map_err(|e| Error::Unsupported {
+                                span,
+                                note: format!("slab_read! parse error: {e}"),
+                            })?;
+                        Ok(Stmt::SlabRead {
+                            slab: Expr::try_from(&args.0)?,
+                            offset: Expr::try_from(&args.1)?,
+                            dest: Expr::try_from(&args.2)?,
+                            size: Expr::try_from(&args.3)?,
+                            span,
+                        })
+                    }
+                    "slab_write" => {
+                        let args: SlabMacroArgs =
+                            syn::parse2(mac.tokens.clone()).map_err(|e| Error::Unsupported {
+                                span,
+                                note: format!("slab_write! parse error: {e}"),
+                            })?;
+                        Ok(Stmt::SlabWrite {
+                            slab: Expr::try_from(&args.0)?,
+                            offset: Expr::try_from(&args.1)?,
+                            src: Expr::try_from(&args.2)?,
+                            size: Expr::try_from(&args.3)?,
+                            span,
+                        })
+                    }
+                    _ => UnsupportedSnafu {
+                        span,
+                        note: format!("Unsupported statement macro '{macro_name}!'"),
+                    }
+                    .fail(),
+                }
             }
-            .fail(),
         }
     }
 }
@@ -3051,6 +3165,9 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                     }
                     // Skip workgroup_size in this pass (handled separately for compute)
                     "workgroup_size" => {}
+                    // This is a documentation block
+                    // TODO: actually emit the same documentation in WGSL
+                    "doc" => {}
                     other => UnsupportedSnafu {
                         span: ident.span(),
                         note: format!("'{other}' is not a supported annotation"),
@@ -6619,6 +6736,117 @@ mod test {
         assert!(
             matches!(result, Ok(Item::Struct(_))),
             "#[derive(...)] on structs should be silently ignored during WGSL parsing"
+        );
+    }
+
+    // --- slab_read! / slab_write! statement macro tests ---
+
+    #[test]
+    fn slab_read_parses_and_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_read!(SLAB, offset, raw, 4);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        assert!(
+            matches!(&stmt, Stmt::SlabRead { .. }),
+            "Expected Stmt::SlabRead, got: {:#?}",
+            std::mem::discriminant(&stmt)
+        );
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var __i: u32 = 0u; __i < 4; __i++)"),
+            "Expected for loop header in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("raw[__i] = SLAB[offset + __i];"),
+            "Expected read body in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_write_parses_and_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_write!(SLAB, offset, arr, 4);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        assert!(
+            matches!(&stmt, Stmt::SlabWrite { .. }),
+            "Expected Stmt::SlabWrite, got: {:#?}",
+            std::mem::discriminant(&stmt)
+        );
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var __i: u32 = 0u; __i < 4; __i++)"),
+            "Expected for loop header in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("SLAB[offset + __i] = arr[__i];"),
+            "Expected write body in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_read_with_get_macro_strips_get() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_read!(get!(SLAB), offset, raw, DATA_SIZE);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        // get!(SLAB) should be stripped to just SLAB
+        assert!(
+            wgsl.contains("SLAB[offset + __i]"),
+            "Expected get!(SLAB) to be stripped to SLAB, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_write_with_get_mut_macro_strips_get_mut() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_write!(get_mut!(SLAB), offset, arr, DATA_SIZE);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        // get_mut!(SLAB) should be stripped to just SLAB
+        assert!(
+            wgsl.contains("SLAB[offset + __i]"),
+            "Expected get_mut!(SLAB) to be stripped to SLAB, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_read_with_const_size_emits_const_name() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_read!(SLAB, id.inner, raw, MY_STRUCT_SLAB_SIZE);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("__i < MY_STRUCT_SLAB_SIZE"),
+            "Expected const name in loop bound, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("SLAB[id.inner + __i]"),
+            "Expected field access in offset, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_unsupported_macro_rejected() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            unknown_macro!(a, b, c, d);
+        };
+        let result = Stmt::try_from(&stmt);
+        assert!(
+            result.is_err(),
+            "Unknown statement macros should be rejected"
         );
     }
 }

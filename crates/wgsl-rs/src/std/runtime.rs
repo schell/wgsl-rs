@@ -9,8 +9,10 @@
 //! (barriers are no-ops, derivatives return zero), preserving backward
 //! compatibility.
 
-use std::cell::{Cell, RefCell};
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::{Cell, RefCell},
+    sync::{Arc, Mutex},
+};
 
 use super::vector::{Vec3u, Vec4f, vec3u, vec4f};
 
@@ -252,8 +254,8 @@ impl QuadContext {
         result
     }
 
-    /// Deposits a multi-component value and computes a coarse horizontal partial
-    /// derivative, returning up to `n` components.
+    /// Deposits a multi-component value and computes a coarse horizontal
+    /// partial derivative, returning up to `n` components.
     pub fn dpdx_coarse_components(&self, quad_idx: u8, components: &[f32], n: usize) -> [f32; 4] {
         let mut slot = [0.0f32; 4];
         slot[..n].copy_from_slice(&components[..n]);
@@ -316,7 +318,8 @@ impl QuadContext {
 #[derive(Clone, Copy, Debug)]
 pub struct FragmentBuiltins {
     /// The fragment's position in window coordinates.
-    /// `xy` contains the pixel center (e.g. `(0.5, 0.5)` for the top-left pixel).
+    /// `xy` contains the pixel center (e.g. `(0.5, 0.5)` for the top-left
+    /// pixel).
     pub position: Vec4f,
     /// Whether this is a front-facing fragment.
     pub front_facing: bool,

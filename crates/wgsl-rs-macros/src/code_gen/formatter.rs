@@ -1074,6 +1074,7 @@ impl GenerateCode for Stmt {
                     code.write_atom(&<syn::Token![;]>::default());
                 }
             }
+            Stmt::Block(block) => block.write_code(code),
             Stmt::If(stmt_if) => stmt_if.write_code(code),
             Stmt::Break {
                 break_token,
@@ -1110,20 +1111,25 @@ impl GenerateCode for Stmt {
                 size,
                 span,
             } => {
-                // Emit: for (var __i: u32 = 0u; __i < size; __i++) {
-                //           dest[__i] = slab[offset + __i];
+                // Emit: for (var _i: u32 = 0u; _i < size; _i++) {
+                //           dest[_i] = slab[offset + _i];
                 //       }
-                write_slab_for_loop(code, *span, size, |code| {
-                    dest.write_code(code);
-                    code.write_str(*span, "[__i]");
-                    code.space();
-                    code.write_str(*span, "=");
-                    code.space();
-                    slab.write_code(code);
-                    code.write_str(*span, "[");
-                    offset.write_code(code);
-                    code.write_str(*span, " + __i];");
-                });
+                write_slab_for_loop(
+                    code,
+                    *span,
+                    |code| size.write_code(code),
+                    |code| {
+                        dest.write_code(code);
+                        code.write_str(*span, "[_i]");
+                        code.space();
+                        code.write_str(*span, "=");
+                        code.space();
+                        slab.write_code(code);
+                        code.write_str(*span, "[");
+                        offset.write_code(code);
+                        code.write_str(*span, " + _i];");
+                    },
+                );
             }
             Stmt::SlabWrite {
                 slab,
@@ -1132,43 +1138,53 @@ impl GenerateCode for Stmt {
                 size,
                 span,
             } => {
-                // Emit: for (var __i: u32 = 0u; __i < size; __i++) {
-                //           slab[offset + __i] = src[__i];
+                // Emit: for (var _i: u32 = 0u; _i < size; _i++) {
+                //           slab[offset + _i] = src[_i];
                 //       }
-                write_slab_for_loop(code, *span, size, |code| {
+                // When size is None (3-arg form), emit arrayLength(&slab).
+                let write_size = |code: &mut GeneratedWgslCode| {
+                    if let Some(size) = size {
+                        size.write_code(code);
+                    } else {
+                        code.write_str(*span, "arrayLength(&");
+                        slab.write_code(code);
+                        code.write_str(*span, ")");
+                    }
+                };
+                write_slab_for_loop(code, *span, write_size, |code| {
                     slab.write_code(code);
                     code.write_str(*span, "[");
                     offset.write_code(code);
-                    code.write_str(*span, " + __i]");
+                    code.write_str(*span, " + _i]");
                     code.space();
                     code.write_str(*span, "=");
                     code.space();
                     src.write_code(code);
-                    code.write_str(*span, "[__i];");
+                    code.write_str(*span, "[_i];");
                 });
             }
         }
     }
 }
 
-/// Emit the common `for (var __i: u32 = 0u; __i < size; __i++) { body }`
-/// pattern used by `slab_read!` and `slab_write!`.
+/// Emit the common `for (var _i: u32 = 0u; _i < size; _i++) { body }`
+/// pattern used by `slab_read_array!` and `slab_write_array!`.
 fn write_slab_for_loop(
     code: &mut GeneratedWgslCode,
     span: Span,
-    size: &Expr,
+    write_size: impl FnOnce(&mut GeneratedWgslCode),
     body: impl FnOnce(&mut GeneratedWgslCode),
 ) {
     code.write_str(span, "for");
     code.space();
     code.write_surrounded(Surrounded::parens().with_span(span), |code| {
-        code.write_str(span, "var __i: u32 = 0u;");
+        code.write_str(span, "var _i: u32 = 0u;");
         code.space();
-        code.write_str(span, "__i < ");
-        size.write_code(code);
+        code.write_str(span, "_i < ");
+        write_size(code);
         code.write_str(span, ";");
         code.space();
-        code.write_str(span, "__i++");
+        code.write_str(span, "_i++");
     });
     code.space();
     code.write_surrounded(Surrounded::block(span), |code| {

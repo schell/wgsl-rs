@@ -126,17 +126,6 @@ impl ToTokens for Swizzling {
                 }
             }
 
-            fn set_constructor(&self) -> proc_macro2::TokenStream {
-                let components = self
-                    .components
-                    .iter()
-                    .map(|p| p.field.clone())
-                    .collect::<Vec<_>>();
-                quote! {
-                    #(self.inner.#components = value.inner.#components;)*
-                }
-            }
-
             fn return_ty(&self) -> proc_macro2::TokenStream {
                 let return_ty = &self.return_ty;
                 if self.constructor.is_some() {
@@ -150,19 +139,29 @@ impl ToTokens for Swizzling {
         impl ToTokens for Swizzle {
             fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
                 let get_fn_ident = self.fn_ident();
-                let set_fn_ident = format_ident!("set_{get_fn_ident}");
                 let get_constructor = self.get_constructor();
-                let set_constructor = self.set_constructor();
                 let return_ty = self.return_ty();
+
+                // Only single-component swizzles get setters, matching WGSL
+                // spec §8.5.1: multi-letter swizzles cannot appear on the
+                // left-hand side of an assignment.
+                let setter = if self.constructor.is_none() {
+                    let set_fn_ident = format_ident!("set_{get_fn_ident}");
+                    let field = &self.components[0].field;
+                    quote! {
+                        pub fn #set_fn_ident(&mut self, value: #return_ty) {
+                            self.inner.#field = value;
+                        }
+                    }
+                } else {
+                    quote! {}
+                };
 
                 quote! {
                     pub fn #get_fn_ident(&self) -> #return_ty {
                         #get_constructor
                     }
-
-                    pub fn #set_fn_ident(&mut self, value: #return_ty) {
-                        #set_constructor
-                    }
+                    #setter
                 }
                 .to_tokens(tokens)
             }

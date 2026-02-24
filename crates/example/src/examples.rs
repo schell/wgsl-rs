@@ -29,6 +29,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &matrix_builtin_example::WGSL_MODULE,
     &synchronization_example::WGSL_MODULE,
     &macro_rules_definitions::WGSL_MODULE,
+    &slab_read_write::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1251,5 +1252,84 @@ pub mod macro_rules_definitions {
         ($id:ident) => {
             id
         };
+    }
+
+    // It's also possible to use derive macros.
+    //
+    // Derive macros pass through without generating any extra WGSL.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Data {
+        pub inner: f32,
+    }
+}
+
+#[wgsl]
+pub mod slab_read_write {
+    //! `wgsl-rs` includes macros for reading to and from u32 "slabs".
+    //!
+    //! The slab can be any indexable item such as an array, RuntimeArray,
+    //! storage pointer, etc.
+
+    use wgsl_rs::std::*;
+
+    pub struct Data {
+        pub one: f32,
+        pub two: u32,
+        pub three_four: Vec2f,
+    }
+
+    impl Data {
+        /// `Data`'s slab size.
+        ///
+        /// This is the number of u32 slots it occupies in a u32 slab.
+        pub const SLAB_SIZE: usize = 4;
+
+        /// Returns an array container to hold ephemeral data read from a slab.
+        pub fn array_container() -> [u32; Self::SLAB_SIZE] {
+            [0, 0, 0, 0]
+        }
+
+        /// Convert an array into `Data`.
+        pub fn from_array(arr: [u32; Self::SLAB_SIZE]) -> Self {
+            Self {
+                one: bitcast_f32(arr[0]),
+                two: arr[1],
+                three_four: vec2f(bitcast_f32(arr[2]), bitcast_f32(arr[3])),
+            }
+        }
+
+        /// Convert `Data` into an array.
+        pub fn to_array(data: Self) -> [u32; Self::SLAB_SIZE] {
+            [
+                bitcast_u32(data.one),
+                data.two,
+                bitcast_u32(data.three_four.x()),
+                bitcast_u32(data.three_four.y()),
+            ]
+        }
+    }
+
+    storage!(group(0), binding(0), read_write, SLAB: RuntimeArray<u32>);
+
+    #[compute]
+    #[workgroup_size(8)]
+    pub fn slab_example(#[builtin(local_invocation_index)] local_idx: u32) {
+        let index = local_idx;
+
+        // Create our `Data` struct from extracted data from the slab
+        let mut data: Data;
+        {
+            // Extract the u32 data from the slab
+            let mut array_data = Data::array_container();
+            slab_read_array!(get!(SLAB), index, array_data, Data::SLAB_SIZE);
+            data = Data::from_array(array_data);
+        }
+
+        // Modify it
+        data.three_four.set_x(123.0);
+
+        // Write the modified `Data` struct back to the slab
+        let out_array = Data::to_array(data);
+        slab_write_array!(get_mut!(SLAB), index, out_array, Data::SLAB_SIZE);
     }
 }

@@ -111,7 +111,7 @@ impl ToTokens for Swizzling {
                 format_ident!("{}", names.map(|n| n.to_string()).join(""))
             }
 
-            fn constructor(&self) -> proc_macro2::TokenStream {
+            fn get_constructor(&self) -> proc_macro2::TokenStream {
                 let mut components = self
                     .components
                     .iter()
@@ -138,14 +138,30 @@ impl ToTokens for Swizzling {
 
         impl ToTokens for Swizzle {
             fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-                let fn_ident = self.fn_ident();
-                let constructor = self.constructor();
+                let get_fn_ident = self.fn_ident();
+                let get_constructor = self.get_constructor();
                 let return_ty = self.return_ty();
 
-                quote! {
-                    pub fn #fn_ident(&self) -> #return_ty {
-                        #constructor
+                // Only single-component swizzles get setters, matching WGSL
+                // spec §8.5.1: multi-letter swizzles cannot appear on the
+                // left-hand side of an assignment.
+                let setter = if self.constructor.is_none() {
+                    let set_fn_ident = format_ident!("set_{get_fn_ident}");
+                    let field = &self.components[0].field;
+                    quote! {
+                        pub fn #set_fn_ident(&mut self, value: #return_ty) {
+                            self.inner.#field = value;
+                        }
                     }
+                } else {
+                    quote! {}
+                };
+
+                quote! {
+                    pub fn #get_fn_ident(&self) -> #return_ty {
+                        #get_constructor
+                    }
+                    #setter
                 }
                 .to_tokens(tokens)
             }

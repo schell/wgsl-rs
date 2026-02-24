@@ -1210,6 +1210,7 @@ pub enum Expr {
         lhs: Box<Expr>,
         dot_token: Token![.],
         swizzle: Ident,
+        params: Option<syn::punctuated::Punctuated<Expr, syn::Token![,]>>,
     },
     /// Type conversion.
     ///
@@ -1387,18 +1388,66 @@ impl TryFrom<&syn::Expr> for Expr {
                     turbofish.as_ref(),
                     "Turbofish is not supported in WGSL",
                 )?;
-                util::some_is_unsupported(
-                    args.first(),
-                    "Method call syntax (receiver.method(args)) is only supported for swizzles \
-                     (e.g., v.xyz()). For struct methods, use explicit path syntax: \
-                     Type::method(receiver, args)",
-                )?;
+
+                /// Returns (true, _) if it is a "set_" swizzle (eg "set_xyz").
+                /// Returns (_, true) if it is a swizzle
+                fn is_swizzle(method: &Ident) -> (bool, bool) {
+                    let mut method = method.to_string();
+                    let (is_setter, method) = if method.starts_with("set_") {
+                        (true, method.split_off(4))
+                    } else {
+                        (false, method)
+                    };
+                    for char in method.chars() {
+                        const SWIZZLE_CHARS: &str = "xyzwrgba";
+                        if char.is_lowercase() && SWIZZLE_CHARS.contains(char) {
+                            continue;
+                        } else {
+                            return (is_setter, false);
+                        }
+                    }
+                    (is_setter, true)
+                }
+
+                let (is_setter, is_swizzle) = is_swizzle(method);
+                ensure!(
+                    is_swizzle,
+                    UnsupportedSnafu {
+                        span: method.span(),
+                        note: "Method call syntax (receiver.method(args)) is only supported for \
+                               swizzles (e.g., v.xyz()). For struct methods, use explicit path \
+                               syntax: Type::method(receiver, args)",
+                    }
+                );
                 let lhs = Box::new(Expr::try_from(receiver.as_ref())?);
+                let params = if is_setter {
+                    let mut param_args = syn::punctuated::Punctuated::new();
+                    for pair in args.pairs() {
+                        let (expr, comma) = pair.into_tuple();
+                        let expr = Expr::try_from(expr)?;
+                        param_args.push_value(expr);
+                        if let Some(comma) = comma {
+                            param_args.push_punct(*comma);
+                        }
+                    }
+                    Some(param_args)
+                } else {
+                    None
+                };
+                // For setters, strip the "set_" prefix to get the
+                // underlying swizzle component (e.g. set_x -> x).
+                let swizzle = if is_setter {
+                    let name = method.to_string();
+                    Ident::new(&name[4..], method.span())
+                } else {
+                    method.clone()
+                };
                 // Treat as swizzle: receiver.method
                 Self::Swizzle {
                     lhs,
                     dot_token: *dot_token,
-                    swizzle: method.clone(),
+                    swizzle,
+                    params,
                 }
             }
             syn::Expr::Binary(syn::ExprBinary {
@@ -1832,6 +1881,52 @@ impl TryFrom<&syn::Local> for Local {
     }
 }
 
+/// Helper for parsing the four comma-separated arguments of `slab_read_array!`
+/// and `slab_write_array!` statement macros.
+struct SlabMacroArgs(syn::Expr, syn::Expr, syn::Expr, syn::Expr);
+
+impl Parse for SlabMacroArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let a = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let b = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let c = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let d = input.parse()?;
+        // Allow optional trailing comma
+        let _ = input.parse::<Option<Token![,]>>();
+        Ok(SlabMacroArgs(a, b, c, d))
+    }
+}
+
+/// Helper for parsing the arguments of `slab_write_array!`, where the fourth
+/// (size) argument is optional:
+///
+/// ```ignore
+/// slab_write_array!(slab, offset, src, size);  // 4-arg form
+/// slab_write_array!(slab, offset, src);        // 3-arg form, size = arrayLength(&slab)
+/// ```
+struct SlabWriteMacroArgs(syn::Expr, syn::Expr, syn::Expr, Option<syn::Expr>);
+
+impl Parse for SlabWriteMacroArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let a = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let b = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let c = input.parse()?;
+        let d = if input.parse::<Option<Token![,]>>()?.is_some() && !input.is_empty() {
+            Some(input.parse()?)
+        } else {
+            None
+        };
+        // Allow optional trailing comma
+        let _ = input.parse::<Option<Token![,]>>();
+        Ok(SlabWriteMacroArgs(a, b, c, d))
+    }
+}
+
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
@@ -1891,6 +1986,31 @@ pub enum Stmt {
     For(Box<ForLoop>),
     /// Switch statement (from Rust match)
     Switch(Box<StmtSwitch>),
+    /// A bare block statement used for scoping: `{ ... }`
+    ///
+    /// Transpiles to a WGSL compound statement.
+    Block(Block),
+    /// `slab_read_array!(slab, offset, dest, size);` -- copy from storage
+    /// buffer to local array.
+    SlabRead {
+        slab: Expr,
+        offset: Expr,
+        dest: Expr,
+        size: Expr,
+        span: Span,
+    },
+    /// `slab_write_array!(slab, offset, src, size);` -- copy from local array
+    /// to storage buffer.
+    ///
+    /// When `size` is `None` (3-arg form), the WGSL code generator emits
+    /// `arrayLength(&slab)` as the loop bound.
+    SlabWrite {
+        slab: Expr,
+        offset: Expr,
+        src: Expr,
+        size: Option<Expr>,
+        span: Span,
+    },
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -2057,17 +2177,60 @@ impl TryFrom<&syn::Stmt> for Stmt {
                     syn::Expr::Match(expr_match) => {
                         Ok(Stmt::Switch(Box::new(StmtSwitch::try_from(expr_match)?)))
                     }
+                    // Block statement → compound statement
+                    syn::Expr::Block(syn::ExprBlock { block, .. }) => {
+                        Ok(Stmt::Block(Block::try_from(block)?))
+                    }
                     _ => Ok(Stmt::Expr {
                         expr: Expr::try_from(expr)?,
                         semi_token: *semi_token,
                     }),
                 }
             }
-            _ => UnsupportedSnafu {
-                span: value.span(),
-                note: format!("Unsupported statement: '{}'", value.into_token_stream()),
+            syn::Stmt::Macro(stmt_macro) => {
+                let mac = &stmt_macro.mac;
+                let macro_name = mac
+                    .path
+                    .get_ident()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                let span = mac.path.span();
+                match macro_name.as_str() {
+                    "slab_read_array" => {
+                        let args: SlabMacroArgs =
+                            syn::parse2(mac.tokens.clone()).map_err(|e| Error::Unsupported {
+                                span,
+                                note: format!("slab_read_array! parse error: {e}"),
+                            })?;
+                        Ok(Stmt::SlabRead {
+                            slab: Expr::try_from(&args.0)?,
+                            offset: Expr::try_from(&args.1)?,
+                            dest: Expr::try_from(&args.2)?,
+                            size: Expr::try_from(&args.3)?,
+                            span,
+                        })
+                    }
+                    "slab_write_array" => {
+                        let args: SlabWriteMacroArgs =
+                            syn::parse2(mac.tokens.clone()).map_err(|e| Error::Unsupported {
+                                span,
+                                note: format!("slab_write_array! parse error: {e}"),
+                            })?;
+                        Ok(Stmt::SlabWrite {
+                            slab: Expr::try_from(&args.0)?,
+                            offset: Expr::try_from(&args.1)?,
+                            src: Expr::try_from(&args.2)?,
+                            size: args.3.as_ref().map(Expr::try_from).transpose()?,
+                            span,
+                        })
+                    }
+                    _ => UnsupportedSnafu {
+                        span,
+                        note: format!("Unsupported statement macro '{macro_name}!'"),
+                    }
+                    .fail(),
+                }
             }
-            .fail(),
         }
     }
 }
@@ -3051,6 +3214,9 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                     }
                     // Skip workgroup_size in this pass (handled separately for compute)
                     "workgroup_size" => {}
+                    // This is a documentation block
+                    // TODO: actually emit the same documentation in WGSL
+                    "doc" => {}
                     other => UnsupportedSnafu {
                         span: ident.span(),
                         note: format!("'{other}' is not a supported annotation"),
@@ -4404,12 +4570,224 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             }
         }
 
-        Ok(ItemImpl {
+        let mut result = ItemImpl {
             _impl_token: *impl_token,
             self_ty: self_ty_ident,
             _brace_token: *brace_token,
             items: parsed_items,
-        })
+        };
+        result.resolve_self();
+        Ok(result)
+    }
+}
+
+impl ItemImpl {
+    /// Replace all occurrences of `Self` in the impl block's items with the
+    /// actual struct name. WGSL has no `Self` keyword, so these must be
+    /// resolved during transpilation.
+    fn resolve_self(&mut self) {
+        let name = &self.self_ty;
+        for item in &mut self.items {
+            match item {
+                ImplItem::Fn(f) => resolve_self_in_fn(name, f),
+                ImplItem::Const(c) => resolve_self_in_const(name, c),
+            }
+        }
+    }
+}
+
+/// Replace an ident with the struct name if it is `Self`.
+fn maybe_replace_self(name: &Ident, ident: &mut Ident) {
+    if ident == "Self" {
+        *ident = Ident::new(&name.to_string(), ident.span());
+    }
+}
+
+fn resolve_self_in_fn(name: &Ident, f: &mut ItemFn) {
+    for arg in f.inputs.iter_mut() {
+        resolve_self_in_type(name, &mut arg.ty);
+    }
+    resolve_self_in_return_type(name, &mut f.return_type);
+    resolve_self_in_block(name, &mut f.block);
+}
+
+fn resolve_self_in_const(name: &Ident, c: &mut ItemConst) {
+    resolve_self_in_type(name, &mut c.ty);
+    resolve_self_in_expr(name, &mut c.expr);
+}
+
+fn resolve_self_in_return_type(name: &Ident, rt: &mut ReturnType) {
+    if let ReturnType::Type { ty, .. } = rt {
+        resolve_self_in_type(name, ty);
+    }
+}
+
+fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
+    match ty {
+        Type::Struct { ident } => maybe_replace_self(name, ident),
+        Type::Array { elem, len, .. } => {
+            resolve_self_in_type(name, elem);
+            resolve_self_in_expr(name, len);
+        }
+        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
+            resolve_self_in_type(name, elem);
+        }
+        Type::Scalar { .. }
+        | Type::Vector { .. }
+        | Type::Matrix { .. }
+        | Type::Sampler { .. }
+        | Type::SamplerComparison { .. }
+        | Type::Texture { .. }
+        | Type::TextureDepth { .. } => {}
+    }
+}
+
+fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
+    match expr {
+        Expr::Lit(_) => {}
+        Expr::Ident(ident) => maybe_replace_self(name, ident),
+        Expr::Array { elems, .. } => {
+            for elem in elems.iter_mut() {
+                resolve_self_in_expr(name, elem);
+            }
+        }
+        Expr::Paren { inner, .. } => resolve_self_in_expr(name, inner),
+        Expr::Binary { lhs, rhs, .. } => {
+            resolve_self_in_expr(name, lhs);
+            resolve_self_in_expr(name, rhs);
+        }
+        Expr::Unary { expr, .. } => resolve_self_in_expr(name, expr),
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            resolve_self_in_expr(name, lhs);
+            resolve_self_in_expr(name, index);
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            resolve_self_in_expr(name, lhs);
+            if let Some(params) = params {
+                for param in params.iter_mut() {
+                    resolve_self_in_expr(name, param);
+                }
+            }
+        }
+        Expr::Cast { lhs, ty } => {
+            resolve_self_in_expr(name, lhs);
+            resolve_self_in_type(name, ty);
+        }
+        Expr::FnCall { path, params, .. } => {
+            resolve_self_in_fn_path(name, path);
+            for param in params.iter_mut() {
+                resolve_self_in_expr(name, param);
+            }
+        }
+        Expr::Struct { ident, fields, .. } => {
+            maybe_replace_self(name, ident);
+            for field in fields.iter_mut() {
+                resolve_self_in_expr(name, &mut field.expr);
+            }
+        }
+        Expr::FieldAccess { base, .. } => resolve_self_in_expr(name, base),
+        Expr::TypePath { ty, .. } => maybe_replace_self(name, ty),
+        Expr::Reference { expr, .. } => resolve_self_in_expr(name, expr),
+    }
+}
+
+fn resolve_self_in_fn_path(name: &Ident, path: &mut FnPath) {
+    match path {
+        FnPath::Ident(ident) => maybe_replace_self(name, ident),
+        FnPath::TypeMethod { ty, .. } => maybe_replace_self(name, ty),
+    }
+}
+
+fn resolve_self_in_block(name: &Ident, block: &mut Block) {
+    for stmt in &mut block.stmt {
+        resolve_self_in_stmt(name, stmt);
+    }
+}
+
+fn resolve_self_in_stmt(name: &Ident, stmt: &mut Stmt) {
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some((_, ty)) = &mut local.ty {
+                resolve_self_in_type(name, ty);
+            }
+            if let Some(init) = &mut local.init {
+                resolve_self_in_expr(name, &mut init.expr);
+            }
+        }
+        Stmt::Const(c) => resolve_self_in_const(name, c),
+        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            resolve_self_in_expr(name, lhs);
+            resolve_self_in_expr(name, rhs);
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            resolve_self_in_expr(name, condition);
+            resolve_self_in_block(name, body);
+        }
+        Stmt::Loop { body, .. } => resolve_self_in_block(name, body),
+        Stmt::Block(block) => resolve_self_in_block(name, block),
+        Stmt::Expr { expr, .. } => resolve_self_in_expr(name, expr),
+        Stmt::If(stmt_if) => resolve_self_in_if(name, stmt_if),
+        Stmt::Break { .. } | Stmt::Continue { .. } => {}
+        Stmt::Return { expr, .. } => {
+            if let Some(expr) = expr {
+                resolve_self_in_expr(name, expr);
+            }
+        }
+        Stmt::For(for_loop) => {
+            resolve_self_in_expr(name, &mut for_loop.from);
+            resolve_self_in_expr(name, &mut for_loop.to);
+            resolve_self_in_block(name, &mut for_loop.body);
+        }
+        Stmt::Switch(switch) => {
+            resolve_self_in_expr(name, &mut switch.selector);
+            for arm in &mut switch.arms {
+                for sel in &mut arm.selectors {
+                    if let CaseSelector::Expr(expr) = sel {
+                        resolve_self_in_expr(name, expr);
+                    }
+                }
+                resolve_self_in_block(name, &mut arm.body);
+            }
+        }
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+            ..
+        } => {
+            resolve_self_in_expr(name, slab);
+            resolve_self_in_expr(name, offset);
+            resolve_self_in_expr(name, dest);
+            resolve_self_in_expr(name, size);
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+            ..
+        } => {
+            resolve_self_in_expr(name, slab);
+            resolve_self_in_expr(name, offset);
+            resolve_self_in_expr(name, src);
+            if let Some(size) = size {
+                resolve_self_in_expr(name, size);
+            }
+        }
+    }
+}
+
+fn resolve_self_in_if(name: &Ident, stmt_if: &mut StmtIf) {
+    resolve_self_in_expr(name, &mut stmt_if.condition);
+    resolve_self_in_block(name, &mut stmt_if.then_block);
+    if let Some(else_branch) = &mut stmt_if.else_branch {
+        match &mut else_branch.body {
+            ElseBody::Block(block) => resolve_self_in_block(name, block),
+            ElseBody::If(stmt_if) => resolve_self_in_if(name, stmt_if),
+        }
     }
 }
 
@@ -6619,6 +6997,140 @@ mod test {
         assert!(
             matches!(result, Ok(Item::Struct(_))),
             "#[derive(...)] on structs should be silently ignored during WGSL parsing"
+        );
+    }
+
+    // --- slab_read_array! / slab_write_array! statement macro tests ---
+
+    #[test]
+    fn slab_read_parses_and_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_read_array!(SLAB, offset, raw, 4);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        assert!(
+            matches!(&stmt, Stmt::SlabRead { .. }),
+            "Expected Stmt::SlabRead, got: {:#?}",
+            std::mem::discriminant(&stmt)
+        );
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var _i: u32 = 0u; _i < 4; _i++)"),
+            "Expected for loop header in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("raw[_i] = SLAB[offset + _i];"),
+            "Expected read body in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_write_parses_and_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_write_array!(_arraySLAB, offset, arr, 4);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        assert!(
+            matches!(&stmt, Stmt::SlabWrite { .. }),
+            "Expected Stmt::SlabWrite, got: {:#?}",
+            std::mem::discriminant(&stmt)
+        );
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("for (var _i: u32 = 0u; _i < 4; _i++)"),
+            "Expected for loop header in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("SLAB[offset + _i] = arr[_i];"),
+            "Expected write body in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_read_with_get_macro_strips_get() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_read_array!(get!(SLAB), offset, raw, DATA_SIZE);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        // get!(SLAB) should be stripped to just SLAB
+        assert!(
+            wgsl.contains("SLAB[offset + _i]"),
+            "Expected get!(SLAB) to be stripped to SLAB, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_write_with_get_mut_macro_strips_get_mut() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_write_array!(get_mut!(SLAB), offset, arr, DATA_SIZE);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        // get_mut!(SLAB) should be stripped to just SLAB
+        assert!(
+            wgsl.contains("SLAB[offset + _i]"),
+            "Expected get_mut!(SLAB) to be stripped to SLAB, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_write_three_arg_emits_array_length() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_write_array!(get_mut!(SLAB), offset, arr);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        assert!(
+            matches!(&stmt, Stmt::SlabWrite { size: None, .. }),
+            "Expected Stmt::SlabWrite with size=None"
+        );
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("_i < arrayLength(&SLAB)"),
+            "Expected arrayLength(&SLAB) as loop bound, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("SLAB[offset + _i] = arr[_i];"),
+            "Expected write body in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_read_with_const_size_emits_const_name() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            slab_read_array!(SLAB, id.inner, raw, MY_STRUCT_SLAB_SIZE);
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert!(
+            wgsl.contains("_i < MY_STRUCT_SLAB_SIZE"),
+            "Expected const name in loop bound, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("SLAB[id.inner + _i]"),
+            "Expected field access in offset, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn slab_unsupported_macro_rejected() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            unknown_macro!(a, b, c, d);
+        };
+        let result = Stmt::try_from(&stmt);
+        assert!(
+            result.is_err(),
+            "Unknown statement macros should be rejected"
         );
     }
 }

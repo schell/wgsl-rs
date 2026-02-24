@@ -21,7 +21,7 @@ pub use wgsl_rs_macros::{
     wgsl_allow, workgroup, workgroup_size,
 };
 
-pub use crate::{get, get_mut};
+pub use crate::{get, get_mut, slab_read_array, slab_write_array};
 
 mod atomic;
 mod bitcast;
@@ -322,6 +322,62 @@ macro_rules! get_mut {
     ($var:ident) => {
         $var.get_mut()
     };
+}
+
+/// Copy `$size` elements from `$slab` starting at `$offset` into `$dst`.
+///
+/// On the GPU side (inside `#[wgsl]` modules), this emits a WGSL `for` loop
+/// that copies from a storage buffer into a local `array<u32, N>`.
+///
+/// On the CPU side, this is a simple element-by-element copy.
+///
+/// # Example
+/// ```ignore
+/// let mut raw = [0u32; 4];
+/// slab_read_array!(get!(SLAB), offset, raw, 4);
+/// ```
+#[macro_export]
+macro_rules! slab_read_array {
+    ($slab:expr, $offset:expr, $dst:expr, $size:expr) => {{
+        let offset = $offset as usize;
+        for i in 0..$size as usize {
+            $dst[i] = $slab[offset + i];
+        }
+    }};
+}
+
+/// Copy `$size` elements from `$src` into `$slab` starting at `$offset`.
+///
+/// On the GPU side (inside `#[wgsl]` modules), this emits a WGSL `for` loop
+/// that copies from a local `array<u32, N>` into a storage buffer.
+///
+/// On the CPU side, this is a simple element-by-element copy.
+///
+/// # Example
+/// ```ignore
+/// let arr = [1u32, 2, 3, 4];
+/// slab_write_array!(get_mut!(SLAB), offset, arr, 4);
+/// ```
+///
+/// The last parameter is optional. When omitted, the proc-macro emits
+/// `arrayLength(&slab)` as the loop bound in WGSL. On the CPU side, this
+/// form uses the source array's `.len()`:
+/// ```ignore
+/// let arr = [1u32, 2, 3, 4];
+/// slab_write_array!(get_mut!(SLAB), offset, arr);
+/// ```
+#[macro_export]
+macro_rules! slab_write_array {
+    ($slab:expr, $offset:expr, $src:expr) => {
+        slab_write_array!($slab, $offset, $src, $src.len())
+    };
+
+    ($slab:expr, $offset:expr, $src:expr, $size:expr) => {{
+        let offset = $offset as usize;
+        for i in 0..$size as usize {
+            $slab[offset + i] = $src[i];
+        }
+    }};
 }
 
 /// Used to provide WGSL type conversion functions like `f32(...)`, etc.

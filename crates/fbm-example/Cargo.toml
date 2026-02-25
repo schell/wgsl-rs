@@ -1,0 +1,11 @@
+[package]
+name = "fbm-example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck.workspace = true
+futures.workspace = true
+winit.workspace = true
+wgpu.workspace = true
+wgsl-rs = { path = "../wgsl-rs", features = ["linkage-wgpu"] }

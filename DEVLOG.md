@@ -244,6 +244,25 @@ Added `storageBarrier()`, `workgroupBarrier()`, `textureBarrier()`, and `workgro
 - Extended `ptr!` macro and parser to support `workgroup` address space
 - Added name mappings in `BUILTIN_CASE_NAME_MAP` for all four sync builtins
 
+### 2026-02-25: FBM example crate (`fbm-example`)
+
+Added a standalone `fbm-example` crate that renders an animated fractal brownian motion
+shader in a `winit` window using `wgpu`. Port of the classic FBM shader by Patricio
+Gonzalez Vivo from GLSL.
+
+Lessons learned during the port:
+- **Typed literal suffixes** like `0.0_f32` are emitted verbatim into WGSL, causing parse
+  errors. Use plain `0.0` instead. The transpiler does not strip Rust literal suffixes.
+- **`#[fragment]` does not strip `#[builtin(...)]`** from function parameters (unlike
+  `#[vertex]` and `#[compute]` which do). Workaround: use an `#[input]` struct with
+  `#[builtin(position)]` on the field instead of a direct parameter attribute.
+  See [#84](https://github.com/schell/wgsl-rs/issues/84).
+- **Accessing uniforms in expressions**: `get!(U_TIME)` returns a `ModuleVarReadGuard<T>`
+  on the Rust side. To use the value in arithmetic, wrap with the identity type constructor:
+  `f32(get!(U_TIME))` for scalars, or `vec2f(get!(U_RESOLUTION).x(), get!(U_RESOLUTION).y())`
+  for vectors. These become no-op constructors in WGSL. This is a bit messy and should be
+  improved long-term.
+
 ### 2026-01-24: RuntimeArray<T> support
 
 Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without size parameter).

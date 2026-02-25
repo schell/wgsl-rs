@@ -365,7 +365,8 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// | `#[wgsl(skip_validation)]` | Skip compile-time and test-time WGSL validation. |
 /// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
 ///
-/// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs, skip_validation)]`.
+/// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs,
+/// skip_validation)]`.
 ///
 /// # Entry Points
 ///

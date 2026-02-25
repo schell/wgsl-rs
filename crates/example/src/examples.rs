@@ -55,7 +55,7 @@ pub mod hello_triangle {
         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
 
         let position = POS[vertex_index as usize];
-        vec4f(position.x(), position.y(), 0.0, 1.0)
+        vec4f(position.x, position.y, 0.0, 1.0)
     }
 
     #[fragment]
@@ -1326,7 +1326,7 @@ pub mod slab_read_write {
         }
 
         // Modify it
-        data.three_four.set_x(123.0);
+        data.three_four.x = 123.0;
 
         // Write the modified `Data` struct back to the slab
         let out_array = Data::to_array(data);

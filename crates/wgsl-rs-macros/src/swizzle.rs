@@ -118,11 +118,11 @@ impl ToTokens for Swizzling {
                     .map(|p| p.field.clone())
                     .collect::<Vec<_>>();
                 if let Some(constructor) = &self.constructor {
-                    quote! { #constructor(#(self.inner.#components),*) }
+                    quote! { #constructor(#(self.#components),*) }
                 } else {
                     // There's only one component
                     let component = components.pop().unwrap();
-                    quote! { self.inner.#component }
+                    quote! { self.#component }
                 }
             }
 
@@ -142,26 +142,10 @@ impl ToTokens for Swizzling {
                 let get_constructor = self.get_constructor();
                 let return_ty = self.return_ty();
 
-                // Only single-component swizzles get setters, matching WGSL
-                // spec §8.5.1: multi-letter swizzles cannot appear on the
-                // left-hand side of an assignment.
-                let setter = if self.constructor.is_none() {
-                    let set_fn_ident = format_ident!("set_{get_fn_ident}");
-                    let field = &self.components[0].field;
-                    quote! {
-                        pub fn #set_fn_ident(&mut self, value: #return_ty) {
-                            self.inner.#field = value;
-                        }
-                    }
-                } else {
-                    quote! {}
-                };
-
                 quote! {
                     pub fn #get_fn_ident(&self) -> #return_ty {
                         #get_constructor
                     }
-                    #setter
                 }
                 .to_tokens(tokens)
             }

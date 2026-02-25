@@ -392,6 +392,24 @@ impl<A: Clone + Convert<B>, B> Convert<B> for &A {
     }
 }
 
+impl Convert<f32> for f32 {
+    fn convert(self) -> f32 {
+        self
+    }
+}
+
+impl Convert<u32> for u32 {
+    fn convert(self) -> u32 {
+        self
+    }
+}
+
+impl Convert<i32> for i32 {
+    fn convert(self) -> i32 {
+        self
+    }
+}
+
 impl<A: Clone + Convert<B>, B> Convert<B> for ModuleVarReadGuard<'_, A> {
     fn convert(self) -> B {
         self.clone().convert()

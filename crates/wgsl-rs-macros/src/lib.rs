@@ -350,6 +350,332 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     Ok(input_mod.into_token_stream().into())
 }
 
+/// Transpiles a Rust module to WGSL.
+///
+/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_MODULE` constant
+/// containing the transpiled WGSL source. The Rust code inside the module
+/// remains fully functional and can be executed on the CPU, while the
+/// generated WGSL runs on the GPU.
+///
+/// # Module Options
+///
+/// | Syntax | Description |
+/// |--------|-------------|
+/// | `#[wgsl]` | Transpile the module with default settings. |
+/// | `#[wgsl(skip_validation)]` | Skip compile-time and test-time WGSL validation. |
+/// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
+///
+/// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs, skip_validation)]`.
+///
+/// # Entry Points
+///
+/// Mark `pub fn` items with an entry point attribute to declare shader stages.
+///
+/// | Attribute | WGSL Output | Notes |
+/// |-----------|------------|-------|
+/// | `#[vertex]` | `@vertex` | |
+/// | `#[fragment]` | `@fragment` | |
+/// | `#[compute]` | `@compute` | Must also have `#[workgroup_size(...)]`. |
+/// | `#[workgroup_size(X)]` | `@workgroup_size(X)` | 1D workgroup. |
+/// | `#[workgroup_size(X, Y)]` | `@workgroup_size(X, Y)` | 2D workgroup. |
+/// | `#[workgroup_size(X, Y, Z)]` | `@workgroup_size(X, Y, Z)` | 3D workgroup. |
+///
+/// **Auto-inference rules:**
+/// - A `#[vertex]` function returning `Vec4f` automatically gets
+///   `@builtin(position)` on its return type.
+/// - A `#[fragment]` function returning `Vec4f` automatically gets
+///   `@location(0)` on its return type.
+///
+/// ```ignore
+/// #[vertex]
+/// pub fn vs_main(#[builtin(vertex_index)] vi: u32) -> Vec4f {
+///     // return type automatically gets @builtin(position)
+///     vec4f(0.0, 0.0, 0.0, 1.0)
+/// }
+///
+/// #[compute]
+/// #[workgroup_size(64)]
+/// pub fn cs_main(#[builtin(global_invocation_id)] gid: Vec3u) {
+///     // ...
+/// }
+/// ```
+///
+/// # Built-in Values
+///
+/// Use `#[builtin(...)]` on function parameters or struct fields to bind
+/// to WGSL built-in values. Each emits `@builtin(name)` in the WGSL output.
+///
+/// | Built-in Name | Stage | Direction | Type |
+/// |---------------|-------|-----------|------|
+/// | `vertex_index` | vertex | input | `u32` |
+/// | `instance_index` | vertex | input | `u32` |
+/// | `position` | vertex / fragment | output / input | `Vec4f` |
+/// | `front_facing` | fragment | input | `bool` |
+/// | `frag_depth` | fragment | output | `f32` |
+/// | `sample_index` | fragment | input | `u32` |
+/// | `sample_mask` | fragment | input+output | `u32` |
+/// | `local_invocation_id` | compute | input | `Vec3u` |
+/// | `local_invocation_index` | compute | input | `u32` |
+/// | `global_invocation_id` | compute | input | `Vec3u` |
+/// | `workgroup_id` | compute | input | `Vec3u` |
+/// | `num_workgroups` | compute | input | `Vec3u` |
+/// | `primitive_index` | fragment | input | `u32` |
+/// | `subgroup_invocation_id` | compute+fragment | input | `u32` |
+/// | `subgroup_size` | compute+fragment | input | `u32` |
+/// | `subgroup_id` | compute | input | `u32` |
+/// | `num_subgroups` | compute | input | `u32` |
+///
+/// # Inter-Stage IO Attributes
+///
+/// These attributes can be placed on function parameters or struct fields
+/// to control data flow between shader stages.
+///
+/// ## `#[location(N)]`
+///
+/// Assigns a user-defined IO location. Emits `@location(N)` in WGSL.
+/// Location indices must be unique within a given set of inputs or outputs
+/// but do not need to be contiguous or ordered.
+///
+/// ## `#[blend_src(N)]`
+///
+/// For dual-source blending. Emits `@blend_src(N)` in WGSL. Only valid
+/// on output struct fields with `@location(0)`. Must have exactly two
+/// entries: `@blend_src(0)` and `@blend_src(1)`.
+///
+/// ## `#[interpolate(type)]` / `#[interpolate(type, sampling)]`
+///
+/// Controls how values are interpolated between vertex and fragment stages.
+/// Emits `@interpolate(type)` or `@interpolate(type, sampling)` in WGSL.
+///
+/// **Interpolation types:** `perspective`, `linear`, `flat`
+///
+/// **Sampling modes:** `center`, `centroid`, `sample`, `first`, `either`
+///
+/// ## `#[invariant]`
+///
+/// Marks a `@builtin(position)` output as invariant. Emits `@invariant`
+/// in WGSL.
+///
+/// # IO Structs
+///
+/// Use `#[input]` and `#[output]` on structs to group inter-stage IO
+/// fields. These attributes strip the IO annotations from the Rust output
+/// (so the struct compiles as plain Rust) while preserving them in the
+/// WGSL output.
+///
+/// ```ignore
+/// #[output]
+/// pub struct VertexOutput {
+///     #[builtin(position)]
+///     pub pos: Vec4f,
+///     #[location(0)]
+///     pub color: Vec4f,
+///     #[location(1)]
+///     #[interpolate(flat)]
+///     pub material_id: u32,
+/// }
+/// ```
+///
+/// Transpiles to:
+///
+/// ```wgsl
+/// struct VertexOutput {
+///     @builtin(position) pos: vec4<f32>,
+///     @location(0) color: vec4<f32>,
+///     @location(1) @interpolate(flat) material_id: u32,
+/// }
+/// ```
+///
+/// # Resource Declarations
+///
+/// Declare GPU resources using macro invocations inside the module.
+///
+/// ## `uniform!`
+///
+/// ```ignore
+/// uniform!(group(0), binding(0), MY_UNIFORM: MyStruct);
+/// ```
+///
+/// Emits `@group(0) @binding(0) var<uniform> MY_UNIFORM: MyStruct;` in
+/// WGSL. On the Rust side, generates a thread-safe static that can be
+/// accessed with `get!` and `get_mut!`.
+///
+/// ## `storage!`
+///
+/// ```ignore
+/// storage!(group(0), binding(1), MY_BUFFER: MyStruct);
+/// storage!(group(0), binding(1), read_only, MY_BUFFER: MyStruct);
+/// storage!(group(0), binding(1), read_write, MY_BUFFER: MyStruct);
+/// ```
+///
+/// Emits `@group(G) @binding(B) var<storage, read>` or
+/// `var<storage, read_write>` in WGSL. The default access mode is
+/// `read_only`.
+///
+/// ## `sampler!`
+///
+/// ```ignore
+/// sampler!(group(0), binding(2), TEX_SAMPLER: Sampler);
+/// sampler!(group(0), binding(3), SHADOW_SAMPLER: SamplerComparison);
+/// ```
+///
+/// Emits `@group(G) @binding(B) var NAME: sampler;` or
+/// `var NAME: sampler_comparison;` in WGSL.
+///
+/// ## `texture!`
+///
+/// ```ignore
+/// texture!(group(0), binding(4), DIFFUSE: Texture2D<f32>);
+/// texture!(group(0), binding(5), SHADOW_MAP: TextureDepth2D);
+/// ```
+///
+/// **Sampled textures** (with type parameter `f32`, `i32`, or `u32`):
+/// `Texture1D`, `Texture2D`, `Texture2DArray`, `Texture3D`, `TextureCube`,
+/// `TextureCubeArray`, `TextureMultisampled2D`.
+///
+/// **Depth textures** (no type parameter):
+/// `TextureDepth2D`, `TextureDepth2DArray`, `TextureDepthCube`,
+/// `TextureDepthCubeArray`, `TextureDepthMultisampled2D`.
+///
+/// ## `workgroup!`
+///
+/// ```ignore
+/// workgroup!(SHARED_DATA: [f32; 64]);
+/// workgroup!(COUNTER: Atomic<u32>);
+/// ```
+///
+/// Emits `var<workgroup> NAME: TYPE;` in WGSL. Only usable in compute
+/// shaders.
+///
+/// # Pointer Types
+///
+/// Use `ptr!(address_space, Type)` in function parameter types to declare
+/// WGSL pointers. On the Rust side this expands to `&mut T`.
+///
+/// **Supported address spaces:** `function`, `private`, `workgroup`.
+///
+/// ```ignore
+/// fn increment(p: ptr!(function, i32)) {
+///     *p += 1;
+/// }
+/// ```
+///
+/// Emits `fn increment(p: ptr<function, i32>)` in WGSL.
+///
+/// # Enums
+///
+/// Enums must have `#[repr(u32)]` and become type aliases with constants
+/// in WGSL.
+///
+/// ```ignore
+/// #[repr(u32)]
+/// pub enum Material {
+///     Metal = 0,
+///     Wood = 1,
+///     Glass = 2,
+/// }
+/// ```
+///
+/// Transpiles to:
+///
+/// ```wgsl
+/// alias Material = u32;
+/// const Material_Metal: u32 = 0u;
+/// const Material_Wood: u32 = 1u;
+/// const Material_Glass: u32 = 2u;
+/// ```
+///
+/// # Statement Macros
+///
+/// These macros are available inside function bodies within `#[wgsl]`
+/// modules.
+///
+/// ## `get!` / `get_mut!`
+///
+/// Access module-level variables declared with `uniform!`, `storage!`, or
+/// `workgroup!`. In Rust, these acquire a read or write lock on the
+/// underlying thread-safe storage. In WGSL, they are stripped and the
+/// variable name is emitted directly.
+///
+/// ```ignore
+/// let value = get!(MY_UNIFORM).field;
+/// get_mut!(MY_BUFFER).field = 42;
+/// ```
+///
+/// ## `slab_read_array!` / `slab_write_array!`
+///
+/// Bulk read/write operations on storage buffer slabs.
+///
+/// ```ignore
+/// slab_read_array!(get!(SLAB), offset, dest_array, count);
+/// slab_write_array!(get_mut!(SLAB), offset, src_array, count);
+/// ```
+///
+/// These expand to indexed for-loops in WGSL.
+///
+/// # Warning Suppression
+///
+/// Use `#[wgsl_allow(...)]` on loop or match expressions to suppress
+/// specific transpiler warnings.
+///
+/// | Warning Name | Description |
+/// |-------------|-------------|
+/// | `non_literal_loop_bounds` | Allow `for i in 0..n` where `n` is not a literal. |
+/// | `non_literal_match_statement_patterns` | Allow match arms with non-literal patterns. |
+///
+/// ```ignore
+/// #[wgsl_allow(non_literal_loop_bounds)]
+/// for i in 0..n {
+///     // ...
+/// }
+/// ```
+///
+/// # Complete Example
+///
+/// ```ignore
+/// use wgsl_rs::std::*;
+///
+/// #[wgsl]
+/// pub mod my_shader {
+///     use super::*;
+///
+///     pub struct Uniforms {
+///         pub projection: Mat4x4f,
+///         pub modelview: Mat4x4f,
+///     }
+///
+///     uniform!(group(0), binding(0), UNIFORMS: Uniforms);
+///
+///     #[output]
+///     pub struct VertexOutput {
+///         #[builtin(position)]
+///         pub clip_position: Vec4f,
+///         #[location(0)]
+///         pub color: Vec4f,
+///     }
+///
+///     #[vertex]
+///     pub fn vs_main(
+///         #[builtin(vertex_index)] vertex_index: u32,
+///         #[location(0)] position: Vec3f,
+///         #[location(1)] color: Vec4f,
+///     ) -> VertexOutput {
+///         let u = get!(UNIFORMS);
+///         let clip = u.projection * u.modelview * vec4f(position.x, position.y, position.z, 1.0);
+///         VertexOutput {
+///             clip_position: clip,
+///             color,
+///         }
+///     }
+///
+///     #[fragment]
+///     pub fn fs_main(
+///         #[location(0)] color: Vec4f,
+///     ) -> Vec4f {
+///         color
+///     }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn wgsl(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     // Parse the input tokens into a syntax tree
@@ -378,6 +704,13 @@ pub fn swizzle(token_stream: TokenStream) -> TokenStream {
     swizzle::swizzle(token_stream)
 }
 
+/// Marks a function as a vertex shader entry point.
+///
+/// Emits `@vertex` in WGSL. If the return type is `Vec4f`, the output
+/// automatically gets `@builtin(position)`. Use `#[builtin(...)]` on
+/// parameters to bind vertex-stage built-in inputs.
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn vertex(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     // For now we don't do any transformations except for pulling out the
@@ -397,11 +730,25 @@ pub fn vertex(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     item_fn.into_token_stream().into()
 }
 
+/// Marks a function as a fragment shader entry point.
+///
+/// Emits `@fragment` in WGSL. If the return type is `Vec4f`, the output
+/// automatically gets `@location(0)`. Use `#[builtin(...)]` on parameters
+/// to bind fragment-stage built-in inputs (e.g., `position`, `front_facing`).
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn fragment(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
 }
 
+/// Marks a function as a compute shader entry point.
+///
+/// Emits `@compute` in WGSL. Must be paired with `#[workgroup_size(...)]`.
+/// Use `#[builtin(...)]` on parameters to bind compute-stage built-in
+/// inputs (e.g., `global_invocation_id`, `local_invocation_id`).
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn compute(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     // Strip #[builtin(...)] attributes from function arguments
@@ -420,13 +767,28 @@ pub fn compute(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     item_fn.into_token_stream().into()
 }
 
+/// Specifies the workgroup dimensions for a `#[compute]` entry point.
+///
+/// Accepts 1, 2, or 3 integer literal arguments. Emits
+/// `@workgroup_size(X)`, `@workgroup_size(X, Y)`, or
+/// `@workgroup_size(X, Y, Z)` in WGSL.
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn workgroup_size(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
 }
 
-/// Attribute for marking function parameters with WGSL builtin identifiers.
-/// This is stripped during Rust compilation but preserved in WGSL output.
+/// Binds a function parameter or struct field to a WGSL built-in value.
+///
+/// Emits `@builtin(name)` in WGSL. Stripped from the Rust output during
+/// compilation. See [`wgsl`] for the full list of supported built-in names
+/// and which shader stages they belong to.
+///
+/// ```ignore
+/// #[vertex]
+/// pub fn main(#[builtin(vertex_index)] vi: u32) -> Vec4f { /* ... */ }
+/// ```
 #[proc_macro_attribute]
 pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
@@ -487,11 +849,34 @@ pub fn wgsl_allow(_attr: TokenStream, token_stream: TokenStream) -> TokenStream 
     token_stream
 }
 
+/// Declares a uniform buffer binding.
+///
+/// Emits `@group(G) @binding(B) var<uniform> NAME: TYPE;` in WGSL.
+/// On the Rust side, generates a thread-safe static accessible via
+/// `get!` and `get_mut!`.
+///
+/// ```ignore
+/// uniform!(group(0), binding(0), MY_UNIFORM: MyStruct);
+/// ```
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro]
 pub fn uniform(input: TokenStream) -> TokenStream {
     uniform::uniform(input)
 }
 
+/// Declares a storage buffer binding.
+///
+/// Emits `@group(G) @binding(B) var<storage, read>` or
+/// `var<storage, read_write>` in WGSL depending on the access mode.
+/// The default is `read_only`.
+///
+/// ```ignore
+/// storage!(group(0), binding(1), MY_BUFFER: MyStruct);
+/// storage!(group(0), binding(1), read_write, MY_BUFFER: MyStruct);
+/// ```
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro]
 pub fn storage(input: TokenStream) -> TokenStream {
     storage::storage(input)
@@ -723,7 +1108,13 @@ pub fn ptr(input: TokenStream) -> TokenStream {
     ptr::ptr(input)
 }
 
-/// Defines an "input" struct.
+/// Marks a struct as a shader input, preserving IO attributes in WGSL.
+///
+/// Fields may carry `#[builtin(...)]`, `#[location(N)]`, and
+/// `#[interpolate(...)]` attributes. These are emitted in the WGSL output
+/// and stripped from the Rust output so the struct compiles normally.
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn input(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     let mut rust_struct: syn::ItemStruct = syn::parse_macro_input!(token_stream);
@@ -748,7 +1139,14 @@ pub fn input(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     rust_struct.into_token_stream().into()
 }
 
-/// Defines an "output" struct.
+/// Marks a struct as a shader output, preserving IO attributes in WGSL.
+///
+/// Fields may carry `#[builtin(...)]`, `#[location(N)]`,
+/// `#[interpolate(...)]`, `#[blend_src(N)]`, and `#[invariant]`
+/// attributes. These are emitted in the WGSL output and stripped from
+/// the Rust output so the struct compiles normally.
+///
+/// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn output(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     let mut rust_struct: syn::ItemStruct = syn::parse_macro_input!(token_stream);

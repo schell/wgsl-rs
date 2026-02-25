@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/example",
+  "crates/fbm-example",
   "crates/wgsl-rs",
   "crates/wgsl-rs-macros",
   "crates/xtask"
@@ -24,5 +25,6 @@ scraper = "0.22"
 quote = "1.0"
 snafu = "0.8.9"
 syn = { version = "2.0", features = ["full", "printing", "extra-traits", "visit-mut"] }
+bytemuck = { version = "1", features = ["derive"] }
 wgpu = "28"
 winit = "0.30"

@@ -211,9 +211,7 @@ mod abs {
         ($ty:ty) => {
             impl NumericBuiltinAbs for $ty {
                 fn abs(self) -> Self {
-                    Self {
-                        inner: self.inner.abs(),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.abs()))
                 }
             }
         };
@@ -244,9 +242,7 @@ mod acos {
         ($ty:ty) => {
             impl NumericBuiltinAcos for $ty {
                 fn acos(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.acos()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.acos()))
                 }
             }
         };
@@ -274,9 +270,7 @@ mod sin {
         ($ty:ty) => {
             impl NumericBuiltinSin for $ty {
                 fn sin(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.sin()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.sin()))
                 }
             }
         };
@@ -304,9 +298,7 @@ mod asin {
         ($ty:ty) => {
             impl NumericBuiltinAsin for $ty {
                 fn asin(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.asin()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.asin()))
                 }
             }
         };
@@ -334,9 +326,7 @@ mod atan {
         ($ty:ty) => {
             impl NumericBuiltinAtan for $ty {
                 fn atan(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.atan()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.atan()))
                 }
             }
         };
@@ -364,9 +354,7 @@ mod cos {
         ($ty:ty) => {
             impl NumericBuiltinCos for $ty {
                 fn cos(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.cos()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.cos()))
                 }
             }
         };
@@ -394,9 +382,7 @@ mod tan {
         ($ty:ty) => {
             impl NumericBuiltinTan for $ty {
                 fn tan(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.tan()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.tan()))
                 }
             }
         };
@@ -425,9 +411,7 @@ mod fract {
         ($ty:ty) => {
             impl NumericBuiltinFract for $ty {
                 fn fract(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.fract()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.fract()))
                 }
             }
         };
@@ -454,9 +438,7 @@ mod inverse_sqrt {
         ($ty:ty) => {
             impl NumericBuiltinInverseSqrt for $ty {
                 fn inverse_sqrt(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| 1.0 / t.sqrt()),
-                    }
+                    Self::from_array(self.to_array().map(|t| 1.0 / t.sqrt()))
                 }
             }
         };
@@ -481,17 +463,17 @@ mod length {
     }
     impl NumericBuiltinLength for Vec2f {
         fn length(self) -> f32 {
-            self.inner.length()
+            glam::Vec2::from(self).length()
         }
     }
     impl NumericBuiltinLength for Vec3f {
         fn length(self) -> f32 {
-            self.inner.length()
+            glam::Vec3::from(self).length()
         }
     }
     impl NumericBuiltinLength for Vec4f {
         fn length(self) -> f32 {
-            self.inner.length()
+            glam::Vec4::from(self).length()
         }
     }
 }
@@ -513,9 +495,7 @@ mod log {
         ($ty:ty) => {
             impl NumericBuiltinLog for $ty {
                 fn log(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.ln()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.ln()))
                 }
             }
         };
@@ -542,9 +522,7 @@ mod log2 {
         ($ty:ty) => {
             impl NumericBuiltinLog2 for $ty {
                 fn log2(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.log2()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.log2()))
                 }
             }
         };
@@ -578,17 +556,17 @@ mod max {
         }
     }
     macro_rules! impl_max_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinMax for $ty {
                 fn max(self, other: Self) -> Self {
-                    self.inner.max(other.inner).into()
+                    <$glam_ty>::from(self).max(<$glam_ty>::from(other)).into()
                 }
             }
         };
     }
-    impl_max_vec!(Vec2f);
-    impl_max_vec!(Vec3f);
-    impl_max_vec!(Vec4f);
+    impl_max_vec!(Vec2f, glam::Vec2);
+    impl_max_vec!(Vec3f, glam::Vec3);
+    impl_max_vec!(Vec4f, glam::Vec4);
 }
 
 pub trait NumericBuiltinMin {
@@ -615,17 +593,17 @@ mod min {
         }
     }
     macro_rules! impl_min_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinMin for $ty {
                 fn min(self, other: Self) -> Self {
-                    self.inner.min(other.inner).into()
+                    <$glam_ty>::from(self).min(<$glam_ty>::from(other)).into()
                 }
             }
         };
     }
-    impl_min_vec!(Vec2f);
-    impl_min_vec!(Vec3f);
-    impl_min_vec!(Vec4f);
+    impl_min_vec!(Vec2f, glam::Vec2);
+    impl_min_vec!(Vec3f, glam::Vec3);
+    impl_min_vec!(Vec4f, glam::Vec4);
 }
 
 pub trait NumericBuiltinPow {
@@ -645,14 +623,12 @@ mod pow {
         ($ty:ty) => {
             impl NumericBuiltinPow for $ty {
                 fn pow(self, other: Self) -> Self {
-                    let mut array = self.inner.to_array();
-                    let exps = other.inner.to_array();
+                    let mut array = self.to_array();
+                    let exps = other.to_array();
                     for i in 0..array.len() {
                         array[i] = array[i].powf(exps[i]);
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -679,9 +655,7 @@ mod radians {
         ($ty:ty) => {
             impl NumericBuiltinRadians for $ty {
                 fn radians(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t * std::f32::consts::PI / 180.0),
-                    }
+                    Self::from_array(self.to_array().map(|t| t * std::f32::consts::PI / 180.0))
                 }
             }
         };
@@ -708,9 +682,7 @@ mod round {
         ($ty:ty) => {
             impl NumericBuiltinRound for $ty {
                 fn round(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.round()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.round()))
                 }
             }
         };
@@ -737,9 +709,7 @@ mod saturate {
         ($ty:ty) => {
             impl NumericBuiltinSaturate for $ty {
                 fn saturate(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.clamp(0.0, 1.0)),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.clamp(0.0, 1.0)))
                 }
             }
         };
@@ -772,17 +742,15 @@ mod sign {
         ($ty:ty) => {
             impl NumericBuiltinSign for $ty {
                 fn sign(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| {
-                            if t > 0.0 {
-                                1.0
-                            } else if t < 0.0 {
-                                -1.0
-                            } else {
-                                0.0
-                            }
-                        }),
-                    }
+                    Self::from_array(self.to_array().map(|t| {
+                        if t > 0.0 {
+                            1.0
+                        } else if t < 0.0 {
+                            -1.0
+                        } else {
+                            0.0
+                        }
+                    }))
                 }
             }
         };
@@ -809,9 +777,7 @@ mod sqrt {
         ($ty:ty) => {
             impl NumericBuiltinSqrt for $ty {
                 fn sqrt(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.sqrt()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.sqrt()))
                 }
             }
         };
@@ -831,21 +797,23 @@ mod step {
     use super::*;
     impl NumericBuiltinStep for f32 {
         fn step(self, x: Self) -> Self {
-            if x >= self { 1.0 } else { 0.0 }
+            if x >= self {
+                1.0
+            } else {
+                0.0
+            }
         }
     }
     macro_rules! impl_step_vec {
         ($ty:ty) => {
             impl NumericBuiltinStep for $ty {
                 fn step(self, other: Self) -> Self {
-                    let mut array = self.inner.to_array();
-                    let other = other.inner.to_array();
+                    let mut array = self.to_array();
+                    let other_arr = other.to_array();
                     for i in 0..array.len() {
-                        array[i] = array[i].step(other[i]);
+                        array[i] = array[i].step(other_arr[i]);
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -872,9 +840,7 @@ mod tanh {
         ($ty:ty) => {
             impl NumericBuiltinTanh for $ty {
                 fn tanh(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.tanh()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.tanh()))
                 }
             }
         };
@@ -910,9 +876,7 @@ mod acosh {
         ($ty:ty) => {
             impl NumericBuiltinAcosh for $ty {
                 fn acosh(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.acosh()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.acosh()))
                 }
             }
         };
@@ -946,9 +910,7 @@ mod asinh {
         ($ty:ty) => {
             impl NumericBuiltinAsinh for $ty {
                 fn asinh(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.asinh()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.asinh()))
                 }
             }
         };
@@ -984,9 +946,7 @@ mod atanh {
         ($ty:ty) => {
             impl NumericBuiltinAtanh for $ty {
                 fn atanh(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.atanh()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.atanh()))
                 }
             }
         };
@@ -1020,9 +980,7 @@ mod cosh {
         ($ty:ty) => {
             impl NumericBuiltinCosh for $ty {
                 fn cosh(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.cosh()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.cosh()))
                 }
             }
         };
@@ -1056,9 +1014,7 @@ mod sinh {
         ($ty:ty) => {
             impl NumericBuiltinSinh for $ty {
                 fn sinh(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.sinh()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.sinh()))
                 }
             }
         };
@@ -1085,9 +1041,7 @@ mod trunc {
         ($ty:ty) => {
             impl NumericBuiltinTrunc for $ty {
                 fn trunc(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.trunc()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.trunc()))
                 }
             }
         };
@@ -1113,26 +1067,26 @@ mod dot {
     use super::*;
 
     macro_rules! impl_dot_vec_f {
-        ($ty:ty, $scalar:ty) => {
+        ($ty:ty, $scalar:ty, $glam_ty:ty) => {
             impl NumericBuiltinDot for $ty {
                 type Scalar = $scalar;
                 fn dot(self, other: Self) -> Self::Scalar {
-                    self.inner.dot(other.inner)
+                    <$glam_ty>::from(self).dot(<$glam_ty>::from(other))
                 }
             }
         };
     }
-    impl_dot_vec_f!(Vec2f, f32);
-    impl_dot_vec_f!(Vec3f, f32);
-    impl_dot_vec_f!(Vec4f, f32);
+    impl_dot_vec_f!(Vec2f, f32, glam::Vec2);
+    impl_dot_vec_f!(Vec3f, f32, glam::Vec3);
+    impl_dot_vec_f!(Vec4f, f32, glam::Vec4);
 
     macro_rules! impl_dot_vec_i {
         ($ty:ty, $scalar:ty) => {
             impl NumericBuiltinDot for $ty {
                 type Scalar = $scalar;
                 fn dot(self, other: Self) -> Self::Scalar {
-                    let a = self.inner.to_array();
-                    let b = other.inner.to_array();
+                    let a = self.to_array();
+                    let b = other.to_array();
                     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
                 }
             }
@@ -1161,19 +1115,17 @@ mod normalize {
     use super::*;
 
     macro_rules! impl_normalize_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinNormalize for $ty {
                 fn normalize(self) -> Self {
-                    Self {
-                        inner: self.inner.normalize(),
-                    }
+                    <$glam_ty>::from(self).normalize().into()
                 }
             }
         };
     }
-    impl_normalize_vec!(Vec2f);
-    impl_normalize_vec!(Vec3f);
-    impl_normalize_vec!(Vec4f);
+    impl_normalize_vec!(Vec2f, glam::Vec2);
+    impl_normalize_vec!(Vec3f, glam::Vec3);
+    impl_normalize_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `cross`.
@@ -1192,9 +1144,7 @@ mod cross {
 
     impl NumericBuiltinCross for Vec3f {
         fn cross(self, other: Self) -> Self {
-            Self {
-                inner: self.inner.cross(other.inner),
-            }
+            glam::Vec3::from(self).cross(glam::Vec3::from(other)).into()
         }
     }
 }
@@ -1232,25 +1182,25 @@ mod clamp {
     }
 
     macro_rules! impl_clamp_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinClamp for $ty {
                 fn clamp(self, low: Self, high: Self) -> Self {
-                    Self {
-                        inner: self.inner.clamp(low.inner, high.inner),
-                    }
+                    <$glam_ty>::from(self)
+                        .clamp(<$glam_ty>::from(low), <$glam_ty>::from(high))
+                        .into()
                 }
             }
         };
     }
-    impl_clamp_vec!(Vec2f);
-    impl_clamp_vec!(Vec3f);
-    impl_clamp_vec!(Vec4f);
-    impl_clamp_vec!(Vec2i);
-    impl_clamp_vec!(Vec3i);
-    impl_clamp_vec!(Vec4i);
-    impl_clamp_vec!(Vec2u);
-    impl_clamp_vec!(Vec3u);
-    impl_clamp_vec!(Vec4u);
+    impl_clamp_vec!(Vec2f, glam::Vec2);
+    impl_clamp_vec!(Vec3f, glam::Vec3);
+    impl_clamp_vec!(Vec4f, glam::Vec4);
+    impl_clamp_vec!(Vec2i, glam::IVec2);
+    impl_clamp_vec!(Vec3i, glam::IVec3);
+    impl_clamp_vec!(Vec4i, glam::IVec4);
+    impl_clamp_vec!(Vec2u, glam::UVec2);
+    impl_clamp_vec!(Vec3u, glam::UVec3);
+    impl_clamp_vec!(Vec4u, glam::UVec4);
 }
 
 /// Provides the numeric built-in function `mix`.
@@ -1275,19 +1225,20 @@ mod mix {
 
     // For vectors, we use component-wise mix
     macro_rules! impl_mix_vec {
-        ($n:literal, $ty:ty) => {
-            impl NumericBuiltinMix for Vec<$n, $ty> {
+        ($ty:ty, $glam_ty:ty) => {
+            impl NumericBuiltinMix for $ty {
                 fn mix(self, e2: Self, e3: Self) -> Self {
-                    Self {
-                        inner: self.inner * (1.0 - e3.inner) + e2.inner * e3.inner,
-                    }
+                    let s: $glam_ty = self.into();
+                    let g2: $glam_ty = e2.into();
+                    let g3: $glam_ty = e3.into();
+                    (s * (1.0 - g3) + g2 * g3).into()
                 }
             }
         };
     }
-    impl_mix_vec!(2, f32);
-    impl_mix_vec!(3, f32);
-    impl_mix_vec!(4, f32);
+    impl_mix_vec!(Vec2f, glam::Vec2);
+    impl_mix_vec!(Vec3f, glam::Vec3);
+    impl_mix_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `floor`.
@@ -1311,19 +1262,17 @@ mod floor {
     }
 
     macro_rules! impl_floor_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinFloor for $ty {
                 fn floor(self) -> Self {
-                    Self {
-                        inner: self.inner.floor(),
-                    }
+                    <$glam_ty>::from(self).floor().into()
                 }
             }
         };
     }
-    impl_floor_vec!(Vec2f);
-    impl_floor_vec!(Vec3f);
-    impl_floor_vec!(Vec4f);
+    impl_floor_vec!(Vec2f, glam::Vec2);
+    impl_floor_vec!(Vec3f, glam::Vec3);
+    impl_floor_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `ceil`.
@@ -1347,19 +1296,17 @@ mod ceil {
     }
 
     macro_rules! impl_ceil_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinCeil for $ty {
                 fn ceil(self) -> Self {
-                    Self {
-                        inner: self.inner.ceil(),
-                    }
+                    <$glam_ty>::from(self).ceil().into()
                 }
             }
         };
     }
-    impl_ceil_vec!(Vec2f);
-    impl_ceil_vec!(Vec3f);
-    impl_ceil_vec!(Vec4f);
+    impl_ceil_vec!(Vec2f, glam::Vec2);
+    impl_ceil_vec!(Vec3f, glam::Vec3);
+    impl_ceil_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `exp`.
@@ -1388,9 +1335,7 @@ mod exp {
         ($ty:ty) => {
             impl NumericBuiltinExp for $ty {
                 fn exp(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.exp()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.exp()))
                 }
             }
         };
@@ -1425,9 +1370,7 @@ mod exp2 {
         ($ty:ty) => {
             impl NumericBuiltinExp2 for $ty {
                 fn exp2(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t.exp2()),
-                    }
+                    Self::from_array(self.to_array().map(|t| t.exp2()))
                 }
             }
         };
@@ -1461,9 +1404,7 @@ mod degrees {
         ($ty:ty) => {
             impl NumericBuiltinDegrees for $ty {
                 fn degrees(self) -> Self {
-                    Self {
-                        inner: self.inner.map(|t| t * 180.0 / std::f32::consts::PI),
-                    }
+                    Self::from_array(self.to_array().map(|t| t * 180.0 / std::f32::consts::PI))
                 }
             }
         };
@@ -1489,19 +1430,19 @@ mod all {
 
     impl LogicalBuiltinAll for Vec2b {
         fn all(self) -> bool {
-            self.inner.all()
+            glam::BVec2::from(self).all()
         }
     }
 
     impl LogicalBuiltinAll for Vec3b {
         fn all(self) -> bool {
-            self.inner.all()
+            glam::BVec3::from(self).all()
         }
     }
 
     impl LogicalBuiltinAll for Vec4b {
         fn all(self) -> bool {
-            self.inner.all()
+            glam::BVec4::from(self).all()
         }
     }
 }
@@ -1522,19 +1463,19 @@ mod any {
 
     impl LogicalBuiltinAny for Vec2b {
         fn any(self) -> bool {
-            self.inner.any()
+            glam::BVec2::from(self).any()
         }
     }
 
     impl LogicalBuiltinAny for Vec3b {
         fn any(self) -> bool {
-            self.inner.any()
+            glam::BVec3::from(self).any()
         }
     }
 
     impl LogicalBuiltinAny for Vec4b {
         fn any(self) -> bool {
-            self.inner.any()
+            glam::BVec4::from(self).any()
         }
     }
 }
@@ -1601,29 +1542,32 @@ mod smoothstep {
     }
     impl NumericBuiltinSmoothstep for Vec2f {
         fn smoothstep(low: Self, high: Self, x: Self) -> Self {
-            let t_inner = ((x.inner - low.inner) / (high.inner - low.inner))
-                .clamp(glam::Vec2::splat(0.0), glam::Vec2::splat(1.0));
-            let result =
-                t_inner * t_inner * (glam::Vec2::splat(3.0) - glam::Vec2::splat(2.0) * t_inner);
-            Self { inner: result }
+            let xg: glam::Vec2 = x.into();
+            let lg: glam::Vec2 = low.into();
+            let hg: glam::Vec2 = high.into();
+            let t = ((xg - lg) / (hg - lg)).clamp(glam::Vec2::splat(0.0), glam::Vec2::splat(1.0));
+            let result = t * t * (glam::Vec2::splat(3.0) - glam::Vec2::splat(2.0) * t);
+            Self::from(result)
         }
     }
     impl NumericBuiltinSmoothstep for Vec3f {
         fn smoothstep(low: Self, high: Self, x: Self) -> Self {
-            let t_inner = ((x.inner - low.inner) / (high.inner - low.inner))
-                .clamp(glam::Vec3::splat(0.0), glam::Vec3::splat(1.0));
-            let result =
-                t_inner * t_inner * (glam::Vec3::splat(3.0) - glam::Vec3::splat(2.0) * t_inner);
-            Self { inner: result }
+            let xg: glam::Vec3 = x.into();
+            let lg: glam::Vec3 = low.into();
+            let hg: glam::Vec3 = high.into();
+            let t = ((xg - lg) / (hg - lg)).clamp(glam::Vec3::splat(0.0), glam::Vec3::splat(1.0));
+            let result = t * t * (glam::Vec3::splat(3.0) - glam::Vec3::splat(2.0) * t);
+            Self::from(result)
         }
     }
     impl NumericBuiltinSmoothstep for Vec4f {
         fn smoothstep(low: Self, high: Self, x: Self) -> Self {
-            let t_inner = ((x.inner - low.inner) / (high.inner - low.inner))
-                .clamp(glam::Vec4::splat(0.0), glam::Vec4::splat(1.0));
-            let result =
-                t_inner * t_inner * (glam::Vec4::splat(3.0) - glam::Vec4::splat(2.0) * t_inner);
-            Self { inner: result }
+            let xg: glam::Vec4 = x.into();
+            let lg: glam::Vec4 = low.into();
+            let hg: glam::Vec4 = high.into();
+            let t = ((xg - lg) / (hg - lg)).clamp(glam::Vec4::splat(0.0), glam::Vec4::splat(1.0));
+            let result = t * t * (glam::Vec4::splat(3.0) - glam::Vec4::splat(2.0) * t);
+            Self::from(result)
         }
     }
 }
@@ -1650,41 +1594,35 @@ mod atan2 {
     }
     impl NumericBuiltinAtan2 for Vec2f {
         fn atan2(y: Self, x: Self) -> Self {
-            let y_arr = y.inner.to_array();
-            let x_arr = x.inner.to_array();
+            let y_arr = y.to_array();
+            let x_arr = x.to_array();
             let result = [y_arr[0].atan2(x_arr[0]), y_arr[1].atan2(x_arr[1])];
-            Self {
-                inner: result.into(),
-            }
+            Self::from_array(result)
         }
     }
     impl NumericBuiltinAtan2 for Vec3f {
         fn atan2(y: Self, x: Self) -> Self {
-            let y_arr = y.inner.to_array();
-            let x_arr = x.inner.to_array();
+            let y_arr = y.to_array();
+            let x_arr = x.to_array();
             let result = [
                 y_arr[0].atan2(x_arr[0]),
                 y_arr[1].atan2(x_arr[1]),
                 y_arr[2].atan2(x_arr[2]),
             ];
-            Self {
-                inner: result.into(),
-            }
+            Self::from_array(result)
         }
     }
     impl NumericBuiltinAtan2 for Vec4f {
         fn atan2(y: Self, x: Self) -> Self {
-            let y_arr = y.inner.to_array();
-            let x_arr = x.inner.to_array();
+            let y_arr = y.to_array();
+            let x_arr = x.to_array();
             let result = [
                 y_arr[0].atan2(x_arr[0]),
                 y_arr[1].atan2(x_arr[1]),
                 y_arr[2].atan2(x_arr[2]),
                 y_arr[3].atan2(x_arr[3]),
             ];
-            Self {
-                inner: result.into(),
-            }
+            Self::from_array(result)
         }
     }
 }
@@ -1710,19 +1648,20 @@ mod fma {
         }
     }
     macro_rules! impl_fma_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinFma for $ty {
                 fn fma(e1: Self, e2: Self, e3: Self) -> Self {
-                    Self {
-                        inner: e1.inner.mul_add(e2.inner, e3.inner),
-                    }
+                    let g1: $glam_ty = e1.into();
+                    let g2: $glam_ty = e2.into();
+                    let g3: $glam_ty = e3.into();
+                    g1.mul_add(g2, g3).into()
                 }
             }
         };
     }
-    impl_fma_vec!(Vec2f);
-    impl_fma_vec!(Vec3f);
-    impl_fma_vec!(Vec4f);
+    impl_fma_vec!(Vec2f, glam::Vec2);
+    impl_fma_vec!(Vec3f, glam::Vec3);
+    impl_fma_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `reflect`.
@@ -1741,20 +1680,20 @@ pub fn reflect<T: NumericBuiltinReflect>(e1: T, e2: T) -> T {
 mod reflect {
     use super::*;
     macro_rules! impl_reflect_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinReflect for $ty {
                 fn reflect(e1: Self, e2: Self) -> Self {
-                    let dot_val = e2.inner.dot(e1.inner);
-                    Self {
-                        inner: e1.inner - 2.0 * dot_val * e2.inner,
-                    }
+                    let g1: $glam_ty = e1.into();
+                    let g2: $glam_ty = e2.into();
+                    let dot_val = g2.dot(g1);
+                    (g1 - 2.0 * dot_val * g2).into()
                 }
             }
         };
     }
-    impl_reflect_vec!(Vec2f);
-    impl_reflect_vec!(Vec3f);
-    impl_reflect_vec!(Vec4f);
+    impl_reflect_vec!(Vec2f, glam::Vec2);
+    impl_reflect_vec!(Vec3f, glam::Vec3);
+    impl_reflect_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `refract`.
@@ -1776,25 +1715,25 @@ pub fn refract<T: NumericBuiltinRefract>(e1: T, e2: T, e3: f32) -> T {
 mod refract {
     use super::*;
     macro_rules! impl_refract_vec {
-        ($ty:ty, $zero:expr) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinRefract for $ty {
                 fn refract(e1: Self, e2: Self, e3: f32) -> Self {
-                    let dot_e2_e1 = e2.inner.dot(e1.inner);
+                    let g1: $glam_ty = e1.into();
+                    let g2: $glam_ty = e2.into();
+                    let dot_e2_e1 = g2.dot(g1);
                     let k = 1.0 - e3 * e3 * (1.0 - dot_e2_e1 * dot_e2_e1);
                     if k < 0.0 {
-                        Self { inner: $zero }
+                        <$glam_ty>::ZERO.into()
                     } else {
-                        Self {
-                            inner: e3 * e1.inner - (e3 * dot_e2_e1 + k.sqrt()) * e2.inner,
-                        }
+                        (e3 * g1 - (e3 * dot_e2_e1 + k.sqrt()) * g2).into()
                     }
                 }
             }
         };
     }
-    impl_refract_vec!(Vec2f, glam::Vec2::ZERO);
-    impl_refract_vec!(Vec3f, glam::Vec3::ZERO);
-    impl_refract_vec!(Vec4f, glam::Vec4::ZERO);
+    impl_refract_vec!(Vec2f, glam::Vec2);
+    impl_refract_vec!(Vec3f, glam::Vec3);
+    impl_refract_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the numeric built-in function `faceForward`.
@@ -1811,22 +1750,24 @@ pub fn face_forward<T: NumericBuiltinFaceForward>(e1: T, e2: T, e3: T) -> T {
 mod face_forward {
     use super::*;
     macro_rules! impl_face_forward_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinFaceForward for $ty {
                 fn face_forward(e1: Self, e2: Self, e3: Self) -> Self {
-                    let dot_val = e2.inner.dot(e3.inner);
+                    let g2: $glam_ty = e2.into();
+                    let g3: $glam_ty = e3.into();
+                    let dot_val = g2.dot(g3);
                     if dot_val < 0.0 {
                         e1
                     } else {
-                        Self { inner: -e1.inner }
+                        -e1
                     }
                 }
             }
         };
     }
-    impl_face_forward_vec!(Vec2f);
-    impl_face_forward_vec!(Vec3f);
-    impl_face_forward_vec!(Vec4f);
+    impl_face_forward_vec!(Vec2f, glam::Vec2);
+    impl_face_forward_vec!(Vec3f, glam::Vec3);
+    impl_face_forward_vec!(Vec4f, glam::Vec4);
 }
 
 /// Provides the logical built-in function `select`.
@@ -1847,7 +1788,11 @@ mod select {
         ($ty:ty) => {
             impl LogicalBuiltinSelect<bool> for $ty {
                 fn select(f: Self, t: Self, cond: bool) -> Self {
-                    if cond { t } else { f }
+                    if cond {
+                        t
+                    } else {
+                        f
+                    }
                 }
             }
         };
@@ -1871,38 +1816,38 @@ mod select {
     impl_select_bool!(Vec4b);
 
     macro_rules! impl_select_vec {
-        ($n:literal, $ty:ty) => {
-            impl LogicalBuiltinSelect<Vec<$n, bool>> for Vec<$n, $ty> {
-                fn select(f: Self, t: Self, cond: Vec<$n, bool>) -> Self {
-                    let cond_array = bool::vec_to_array(cond);
-                    let mut f_array = <$ty>::vec_to_array(f);
-                    let t_array = <$ty>::vec_to_array(t);
+        ($val_ty:ty, $cond_ty:ty) => {
+            impl LogicalBuiltinSelect<$cond_ty> for $val_ty {
+                fn select(f: Self, t: Self, cond: $cond_ty) -> Self {
+                    let cond_array = cond.to_array();
+                    let mut f_array = f.to_array();
+                    let t_array = t.to_array();
                     for i in 0..f_array.len() {
                         if cond_array[i] {
                             f_array[i] = t_array[i];
                         }
                     }
-                    <$ty>::vec_from_array(f_array)
+                    Self::from_array(f_array)
                 }
             }
         };
     }
 
-    impl_select_vec!(2, f32);
-    impl_select_vec!(3, f32);
-    impl_select_vec!(4, f32);
+    impl_select_vec!(Vec2f, Vec2b);
+    impl_select_vec!(Vec3f, Vec3b);
+    impl_select_vec!(Vec4f, Vec4b);
 
-    impl_select_vec!(2, i32);
-    impl_select_vec!(3, i32);
-    impl_select_vec!(4, i32);
+    impl_select_vec!(Vec2i, Vec2b);
+    impl_select_vec!(Vec3i, Vec3b);
+    impl_select_vec!(Vec4i, Vec4b);
 
-    impl_select_vec!(2, u32);
-    impl_select_vec!(3, u32);
-    impl_select_vec!(4, u32);
+    impl_select_vec!(Vec2u, Vec2b);
+    impl_select_vec!(Vec3u, Vec3b);
+    impl_select_vec!(Vec4u, Vec4b);
 
-    impl_select_vec!(2, bool);
-    impl_select_vec!(3, bool);
-    impl_select_vec!(4, bool);
+    impl_select_vec!(Vec2b, Vec2b);
+    impl_select_vec!(Vec3b, Vec3b);
+    impl_select_vec!(Vec4b, Vec4b);
 }
 
 /// Result of `modf()` — splits a floating-point value into fractional and whole
@@ -1948,23 +1893,22 @@ mod modf_impl {
     }
 
     macro_rules! impl_modf_vec {
-        ($ty:ty) => {
+        ($ty:ty, $glam_ty:ty) => {
             impl NumericBuiltinModf for $ty {
                 fn modf(self) -> ModfResult<Self> {
-                    let whole_inner = self.inner.trunc();
+                    let g: $glam_ty = self.into();
+                    let whole_g = g.trunc();
                     ModfResult {
-                        fract: Self {
-                            inner: self.inner - whole_inner,
-                        },
-                        whole: Self { inner: whole_inner },
+                        fract: (g - whole_g).into(),
+                        whole: whole_g.into(),
                     }
                 }
             }
         };
     }
-    impl_modf_vec!(Vec2f);
-    impl_modf_vec!(Vec3f);
-    impl_modf_vec!(Vec4f);
+    impl_modf_vec!(Vec2f, glam::Vec2);
+    impl_modf_vec!(Vec3f, glam::Vec3);
+    impl_modf_vec!(Vec4f, glam::Vec4);
 }
 
 /// Result of `frexp()` — splits a floating-point value into significand and
@@ -2075,7 +2019,7 @@ mod frexp_impl {
                 type Exp = $ity;
 
                 fn frexp(self) -> FrexpResult<Self, $ity> {
-                    let arr = f32::vec_to_array(self);
+                    let arr = self.to_array();
                     let mut fract_arr = [0.0f32; $n];
                     let mut exp_arr = [0i32; $n];
                     for i in 0..$n {
@@ -2084,8 +2028,8 @@ mod frexp_impl {
                         exp_arr[i] = e;
                     }
                     FrexpResult {
-                        fract: f32::vec_from_array(fract_arr),
-                        exp: i32::vec_from_array(exp_arr),
+                        fract: <$fty>::from_array(fract_arr),
+                        exp: <$ity>::from_array(exp_arr),
                     }
                 }
             }
@@ -2122,13 +2066,13 @@ mod ldexp_impl {
         ($fty:ty, $ity:ty, $n:literal) => {
             impl NumericBuiltinLdexp<$ity> for $fty {
                 fn ldexp(e1: Self, e2: $ity) -> Self {
-                    let f_arr = f32::vec_to_array(e1);
-                    let i_arr = i32::vec_to_array(e2);
+                    let f_arr = e1.to_array();
+                    let i_arr = e2.to_array();
                     let mut result = [0.0f32; $n];
                     for i in 0..$n {
                         result[i] = ldexp(f_arr[i], i_arr[i]);
                     }
-                    f32::vec_from_array(result)
+                    <$fty>::from_array(result)
                 }
             }
         };
@@ -2354,9 +2298,9 @@ mod test {
     fn sanity_normalize() {
         let v = vec3f(3.0, 0.0, 0.0);
         let norm_v = normalize(v);
-        assert!((norm_v.inner.x - 1.0).abs() < 1e-6);
-        assert!((norm_v.inner.y - 0.0).abs() < 1e-6);
-        assert!((norm_v.inner.z - 0.0).abs() < 1e-6);
+        assert!((norm_v.x - 1.0).abs() < 1e-6);
+        assert!((norm_v.y - 0.0).abs() < 1e-6);
+        assert!((norm_v.z - 0.0).abs() < 1e-6);
     }
 
     #[test]
@@ -2364,9 +2308,9 @@ mod test {
         let a = vec3f(1.0, 0.0, 0.0);
         let b = vec3f(0.0, 1.0, 0.0);
         let cross_ab = cross(a, b);
-        assert!((cross_ab.inner.x - 0.0).abs() < 1e-6);
-        assert!((cross_ab.inner.y - 0.0).abs() < 1e-6);
-        assert!((cross_ab.inner.z - 1.0).abs() < 1e-6);
+        assert!((cross_ab.x - 0.0).abs() < 1e-6);
+        assert!((cross_ab.y - 0.0).abs() < 1e-6);
+        assert!((cross_ab.z - 1.0).abs() < 1e-6);
     }
 
     #[test]

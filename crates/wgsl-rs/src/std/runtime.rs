@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::vector::{Vec3u, Vec4f, vec3u, vec4f};
+use super::vector::{vec3u, vec4f, Vec3u, Vec4f};
 
 thread_local! {
     /// Barrier for workgroup synchronization (compute dispatch).
@@ -485,7 +485,7 @@ mod tests {
 
         let mut results = results.into_inner().unwrap();
         results.sort_by_key(|b| {
-            let g = super::super::vector::ScalarCompOfVec::vec_to_array(b.global_invocation_id);
+            let g = b.global_invocation_id.to_array();
             (g[0], g[1], g[2])
         });
 
@@ -493,63 +493,27 @@ mod tests {
 
         // Workgroup 0: local 0,0,0 and 1,0,0
         let b = &results[0];
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.global_invocation_id),
-            [0, 0, 0]
-        );
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.local_invocation_id),
-            [0, 0, 0]
-        );
+        assert_eq!(b.global_invocation_id.to_array(), [0, 0, 0]);
+        assert_eq!(b.local_invocation_id.to_array(), [0, 0, 0]);
         assert_eq!(b.local_invocation_index, 0);
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.workgroup_id),
-            [0, 0, 0]
-        );
+        assert_eq!(b.workgroup_id.to_array(), [0, 0, 0]);
 
         let b = &results[1];
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.global_invocation_id),
-            [1, 0, 0]
-        );
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.local_invocation_id),
-            [1, 0, 0]
-        );
+        assert_eq!(b.global_invocation_id.to_array(), [1, 0, 0]);
+        assert_eq!(b.local_invocation_id.to_array(), [1, 0, 0]);
         assert_eq!(b.local_invocation_index, 1);
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.workgroup_id),
-            [0, 0, 0]
-        );
+        assert_eq!(b.workgroup_id.to_array(), [0, 0, 0]);
 
         // Workgroup 1: local 0,0,0 and 1,0,0
         let b = &results[2];
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.global_invocation_id),
-            [2, 0, 0]
-        );
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.local_invocation_id),
-            [0, 0, 0]
-        );
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.workgroup_id),
-            [1, 0, 0]
-        );
+        assert_eq!(b.global_invocation_id.to_array(), [2, 0, 0]);
+        assert_eq!(b.local_invocation_id.to_array(), [0, 0, 0]);
+        assert_eq!(b.workgroup_id.to_array(), [1, 0, 0]);
 
         let b = &results[3];
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.global_invocation_id),
-            [3, 0, 0]
-        );
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.local_invocation_id),
-            [1, 0, 0]
-        );
-        assert_eq!(
-            super::super::vector::ScalarCompOfVec::vec_to_array(b.workgroup_id),
-            [1, 0, 0]
-        );
+        assert_eq!(b.global_invocation_id.to_array(), [3, 0, 0]);
+        assert_eq!(b.local_invocation_id.to_array(), [1, 0, 0]);
+        assert_eq!(b.workgroup_id.to_array(), [1, 0, 0]);
     }
 
     #[test]
@@ -638,7 +602,7 @@ mod tests {
         for (y, row) in results.iter().enumerate() {
             for (x, cell) in row.iter().enumerate() {
                 let pos = cell.expect("fragment should produce output");
-                let components = super::super::vector::ScalarCompOfVec::vec_to_array(pos);
+                let components = pos.to_array();
                 assert!(
                     (components[0] - (x as f32 + 0.5)).abs() < f32::EPSILON,
                     "position.x mismatch at ({x}, {y})"

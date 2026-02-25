@@ -161,9 +161,9 @@ mod bitcast_impls {
         ($n:literal, $src_vec:ty, $dst_vec:ty, $src_scalar:ty, $dst_scalar:ty) => {
             impl Bitcast<$dst_vec> for $src_vec {
                 fn bitcast(self) -> $dst_vec {
-                    let src: [$src_scalar; $n] = <$src_scalar>::vec_to_array(self);
+                    let src: [$src_scalar; $n] = self.to_array();
                     let dst: [$dst_scalar; $n] = src.map(|s| Bitcast::<$dst_scalar>::bitcast(s));
-                    <$dst_scalar>::vec_from_array(dst)
+                    <$dst_vec>::from_array(dst)
                 }
             }
         };

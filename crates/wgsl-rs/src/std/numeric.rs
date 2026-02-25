@@ -797,11 +797,7 @@ mod step {
     use super::*;
     impl NumericBuiltinStep for f32 {
         fn step(self, x: Self) -> Self {
-            if x >= self {
-                1.0
-            } else {
-                0.0
-            }
+            if x >= self { 1.0 } else { 0.0 }
         }
     }
     macro_rules! impl_step_vec {
@@ -1756,11 +1752,7 @@ mod face_forward {
                     let g2: $glam_ty = e2.into();
                     let g3: $glam_ty = e3.into();
                     let dot_val = g2.dot(g3);
-                    if dot_val < 0.0 {
-                        e1
-                    } else {
-                        -e1
-                    }
+                    if dot_val < 0.0 { e1 } else { -e1 }
                 }
             }
         };
@@ -1788,11 +1780,7 @@ mod select {
         ($ty:ty) => {
             impl LogicalBuiltinSelect<bool> for $ty {
                 fn select(f: Self, t: Self, cond: bool) -> Self {
-                    if cond {
-                        t
-                    } else {
-                        f
-                    }
+                    if cond { t } else { f }
                 }
             }
         };

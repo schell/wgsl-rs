@@ -2,7 +2,7 @@
 
 use itertools::Itertools;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::parse::Parse;
 
 /// Parses macro input like `Vec2, [x, y], [r, g]` and

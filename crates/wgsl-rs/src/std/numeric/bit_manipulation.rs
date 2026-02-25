@@ -35,13 +35,11 @@ mod count_leading_zeros {
         ($ty:ty, $scalar:ty) => {
             impl NumericBuiltinCountLeadingZeros for $ty {
                 fn count_leading_zeros(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = (*elem).leading_zeros() as $scalar;
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -87,13 +85,11 @@ mod count_one_bits {
         ($ty:ty, $scalar:ty) => {
             impl NumericBuiltinCountOneBits for $ty {
                 fn count_one_bits(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = (*elem).count_ones() as $scalar;
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -139,13 +135,11 @@ mod count_trailing_zeros {
         ($ty:ty, $scalar:ty) => {
             impl NumericBuiltinCountTrailingZeros for $ty {
                 fn count_trailing_zeros(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = (*elem).trailing_zeros() as $scalar;
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -191,13 +185,11 @@ mod reverse_bits {
         ($ty:ty) => {
             impl NumericBuiltinReverseBits for $ty {
                 fn reverse_bits(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = (*elem).reverse_bits();
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -263,7 +255,7 @@ mod first_leading_bit {
         ($ty:ty) => {
             impl NumericBuiltinFirstLeadingBit for $ty {
                 fn first_leading_bit(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = if *elem == 0 {
                             u32::MAX
@@ -271,9 +263,7 @@ mod first_leading_bit {
                             31 - (*elem).leading_zeros()
                         };
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -286,7 +276,7 @@ mod first_leading_bit {
         ($ty:ty) => {
             impl NumericBuiltinFirstLeadingBit for $ty {
                 fn first_leading_bit(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = if *elem == 0 || *elem == -1 {
                             -1
@@ -296,9 +286,7 @@ mod first_leading_bit {
                             31 - (*elem).leading_ones() as i32
                         };
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -352,7 +340,7 @@ mod first_trailing_bit {
         ($ty:ty) => {
             impl NumericBuiltinFirstTrailingBit for $ty {
                 fn first_trailing_bit(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = if *elem == 0 {
                             u32::MAX
@@ -360,9 +348,7 @@ mod first_trailing_bit {
                             (*elem).trailing_zeros()
                         };
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -375,7 +361,7 @@ mod first_trailing_bit {
         ($ty:ty) => {
             impl NumericBuiltinFirstTrailingBit for $ty {
                 fn first_trailing_bit(self) -> Self {
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = if *elem == 0 {
                             -1
@@ -383,9 +369,7 @@ mod first_trailing_bit {
                             (*elem).trailing_zeros() as i32
                         };
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -472,18 +456,14 @@ mod extract_bits {
                     let o = std::cmp::Ord::min(offset, w);
                     let c = std::cmp::Ord::min(count, w - o);
                     if c == 0 {
-                        return Self {
-                            inner: Default::default(),
-                        };
+                        return Self::from_array(self.to_array().map(|_| 0));
                     }
                     let mask = if c >= 32 { u32::MAX } else { (1u32 << c) - 1 };
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         *elem = (*elem >> o) & mask;
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -500,14 +480,12 @@ mod extract_bits {
                     let o = std::cmp::Ord::min(offset, w);
                     let c = std::cmp::Ord::min(count, w - o);
                     if c == 0 {
-                        return Self {
-                            inner: Default::default(),
-                        };
+                        return Self::from_array(self.to_array().map(|_| 0));
                     }
                     let mask = if c >= 32 { u32::MAX } else { (1u32 << c) - 1 };
                     let sign_bit = 1u32 << (c - 1);
                     let sign_extend_mask = !mask;
-                    let mut array = self.inner.to_array();
+                    let mut array = self.to_array();
                     for elem in array.iter_mut() {
                         let extracted = ((*elem as u32) >> o) & mask;
                         *elem = if extracted & sign_bit != 0 {
@@ -516,9 +494,7 @@ mod extract_bits {
                             extracted as i32
                         };
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -607,14 +583,12 @@ mod insert_bits {
                     }
                     let low_mask = if c >= 32 { u32::MAX } else { (1u32 << c) - 1 };
                     let mask = low_mask << o;
-                    let mut array = self.inner.to_array();
-                    let newbits_array = newbits.inner.to_array();
+                    let mut array = self.to_array();
+                    let newbits_array = newbits.to_array();
                     for (elem, nb) in array.iter_mut().zip(newbits_array.iter()) {
                         *elem = (*elem & !mask) | ((*nb & low_mask) << o);
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };
@@ -635,16 +609,14 @@ mod insert_bits {
                     }
                     let low_mask = if c >= 32 { u32::MAX } else { (1u32 << c) - 1 };
                     let mask = low_mask << o;
-                    let mut array = self.inner.to_array();
-                    let newbits_array = newbits.inner.to_array();
+                    let mut array = self.to_array();
+                    let newbits_array = newbits.to_array();
                     for (elem, nb) in array.iter_mut().zip(newbits_array.iter()) {
                         let e = *elem as u32;
                         let n = *nb as u32;
                         *elem = ((e & !mask) | ((n & low_mask) << o)) as i32;
                     }
-                    Self {
-                        inner: array.into(),
-                    }
+                    Self::from_array(array)
                 }
             }
         };

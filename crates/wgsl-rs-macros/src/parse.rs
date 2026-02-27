@@ -946,6 +946,134 @@ impl std::fmt::Display for Lit {
     }
 }
 
+/// Validates that a `syn::Expr` is a zero-valued literal with a type suffix and
+/// returns the corresponding scalar `Type`.
+///
+/// Supported forms:
+/// - `0u32` → `Type::Scalar { ty: U32 }`
+/// - `0i32` → `Type::Scalar { ty: I32 }`
+/// - `0.0f32` → `Type::Scalar { ty: F32 }`
+/// - `false` → `Type::Scalar { ty: Bool }`
+fn extract_zero_value_scalar_type(expr: &syn::Expr, span: Span) -> Result<Type, Error> {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(lit_int),
+            ..
+        }) => {
+            let value = lit_int
+                .base10_parse::<u64>()
+                .map_err(|_| Error::Unsupported {
+                    span,
+                    note: format!(
+                        "could not parse integer literal '{}' in array repeat expression",
+                        lit_int
+                    ),
+                })?;
+            if value != 0 {
+                return UnsupportedSnafu {
+                    span,
+                    note: format!(
+                        "array repeat expressions only support zero values, got '{}'. Use \
+                         explicit element listing instead, e.g. `[{v}, {v}, ...]`",
+                        lit_int,
+                        v = lit_int,
+                    ),
+                }
+                .fail();
+            }
+            let suffix = lit_int.suffix();
+            let ty = match suffix {
+                "u32" => ScalarType::U32,
+                "i32" => ScalarType::I32,
+                _ => {
+                    return UnsupportedSnafu {
+                        span,
+                        note: format!(
+                            "array repeat expression requires a typed zero literal like `0u32` or \
+                             `0i32`, got '{}'",
+                            lit_int,
+                        ),
+                    }
+                    .fail();
+                }
+            };
+            Ok(Type::Scalar {
+                ty,
+                ident: Ident::new(suffix, span),
+            })
+        }
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Float(lit_float),
+            ..
+        }) => {
+            let value = lit_float
+                .base10_parse::<f64>()
+                .map_err(|_| Error::Unsupported {
+                    span,
+                    note: format!(
+                        "could not parse float literal '{}' in array repeat expression",
+                        lit_float
+                    ),
+                })?;
+            if value != 0.0 {
+                return UnsupportedSnafu {
+                    span,
+                    note: format!(
+                        "array repeat expressions only support zero values, got '{}'. Use \
+                         explicit element listing instead, e.g. `[{v}, {v}, ...]`",
+                        lit_float,
+                        v = lit_float,
+                    ),
+                }
+                .fail();
+            }
+            let suffix = lit_float.suffix();
+            if suffix != "f32" {
+                return UnsupportedSnafu {
+                    span,
+                    note: format!(
+                        "array repeat expression requires a typed zero literal like `0.0f32`, got \
+                         '{}'",
+                        lit_float,
+                    ),
+                }
+                .fail();
+            }
+            Ok(Type::Scalar {
+                ty: ScalarType::F32,
+                ident: Ident::new("f32", span),
+            })
+        }
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(lit_bool),
+            ..
+        }) => {
+            if lit_bool.value {
+                return UnsupportedSnafu {
+                    span,
+                    note: "array repeat expressions only support zero values, got `true`. Use \
+                           explicit element listing instead, e.g. `[true, true, ...]`"
+                        .to_string(),
+                }
+                .fail();
+            }
+            Ok(Type::Scalar {
+                ty: ScalarType::Bool,
+                ident: Ident::new("bool", span),
+            })
+        }
+        other => UnsupportedSnafu {
+            span,
+            note: format!(
+                "array repeat expression requires a zero-valued literal (`0u32`, `0i32`, \
+                 `0.0f32`, or `false`), got '{}'",
+                other.into_token_stream(),
+            ),
+        }
+        .fail(),
+    }
+}
+
 /// A binary operator: `+` `-` `*` `/` `%` `==` `!=` `<` `<=` `>` `>=` `&&` `||`
 /// `&` `|` `^` `<<` `>>`.
 pub enum BinOp {
@@ -1255,6 +1383,16 @@ pub enum Expr {
         and_token: Token![&],
         expr: Box<Expr>,
     },
+    /// A zero-value array initialization: `[0u32; N]`
+    ///
+    /// Transpiles to the WGSL zero-value constructor `array<T, N>()`.
+    /// Only zero-valued literals with type suffixes are supported
+    /// (`0u32`, `0i32`, `0.0f32`, `false`).
+    ZeroValueArray {
+        bracket_token: syn::token::Bracket,
+        elem_type: Box<Type>,
+        len: Box<Expr>,
+    },
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -1338,6 +1476,22 @@ impl TryFrom<&syn::Expr> for Expr {
                 Self::Array {
                     bracket_token: *bracket_token,
                     elems: expr_elems,
+                }
+            }
+            syn::Expr::Repeat(syn::ExprRepeat {
+                attrs: _,
+                bracket_token,
+                expr,
+                semi_token: _,
+                len,
+            }) => {
+                let elem_type =
+                    Box::new(extract_zero_value_scalar_type(expr.as_ref(), expr.span())?);
+                let len = Box::new(Expr::try_from(len.as_ref())?);
+                Self::ZeroValueArray {
+                    bracket_token: *bracket_token,
+                    elem_type,
+                    len,
                 }
             }
             syn::Expr::Index(syn::ExprIndex {
@@ -1719,6 +1873,7 @@ impl Expr {
                 .span
                 .join(expr.span())
                 .unwrap_or_else(|| and_token.span),
+            Expr::ZeroValueArray { bracket_token, .. } => bracket_token.span.join(),
         }
     }
 }
@@ -4688,6 +4843,7 @@ fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
         Expr::FieldAccess { base, .. } => resolve_self_in_expr(name, base),
         Expr::TypePath { ty, .. } => maybe_replace_self(name, ty),
         Expr::Reference { expr, .. } => resolve_self_in_expr(name, expr),
+        Expr::ZeroValueArray { len, .. } => resolve_self_in_expr(name, len),
     }
 }
 
@@ -5046,6 +5202,109 @@ mod test {
         let ty: syn::Type = syn::parse_str("[f32; 4]").unwrap();
         let ty = Type::try_from(&ty).unwrap();
         assert_eq!("array<f32, 4>", &ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_zero_value_array_u32() {
+        let expr: syn::Expr = syn::parse_str("[0u32; 4]").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("array<u32, 4>()", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_zero_value_array_i32() {
+        let expr: syn::Expr = syn::parse_str("[0i32; 4]").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("array<i32, 4>()", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_zero_value_array_f32() {
+        let expr: syn::Expr = syn::parse_str("[0.0f32; 4]").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("array<f32, 4>()", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_zero_value_array_bool() {
+        let expr: syn::Expr = syn::parse_str("[false; 4]").unwrap();
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!("array<bool, 4>()", &expr.to_wgsl());
+    }
+
+    #[test]
+    fn parse_zero_value_array_rejects_unsuffixed_int() {
+        let expr: syn::Expr = syn::parse_str("[0; 4]").unwrap();
+        match Expr::try_from(&expr) {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("typed zero literal"),
+                    "expected helpful error about typed literals, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected error for unsuffixed integer"),
+        }
+    }
+
+    #[test]
+    fn parse_zero_value_array_rejects_unsuffixed_float() {
+        let expr: syn::Expr = syn::parse_str("[0.0; 4]").unwrap();
+        match Expr::try_from(&expr) {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("typed zero literal"),
+                    "expected helpful error about typed literals, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected error for unsuffixed float"),
+        }
+    }
+
+    #[test]
+    fn parse_zero_value_array_rejects_nonzero() {
+        let expr: syn::Expr = syn::parse_str("[1u32; 4]").unwrap();
+        match Expr::try_from(&expr) {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("only support zero values"),
+                    "expected helpful error about zero values, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected error for non-zero value"),
+        }
+    }
+
+    #[test]
+    fn parse_zero_value_array_rejects_nonzero_float() {
+        let expr: syn::Expr = syn::parse_str("[1.0f32; 4]").unwrap();
+        match Expr::try_from(&expr) {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("only support zero values"),
+                    "expected helpful error about zero values, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected error for non-zero float"),
+        }
+    }
+
+    #[test]
+    fn parse_zero_value_array_rejects_true() {
+        let expr: syn::Expr = syn::parse_str("[true; 4]").unwrap();
+        match Expr::try_from(&expr) {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("only support zero values"),
+                    "expected helpful error about zero values, got: {msg}"
+                );
+            }
+            Ok(_) => panic!("expected error for true value"),
+        }
     }
 
     #[test]

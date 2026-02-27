@@ -274,6 +274,14 @@ impl<T, AM: AccessMode> Storage<T, AM> {
         self.data.write()
     }
 
+    /// Set the inner `T`.
+    ///
+    /// Not available in WGSL. Used for CPU-side shader testing to
+    /// populate storage buffers before calling compute entry points.
+    pub fn set(&self, data: T) {
+        self.data.set(data);
+    }
+
     /// Returns the group index of this storage variable.
     pub fn group(&self) -> u32 {
         self.group

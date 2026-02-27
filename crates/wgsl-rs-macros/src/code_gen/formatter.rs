@@ -920,6 +920,29 @@ impl GenerateCode for Expr {
                 code.write_atom(and_token);
                 expr.write_code(code);
             }
+            Expr::ZeroValueArray {
+                bracket_token,
+                elem_type,
+                len,
+            } => {
+                // [0u32; N] -> array<u32, N>() in WGSL
+                let span = bracket_token.span.join();
+                code.write_str(span, "array");
+                code.write_surrounded(
+                    Surrounded {
+                        rust_span: span,
+                        open: "<",
+                        close: ">",
+                        ..Default::default()
+                    },
+                    |code| {
+                        elem_type.write_code(code);
+                        code.write_str(span, ", ");
+                        len.write_code(code);
+                    },
+                );
+                code.write_str(span, "()");
+            }
         }
     }
 }

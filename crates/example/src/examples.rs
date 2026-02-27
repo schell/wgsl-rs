@@ -13,6 +13,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &binary_ops_example::WGSL_MODULE,
     &for_loop_example::WGSL_MODULE,
     &assignment_example::WGSL_MODULE,
+    &zero_value_array_example::WGSL_MODULE,
     &while_loop_example::WGSL_MODULE,
     &loop_example::WGSL_MODULE,
     &if_example::WGSL_MODULE,
@@ -487,6 +488,42 @@ pub mod assignment_example {
     #[fragment]
     pub fn test_array_assignment() -> Vec4f {
         let mut arr: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+        arr[0] = 1.0;
+        arr[1] = 2.0;
+        arr[2] = 3.0;
+        arr[3] = 4.0;
+        vec4f(arr[0], arr[1], arr[2], arr[3])
+    }
+}
+
+/// Demonstrates zero-value array initialization using `[0u32; N]` syntax.
+///
+/// In WGSL, this transpiles to the zero-value constructor `array<T, N>()`.
+#[wgsl]
+pub mod zero_value_array_example {
+    use wgsl_rs::std::*;
+
+    #[fragment]
+    pub fn test_zero_u32_array() -> Vec4f {
+        let arr: [u32; 4] = [0u32; 4];
+        vec4f(f32(arr[0]), f32(arr[1]), f32(arr[2]), f32(arr[3]))
+    }
+
+    #[fragment]
+    pub fn test_zero_f32_array() -> Vec4f {
+        let arr: [f32; 4] = [0.0f32; 4];
+        vec4f(arr[0], arr[1], arr[2], arr[3])
+    }
+
+    #[fragment]
+    pub fn test_zero_i32_array() -> Vec4f {
+        let arr: [i32; 4] = [0i32; 4];
+        vec4f(f32(arr[0]), f32(arr[1]), f32(arr[2]), f32(arr[3]))
+    }
+
+    #[fragment]
+    pub fn test_zero_array_with_assignment() -> Vec4f {
+        let mut arr: [f32; 4] = [0.0f32; 4];
         arr[0] = 1.0;
         arr[1] = 2.0;
         arr[2] = 3.0;

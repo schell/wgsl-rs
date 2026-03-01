@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
-use crate::parse::{ItemUniform, to_snake_case};
+use crate::parse::{to_snake_case, ItemUniform};
 
 pub fn uniform(input: TokenStream) -> TokenStream {
     let ItemUniform {
@@ -24,7 +24,7 @@ pub fn uniform(input: TokenStream) -> TokenStream {
     let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
 
     let expanded = quote! {
-        static #name: Uniform<#rust_ty> = Uniform::new(#group, #binding);
+        pub static #name: Uniform<#rust_ty> = Uniform::new(#group, #binding);
 
         /// Buffer descriptor for the uniform variable.
         ///

@@ -238,11 +238,12 @@ impl LinkageInfo {
 }
 
 /// Generate the linkage module code.
-pub fn generate_linkage_module(info: &LinkageInfo, source_lines: &[String]) -> TokenStream {
+///
+/// The generated `shader_source()` function uses `OnceLock` to lazily compute
+/// and cache the full WGSL source (including imports) from the parent module's
+/// `WGSL_MODULE` constant.
+pub fn generate_linkage_module(info: &LinkageInfo) -> TokenStream {
     let module_name_str = info.module_name.to_string();
-
-    // Join source lines into a single string for SHADER_SOURCE
-    let shader_source = source_lines.join("\n");
 
     // Generate bind group modules
     let bind_group_modules = generate_bind_group_modules(info, &module_name_str);
@@ -258,14 +259,22 @@ pub fn generate_linkage_module(info: &LinkageInfo, source_lines: &[String]) -> T
 
     quote! {
         pub mod linkage {
-            /// The WGSL source code as a single string.
-            pub const SHADER_SOURCE: &str = #shader_source;
+            /// Returns the full WGSL source code including all imports.
+            ///
+            /// The source is computed once on first access and cached for
+            /// subsequent calls.
+            pub fn shader_source() -> &'static str {
+                static SOURCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+                SOURCE.get_or_init(|| {
+                    super::WGSL_MODULE.wgsl_source().join("\n")
+                })
+            }
 
             /// Creates a shader module descriptor.
             pub fn shader_module_descriptor() -> wgpu::ShaderModuleDescriptor<'static> {
                 wgpu::ShaderModuleDescriptor {
                     label: Some(#module_name_str),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_SOURCE)),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source())),
                 }
             }
 

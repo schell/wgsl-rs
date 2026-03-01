@@ -305,7 +305,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let linkage_fragment = {
         let linkage_info =
             linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
-        linkage::generate_linkage_module(&linkage_info, &source_lines)
+        linkage::generate_linkage_module(&linkage_info)
     };
 
     if let Some((_, content)) = input_mod.content.as_mut() {

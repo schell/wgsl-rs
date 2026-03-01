@@ -141,5 +141,18 @@ mod test {
             "",
         ];
         assert_eq!(&expected, &source);
+
+        // Verify that imported module sources are not duplicated.
+        // Module C imports B, which imports A. Module A's source should
+        // appear exactly once in the concatenated output.
+        let a_count = source
+            .iter()
+            .filter(|line| a::WGSL_MODULE.source.contains(line))
+            .count();
+        assert_eq!(
+            a::WGSL_MODULE.source.len(),
+            a_count,
+            "module A's source lines should appear exactly once (no duplicates from transitive imports)"
+        );
     }
 }

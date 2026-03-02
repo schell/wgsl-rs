@@ -7,63 +7,63 @@ use super::*;
 
 /// A 2x2 column-major matrix of `f32` components (2 columns of `Vec2f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat2x2f {
     columns: [Vec2f; 2],
 }
 
 /// A 2x3 column-major matrix of `f32` components (2 columns of `Vec3f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat2x3f {
     columns: [Vec3f; 2],
 }
 
 /// A 2x4 column-major matrix of `f32` components (2 columns of `Vec4f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat2x4f {
     columns: [Vec4f; 2],
 }
 
 /// A 3x2 column-major matrix of `f32` components (3 columns of `Vec2f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat3x2f {
     columns: [Vec2f; 3],
 }
 
 /// A 3x3 column-major matrix of `f32` components (3 columns of `Vec3f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat3x3f {
     columns: [Vec3f; 3],
 }
 
 /// A 3x4 column-major matrix of `f32` components (3 columns of `Vec4f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat3x4f {
     columns: [Vec4f; 3],
 }
 
 /// A 4x2 column-major matrix of `f32` components (4 columns of `Vec2f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat4x2f {
     columns: [Vec2f; 4],
 }
 
 /// A 4x3 column-major matrix of `f32` components (4 columns of `Vec3f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat4x3f {
     columns: [Vec3f; 4],
 }
 
 /// A 4x4 column-major matrix of `f32` components (4 columns of `Vec4f`).
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Mat4x4f {
     columns: [Vec4f; 4],
 }

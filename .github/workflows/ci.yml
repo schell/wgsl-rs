@@ -80,7 +80,7 @@ jobs:
       - name: Install nextest
         run: |
           if ! command -v cargo-nextest >/dev/null 2>&1; then
-            cargo install nextest
+            cargo install --locked cargo-nextest
           fi
 
       - name: Run tests

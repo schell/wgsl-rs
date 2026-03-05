@@ -51,6 +51,13 @@ pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     ("first_trailing_bit", "firstTrailingBit"),
     ("insert_bits", "insertBits"),
     ("reverse_bits", "reverseBits"),
+    // Derivative builtins
+    ("dpdx_coarse", "dpdxCoarse"),
+    ("dpdx_fine", "dpdxFine"),
+    ("dpdy_coarse", "dpdyCoarse"),
+    ("dpdy_fine", "dpdyFine"),
+    ("fwidth_coarse", "fwidthCoarse"),
+    ("fwidth_fine", "fwidthFine"),
     // Numeric builtins with camelCase
     ("face_forward", "faceForward"),
     ("inverse_sqrt", "inverseSqrt"),

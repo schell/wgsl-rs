@@ -25,6 +25,7 @@ pub use crate::{get, get_mut, slab_read_array, slab_write_array};
 
 mod atomic;
 mod bitcast;
+mod derivative;
 mod matrix;
 mod numeric;
 mod packing;
@@ -36,6 +37,7 @@ mod vector;
 
 pub use atomic::*;
 pub use bitcast::*;
+pub use derivative::*;
 pub use matrix::*;
 pub use numeric::*;
 pub use packing::*;

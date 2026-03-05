@@ -44,7 +44,6 @@ pub(crate) fn with_workgroup_barrier<R>(f: impl FnOnce(Option<&std::sync::Barrie
 ///
 /// This is used by derivative builtins (dpdx, dpdy, fwidth) to access the
 /// quad synchronization context during fragment dispatch.
-#[allow(dead_code)] // Used by derivative builtins once implemented.
 pub(crate) fn with_quad_context<R>(f: impl FnOnce(Option<(&QuadContext, u8)>) -> R) -> R {
     QUAD_CONTEXT.with(|ctx| {
         let guard = ctx.borrow();

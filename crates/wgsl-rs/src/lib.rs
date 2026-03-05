@@ -152,7 +152,8 @@ mod test {
         assert_eq!(
             a::WGSL_MODULE.source.len(),
             a_count,
-            "module A's source lines should appear exactly once (no duplicates from transitive imports)"
+            "module A's source lines should appear exactly once (no duplicates from transitive \
+             imports)"
         );
     }
 }

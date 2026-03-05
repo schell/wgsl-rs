@@ -77,5 +77,11 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Install nextest
+        run: |
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install nextest
+          fi
+
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo nextest run --all-features

@@ -15,7 +15,9 @@ const WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
 const TEXEL_SIZE: u32 = 16; // 4 f32s * 4 bytes each = 16 bytes per pixel (Rgba32Float)
 
-/// Creates a headless wgpu device, or returns `None` if no adapter is found.
+/// Creates a headless wgpu device, or returns `None` if no suitable adapter
+/// is found. Checks that the adapter supports `Rgba32Float` as a render
+/// attachment (some software rasterizers may not).
 fn create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
@@ -27,6 +29,17 @@ fn create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         force_fallback_adapter: false,
     }))
     .ok()?;
+
+    // Verify Rgba32Float is renderable on this adapter.
+    let format_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba32Float);
+    if !format_features
+        .allowed_usages
+        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+    {
+        eprintln!("Adapter does not support Rgba32Float as render attachment — skipping GPU test");
+        return None;
+    }
+
     let (device, queue) =
         block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
     Some((device, queue))

@@ -124,6 +124,13 @@ pub fn fwidth_fine<T: DerivativeBuiltinFwidthFine>(e: T) -> T {
 
 /// Calls `quad_fn` if a quad context is available, otherwise returns
 /// `fallback`.
+///
+/// **Divergence note:** The underlying `QuadContext` uses barriers that require
+/// all 4 quad invocations to participate. If a shader has non-uniform control
+/// flow (e.g. an early return in only some invocations), the barrier will
+/// deadlock rather than returning an indeterminate value like a GPU would. This
+/// is a known limitation of the dispatch runtime as a whole; a timeout-based or
+/// participation-tracking fallback would be needed to handle divergence safely.
 #[cfg(feature = "dispatch-runtime")]
 fn with_quad_or<R>(fallback: R, quad_fn: impl FnOnce(&super::runtime::QuadContext, u8) -> R) -> R {
     super::runtime::with_quad_context(|opt| match opt {
@@ -132,23 +139,33 @@ fn with_quad_or<R>(fallback: R, quad_fn: impl FnOnce(&super::runtime::QuadContex
     })
 }
 
-/// Outside the dispatch runtime the derivative is always zero.
-#[cfg(not(feature = "dispatch-runtime"))]
-fn with_quad_or<R>(fallback: R, _quad_fn: impl FnOnce(&() /* unused */, u8) -> R) -> R {
-    fallback
-}
-
 // --- dpdx variants (f32) ---
 
+#[cfg(feature = "dispatch-runtime")]
 impl DerivativeBuiltinDpdxFine for f32 {
     fn dpdx_fine(self) -> Self {
         with_quad_or(0.0, |ctx, idx| ctx.dpdx_fine_f32(idx, self))
     }
 }
 
+#[cfg(not(feature = "dispatch-runtime"))]
+impl DerivativeBuiltinDpdxFine for f32 {
+    fn dpdx_fine(self) -> Self {
+        0.0
+    }
+}
+
+#[cfg(feature = "dispatch-runtime")]
 impl DerivativeBuiltinDpdxCoarse for f32 {
     fn dpdx_coarse(self) -> Self {
         with_quad_or(0.0, |ctx, idx| ctx.dpdx_coarse_f32(idx, self))
+    }
+}
+
+#[cfg(not(feature = "dispatch-runtime"))]
+impl DerivativeBuiltinDpdxCoarse for f32 {
+    fn dpdx_coarse(self) -> Self {
+        0.0
     }
 }
 
@@ -160,15 +177,31 @@ impl DerivativeBuiltinDpdx for f32 {
 
 // --- dpdy variants (f32) ---
 
+#[cfg(feature = "dispatch-runtime")]
 impl DerivativeBuiltinDpdyFine for f32 {
     fn dpdy_fine(self) -> Self {
         with_quad_or(0.0, |ctx, idx| ctx.dpdy_fine_f32(idx, self))
     }
 }
 
+#[cfg(not(feature = "dispatch-runtime"))]
+impl DerivativeBuiltinDpdyFine for f32 {
+    fn dpdy_fine(self) -> Self {
+        0.0
+    }
+}
+
+#[cfg(feature = "dispatch-runtime")]
 impl DerivativeBuiltinDpdyCoarse for f32 {
     fn dpdy_coarse(self) -> Self {
         with_quad_or(0.0, |ctx, idx| ctx.dpdy_coarse_f32(idx, self))
+    }
+}
+
+#[cfg(not(feature = "dispatch-runtime"))]
+impl DerivativeBuiltinDpdyCoarse for f32 {
+    fn dpdy_coarse(self) -> Self {
+        0.0
     }
 }
 
@@ -205,6 +238,7 @@ impl DerivativeBuiltinFwidth for f32 {
 /// Implements a fine dpdx derivative for a vector type.
 macro_rules! impl_dpdx_fine_vec {
     ($ty:ty, $n:expr) => {
+        #[cfg(feature = "dispatch-runtime")]
         impl DerivativeBuiltinDpdxFine for $ty {
             fn dpdx_fine(self) -> Self {
                 let arr = self.to_array();
@@ -218,12 +252,20 @@ macro_rules! impl_dpdx_fine_vec {
                 Self::from_array(out)
             }
         }
+
+        #[cfg(not(feature = "dispatch-runtime"))]
+        impl DerivativeBuiltinDpdxFine for $ty {
+            fn dpdx_fine(self) -> Self {
+                Self::default()
+            }
+        }
     };
 }
 
 /// Implements a coarse dpdx derivative for a vector type.
 macro_rules! impl_dpdx_coarse_vec {
     ($ty:ty, $n:expr) => {
+        #[cfg(feature = "dispatch-runtime")]
         impl DerivativeBuiltinDpdxCoarse for $ty {
             fn dpdx_coarse(self) -> Self {
                 let arr = self.to_array();
@@ -237,12 +279,20 @@ macro_rules! impl_dpdx_coarse_vec {
                 Self::from_array(out)
             }
         }
+
+        #[cfg(not(feature = "dispatch-runtime"))]
+        impl DerivativeBuiltinDpdxCoarse for $ty {
+            fn dpdx_coarse(self) -> Self {
+                Self::default()
+            }
+        }
     };
 }
 
 /// Implements a fine dpdy derivative for a vector type.
 macro_rules! impl_dpdy_fine_vec {
     ($ty:ty, $n:expr) => {
+        #[cfg(feature = "dispatch-runtime")]
         impl DerivativeBuiltinDpdyFine for $ty {
             fn dpdy_fine(self) -> Self {
                 let arr = self.to_array();
@@ -256,12 +306,20 @@ macro_rules! impl_dpdy_fine_vec {
                 Self::from_array(out)
             }
         }
+
+        #[cfg(not(feature = "dispatch-runtime"))]
+        impl DerivativeBuiltinDpdyFine for $ty {
+            fn dpdy_fine(self) -> Self {
+                Self::default()
+            }
+        }
     };
 }
 
 /// Implements a coarse dpdy derivative for a vector type.
 macro_rules! impl_dpdy_coarse_vec {
     ($ty:ty, $n:expr) => {
+        #[cfg(feature = "dispatch-runtime")]
         impl DerivativeBuiltinDpdyCoarse for $ty {
             fn dpdy_coarse(self) -> Self {
                 let arr = self.to_array();
@@ -273,6 +331,13 @@ macro_rules! impl_dpdy_coarse_vec {
                 let mut out = [0.0f32; $n];
                 out.copy_from_slice(&result[..$n]);
                 Self::from_array(out)
+            }
+        }
+
+        #[cfg(not(feature = "dispatch-runtime"))]
+        impl DerivativeBuiltinDpdyCoarse for $ty {
+            fn dpdy_coarse(self) -> Self {
+                Self::default()
             }
         }
     };

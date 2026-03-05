@@ -93,6 +93,16 @@ pub fn dispatch_workgroups<F>(
     let invocations_per_workgroup = (sx * sy * sz) as usize;
     let num_workgroups = vec3u(cx, cy, cz);
 
+    // Guard against unreasonably large workgroup sizes that would spawn too
+    // many OS threads. Real GPUs cap workgroup invocations at 256 or 1024;
+    // we use 1024 as a generous upper bound.
+    const MAX_INVOCATIONS: usize = 1024;
+    assert!(
+        invocations_per_workgroup <= MAX_INVOCATIONS,
+        "workgroup size {sx}x{sy}x{sz} = {invocations_per_workgroup} invocations exceeds the CPU \
+         dispatch runtime limit of {MAX_INVOCATIONS} threads per workgroup"
+    );
+
     // Use a dedicated thread pool so that barrier waits within a workgroup
     // cannot starve threads needed by other concurrent dispatches (e.g. when
     // multiple tests run in parallel on the global rayon pool).
@@ -388,6 +398,10 @@ where
     // run in parallel on the global rayon pool). Each quad needs exactly 4
     // threads; quads are processed sequentially within the pool which is safe
     // and avoids nested-parallelism deadlocks.
+    //
+    // NOTE: This trades inter-quad parallelism for correctness. For large grids
+    // a future optimization could use a pool sized to 4*k threads with a
+    // work-queue that schedules whole quads onto fixed 4-thread lanes.
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(4)
         .build()

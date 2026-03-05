@@ -77,5 +77,26 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Install nextest
+        run: |
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest
+          fi
+
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo nextest run --all-features
+
+  doc-test:
+    name: Doc test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run doc tests
+        run: cargo test --doc --all-features

@@ -31,6 +31,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &synchronization_example::WGSL_MODULE,
     &macro_rules_definitions::WGSL_MODULE,
     &slab_read_write::WGSL_MODULE,
+    &derivative_example::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1368,5 +1369,56 @@ pub mod slab_read_write {
         // Write the modified `Data` struct back to the slab
         let out_array = Data::to_array(data);
         slab_write_array!(get_mut!(SLAB), index, out_array, Data::SLAB_SIZE);
+    }
+}
+
+#[wgsl]
+pub mod derivative_example {
+    //! Demonstrates all 9 WGSL derivative builtin functions used in a fragment
+    //! shader.
+
+    use wgsl_rs::std::*;
+
+    #[input]
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[output]
+    pub struct DerivativeOutputs {
+        #[location(0)]
+        pub dx: Vec4f,
+        #[location(1)]
+        pub dy: Vec4f,
+        #[location(2)]
+        pub fw: Vec4f,
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> DerivativeOutputs {
+        let position = input.position;
+
+        // Scalar derivatives.
+        let dx_scalar = dpdx(position.x);
+        let dy_scalar = dpdy(position.y);
+        let fw_scalar = fwidth(position.x);
+
+        // Fine variants on a Vec2f.
+        let pos_xy = vec2f(position.x, position.y);
+        let dx_fine = dpdx_fine(pos_xy);
+        let dy_fine = dpdy_fine(pos_xy);
+        let fw_fine = fwidth_fine(pos_xy);
+
+        // Coarse variants on a scalar.
+        let dx_coarse = dpdx_coarse(position.x);
+        let dy_coarse = dpdy_coarse(position.y);
+        let fw_coarse = fwidth_coarse(position.x);
+
+        DerivativeOutputs {
+            dx: vec4f(dx_scalar, dx_fine.x, dx_fine.y, dx_coarse),
+            dy: vec4f(dy_scalar, dy_fine.x, dy_fine.y, dy_coarse),
+            fw: vec4f(fw_scalar, fw_fine.x, fw_fine.y, fw_coarse),
+        }
     }
 }

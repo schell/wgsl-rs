@@ -36,6 +36,8 @@ cargo run -p example -- source {name}       # Validate and print a single exampl
 cargo expand -p example -- examples::{name} # Expand the example which uses the `wgsl` macro, showing the generated WGSL_MODULE
 ```
 
+Always remember to run `cargo fmt` after making changes.
+
 ### xtask - development tools for agents
 
 This repo contains a `cargo xtask` that provides agents with some

@@ -6870,6 +6870,64 @@ mod test {
     }
 
     #[test]
+    fn derivative_builtin_translates_to_wgsl() {
+        // Variants that need camelCase translation.
+        let expr: syn::Expr = syn::parse_quote! { dpdx_coarse(x) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "dpdxCoarse(x)");
+
+        let expr: syn::Expr = syn::parse_quote! { dpdx_fine(x) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "dpdxFine(x)");
+
+        let expr: syn::Expr = syn::parse_quote! { dpdy_coarse(v) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "dpdyCoarse(v)");
+
+        let expr: syn::Expr = syn::parse_quote! { dpdy_fine(v) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "dpdyFine(v)");
+
+        let expr: syn::Expr = syn::parse_quote! { fwidth_coarse(e) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "fwidthCoarse(e)");
+
+        let expr: syn::Expr = syn::parse_quote! { fwidth_fine(e) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "fwidthFine(e)");
+    }
+
+    #[test]
+    fn derivative_base_names_pass_through() {
+        // Base names are the same in Rust and WGSL — no translation needed.
+        let expr: syn::Expr = syn::parse_quote! { dpdx(x) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "dpdx(x)");
+
+        let expr: syn::Expr = syn::parse_quote! { dpdy(y) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "dpdy(y)");
+
+        let expr: syn::Expr = syn::parse_quote! { fwidth(v) };
+        let expr = Expr::try_from(&expr).unwrap();
+        assert_eq!(expr.to_wgsl(), "fwidth(v)");
+    }
+
+    #[test]
+    fn defining_function_named_derivative_builtin_is_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn dpdx_fine(x: f32) -> f32 {
+                0.0
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            result.is_err(),
+            "Defining dpdx_fine should be rejected as a reserved builtin name"
+        );
+    }
+
+    #[test]
     fn parse_type_atomic_i32() {
         let ty: syn::Type = syn::parse_str("Atomic<i32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();

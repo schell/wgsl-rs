@@ -44,7 +44,6 @@ pub(crate) fn with_workgroup_barrier<R>(f: impl FnOnce(Option<&std::sync::Barrie
 ///
 /// This is used by derivative builtins (dpdx, dpdy, fwidth) to access the
 /// quad synchronization context during fragment dispatch.
-#[allow(dead_code)] // Used by derivative builtins once implemented.
 pub(crate) fn with_quad_context<R>(f: impl FnOnce(Option<(&QuadContext, u8)>) -> R) -> R {
     QUAD_CONTEXT.with(|ctx| {
         let guard = ctx.borrow();
@@ -94,13 +93,31 @@ pub fn dispatch_workgroups<F>(
     let invocations_per_workgroup = (sx * sy * sz) as usize;
     let num_workgroups = vec3u(cx, cy, cz);
 
+    // Guard against unreasonably large workgroup sizes that would spawn too
+    // many OS threads. Real GPUs cap workgroup invocations at 256 or 1024;
+    // we use 1024 as a generous upper bound.
+    const MAX_INVOCATIONS: usize = 1024;
+    assert!(
+        invocations_per_workgroup <= MAX_INVOCATIONS,
+        "workgroup size {sx}x{sy}x{sz} = {invocations_per_workgroup} invocations exceeds the CPU \
+         dispatch runtime limit of {MAX_INVOCATIONS} threads per workgroup"
+    );
+
+    // Use a dedicated thread pool so that barrier waits within a workgroup
+    // cannot starve threads needed by other concurrent dispatches (e.g. when
+    // multiple tests run in parallel on the global rayon pool).
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(invocations_per_workgroup)
+        .build()
+        .expect("failed to build workgroup thread pool");
+
     for wz in 0..cz {
         for wy in 0..cy {
             for wx in 0..cx {
                 let workgroup_id = vec3u(wx, wy, wz);
                 let barrier = Arc::new(std::sync::Barrier::new(invocations_per_workgroup));
 
-                rayon::scope(|s| {
+                pool.scope(|s| {
                     for lz in 0..sz {
                         for ly in 0..sy {
                             for lx in 0..sx {
@@ -376,15 +393,28 @@ where
         coords
     };
 
+    // Use a dedicated 4-thread pool so that quad barrier waits cannot starve
+    // threads needed by other concurrent dispatches (e.g. when multiple tests
+    // run in parallel on the global rayon pool). Each quad needs exactly 4
+    // threads; quads are processed sequentially within the pool which is safe
+    // and avoids nested-parallelism deadlocks.
+    //
+    // NOTE: This trades inter-quad parallelism for correctness. For large grids
+    // a future optimization could use a pool sized to 4*k threads with a
+    // work-queue that schedules whole quads onto fixed 4-thread lanes.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .expect("failed to build fragment quad thread pool");
+
     {
-        use rayon::iter::{IntoParallelIterator, ParallelIterator};
         let shader_fn = &shader_fn;
         let input_fn = &input_fn;
         let grid = &grid;
-        quad_coords.into_par_iter().for_each(|(qx, qy)| {
+        for (qx, qy) in quad_coords {
             let quad_ctx = Arc::new(QuadContext::new());
 
-            rayon::scope(|s| {
+            pool.scope(|s| {
                 for dy in 0..2u32 {
                     for dx in 0..2u32 {
                         let px = qx + dx;
@@ -431,7 +461,7 @@ where
                     }
                 }
             });
-        });
+        }
     }
 
     // Collect results, unwrapping the Arc<Mutex<>> layer.

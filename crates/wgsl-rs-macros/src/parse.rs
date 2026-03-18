@@ -2166,6 +2166,13 @@ pub enum Stmt {
         size: Option<Expr>,
         span: Span,
     },
+    /// `discard!();` -- discard the current fragment (fragment shaders only).
+    ///
+    /// Transpiles to `discard;` in WGSL. On the CPU side, the `discard!()`
+    /// macro sets a thread-local flag that suppresses the fragment output.
+    Discard {
+        span: Span,
+    },
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -2379,6 +2386,7 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             span,
                         })
                     }
+                    "discard" => Ok(Stmt::Discard { span }),
                     _ => UnsupportedSnafu {
                         span,
                         note: format!("Unsupported statement macro '{macro_name}!'"),
@@ -4885,7 +4893,7 @@ fn resolve_self_in_stmt(name: &Ident, stmt: &mut Stmt) {
         Stmt::Block(block) => resolve_self_in_block(name, block),
         Stmt::Expr { expr, .. } => resolve_self_in_expr(name, expr),
         Stmt::If(stmt_if) => resolve_self_in_if(name, stmt_if),
-        Stmt::Break { .. } | Stmt::Continue { .. } => {}
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
         Stmt::Return { expr, .. } => {
             if let Some(expr) = expr {
                 resolve_self_in_expr(name, expr);
@@ -7448,6 +7456,36 @@ mod test {
         assert!(
             result.is_err(),
             "Unknown statement macros should be rejected"
+        );
+    }
+
+    // --- discard! statement macro tests ---
+
+    #[test]
+    fn discard_parses_to_stmt_discard() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            discard!();
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        assert!(
+            matches!(&stmt, Stmt::Discard { .. }),
+            "Expected Stmt::Discard, got: {:#?}",
+            std::mem::discriminant(&stmt)
+        );
+    }
+
+    #[test]
+    fn discard_generates_wgsl() {
+        let stmt: syn::Stmt = syn::parse_quote! {
+            discard!();
+        };
+        let stmt = Stmt::try_from(&stmt).unwrap();
+        let wgsl = stmt.to_wgsl();
+        assert_eq!(
+            wgsl.trim(),
+            "discard;",
+            "Expected 'discard;' in WGSL, got: {}",
+            wgsl
         );
     }
 }

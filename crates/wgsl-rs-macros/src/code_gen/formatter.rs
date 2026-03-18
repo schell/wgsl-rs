@@ -1186,6 +1186,10 @@ impl GenerateCode for Stmt {
                     code.write_str(*span, "[_i];");
                 });
             }
+            Stmt::Discard { span } => {
+                code.write_str(*span, "discard");
+                code.write_str(*span, ";");
+            }
         }
     }
 }

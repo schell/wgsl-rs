@@ -47,21 +47,16 @@ pub(crate) fn with_workgroup_barrier<R>(f: impl FnOnce(Option<&std::sync::Barrie
 
 /// Marks the current fragment invocation as discarded.
 ///
-/// Called by the `discard!()` macro on the CPU side. After this call,
-/// `dispatch_fragments` will treat this invocation's output as `None`,
-/// matching the WGSL behavior where `discard` converts an invocation
-/// into a helper invocation.
+/// Called by `crate::std::mark_discarded()` (the public wrapper) on the
+/// CPU side. After this call, `dispatch_fragments` will treat this
+/// invocation's output as `None`, matching the WGSL behavior where
+/// `discard` converts an invocation into a helper invocation.
 ///
 /// Execution continues after this call (the shader is not aborted),
 /// consistent with WGSL semantics where helper invocations continue
 /// running for derivative computation.
-pub fn mark_discarded() {
+pub(crate) fn mark_discarded() {
     DISCARDED.with(|d| d.set(true));
-}
-
-/// Returns whether the current invocation has been discarded.
-pub fn is_discarded() -> bool {
-    DISCARDED.with(|d| d.get())
 }
 
 /// Executes `f` with a reference to the current thread's quad context and
@@ -700,9 +695,9 @@ mod tests {
                         "discarded fragment at ({x}, {y}) should be None"
                     );
                 } else {
-                    let (rx, ry) = cell.expect(&format!(
-                        "non-discarded fragment at ({x}, {y}) should produce output"
-                    ));
+                    let (rx, ry) = cell.unwrap_or_else(|| {
+                        panic!("non-discarded fragment at ({x}, {y}) should produce output")
+                    });
                     assert_eq!(rx, x as u32);
                     assert_eq!(ry, y as u32);
                 }

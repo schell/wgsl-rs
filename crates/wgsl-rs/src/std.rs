@@ -410,8 +410,20 @@ macro_rules! slab_write_array {
 #[macro_export]
 macro_rules! discard {
     () => {
-        $crate::std::runtime::mark_discarded()
+        $crate::std::mark_discarded()
     };
+}
+
+/// CPU-side implementation of `discard!()`.
+///
+/// When the `dispatch-runtime` feature is enabled, this delegates to
+/// the runtime's thread-local discard flag. Otherwise, it is a no-op.
+#[inline]
+pub fn mark_discarded() {
+    #[cfg(feature = "dispatch-runtime")]
+    {
+        runtime::mark_discarded();
+    }
 }
 
 /// Used to provide WGSL type conversion functions like `f32(...)`, etc.

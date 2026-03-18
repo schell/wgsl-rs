@@ -32,6 +32,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &macro_rules_definitions::WGSL_MODULE,
     &slab_read_write::WGSL_MODULE,
     &derivative_example::WGSL_MODULE,
+    &discard_example::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1420,5 +1421,31 @@ pub mod derivative_example {
             dy: vec4f(dy_scalar, dy_fine.x, dy_fine.y, dy_coarse),
             fw: vec4f(fw_scalar, fw_fine.x, fw_fine.y, fw_coarse),
         }
+    }
+}
+
+#[wgsl]
+pub mod discard_example {
+    //! Demonstrates the `discard!()` statement for discarding fragments.
+
+    use wgsl_rs::std::*;
+
+    /// Discard fragments with shallow depth (close to the near plane).
+    pub fn discard_if_shallow(pos: Vec4f) {
+        if pos.z < 0.001 {
+            discard!();
+        }
+    }
+
+    #[input]
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        discard_if_shallow(input.position);
+        vec4f(1.0, 0.0, 0.0, 1.0)
     }
 }

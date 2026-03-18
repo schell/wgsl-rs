@@ -21,7 +21,7 @@ pub use wgsl_rs_macros::{
     wgsl_allow, workgroup, workgroup_size,
 };
 
-pub use crate::{get, get_mut, slab_read_array, slab_write_array};
+pub use crate::{discard, get, get_mut, slab_read_array, slab_write_array};
 
 mod atomic;
 mod bitcast;
@@ -388,6 +388,42 @@ macro_rules! slab_write_array {
             $slab[offset + i] = $src[i];
         }
     }};
+}
+
+/// Marks the current fragment invocation as discarded.
+///
+/// In WGSL, this transpiles to `discard;`, which converts the invocation
+/// into a helper invocation and prevents the fragment from being processed
+/// downstream in the render pipeline.
+///
+/// On the CPU side (when running via `dispatch_fragments`), this sets a
+/// thread-local flag. The shader continues executing (matching WGSL
+/// semantics where helper invocations continue for derivative computation),
+/// but `dispatch_fragments` suppresses the output.
+///
+/// # Example
+/// ```ignore
+/// if depth < 0.001 {
+///     discard!();
+/// }
+/// ```
+#[macro_export]
+macro_rules! discard {
+    () => {
+        $crate::std::mark_discarded()
+    };
+}
+
+/// CPU-side implementation of `discard!()`.
+///
+/// When the `dispatch-runtime` feature is enabled, this delegates to
+/// the runtime's thread-local discard flag. Otherwise, it is a no-op.
+#[inline]
+pub fn mark_discarded() {
+    #[cfg(feature = "dispatch-runtime")]
+    {
+        runtime::mark_discarded();
+    }
 }
 
 /// Used to provide WGSL type conversion functions like `f32(...)`, etc.

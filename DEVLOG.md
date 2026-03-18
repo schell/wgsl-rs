@@ -263,6 +263,16 @@ Lessons learned during the port:
   for vectors. These become no-op constructors in WGSL. This is a bit messy and should be
   improved long-term.
 
+### 2026-03-16: Discard statement support (`discard!()`)
+
+Added `discard!()` macro for the WGSL `discard` statement (fragment shaders only).
+- `discard!()` transpiles to `discard;` in WGSL
+- On the CPU side, sets a thread-local flag checked by `dispatch_fragments` to suppress the fragment output
+- Execution continues after `discard!()` (matching WGSL semantics where helper invocations
+  continue running for derivative computation), but the output is discarded
+- Can be called from any function reachable from a fragment entry point, not just the entry point itself
+- Storage/workgroup writes are not yet suppressed on the CPU side for discarded invocations (future work)
+
 ### 2026-01-24: RuntimeArray<T> support
 
 Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without size parameter).

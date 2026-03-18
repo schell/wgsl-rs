@@ -28,6 +28,12 @@ thread_local! {
 
     /// Compute builtin values for the current invocation.
     static COMPUTE_BUILTINS: RefCell<Option<ComputeBuiltins>> = const { RefCell::new(None) };
+
+    /// Whether the current fragment invocation has been discarded.
+    ///
+    /// Set by `discard!()` on the CPU side, checked by `dispatch_fragments`
+    /// after the shader returns to suppress the fragment output.
+    static DISCARDED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Executes `f` with a reference to the current thread's workgroup barrier,
@@ -37,6 +43,20 @@ pub(crate) fn with_workgroup_barrier<R>(f: impl FnOnce(Option<&std::sync::Barrie
         let guard = b.borrow();
         f(guard.as_ref().map(|arc| arc.as_ref()))
     })
+}
+
+/// Marks the current fragment invocation as discarded.
+///
+/// Called by `crate::std::mark_discarded()` (the public wrapper) on the
+/// CPU side. After this call, `dispatch_fragments` will treat this
+/// invocation's output as `None`, matching the WGSL behavior where
+/// `discard` converts an invocation into a helper invocation.
+///
+/// Execution continues after this call (the shader is not aborted),
+/// consistent with WGSL semantics where helper invocations continue
+/// running for derivative computation.
+pub(crate) fn mark_discarded() {
+    DISCARDED.with(|d| d.set(true));
 }
 
 /// Executes `f` with a reference to the current thread's quad context and
@@ -439,6 +459,7 @@ where
                                 *ctx.borrow_mut() = Some(quad_ctx);
                             });
                             QUAD_INDEX.with(|i| i.set(quad_idx));
+                            DISCARDED.with(|d| d.set(false));
 
                             let builtins = FragmentBuiltins {
                                 position: vec4f(px as f32 + 0.5, py as f32 + 0.5, 0.0, 1.0),
@@ -449,9 +470,12 @@ where
 
                             let output = shader_fn(builtins, input);
 
-                            // Store result only for non-helper invocations.
+                            // Store result only for non-helper, non-discarded invocations.
                             if let Some(cell) = grid_cell {
-                                *cell.lock().expect("grid cell poisoned") = Some(output);
+                                let discarded = DISCARDED.with(|d| d.get());
+                                if !discarded {
+                                    *cell.lock().expect("grid cell poisoned") = Some(output);
+                                }
                             }
 
                             QUAD_CONTEXT.with(|ctx| {
@@ -640,6 +664,65 @@ mod tests {
                 assert!(
                     (components[1] - (y as f32 + 0.5)).abs() < f32::EPSILON,
                     "position.y mismatch at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fragment_dispatch_discard() {
+        // 4x4 grid where even-column fragments call mark_discarded().
+        // Even columns should produce None, odd columns should produce Some.
+        let results = dispatch_fragments(
+            4,
+            4,
+            |x, y| (x, y),
+            |_builtins, (x, y)| {
+                if x % 2 == 0 {
+                    mark_discarded();
+                }
+                (x, y)
+            },
+        );
+
+        assert_eq!(results.len(), 4);
+        for (y, row) in results.iter().enumerate() {
+            assert_eq!(row.len(), 4);
+            for (x, cell) in row.iter().enumerate() {
+                if x % 2 == 0 {
+                    assert!(
+                        cell.is_none(),
+                        "discarded fragment at ({x}, {y}) should be None"
+                    );
+                } else {
+                    let (rx, ry) = cell.unwrap_or_else(|| {
+                        panic!("non-discarded fragment at ({x}, {y}) should produce output")
+                    });
+                    assert_eq!(rx, x as u32);
+                    assert_eq!(ry, y as u32);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fragment_dispatch_discard_all() {
+        // All fragments discarded — every cell should be None.
+        let results = dispatch_fragments(
+            2,
+            2,
+            |x, y| (x, y),
+            |_builtins, input| {
+                mark_discarded();
+                input
+            },
+        );
+
+        for (y, row) in results.iter().enumerate() {
+            for (x, cell) in row.iter().enumerate() {
+                assert!(
+                    cell.is_none(),
+                    "all-discarded fragment at ({x}, {y}) should be None"
                 );
             }
         }

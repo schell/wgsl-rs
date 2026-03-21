@@ -402,16 +402,25 @@ pub fn fract<T: NumericBuiltinFract>(e: T) -> T {
 }
 mod fract {
     use super::*;
+
+    /// WGSL `fract(e) = e - floor(e)`, which is always in `[0, 1)`.
+    ///
+    /// This differs from Rust's `f32::fract()` which computes `self -
+    /// self.trunc()` and can return negative values for negative inputs.
+    fn wgsl_fract(x: f32) -> f32 {
+        x - x.floor()
+    }
+
     impl NumericBuiltinFract for f32 {
         fn fract(self) -> Self {
-            self.fract()
+            wgsl_fract(self)
         }
     }
     macro_rules! impl_fract_vec {
         ($ty:ty) => {
             impl NumericBuiltinFract for $ty {
                 fn fract(self) -> Self {
-                    Self::from_array(self.to_array().map(|t| t.fract()))
+                    Self::from_array(self.to_array().map(wgsl_fract))
                 }
             }
         };
@@ -673,16 +682,36 @@ pub fn round<T: NumericBuiltinRound>(e: T) -> T {
 }
 mod round {
     use super::*;
+
+    /// WGSL "round half to even" (banker's rounding).
+    ///
+    /// When the value is exactly halfway between two integers, the result is
+    /// the nearest even integer. This differs from Rust's `f32::round()` which
+    /// rounds half away from zero.
+    fn wgsl_round(x: f32) -> f32 {
+        let rounded = x.round();
+        // Check if we're exactly at a .5 boundary
+        let diff = x - rounded;
+        if diff == 0.5 || diff == -0.5 {
+            // At a halfway point — pick the even integer
+            let floor = x.floor();
+            let ceil = x.ceil();
+            if floor as i32 % 2 == 0 { floor } else { ceil }
+        } else {
+            rounded
+        }
+    }
+
     impl NumericBuiltinRound for f32 {
         fn round(self) -> Self {
-            self.round()
+            wgsl_round(self)
         }
     }
     macro_rules! impl_round_vec {
         ($ty:ty) => {
             impl NumericBuiltinRound for $ty {
                 fn round(self) -> Self {
-                    Self::from_array(self.to_array().map(|t| t.round()))
+                    Self::from_array(self.to_array().map(wgsl_round))
                 }
             }
         };

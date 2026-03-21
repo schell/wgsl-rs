@@ -3,6 +3,7 @@ members = [
   "crates/example",
   "crates/fbm-example",
   "crates/gpu-tests",
+  "crates/roundtrip-tests",
   "crates/wgsl-rs",
   "crates/wgsl-rs-macros",
   "crates/xtask"

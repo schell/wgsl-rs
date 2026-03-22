@@ -273,6 +273,13 @@ Added `discard!()` macro for the WGSL `discard` statement (fragment shaders only
 - Can be called from any function reachable from a fragment entry point, not just the entry point itself
 - Storage/workgroup writes are not yet suppressed on the CPU side for discarded invocations (future work)
 
+### 2026-03-22: Roundtrip tests — bit manipulation, bitcast, packing
+
+Extended `roundtrip-tests` with 9 new sub-tests covering bit manipulation (clz,
+popcount, ctz, reverse_bits, first_leading/trailing_bit, extract/insert_bits),
+bitcast (scalar and vec4 roundtrips), and pack/unpack (4x8/2x16 snorm/unorm/float).
+Discovered naga/Metal backend bug with `firstLeadingBit(0xFFFFFFFF_u)`.
+
 ### 2026-03-22: Roundtrip tests and fract/round bug fixes
 
 Added `roundtrip-tests` crate — a standalone binary that validates GPU vs CPU coherence

@@ -245,6 +245,122 @@ pub fn compare_f32_results(
     }
 }
 
+/// Compares two `u32` slices element-by-element for exact equality.
+///
+/// Returns a `ComparisonResult`. All mismatches are reported since u32
+/// comparisons are exact (no epsilon).
+pub fn compare_u32_results(
+    name: &str,
+    gpu: &[u32],
+    cpu: &[u32],
+    labels: &[&str],
+) -> ComparisonResult {
+    assert_eq!(
+        gpu.len(),
+        cpu.len(),
+        "GPU and CPU result lengths differ for {name}"
+    );
+    assert_eq!(
+        gpu.len(),
+        labels.len(),
+        "result length and label count differ for {name}"
+    );
+
+    let mut mismatches = Vec::new();
+
+    for (i, ((g, c), label)) in gpu.iter().zip(cpu.iter()).zip(labels.iter()).enumerate() {
+        if g != c {
+            mismatches.push(format!(
+                "  [{i}] {label}: GPU=0x{g:08X} ({g}), CPU=0x{c:08X} ({c})"
+            ));
+        }
+    }
+
+    ComparisonResult {
+        name: name.to_string(),
+        passed: mismatches.is_empty(),
+        max_error: if mismatches.is_empty() { 0.0 } else { 1.0 },
+        mismatches,
+    }
+}
+
+/// Compares two `u32` slices where each u32 contains packed sub-values.
+///
+/// Each u32 is split into bytes and the maximum per-byte difference is
+/// checked against `max_byte_diff`. This is useful for pack functions where
+/// the WGSL spec allows `±1` LSB rounding differences.
+pub fn compare_packed_u32_results(
+    name: &str,
+    gpu: &[u32],
+    cpu: &[u32],
+    labels: &[&str],
+    max_byte_diff: u8,
+) -> ComparisonResult {
+    assert_eq!(
+        gpu.len(),
+        cpu.len(),
+        "GPU and CPU result lengths differ for {name}"
+    );
+    assert_eq!(
+        gpu.len(),
+        labels.len(),
+        "result length and label count differ for {name}"
+    );
+
+    let mut mismatches = Vec::new();
+    let mut max_error: f32 = 0.0;
+
+    for (i, ((g, c), label)) in gpu.iter().zip(cpu.iter()).zip(labels.iter()).enumerate() {
+        let g_bytes = g.to_le_bytes();
+        let c_bytes = c.to_le_bytes();
+        let mut byte_diff = 0u8;
+        for (gb, cb) in g_bytes.iter().zip(c_bytes.iter()) {
+            let d = (*gb as i16 - *cb as i16).unsigned_abs() as u8;
+            byte_diff = byte_diff.max(d);
+        }
+        max_error = max_error.max(byte_diff as f32);
+        if byte_diff > max_byte_diff {
+            mismatches.push(format!(
+                "  [{i}] {label}: GPU=0x{g:08X}, CPU=0x{c:08X} (max byte diff={byte_diff})"
+            ));
+        }
+    }
+
+    ComparisonResult {
+        name: name.to_string(),
+        passed: mismatches.is_empty(),
+        max_error,
+        mismatches,
+    }
+}
+
+/// The standard bind group layout entries for a read-only input buffer at
+/// binding 0 and a read-write output buffer at binding 1.
+///
+/// This is the common layout used by almost all roundtrip test shaders.
+pub const STANDARD_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
 /// A roundtrip test that can be run by the harness.
 pub trait RoundtripTest {
     /// Short name for this test category (e.g., "trig", "exponential").

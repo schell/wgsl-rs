@@ -26,12 +26,13 @@
 //! - [`packing`] — Pack/unpack quantization: `pack4x8snorm`, `pack4x8unorm`,
 //!   `pack2x16snorm`, `pack2x16unorm`, `pack2x16float`, `unpack4x8snorm`,
 //!   `unpack4x8unorm`, `unpack2x16snorm`, `unpack2x16unorm`, `unpack2x16float`
+//! - [`modf_frexp_ldexp`] — Struct-returning numeric builtins: `modf`, `frexp`,
+//!   `ldexp`
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
 //!
-//! - **modf, frexp, ldexp** — Struct-returning numeric builtins
 //! - **Type conversions** — `f32()`, `u32()`, `i32()` casting functions
 //! - **Matrix operations** — `determinant`, `transpose`, matrix-vector and
 //!   matrix-matrix multiplication
@@ -52,6 +53,7 @@ pub mod bitcast;
 pub mod clamping;
 pub mod exponential;
 pub mod geometric;
+pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
 pub mod trig;
@@ -69,5 +71,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(bit_manipulation::BitManipulationTest),
         Box::new(bitcast::BitcastTest),
         Box::new(packing::PackingTest),
+        Box::new(modf_frexp_ldexp::ModfFrexpLdexpTest),
     ]
 }

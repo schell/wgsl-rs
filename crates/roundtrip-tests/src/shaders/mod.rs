@@ -28,12 +28,11 @@
 //!   `unpack4x8unorm`, `unpack2x16snorm`, `unpack2x16unorm`, `unpack2x16float`
 //! - [`modf_frexp_ldexp`] — Struct-returning numeric builtins: `modf`, `frexp`,
 //!   `ldexp`
+//! - [`type_conversions`] — Type casting functions: `f32()`, `u32()`, `i32()`
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
-//!
-//! - **Type conversions** — `f32()`, `u32()`, `i32()` casting functions
 //! - **Matrix operations** — `determinant`, `transpose`, matrix-vector and
 //!   matrix-matrix multiplication
 //! - **Logical builtins** — `all`, `any` on bool vectors
@@ -57,6 +56,7 @@ pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
 pub mod trig;
+pub mod type_conversions;
 
 use crate::harness::RoundtripTest;
 
@@ -72,5 +72,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(bitcast::BitcastTest),
         Box::new(packing::PackingTest),
         Box::new(modf_frexp_ldexp::ModfFrexpLdexpTest),
+        Box::new(type_conversions::TypeConversionsTest),
     ]
 }

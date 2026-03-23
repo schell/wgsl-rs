@@ -1902,10 +1902,16 @@ mod modf_impl {
     impl NumericBuiltinModf for f32 {
         fn modf(self) -> ModfResult<Self> {
             let whole = self.trunc();
-            ModfResult {
-                fract: self - whole,
-                whole,
-            }
+            // For infinity, the fractional part should be 0 (or -0) with the original sign.
+            // For NaN, the fractional part should be NaN.
+            let fract = if self.is_nan() {
+                self
+            } else if !self.is_finite() {
+                f32::copysign(0.0, self)
+            } else {
+                self - whole
+            };
+            ModfResult { fract, whole }
         }
     }
 
@@ -1915,8 +1921,20 @@ mod modf_impl {
                 fn modf(self) -> ModfResult<Self> {
                     let g: $glam_ty = self.into();
                     let whole_g = g.trunc();
+                    let fract_g = g - whole_g;
+                    // For each component, if it's not finite, the fractional part should be 0 (or
+                    // -0) with the original sign
+                    let fract_corrected = fract_g.map(|v| {
+                        if v.is_nan() {
+                            v
+                        } else if !v.is_finite() {
+                            f32::copysign(0.0, v)
+                        } else {
+                            v
+                        }
+                    });
                     ModfResult {
-                        fract: (g - whole_g).into(),
+                        fract: fract_corrected.into(),
                         whole: whole_g.into(),
                     }
                 }

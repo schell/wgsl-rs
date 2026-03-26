@@ -5,7 +5,7 @@
 //!
 //! Covers Vec4 with f32, i32, u32 scalar types, plus spot checks for Vec2/Vec3.
 
-use wgsl_rs::wgsl;
+use wgsl_rs::{std::*, wgsl};
 
 use crate::harness::{self, ComparisonResult, RoundtripTest};
 
@@ -42,7 +42,7 @@ pub mod vec_binary_f32 {
         );
 
         let out_base = idx * 5;
-        get_mut!(OUTPUT)[out_base + 0] = a + b;
+        get_mut!(OUTPUT)[out_base] = a + b;
         get_mut!(OUTPUT)[out_base + 1] = a - b;
         get_mut!(OUTPUT)[out_base + 2] = a * b; // component-wise multiplication
         get_mut!(OUTPUT)[out_base + 3] = a / b;
@@ -79,7 +79,7 @@ pub mod vec_binary_i32 {
         );
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base + 0] = a + b;
+        get_mut!(OUTPUT)[out_base] = a + b;
         get_mut!(OUTPUT)[out_base + 1] = a - b;
         get_mut!(OUTPUT)[out_base + 2] = a * b;
         get_mut!(OUTPUT)[out_base + 3] = a / b;
@@ -115,7 +115,7 @@ pub mod vec_binary_u32 {
         );
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base + 0] = a + b;
+        get_mut!(OUTPUT)[out_base] = a + b;
         get_mut!(OUTPUT)[out_base + 1] = a - b;
         get_mut!(OUTPUT)[out_base + 2] = a * b;
         get_mut!(OUTPUT)[out_base + 3] = a / b;
@@ -149,7 +149,7 @@ pub mod vec_scalar_f32 {
 
         let out_base = idx * 8;
         // v ⊗ s
-        get_mut!(OUTPUT)[out_base + 0] = v + s;
+        get_mut!(OUTPUT)[out_base] = v + s;
         get_mut!(OUTPUT)[out_base + 1] = v - s;
         get_mut!(OUTPUT)[out_base + 2] = v * s;
         get_mut!(OUTPUT)[out_base + 3] = v / s;
@@ -185,7 +185,7 @@ pub mod vec_scalar_i32 {
         let s = input[base + 4];
 
         let out_base = idx * 8;
-        get_mut!(OUTPUT)[out_base + 0] = v + s;
+        get_mut!(OUTPUT)[out_base] = v + s;
         get_mut!(OUTPUT)[out_base + 1] = v - s;
         get_mut!(OUTPUT)[out_base + 2] = v * s;
         get_mut!(OUTPUT)[out_base + 3] = v / s;
@@ -220,7 +220,7 @@ pub mod vec_scalar_u32 {
         let s = input[base + 4];
 
         let out_base = idx * 8;
-        get_mut!(OUTPUT)[out_base + 0] = v + s;
+        get_mut!(OUTPUT)[out_base] = v + s;
         get_mut!(OUTPUT)[out_base + 1] = v - s;
         get_mut!(OUTPUT)[out_base + 2] = v * s;
         get_mut!(OUTPUT)[out_base + 3] = v / s;
@@ -670,14 +670,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_binary_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_binary_f32::INPUT.set(flattened);
             vec_binary_f32::OUTPUT.set([Vec4f::default(); 320]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -735,14 +735,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_binary_i32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_binary_i32::INPUT.set(flattened);
             vec_binary_i32::OUTPUT.set([Vec4i::default(); 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -778,14 +778,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_binary_u32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_binary_u32::INPUT.set(flattened);
             vec_binary_u32::OUTPUT.set([Vec4u::default(); 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -817,14 +817,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_scalar_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_scalar_f32::INPUT.set(flattened);
             vec_scalar_f32::OUTPUT.set([Vec4f::default(); 512]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -859,14 +859,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_scalar_i32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_scalar_i32::INPUT.set(flattened);
             vec_scalar_i32::OUTPUT.set([Vec4i::default(); 512]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -903,14 +903,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_scalar_u32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_scalar_u32::INPUT.set(flattened);
             vec_scalar_u32::OUTPUT.set([Vec4u::default(); 512]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -959,14 +959,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_unary::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_unary::INPUT.set(flattened);
             vec_unary::OUTPUT.set([0.0f32; 512]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -1028,14 +1028,14 @@ impl RoundtripTest for VectorArithmeticTest {
                 queue,
                 shader_source: vec_mixed_dims::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            use wgsl_rs::std::*;
+
             vec_mixed_dims::INPUT.set(flattened);
             vec_mixed_dims::OUTPUT.set([0.0f32; 384]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -1058,6 +1058,286 @@ impl RoundtripTest for VectorArithmeticTest {
             ));
         }
 
+        // --- vec_overflow_u32 ---
+        {
+            let (a_inputs, b_inputs) = vec4u_overflow_inputs();
+            let mut flattened = [0u32; 512];
+            for i in 0..N {
+                let base = i * 8;
+                flattened[base] = a_inputs[i].x;
+                flattened[base + 1] = a_inputs[i].y;
+                flattened[base + 2] = a_inputs[i].z;
+                flattened[base + 3] = a_inputs[i].w;
+                flattened[base + 4] = b_inputs[i].x;
+                flattened[base + 5] = b_inputs[i].y;
+                flattened[base + 6] = b_inputs[i].z;
+                flattened[base + 7] = b_inputs[i].w;
+            }
+
+            let input_bytes = bytemuck::cast_slice(&flattened);
+            let output_size = (384 * 4 * std::mem::size_of::<u32>()) as u64;
+
+            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+                device,
+                queue,
+                shader_source: vec_overflow_u32::linkage::shader_source(),
+                entry_point: "main",
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (1, 1, 1),
+            });
+            let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
+
+
+            vec_overflow_u32::INPUT.set(flattened);
+            vec_overflow_u32::OUTPUT.set([vec4u(0, 0, 0, 0); 384]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
+                vec_overflow_u32::main(builtins.global_invocation_id);
+            });
+            let cpu_output_guard = vec_overflow_u32::OUTPUT.get();
+            let cpu_u32s: Vec<u32> = cpu_output_guard
+                .iter()
+                .flat_map(|v| [v.x, v.y, v.z, v.w])
+                .collect();
+
+            let labels: Vec<String> = (0..384 * 4)
+                .map(|i| format!("vec_overflow_u32[{}]", i))
+                .collect();
+            let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+            results.push(harness::compare_u32_results(
+                "vec_overflow_u32",
+                gpu_u32s,
+                &cpu_u32s,
+                &label_refs,
+            ));
+        }
+
+        // --- vec_overflow_i32 ---
+        {
+            let (a_inputs, b_inputs) = vec4i_overflow_inputs();
+            let mut flattened = [0i32; 512];
+            for i in 0..N {
+                let base = i * 8;
+                flattened[base] = a_inputs[i].x;
+                flattened[base + 1] = a_inputs[i].y;
+                flattened[base + 2] = a_inputs[i].z;
+                flattened[base + 3] = a_inputs[i].w;
+                flattened[base + 4] = b_inputs[i].x;
+                flattened[base + 5] = b_inputs[i].y;
+                flattened[base + 6] = b_inputs[i].z;
+                flattened[base + 7] = b_inputs[i].w;
+            }
+
+            let input_bytes = bytemuck::cast_slice(&flattened);
+            let output_size = (448 * 4 * std::mem::size_of::<i32>()) as u64;
+
+            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+                device,
+                queue,
+                shader_source: vec_overflow_i32::linkage::shader_source(),
+                entry_point: "main",
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (1, 1, 1),
+            });
+            let gpu_i32s_raw: &[i32] = bytemuck::cast_slice(&gpu_bytes);
+
+
+            vec_overflow_i32::INPUT.set(flattened);
+            vec_overflow_i32::OUTPUT.set([vec4i(0, 0, 0, 0); 448]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
+                vec_overflow_i32::main(builtins.global_invocation_id);
+            });
+            let cpu_output_guard = vec_overflow_i32::OUTPUT.get();
+            let cpu_i32s: Vec<i32> = cpu_output_guard
+                .iter()
+                .flat_map(|v| [v.x, v.y, v.z, v.w])
+                .collect();
+
+            let labels: Vec<String> = (0..448 * 4)
+                .map(|i| format!("vec_overflow_i32[{}]", i))
+                .collect();
+            let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+            // For i32 comparison, we need to convert to u32 for bit-exact comparison
+            let gpu_u32s: Vec<u32> = gpu_i32s_raw.iter().map(|&x| x as u32).collect();
+            let cpu_u32s: Vec<u32> = cpu_i32s.iter().map(|&x| x as u32).collect();
+
+            results.push(harness::compare_u32_results(
+                "vec_overflow_i32",
+                &gpu_u32s,
+                &cpu_u32s,
+                &label_refs,
+            ));
+        }
+
         results
     }
+}
+
+/// vec_overflow_u32: Tests u32 overflow wrapping behavior
+///
+/// Verifies that u32 vector operations wrap correctly on overflow/underflow,
+/// matching WGSL spec requirement of modulo 2^32 arithmetic.
+#[wgsl]
+pub mod vec_overflow_u32 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [u32; 512]); // 64 vec4 pairs
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 384]); // 6 ops * 64
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let a = vec4u(
+            input[base],
+            input[base + 1],
+            input[base + 2],
+            input[base + 3],
+        );
+        let b = vec4u(
+            input[base + 4],
+            input[base + 5],
+            input[base + 6],
+            input[base + 7],
+        );
+
+        let out_base = idx * 6;
+        get_mut!(OUTPUT)[out_base] = a + b; // May overflow
+        get_mut!(OUTPUT)[out_base + 1] = a - b; // May underflow
+        get_mut!(OUTPUT)[out_base + 2] = a * b; // May overflow
+        get_mut!(OUTPUT)[out_base + 3] = a / b;
+        get_mut!(OUTPUT)[out_base + 4] = a + a; // Self-addition overflow test
+        get_mut!(OUTPUT)[out_base + 5] = b - a; // Reversed subtraction
+        // underflow test
+    }
+}
+
+/// vec_overflow_i32: Tests i32 overflow wrapping behavior
+///
+/// Verifies that i32 vector operations wrap correctly on overflow/underflow,
+/// matching WGSL spec requirement of modulo 2^32 arithmetic.
+#[wgsl]
+pub mod vec_overflow_i32 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [i32; 512]); // 64 vec4 pairs
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 448]); // 7 ops * 64
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let a = vec4i(
+            input[base],
+            input[base + 1],
+            input[base + 2],
+            input[base + 3],
+        );
+        let b = vec4i(
+            input[base + 4],
+            input[base + 5],
+            input[base + 6],
+            input[base + 7],
+        );
+
+        let out_base = idx * 7;
+        get_mut!(OUTPUT)[out_base] = a + b; // May overflow
+        get_mut!(OUTPUT)[out_base + 1] = a - b; // May underflow
+        get_mut!(OUTPUT)[out_base + 2] = a * b; // May overflow
+        get_mut!(OUTPUT)[out_base + 3] = a / b;
+        get_mut!(OUTPUT)[out_base + 4] = -a; // Negation overflow (i32::MIN wraps)
+        get_mut!(OUTPUT)[out_base + 5] = a + a; // Self-addition overflow
+        get_mut!(OUTPUT)[out_base + 6] = b - a; // Reversed subtraction
+        // underflow
+    }
+}
+
+/// Generates overflow test inputs for Vec4u.
+///
+/// Includes edge cases near u32::MAX and 0 to test wrapping.
+fn vec4u_overflow_inputs() -> ([wgsl_rs::std::Vec4u; N], [wgsl_rs::std::Vec4u; N]) {
+    use wgsl_rs::std::vec4u;
+
+    let mut a = [vec4u(0, 0, 0, 0); N];
+    let mut b = [vec4u(1, 1, 1, 1); N];
+
+    // Edge case: underflow wrapping (0 - x should wrap to large positive)
+    a[0] = vec4u(0, 0, 0, 0);
+    b[0] = vec4u(1, 2, 3, 4);
+
+    // Edge case: overflow wrapping (u32::MAX + x should wrap to small positive)
+    a[1] = vec4u(u32::MAX, u32::MAX, u32::MAX - 1, u32::MAX - 1);
+    b[1] = vec4u(1, 2, 3, 4);
+
+    // Edge case: multiplication overflow
+    a[2] = vec4u(u32::MAX / 2, u32::MAX / 2, u32::MAX / 4, u32::MAX / 4);
+    b[2] = vec4u(3, 4, 5, 6);
+
+    // Edge case: large values that will overflow on addition
+    a[3] = vec4u(u32::MAX - 10, u32::MAX - 20, u32::MAX - 30, u32::MAX - 40);
+    b[3] = vec4u(20, 30, 40, 50);
+
+    // More edge cases
+    a[4] = vec4u(1, 2, 3, 4);
+    b[4] = vec4u(u32::MAX, u32::MAX - 1, u32::MAX - 2, u32::MAX - 3);
+
+    for i in 5..N {
+        let t = i as u32;
+        // Mix of large and small values
+        a[i] = vec4u(u32::MAX - t * 100, t * 1000, u32::MAX / 2 + t, t * 100);
+        b[i] = vec4u(t * 200, t * 50, t * 100, u32::MAX - t * 50);
+    }
+
+    (a, b)
+}
+
+/// Generates overflow test inputs for Vec4i.
+///
+/// Includes edge cases near i32::MIN and i32::MAX to test wrapping.
+fn vec4i_overflow_inputs() -> ([wgsl_rs::std::Vec4i; N], [wgsl_rs::std::Vec4i; N]) {
+    use wgsl_rs::std::vec4i;
+
+    let mut a = [vec4i(0, 0, 0, 0); N];
+    let mut b = [vec4i(1, 1, 1, 1); N];
+
+    // Edge case: i32::MAX + positive should wrap to negative
+    a[0] = vec4i(i32::MAX, i32::MAX, i32::MAX - 1, i32::MAX - 1);
+    b[0] = vec4i(1, 2, 3, 4);
+
+    // Edge case: i32::MIN - positive should wrap to large positive
+    a[1] = vec4i(i32::MIN, i32::MIN, i32::MIN + 1, i32::MIN + 1);
+    b[1] = vec4i(1, 2, 3, 4);
+
+    // Edge case: i32::MIN negation should wrap (i32::MIN.wrapping_neg() ==
+    // i32::MIN)
+    a[2] = vec4i(i32::MIN, i32::MIN + 1, -1, 0);
+    b[2] = vec4i(1, 1, 1, 1);
+
+    // Edge case: multiplication overflow
+    a[3] = vec4i(i32::MAX / 2, i32::MAX / 2, i32::MIN / 2, i32::MIN / 2);
+    b[3] = vec4i(3, 4, 3, 4);
+
+    // Edge case: mixed positive and negative extremes
+    a[4] = vec4i(i32::MAX - 10, i32::MIN + 10, i32::MAX / 2, i32::MIN / 2);
+    b[4] = vec4i(20, -20, i32::MAX / 2, i32::MIN / 2);
+
+    for i in 5..N {
+        let t = i as i32;
+        // Mix of extreme values
+        a[i] = vec4i(i32::MAX - t * 100, i32::MIN + t * 100, t * 1000, -t * 1000);
+        b[i] = vec4i(t * 200, -t * 200, i32::MAX / (t + 1), i32::MIN / (t + 1));
+    }
+
+    (a, b)
 }

@@ -47,6 +47,7 @@
 //! - **Texture sampling** — `texture_sample`, `texture_load`, etc. (complex
 //!   setup with texture data)
 
+pub mod basic_numeric;
 pub mod bit_manipulation;
 pub mod bitcast;
 pub mod clamping;
@@ -75,5 +76,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(modf_frexp_ldexp::ModfFrexpLdexpTest),
         Box::new(type_conversions::TypeConversionsTest),
         Box::new(vector_arithmetic::VectorArithmeticTest),
+        Box::new(basic_numeric::BasicNumericTest),
     ]
 }

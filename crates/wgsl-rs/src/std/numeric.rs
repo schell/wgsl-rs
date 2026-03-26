@@ -181,17 +181,18 @@ pub fn tan<T: NumericBuiltinTan>(e: T) -> T {
 
 mod abs {
     use super::*;
-    macro_rules! impl_abs_scalar {
-        ($ty:ty) => {
-            impl NumericBuiltinAbs for $ty {
-                fn abs(self) -> Self {
-                    self.abs()
-                }
-            }
-        };
+    impl NumericBuiltinAbs for f32 {
+        fn abs(self) -> Self {
+            self.abs()
+        }
     }
-    impl_abs_scalar!(f32);
-    impl_abs_scalar!(i32);
+
+    impl NumericBuiltinAbs for i32 {
+        fn abs(self) -> Self {
+            // Use wrapping_abs to match WGSL spec behavior and avoid panic on i32::MIN
+            self.wrapping_abs()
+        }
+    }
 
     macro_rules! impl_abs_uself {
         ($ty:ty) => {
@@ -207,7 +208,7 @@ mod abs {
     impl_abs_uself!(Vec3u);
     impl_abs_uself!(Vec4u);
 
-    macro_rules! impl_abs_vec {
+    macro_rules! impl_abs_vec_f32 {
         ($ty:ty) => {
             impl NumericBuiltinAbs for $ty {
                 fn abs(self) -> Self {
@@ -216,12 +217,23 @@ mod abs {
             }
         };
     }
-    impl_abs_vec!(Vec2f);
-    impl_abs_vec!(Vec3f);
-    impl_abs_vec!(Vec4f);
-    impl_abs_vec!(Vec2i);
-    impl_abs_vec!(Vec3i);
-    impl_abs_vec!(Vec4i);
+    impl_abs_vec_f32!(Vec2f);
+    impl_abs_vec_f32!(Vec3f);
+    impl_abs_vec_f32!(Vec4f);
+
+    macro_rules! impl_abs_vec_i32 {
+        ($ty:ty) => {
+            impl NumericBuiltinAbs for $ty {
+                fn abs(self) -> Self {
+                    // Use wrapping_abs to match WGSL spec and avoid panic on i32::MIN
+                    Self::from_array(self.to_array().map(|t| t.wrapping_abs()))
+                }
+            }
+        };
+    }
+    impl_abs_vec_i32!(Vec2i);
+    impl_abs_vec_i32!(Vec3i);
+    impl_abs_vec_i32!(Vec4i);
 }
 
 mod acos {

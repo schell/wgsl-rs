@@ -29,6 +29,8 @@
 //! - [`modf_frexp_ldexp`] — Struct-returning numeric builtins: `modf`, `frexp`,
 //!   `ldexp`
 //! - [`type_conversions`] — Type casting functions: `f32()`, `u32()`, `i32()`
+//! - [`vector_arithmetic`] — Vector arithmetic operators: `+`, `-`, `*`, `/`,
+//!   `%`, unary `-` for Vec2/3/4 with f32, i32, u32
 //!
 //! ## Planned coverage
 //!
@@ -36,8 +38,6 @@
 //! - **Matrix operations** — `determinant`, `transpose`, matrix-vector and
 //!   matrix-matrix multiplication
 //! - **Logical builtins** — `all`, `any` on bool vectors
-//! - **Vector arithmetic** — Explicit operator tests for `+`, `-`, `*`, `/`,
-//!   `%` on vector types
 //! - **Atomic operations** — `atomic_add`, `atomic_max`,
 //!   `atomic_compare_exchange_weak`, etc. (requires workgroup-scoped tests)
 //! - **Synchronization** — `workgroup_barrier`, `storage_barrier`,
@@ -57,6 +57,7 @@ pub mod packing;
 pub mod rounding;
 pub mod trig;
 pub mod type_conversions;
+pub mod vector_arithmetic;
 
 use crate::harness::RoundtripTest;
 
@@ -73,5 +74,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(packing::PackingTest),
         Box::new(modf_frexp_ldexp::ModfFrexpLdexpTest),
         Box::new(type_conversions::TypeConversionsTest),
+        Box::new(vector_arithmetic::VectorArithmeticTest),
     ]
 }

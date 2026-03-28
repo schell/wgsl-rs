@@ -31,13 +31,18 @@
 //! - [`type_conversions`] — Type casting functions: `f32()`, `u32()`, `i32()`
 //! - [`vector_arithmetic`] — Vector arithmetic operators: `+`, `-`, `*`, `/`,
 //!   `%`, unary `-` for Vec2/3/4 with f32, i32, u32
+//! - [`basic_numeric`] — Basic numeric functions: `abs`, `sign`, `degrees`,
+//!   `radians`
+//! - [`logical_operations`] — Logical builtins: `all`, `any` on bool vectors
+//!   (Vec2b, Vec3b, Vec4b)
+//! - [`select_operations`] — Conditional selection: `select` on scalar and
+//!   vector types (f32, i32, u32) with scalar and vector bool conditions
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
 //! - **Matrix operations** — `determinant`, `transpose`, matrix-vector and
 //!   matrix-matrix multiplication
-//! - **Logical builtins** — `all`, `any` on bool vectors
 //! - **Atomic operations** — `atomic_add`, `atomic_max`,
 //!   `atomic_compare_exchange_weak`, etc. (requires workgroup-scoped tests)
 //! - **Synchronization** — `workgroup_barrier`, `storage_barrier`,
@@ -53,9 +58,11 @@ pub mod bitcast;
 pub mod clamping;
 pub mod exponential;
 pub mod geometric;
+pub mod logical_operations;
 pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
+pub mod select_operations;
 pub mod trig;
 pub mod type_conversions;
 pub mod vector_arithmetic;
@@ -77,5 +84,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(type_conversions::TypeConversionsTest),
         Box::new(vector_arithmetic::VectorArithmeticTest),
         Box::new(basic_numeric::BasicNumericTest),
+        Box::new(logical_operations::LogicalOperationsTest),
+        Box::new(select_operations::SelectOperationsTest),
     ]
 }

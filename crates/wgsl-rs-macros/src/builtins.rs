@@ -10,6 +10,10 @@
 /// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
 /// are NOT included here since they don't need translation.
 pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
+    // Boolean vector aliases that _should_ exist in WGSL
+    ("vec2b", "vec2<bool>"),
+    ("vec3b", "vec3<bool>"),
+    ("vec4b", "vec4<bool>"),
     // Arrays
     ("array_length", "arrayLength"),
     // Bitcast

@@ -1596,3 +1596,55 @@ impl std::ops::Neg for Vec4<i32> {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn can_compile_module_with_all_vector_aliases() {
+        #[crate::wgsl(crate_path = crate)]
+        mod vectors {
+            use crate::std::*;
+
+            pub fn _main() {
+                // 2D vectors - floating point
+                let _v2f = vec2f(1.0, 2.0);
+
+                // 2D vectors - signed integer
+                let _v2i = vec2i(1, 2);
+
+                // 2D vectors - unsigned integer
+                let _v2u = vec2u(1u32, 2u32);
+
+                // 2D vectors - boolean
+                // Note: WGSL does not have vec2b as a predeclared alias,
+                // but wgsl-rs provides it for Rust-side convenience.
+                let _v2b = vec2b(true, false);
+
+                // 3D vectors - floating point
+                let _v3f = vec3f(1.0, 2.0, 3.0);
+
+                // 3D vectors - signed integer
+                let _v3i = vec3i(1, 2, 3);
+
+                // 3D vectors - unsigned integer
+                let _v3u = vec3u(1u32, 2u32, 3u32);
+
+                // 3D vectors - boolean
+                let _v3b = vec3b(true, false, true);
+
+                // 4D vectors - floating point
+                let _v4f = vec4f(1.0, 2.0, 3.0, 4.0);
+
+                // 4D vectors - signed integer
+                let _v4i = vec4i(1, 2, 3, 4);
+
+                // 4D vectors - unsigned integer
+                let _v4u = vec4u(1u32, 2u32, 3u32, 4u32);
+
+                // 4D vectors - boolean
+                let _v4b = vec4b(true, false, true, false);
+            }
+        }
+    }
+}

@@ -37,12 +37,12 @@
 //!   (Vec2b, Vec3b, Vec4b)
 //! - [`select_operations`] — Conditional selection: `select` on scalar and
 //!   vector types (f32, i32, u32) with scalar and vector bool conditions
+//! - [`matrix_operations`] — Matrix builtins and arithmetic: `determinant`,
+//!   `transpose`, matrix-vector multiplication, matrix-matrix multiplication
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
-//! - **Matrix operations** — `determinant`, `transpose`, matrix-vector and
-//!   matrix-matrix multiplication
 //! - **Atomic operations** — `atomic_add`, `atomic_max`,
 //!   `atomic_compare_exchange_weak`, etc. (requires workgroup-scoped tests)
 //! - **Synchronization** — `workgroup_barrier`, `storage_barrier`,
@@ -59,6 +59,7 @@ pub mod clamping;
 pub mod exponential;
 pub mod geometric;
 pub mod logical_operations;
+pub mod matrix_operations;
 pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
@@ -86,5 +87,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(basic_numeric::BasicNumericTest),
         Box::new(logical_operations::LogicalOperationsTest),
         Box::new(select_operations::SelectOperationsTest),
+        Box::new(matrix_operations::MatrixOperationsTest),
     ]
 }

@@ -39,14 +39,14 @@
 //!   vector types (f32, i32, u32) with scalar and vector bool conditions
 //! - [`matrix_operations`] — Matrix builtins and arithmetic: `determinant`,
 //!   `transpose`, matrix-vector multiplication, matrix-matrix multiplication
+//! - [`synchronization`] — Synchronization builtins: `workgroup_barrier`,
+//!   `storage_barrier`, `workgroup_uniform_load`
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
 //! - **Atomic operations** — `atomic_add`, `atomic_max`,
 //!   `atomic_compare_exchange_weak`, etc. (requires workgroup-scoped tests)
-//! - **Synchronization** — `workgroup_barrier`, `storage_barrier`,
-//!   `workgroup_uniform_load` (requires multi-invocation compute)
 //! - **Derivative functions** — `dpdx`, `dpdy`, `fwidth` and fine/coarse
 //!   variants (requires fragment shader tests with `dispatch_fragments`)
 //! - **Texture sampling** — `texture_sample`, `texture_load`, etc. (complex
@@ -64,6 +64,7 @@ pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
 pub mod select_operations;
+pub mod synchronization;
 pub mod trig;
 pub mod type_conversions;
 pub mod vector_arithmetic;
@@ -88,5 +89,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(logical_operations::LogicalOperationsTest),
         Box::new(select_operations::SelectOperationsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
+        Box::new(synchronization::SynchronizationTest),
     ]
 }

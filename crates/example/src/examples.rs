@@ -1,5 +1,4 @@
 //! Example WGSL modules.
-
 #![allow(dead_code)]
 use wgsl_rs::wgsl;
 
@@ -33,6 +32,8 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &slab_read_write::WGSL_MODULE,
     &derivative_example::WGSL_MODULE,
     &discard_example::WGSL_MODULE,
+    &generic_functions::WGSL_MODULE,
+    &trait_impl_example::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1447,5 +1448,91 @@ pub mod discard_example {
     pub fn frag_main(input: FragInput) -> Vec4f {
         discard_if_shallow(input.position);
         vec4f(1.0, 0.0, 0.0, 1.0)
+    }
+}
+
+/// Demonstrates generic function monomorphization.
+///
+/// Generic free functions use Rust generics with turbofish syntax at call
+/// sites. The `#[wgsl]` macro monomorphizes each unique instantiation into a
+/// concrete WGSL function with a mangled name (e.g., `double_f32`).
+///
+/// Trait bounds exist only for Rust's type checker and are stripped from the
+/// WGSL output. This leverages the "two worlds" design: Rust validates types
+/// on the CPU side, while WGSL gets fully concrete code for the GPU.
+#[wgsl]
+pub mod generic_functions {
+    /// A generic function that doubles a value via addition.
+    ///
+    /// Trait bounds (`Copy + std::ops::Add`) are required for Rust to
+    /// type-check the generic body. They produce no WGSL output.
+    pub fn double<T: Copy + std::ops::Add<Output = T>>(x: T) -> T {
+        x + x
+    }
+
+    /// A generic "select" function: returns `a` if `cond` is true, else `b`.
+    pub fn select_val<T: Copy>(a: T, b: T, cond: bool) -> T {
+        if cond { a } else { b }
+    }
+
+    /// A generic function calling another generic function (transitive
+    /// monomorphization). Demonstrates nested turbofish: `double::<T>(x)`.
+    pub fn double_or_keep<T: Copy + std::ops::Add<Output = T>>(x: T, use_double: bool) -> T {
+        select_val::<T>(double::<T>(x), x, use_double)
+    }
+
+    /// Concrete function that calls the generic helpers with `f32`.
+    pub fn apply_f32(value: f32) -> f32 {
+        double_or_keep::<f32>(value, true)
+    }
+
+    /// Concrete function that calls the generic helpers with `i32`.
+    pub fn apply_i32(value: i32) -> i32 {
+        double_or_keep::<i32>(value, false)
+    }
+}
+
+/// Demonstrates trait impl blocks generating WGSL functions.
+///
+/// Trait definitions are Rust-only (no WGSL output). Trait impl blocks
+/// generate `Type_method` functions, just like inherent impl blocks.
+/// Combined with generics, `T::method(args)` in a generic function
+/// resolves to `ConcreteType_method(args)` after monomorphization.
+#[wgsl]
+pub mod trait_impl_example {
+    /// A trait for types that support an "add" operation.
+    /// This definition is Rust-only — it produces no WGSL output.
+    pub trait Addable {
+        fn add(a: Self, b: Self) -> Self;
+    }
+
+    impl Addable for f32 {
+        fn add(a: f32, b: f32) -> f32 {
+            a + b
+        }
+    }
+
+    impl Addable for i32 {
+        fn add(a: i32, b: i32) -> i32 {
+            a + b
+        }
+    }
+
+    /// Generic function that sums three values using the trait method.
+    /// `T::add(a, b)` resolves to `f32_add(a, b)` or `i32_add(a, b)`
+    /// after monomorphization.
+    pub fn sum_three<T: Addable>(a: T, b: T, c: T) -> T {
+        let ab = T::add(a, b);
+        T::add(ab, c)
+    }
+
+    /// Concrete caller — triggers monomorphization of `sum_three::<f32>`.
+    pub fn sum_f32(a: f32, b: f32, c: f32) -> f32 {
+        sum_three::<f32>(a, b, c)
+    }
+
+    /// Concrete caller — triggers monomorphization of `sum_three::<i32>`.
+    pub fn sum_i32(a: i32, b: i32, c: i32) -> i32 {
+        sum_three::<i32>(a, b, c)
     }
 }

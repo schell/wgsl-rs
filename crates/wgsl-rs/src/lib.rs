@@ -156,4 +156,79 @@ mod test {
              imports)"
         );
     }
+
+    // Cross-module trait impl test:
+    // - trait_provider defines a trait and implements it for f32
+    // - trait_consumer imports it and uses the impl via a generic function
+
+    #[wgsl(crate_path = crate)]
+    pub mod trait_provider {
+        pub trait Scalable {
+            fn scale(val: Self, factor: f32) -> Self;
+        }
+
+        impl Scalable for f32 {
+            fn scale(val: f32, factor: f32) -> f32 {
+                val * factor
+            }
+        }
+    }
+
+    #[wgsl(crate_path = crate)]
+    pub mod trait_consumer {
+        use super::trait_provider::*;
+
+        pub fn apply_scale<T: Scalable>(val: T, factor: f32) -> T {
+            T::scale(val, factor)
+        }
+
+        pub fn go() -> f32 {
+            apply_scale::<f32>(2.0, 3.0)
+        }
+    }
+
+    #[test]
+    fn cross_module_trait_impl() {
+        // Verify provider module generates f32_scale
+        let provider_src = trait_provider::WGSL_MODULE
+            .source
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            provider_src.contains("fn f32_scale("),
+            "trait_provider should contain f32_scale, got:\n{provider_src}"
+        );
+
+        // Verify consumer module generates apply_scale_f32 that calls f32_scale
+        let consumer_src = trait_consumer::WGSL_MODULE
+            .source
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            consumer_src.contains("fn apply_scale_f32("),
+            "trait_consumer should contain apply_scale_f32, got:\n{consumer_src}"
+        );
+        assert!(
+            consumer_src.contains("f32_scale("),
+            "apply_scale_f32 should call f32_scale, got:\n{consumer_src}"
+        );
+
+        // Verify the concatenated source has both
+        let full_src = trait_consumer::WGSL_MODULE.wgsl_source().join("\n");
+        assert!(
+            full_src.contains("fn f32_scale(") && full_src.contains("fn apply_scale_f32("),
+            "concatenated source should have both functions, got:\n{full_src}"
+        );
+
+        // Verify Rust-side execution works too
+        let result = trait_consumer::go();
+        assert!(
+            (result - 6.0).abs() < f32::EPSILON,
+            "2.0 * 3.0 should be 6.0, got {result}"
+        );
+    }
 }

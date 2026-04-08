@@ -13,6 +13,7 @@ mod builtins;
 mod code_gen;
 #[cfg(feature = "linkage-wgpu")]
 mod linkage;
+mod monomorphize;
 mod parse;
 mod ptr;
 mod sampler;
@@ -285,7 +286,8 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let attrs: Attrs = syn::parse(attr)?;
     let crate_path = attrs.crate_path();
 
-    let wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    monomorphize::run(&mut wgsl_module)?;
     let imports = wgsl_module.imports(&crate_path);
 
     let code = code_gen::generate_wgsl(&wgsl_module);

@@ -663,6 +663,9 @@ impl GenerateCode for Type {
                 // WGSL format: texture_depth_2d, texture_depth_cube, etc.
                 code.write_str(ident.span(), kind.wgsl_name());
             }
+            Type::TypeParam { .. } => {
+                unreachable!("TypeParam should be resolved by monomorphization before codegen")
+            }
         }
     }
 }
@@ -860,9 +863,14 @@ impl GenerateCode for Expr {
             }
             Expr::FnCall {
                 path,
+                type_args,
                 paren_token,
                 params,
             } => {
+                debug_assert!(
+                    type_args.is_empty(),
+                    "type_args should be resolved by monomorphization before codegen"
+                );
                 path.write_code(code);
                 let indented = params.len() > 4;
                 code.write_surrounded(
@@ -1603,6 +1611,7 @@ impl GenerateCode for FnAttrs {
 impl GenerateCode for ItemFn {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemFn {
+            type_params: _,
             fn_attrs,
             fn_token,
             ident,
@@ -1973,6 +1982,7 @@ impl GenerateCode for ItemImpl {
                 }
                 ImplItem::Fn(item_fn) => {
                     let ItemFn {
+                        type_params: _,
                         fn_attrs,
                         fn_token,
                         ident,
@@ -2086,9 +2096,6 @@ impl GenerateCode for Item {
             }
             Item::Trait => {
                 // Trait definitions are Rust-only and produce no WGSL.
-            }
-            Item::TraitImpl => {
-                // Trait impl blocks are Rust-only and produce no WGSL.
             }
         }
     }

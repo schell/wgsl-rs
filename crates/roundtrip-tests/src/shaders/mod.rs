@@ -41,17 +41,18 @@
 //!   `transpose`, matrix-vector multiplication, matrix-matrix multiplication
 //! - [`synchronization`] — Synchronization builtins: `workgroup_barrier`,
 //!   `storage_barrier`, `workgroup_uniform_load`
+//! - [`atomic_operations`] — Atomic builtins for `u32` and `i32`: load/store,
+//!   arithmetic, bitwise, exchange, compare_exchange_weak
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
-//! - **Atomic operations** — `atomic_add`, `atomic_max`,
-//!   `atomic_compare_exchange_weak`, etc. (requires workgroup-scoped tests)
 //! - **Derivative functions** — `dpdx`, `dpdy`, `fwidth` and fine/coarse
 //!   variants (requires fragment shader tests with `dispatch_fragments`)
 //! - **Texture sampling** — `texture_sample`, `texture_load`, etc. (complex
 //!   setup with texture data)
 
+pub mod atomic_operations;
 pub mod basic_numeric;
 pub mod bit_manipulation;
 pub mod bitcast;
@@ -90,5 +91,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(select_operations::SelectOperationsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),
+        Box::new(atomic_operations::AtomicOperationsTest),
     ]
 }

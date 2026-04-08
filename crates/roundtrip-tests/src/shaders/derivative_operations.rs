@@ -8,7 +8,6 @@ use crate::harness::{self, ComparisonResult, RoundtripTest};
 
 const WIDTH: u32 = 32;
 const HEIGHT: u32 = 32;
-const TEXEL_SIZE: u32 = 16; // RGBA32Float
 
 #[wgsl]
 pub mod derivative_basic {
@@ -79,108 +78,11 @@ pub mod derivative_variants {
     }
 }
 
-/// Aligns `value` to the next multiple of `alignment`.
-fn align_to(value: u32, alignment: u32) -> u32 {
-    (value + alignment - 1) & !(alignment - 1)
-}
-
-/// Creates one RGBA32Float render target texture.
-fn create_render_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("derivative_render_target"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    })
-}
-
-/// Reads a texture back as row-major RGBA32Float pixels.
-fn read_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-    width: u32,
-    height: u32,
-) -> Vec<[f32; 4]> {
-    let bytes_per_row = align_to(width * TEXEL_SIZE, 256);
-    let buffer_size = (bytes_per_row * height) as u64;
-
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("derivative_readback"),
-        size: buffer_size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("derivative_readback"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-    let idx = queue.submit(Some(encoder.finish()));
-
-    let (sender, receiver) = std::sync::mpsc::channel();
-    staging
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("channel send failed");
-        });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(idx),
-            timeout: None,
-        })
-        .expect("wgpu poll failed");
-    receiver
-        .recv()
-        .expect("channel recv failed")
-        .expect("buffer mapping failed");
-
-    let data = staging.slice(..).get_mapped_range();
-    let mut pixels = Vec::with_capacity((width * height) as usize);
-    for y in 0..height {
-        let row_offset = (y * bytes_per_row) as usize;
-        for x in 0..width {
-            let offset = row_offset + (x * TEXEL_SIZE) as usize;
-            let px: [f32; 4] = *bytemuck::from_bytes(&data[offset..offset + TEXEL_SIZE as usize]);
-            pixels.push(px);
-        }
-    }
-    drop(data);
-    staging.unmap();
-    pixels
-}
 
 /// Renders the basic derivative shader to one target and returns pixels.
 fn render_basic(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 4]> {
-    let texture = create_render_target(device, WIDTH, HEIGHT);
+    let texture =
+        harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, "derivative_basic_target");
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let module = derivative_basic::linkage::shader_module(device);
 
@@ -234,13 +136,19 @@ fn render_basic(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 4]> {
     }
     queue.submit(Some(encoder.finish()));
 
-    read_texture(device, queue, &texture, WIDTH, HEIGHT)
+    harness::read_rgba32float_texture(device, queue, &texture, WIDTH, HEIGHT)
 }
 
 /// Renders fine and coarse variant outputs to two targets.
 fn render_variants(device: &wgpu::Device, queue: &wgpu::Queue) -> (Vec<[f32; 4]>, Vec<[f32; 4]>) {
-    let fine_texture = create_render_target(device, WIDTH, HEIGHT);
-    let coarse_texture = create_render_target(device, WIDTH, HEIGHT);
+    let fine_texture =
+        harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, "derivative_fine_target");
+    let coarse_texture = harness::create_rgba32float_render_target(
+        device,
+        WIDTH,
+        HEIGHT,
+        "derivative_coarse_target",
+    );
     let fine_view = fine_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let coarse_view = coarse_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let module = derivative_variants::linkage::shader_module(device);
@@ -313,8 +221,8 @@ fn render_variants(device: &wgpu::Device, queue: &wgpu::Queue) -> (Vec<[f32; 4]>
     }
     queue.submit(Some(encoder.finish()));
 
-    let fine = read_texture(device, queue, &fine_texture, WIDTH, HEIGHT);
-    let coarse = read_texture(device, queue, &coarse_texture, WIDTH, HEIGHT);
+    let fine = harness::read_rgba32float_texture(device, queue, &fine_texture, WIDTH, HEIGHT);
+    let coarse = harness::read_rgba32float_texture(device, queue, &coarse_texture, WIDTH, HEIGHT);
     (fine, coarse)
 }
 

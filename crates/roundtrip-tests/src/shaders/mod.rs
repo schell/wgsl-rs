@@ -45,12 +45,14 @@
 //!   arithmetic, bitwise, exchange, compare_exchange_weak
 //! - [`derivative_operations`] — Fragment derivatives: `dpdx`, `dpdy`,
 //!   `fwidth`, and fine/coarse variants
+//! - [`texture_operations`] — Texture functions: `texture_load`,
+//!   `texture_sample` on 2D sampled textures
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
-//! - **Texture sampling** — `texture_sample`, `texture_load`, etc. (complex
-//!   setup with texture data)
+//! - **Advanced texture builtins** — `texture_sample_grad`, array/cube/depth
+//!   sampling variants, gather/compare variants
 
 pub mod atomic_operations;
 pub mod basic_numeric;
@@ -67,6 +69,7 @@ pub mod packing;
 pub mod rounding;
 pub mod select_operations;
 pub mod synchronization;
+pub mod texture_operations;
 pub mod trig;
 pub mod type_conversions;
 pub mod vector_arithmetic;
@@ -94,5 +97,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(synchronization::SynchronizationTest),
         Box::new(atomic_operations::AtomicOperationsTest),
         Box::new(derivative_operations::DerivativeOperationsTest),
+        Box::new(texture_operations::TextureOperationsTest),
     ]
 }

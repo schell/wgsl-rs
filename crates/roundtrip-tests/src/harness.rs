@@ -35,6 +35,106 @@ fn align_to(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
+/// Creates an `Rgba32Float` render target texture.
+pub fn create_rgba32float_render_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    label: &'static str,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// Reads an `Rgba32Float` texture back as row-major pixels.
+pub fn read_rgba32float_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Vec<[f32; 4]> {
+    const TEXEL_SIZE: u32 = 16;
+    let bytes_per_row = align_to((width * TEXEL_SIZE) as u64, 256) as u32;
+    let buffer_size = (bytes_per_row * height) as u64;
+
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("roundtrip_rgba32f_readback"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("roundtrip_rgba32f_readback"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &staging,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: None,
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let idx = queue.submit(Some(encoder.finish()));
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    staging
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).expect("channel send failed");
+        });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(idx),
+            timeout: None,
+        })
+        .expect("wgpu poll failed");
+    receiver
+        .recv()
+        .expect("channel recv failed")
+        .expect("buffer mapping failed");
+
+    let data = staging.slice(..).get_mapped_range();
+    let mut pixels = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        let row_offset = (y * bytes_per_row) as usize;
+        for x in 0..width {
+            let offset = row_offset + (x * TEXEL_SIZE) as usize;
+            let px: [f32; 4] = *bytemuck::from_bytes(&data[offset..offset + TEXEL_SIZE as usize]);
+            pixels.push(px);
+        }
+    }
+    drop(data);
+    staging.unmap();
+    pixels
+}
+
 /// Parameters for a GPU compute dispatch.
 pub struct GpuComputeParams<'a> {
     pub device: &'a wgpu::Device,

@@ -43,12 +43,12 @@
 //!   `storage_barrier`, `workgroup_uniform_load`
 //! - [`atomic_operations`] — Atomic builtins for `u32` and `i32`: load/store,
 //!   arithmetic, bitwise, exchange, compare_exchange_weak
+//! - [`derivative_operations`] — Fragment derivatives: `dpdx`, `dpdy`,
+//!   `fwidth`, and fine/coarse variants
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
-//! - **Derivative functions** — `dpdx`, `dpdy`, `fwidth` and fine/coarse
-//!   variants (requires fragment shader tests with `dispatch_fragments`)
 //! - **Texture sampling** — `texture_sample`, `texture_load`, etc. (complex
 //!   setup with texture data)
 
@@ -57,6 +57,7 @@ pub mod basic_numeric;
 pub mod bit_manipulation;
 pub mod bitcast;
 pub mod clamping;
+pub mod derivative_operations;
 pub mod exponential;
 pub mod geometric;
 pub mod logical_operations;
@@ -92,5 +93,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),
         Box::new(atomic_operations::AtomicOperationsTest),
+        Box::new(derivative_operations::DerivativeOperationsTest),
     ]
 }

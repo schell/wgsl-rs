@@ -47,13 +47,18 @@
 //!   `fwidth`, and fine/coarse variants
 //! - [`texture_operations`] — Texture functions: `texture_load`,
 //!   `texture_sample` on 2D sampled textures
+//! - [`advanced_texture_operations`] — Advanced texture builtins:
+//!   `texture_sample_grad/level/bias`, offsets, gather, and 2D-array variants
 //!
 //! ## Planned coverage
 //!
 //! The following categories are intended for future implementation:
-//! - **Advanced texture builtins** — `texture_sample_grad`, array/cube/depth
-//!   sampling variants, gather/compare variants
+//! - **Depth texture GPU roundtrip** — `texture_sample_compare*` and
+//!   `texture_gather_compare*` (depth upload/readback path)
+//! - **Additional texture families** — cube/3D/multisampled and remaining
+//!   gather/sample variant combinations
 
+pub mod advanced_texture_operations;
 pub mod atomic_operations;
 pub mod basic_numeric;
 pub mod bit_manipulation;
@@ -98,5 +103,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(atomic_operations::AtomicOperationsTest),
         Box::new(derivative_operations::DerivativeOperationsTest),
         Box::new(texture_operations::TextureOperationsTest),
+        Box::new(advanced_texture_operations::AdvancedTextureOperationsTest),
     ]
 }

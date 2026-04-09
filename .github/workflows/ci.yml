@@ -86,6 +86,28 @@ jobs:
       - name: Run tests
         run: cargo nextest run --all-features
 
+  roundtrip-tests:
+    name: Roundtrip Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: List roundtrip tests
+        run: cargo run -p roundtrip-tests -- --list
+
+      - name: Run roundtrip tests
+        run: cargo run -p roundtrip-tests
+
   doc-test:
     name: Doc test
     runs-on: ubuntu-latest

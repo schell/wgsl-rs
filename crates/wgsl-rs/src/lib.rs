@@ -28,20 +28,126 @@ pub struct Module {
 
     /// Source of the module, by line.
     pub source: &'static [&'static str],
+
+    /// Generic function templates defined in this module.
+    ///
+    /// These are WGSL function sources with `__TP{name}__` placeholders for
+    /// type parameters. Consuming modules reference these via
+    /// `instantiations` to produce monomorphized functions at source-assembly
+    /// time.
+    pub templates: &'static [GenericTemplate],
+
+    /// Cross-module template instantiations.
+    ///
+    /// Each entry references a template from an imported module and provides
+    /// the concrete type names to substitute for the type parameters. These
+    /// are resolved at source-assembly time in `wgsl_source()`.
+    pub instantiations: &'static [TemplateInstantiation],
+}
+
+/// A generic function template with placeholder type parameters.
+pub struct GenericTemplate {
+    /// The generic function name (e.g., `"shade_fragment"`).
+    pub name: &'static str,
+    /// Type parameter names (e.g., `["M", "L", "N"]`).
+    pub type_params: &'static [&'static str],
+    /// WGSL source with `__TP{name}__` placeholders for each type parameter.
+    pub wgsl_source: &'static str,
+    /// Transitive generic function calls within this template.
+    ///
+    /// Each entry records a call to another generic function, with a mapping
+    /// from the callee's type params back to this template's type params.
+    pub dependencies: &'static [TemplateDependency],
+}
+
+/// A transitive dependency from one generic template to another.
+pub struct TemplateDependency {
+    /// Name of the generic function being called.
+    pub callee: &'static str,
+    /// Maps each of the callee's type params to one of the caller's type
+    /// params, by index. For example, if `quadruple<T>` calls `double::<T>()`,
+    /// the mapping is `&[0]` (double's 0th param = quadruple's 0th param).
+    pub type_param_mapping: &'static [usize],
+}
+
+/// A request to instantiate a generic template with concrete types.
+pub struct TemplateInstantiation {
+    /// The imported module containing the template.
+    pub module: &'static Module,
+    /// The generic function name to instantiate.
+    pub template_name: &'static str,
+    /// Concrete type names to substitute for each type parameter.
+    pub type_args: &'static [&'static str],
 }
 
 impl Module {
-    /// Returns the concatenated WGSL source of this module and all its imports.
+    /// Returns the concatenated WGSL source of this module and all its imports,
+    /// including any cross-module template instantiations.
     ///
     /// This recursively collects source lines from all imported modules first,
-    /// then appends this module's source lines.
-    pub fn wgsl_source(&self) -> Vec<&'static str> {
+    /// then appends this module's source lines, then appends any instantiated
+    /// template functions (including transitive dependencies).
+    pub fn wgsl_source(&self) -> Vec<String> {
         let mut src = vec![];
         for module in self.imports.iter() {
             src.extend(module.wgsl_source());
         }
-        src.extend(self.source);
+        for line in self.source {
+            src.push(line.to_string());
+        }
+        // Resolve cross-module template instantiations (with transitive deps)
+        let mut instantiated: ::std::collections::HashSet<(String, Vec<String>)> =
+            ::std::collections::HashSet::new();
+        for inst in self.instantiations {
+            let type_args: Vec<String> = inst.type_args.iter().map(|s| s.to_string()).collect();
+            Self::instantiate_template(
+                inst.module,
+                inst.template_name,
+                &type_args,
+                &mut src,
+                &mut instantiated,
+            );
+        }
         src
+    }
+
+    /// Instantiate a single template and recursively instantiate its
+    /// dependencies. Tracks already-instantiated `(name, type_args)` pairs
+    /// to avoid duplicates.
+    fn instantiate_template(
+        module: &Module,
+        template_name: &str,
+        type_args: &[String],
+        out: &mut Vec<String>,
+        seen: &mut ::std::collections::HashSet<(String, Vec<String>)>,
+    ) {
+        let key = (template_name.to_string(), type_args.to_vec());
+        if !seen.insert(key) {
+            return; // Already instantiated
+        }
+
+        let Some(template) = module.templates.iter().find(|t| t.name == template_name) else {
+            return; // Template not found (might be a non-generic imported function)
+        };
+
+        // Recursively instantiate dependencies first (so callees appear before callers)
+        for dep in template.dependencies {
+            // Map the dependency's type params through the current type_args
+            let dep_type_args: Vec<String> = dep
+                .type_param_mapping
+                .iter()
+                .map(|&idx| type_args[idx].clone())
+                .collect();
+            Self::instantiate_template(module, dep.callee, &dep_type_args, out, seen);
+        }
+
+        // Substitute placeholders in the template WGSL
+        let mut wgsl = template.wgsl_source.to_string();
+        for (param_name, arg) in template.type_params.iter().zip(type_args.iter()) {
+            let placeholder = format!("__TP{param_name}__");
+            wgsl = wgsl.replace(&placeholder, arg);
+        }
+        out.push(wgsl);
     }
 }
 
@@ -128,7 +234,7 @@ mod test {
     fn module_source() {
         let source = c::WGSL_MODULE.wgsl_source();
         c::main();
-        let expected = vec![
+        let expected: Vec<String> = vec![
             "const THREE: u32 = 3;",
             "fn add_three_to_x_minus_y(x:u32, y:u32) -> u32 {",
             "    let i: u32 = (x-y)+THREE;",
@@ -139,7 +245,10 @@ mod test {
             "    let _u = add_three_to_x_minus_y(1337, 666);",
             "}",
             "",
-        ];
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         assert_eq!(&expected, &source);
 
         // Verify that imported module sources are not duplicated.
@@ -147,7 +256,7 @@ mod test {
         // appear exactly once in the concatenated output.
         let a_count = source
             .iter()
-            .filter(|line| a::WGSL_MODULE.source.contains(line))
+            .filter(|line| a::WGSL_MODULE.source.contains(&line.as_str()))
             .count();
         assert_eq!(
             a::WGSL_MODULE.source.len(),

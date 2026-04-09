@@ -251,7 +251,59 @@ fn gen_wgsl_module(
     crate_path: &syn::Path,
     imports: &[proc_macro2::TokenStream],
     source_lines: &[String],
+    mono_result: &monomorphize::MonoResult,
 ) -> proc_macro2::TokenStream {
+    // Generate template entries for generic functions defined in this module
+    let template_entries: Vec<proc_macro2::TokenStream> = mono_result
+        .template_macros
+        .iter()
+        .map(|tmpl| {
+            let name = &tmpl.fn_name;
+            let params: Vec<&str> = tmpl.type_param_names.iter().map(|s| s.as_str()).collect();
+            let wgsl = &tmpl.template_wgsl;
+            let dep_entries: Vec<proc_macro2::TokenStream> = tmpl
+                .dependencies
+                .iter()
+                .map(|dep| {
+                    let callee = &dep.callee;
+                    let mapping = &dep.type_param_mapping;
+                    quote! {
+                        #crate_path::TemplateDependency {
+                            callee: #callee,
+                            type_param_mapping: &[#(#mapping),*],
+                        }
+                    }
+                })
+                .collect();
+            quote! {
+                #crate_path::GenericTemplate {
+                    name: #name,
+                    type_params: &[#(#params),*],
+                    wgsl_source: #wgsl,
+                    dependencies: &[#(#dep_entries),*],
+                }
+            }
+        })
+        .collect();
+
+    // Generate instantiation entries for cross-module generic calls
+    let inst_entries: Vec<proc_macro2::TokenStream> = mono_result
+        .cross_module_instantiations
+        .iter()
+        .map(|inst| {
+            let import_path = &inst.import_path;
+            let tmpl_name = &inst.fn_name;
+            let args: Vec<&str> = inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
+            quote! {
+                #crate_path::TemplateInstantiation {
+                    module: &#import_path::WGSL_MODULE,
+                    template_name: #tmpl_name,
+                    type_args: &[#(#args),*],
+                }
+            }
+        })
+        .collect();
+
     quote! {
         pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {
             name: stringify!(#name),
@@ -260,15 +312,19 @@ fn gen_wgsl_module(
             ],
             source: &[
                 #(#source_lines),*
-            ]
+            ],
+            templates: &[
+                #(#template_entries),*
+            ],
+            instantiations: &[
+                #(#inst_entries),*
+            ],
         };
     }
 }
 
 /// Generates a `#[test]` function that validates the concatenated WGSL source.
 ///
-/// This is used for modules that have imports, which cannot be validated at
-/// compile-time because the imported symbols aren't available during macro
 /// expansion.
 fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
     let error_msg = format!("WGSL validation failed for module '{module_ident}'");
@@ -287,12 +343,19 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let crate_path = attrs.crate_path();
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
-    monomorphize::run(&mut wgsl_module)?;
+    let mono_result = monomorphize::run(&mut wgsl_module)?;
     let imports = wgsl_module.imports(&crate_path);
 
     let code = code_gen::generate_wgsl(&wgsl_module);
     let source_lines = code.source_lines();
-    let module_fragment = gen_wgsl_module(&wgsl_module.ident, &crate_path, &imports, &source_lines);
+
+    let module_fragment = gen_wgsl_module(
+        &wgsl_module.ident,
+        &crate_path,
+        &imports,
+        &source_lines,
+        &mono_result,
+    );
 
     // Generate validation test for modules with imports (unless skip_validation is
     // set)

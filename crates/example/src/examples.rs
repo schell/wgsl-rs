@@ -35,6 +35,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &generic_functions::WGSL_MODULE,
     &trait_impl_example::WGSL_MODULE,
     &renderer_specialization::WGSL_MODULE,
+    &renderer_specialization_simple::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1549,10 +1550,6 @@ pub mod trait_impl_example {
 ///
 /// The traits exist only for Rust's type checker. The WGSL output contains
 /// only the concrete, monomorphized functions for each configuration.
-///
-/// In a real renderer you would split these across modules — trait definitions
-/// in one, each rendering backend in another, and the pipeline in a third.
-/// They are combined here for brevity.
 #[wgsl]
 pub mod renderer_specialization {
     use wgsl_rs::std::*;
@@ -1690,10 +1687,10 @@ pub mod renderer_specialization {
 
     // ===== Concrete shader variants (each is one turbofish line) =====
 
-    /// Simple renderer: checkerboard + Lambert + geometric normals.
-    pub fn shade_simple(uv: Vec2f, normal: Vec3f, light_dir: Vec3f, view_dir: Vec3f) -> Vec4f {
-        shade_fragment::<Checker, Lambert, GeomNormal>(uv, normal, light_dir, view_dir)
-    }
+    // /// Simple renderer: checkerboard + Lambert + geometric normals.
+    // pub fn shade_simple(uv: Vec2f, normal: Vec3f, light_dir: Vec3f, view_dir:
+    // Vec3f) -> Vec4f {     shade_fragment::<Checker, Lambert, GeomNormal>(uv,
+    // normal, light_dir, view_dir) }
 
     /// Fancy renderer: gradient + Blinn-Phong + perturbed normals.
     pub fn shade_fancy(uv: Vec2f, normal: Vec3f, light_dir: Vec3f, view_dir: Vec3f) -> Vec4f {
@@ -1704,5 +1701,16 @@ pub mod renderer_specialization {
     /// Demonstrates that each axis of variation is independent.
     pub fn shade_hybrid(uv: Vec2f, normal: Vec3f, light_dir: Vec3f, view_dir: Vec3f) -> Vec4f {
         shade_fragment::<Checker, BlinnPhong, PerturbNormal>(uv, normal, light_dir, view_dir)
+    }
+}
+
+#[wgsl]
+pub mod renderer_specialization_simple {
+    use super::renderer_specialization::*;
+    use wgsl_rs::std::*;
+
+    /// Simple renderer: checkerboard + Lambert + geometric normals.
+    pub fn shade_simple(uv: Vec2f, normal: Vec3f, light_dir: Vec3f, view_dir: Vec3f) -> Vec4f {
+        shade_fragment::<Checker, Lambert, GeomNormal>(uv, normal, light_dir, view_dir)
     }
 }

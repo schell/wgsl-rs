@@ -663,8 +663,14 @@ impl GenerateCode for Type {
                 // WGSL format: texture_depth_2d, texture_depth_cube, etc.
                 code.write_str(ident.span(), kind.wgsl_name());
             }
-            Type::TypeParam { .. } => {
-                unreachable!("TypeParam should be resolved by monomorphization before codegen")
+            Type::TypeParam { ident } => {
+                // When generating template WGSL for cross-module generic
+                // functions, type params are emitted as placeholders that
+                // will be substituted by the consuming module's macro.
+                // For same-module codegen, TypeParams should have been
+                // resolved by monomorphization before reaching here.
+                let placeholder = format!("__TP{}__", ident);
+                code.write_str(ident.span(), &placeholder);
             }
         }
     }
@@ -867,11 +873,15 @@ impl GenerateCode for Expr {
                 paren_token,
                 params,
             } => {
-                debug_assert!(
-                    type_args.is_empty(),
-                    "type_args should be resolved by monomorphization before codegen"
-                );
+                // For normal codegen, type_args is empty (resolved by
+                // monomorphization). For template WGSL generation, type_args
+                // may contain placeholder types — append them to the function
+                // name so that `double::<T>()` becomes `double___TPT__()`.
                 path.write_code(code);
+                for ta in type_args {
+                    code.write_str(paren_token.span.open(), "_");
+                    ta.write_code(code);
+                }
                 let indented = params.len() > 4;
                 code.write_surrounded(
                     Surrounded {

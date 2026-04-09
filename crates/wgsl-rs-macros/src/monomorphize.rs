@@ -458,8 +458,42 @@ impl MonoCtx {
                         FnPath::TypeMethod { ty, .. } => ty.span(),
                     };
 
-                    // Validate this is a known generic function
-                    if !self.templates.contains_key(&fn_name) {
+                    if let Some(template) = self.templates.get(&fn_name) {
+                        if type_args.len() != template.type_params.len() {
+                            return Err(crate::parse::Error::unsupported(
+                                span,
+                                format!(
+                                    "'{fn_name}' expects {} type argument(s), but {} were provided",
+                                    template.type_params.len(),
+                                    type_args.len()
+                                ),
+                            ));
+                        }
+
+                        // Only enqueue if all type args are concrete (no TypeParam)
+                        if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                            let key = InstKey {
+                                fn_name: fn_name.clone(),
+                                type_args: type_args
+                                    .iter()
+                                    .map(type_to_key)
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            };
+                            if !self.seen.contains(&key) {
+                                self.seen.insert(key.clone());
+                                self.queue.push_back(InstRequest {
+                                    key,
+                                    span,
+                                    concrete_types: type_args.clone(),
+                                });
+                            }
+                        }
+                        // If type_args contain TypeParam, this call is inside a
+                        // generic function body. It will be
+                        // resolved transitively when that
+                        // template is instantiated.
+                    } else if self.reserved_names.contains(&fn_name) {
+                        // A known local non-generic function called with turbofish.
                         return Err(crate::parse::Error::unsupported(
                             span,
                             format!(
@@ -468,41 +502,8 @@ impl MonoCtx {
                             ),
                         ));
                     }
-
-                    let template = &self.templates[&fn_name];
-                    if type_args.len() != template.type_params.len() {
-                        return Err(crate::parse::Error::unsupported(
-                            span,
-                            format!(
-                                "'{fn_name}' expects {} type argument(s), but {} were provided",
-                                template.type_params.len(),
-                                type_args.len()
-                            ),
-                        ));
-                    }
-
-                    // Only enqueue if all type args are concrete (no TypeParam)
-                    if type_args.iter().all(|ta| !contains_type_param(ta)) {
-                        let key = InstKey {
-                            fn_name: fn_name.clone(),
-                            type_args: type_args
-                                .iter()
-                                .map(type_to_key)
-                                .collect::<Result<Vec<_>, _>>()?,
-                        };
-                        if !self.seen.contains(&key) {
-                            self.seen.insert(key.clone());
-                            self.queue.push_back(InstRequest {
-                                key,
-                                span,
-                                concrete_types: type_args.clone(),
-                            });
-                        }
-                    }
-                    // If type_args contain TypeParam, this call is inside a
-                    // generic function body. It will be
-                    // resolved transitively when that
-                    // template is instantiated.
+                    // Otherwise, this may be a cross-module generic call.
+                    // Defer validation/rewriting to the cross-module pass.
                 }
 
                 // Also recurse into params

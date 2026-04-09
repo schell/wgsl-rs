@@ -325,11 +325,17 @@ fn gen_wgsl_module(
 
 /// Generates a `#[test]` function that validates the concatenated WGSL source.
 ///
-/// expansion.
+/// This is used for modules that have imports, which cannot be validated at
+/// compile-time because the imported symbols aren't available during macro
+/// expansion. The `validate()` method is available on `Module` when the
+/// `wgsl-rs` crate has the `validation` feature enabled (the default). We
+/// gate on `#[cfg(test)]` only — not `feature = "validation"` — because the
+/// feature belongs to `wgsl-rs`, not the consuming crate, and checking it
+/// here would produce an "unexpected cfg" warning in downstream crates.
 fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
     let error_msg = format!("WGSL validation failed for module '{module_ident}'");
     quote! {
-        #[cfg(all(test, feature = "validation"))]
+        #[cfg(test)]
         #[test]
         fn __validate_wgsl() {
             WGSL_MODULE.validate().expect(#error_msg);

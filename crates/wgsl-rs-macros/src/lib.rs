@@ -291,12 +291,20 @@ fn gen_wgsl_module(
         .cross_module_instantiations
         .iter()
         .map(|inst| {
-            let import_path = &inst.import_path;
+            let import_paths = &inst.import_paths;
             let tmpl_name = &inst.fn_name;
             let args: Vec<&str> = inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
+            let modules: Vec<proc_macro2::TokenStream> = import_paths
+                .iter()
+                .map(|path| {
+                    quote! {
+                        &#path::WGSL_MODULE
+                    }
+                })
+                .collect();
             quote! {
                 #crate_path::TemplateInstantiation {
-                    module: &#import_path::WGSL_MODULE,
+                    modules: &[#(#modules),*],
                     template_name: #tmpl_name,
                     type_args: &[#(#args),*],
                 }

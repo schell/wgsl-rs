@@ -30,12 +30,8 @@ use crate::{
 /// consuming module's `WGSL_MODULE.source` as a macro invocation.
 #[derive(Debug, Clone)]
 pub struct CrossModuleInstantiation {
-    /// The `use` path prefix that identifies the crate/module containing the
-    /// template (e.g., `super::renderer_specialization`).
-    pub import_path: syn::Path,
-    /// The module name where the template is defined (for macro name
-    /// construction).
-    pub module_name: String,
+    /// Candidate imported modules that may contain the template.
+    pub import_paths: Vec<syn::Path>,
     /// The generic function name.
     pub fn_name: String,
     /// The lowercased mangled type argument names.
@@ -57,8 +53,6 @@ pub struct MonoResult {
 /// generic function template.
 #[derive(Debug)]
 pub struct TemplateMacro {
-    /// The module name (for macro name prefixing).
-    pub module_name: String,
     /// The generic function name.
     pub fn_name: String,
     /// Type parameter names (e.g., `["M", "L", "N"]`).
@@ -233,9 +227,8 @@ impl MonoCtx {
     /// cross-module instantiation via string substitution.
     fn generate_template_macros(
         &self,
-        module: &ItemMod,
+        _module: &ItemMod,
     ) -> Result<Vec<TemplateMacro>, crate::parse::Error> {
-        let module_name = module.ident.to_string();
         let mut macros = Vec::new();
 
         for template in self.templates.values() {
@@ -299,10 +292,9 @@ impl MonoCtx {
                 .map(|id| id.to_string())
                 .collect();
             let dependencies =
-                collect_template_dependencies(&template.block, &self.templates, &type_param_names);
+                collect_template_dependencies(&template.block, &self.templates, &type_param_names)?;
 
             macros.push(TemplateMacro {
-                module_name: module_name.clone(),
                 fn_name: template.ident.to_string(),
                 type_param_names,
                 template_wgsl,
@@ -1516,19 +1508,6 @@ fn collect_cross_module_from_expr(
                         .collect::<Result<Vec<_>, _>>()?;
                     let mangled_name = mangle_name(&fn_name, type_args)?;
 
-                    // Determine the import path — use the last segment as the module name.
-                    // For `use super::renderer_specialization::*;`, the path is
-                    // `super::renderer_specialization`, and the module name is
-                    // `renderer_specialization`.
-                    // We use the first import path that exists. In practice there's
-                    // usually just one relevant import.
-                    let import_path = import_paths[0].clone();
-                    let module_name = import_path
-                        .segments
-                        .last()
-                        .map(|s| s.ident.to_string())
-                        .unwrap_or_default();
-
                     // Rewrite the call site to use the mangled name
                     let span = match &*path {
                         FnPath::Ident(id) => id.span(),
@@ -1540,8 +1519,7 @@ fn collect_cross_module_from_expr(
                     // Add instantiation if not already seen
                     if seen.insert(mangled_name) {
                         out.push(CrossModuleInstantiation {
-                            import_path,
-                            module_name,
+                            import_paths: import_paths.to_vec(),
                             fn_name,
                             mangled_type_args,
                         });
@@ -1610,11 +1588,11 @@ fn collect_template_dependencies(
     block: &Block,
     templates: &BTreeMap<String, ItemFn>,
     caller_type_params: &[String],
-) -> Vec<TemplateDep> {
+) -> Result<Vec<TemplateDep>, crate::parse::Error> {
     let mut deps = Vec::new();
     let mut seen = BTreeSet::new();
-    scan_block_for_deps(block, templates, caller_type_params, &mut deps, &mut seen);
-    deps
+    scan_block_for_deps(block, templates, caller_type_params, &mut deps, &mut seen)?;
+    Ok(deps)
 }
 
 fn scan_block_for_deps(
@@ -1623,10 +1601,11 @@ fn scan_block_for_deps(
     caller_params: &[String],
     out: &mut Vec<TemplateDep>,
     seen: &mut BTreeSet<String>,
-) {
+) -> Result<(), crate::parse::Error> {
     for stmt in &block.stmt {
-        scan_stmt_for_deps(stmt, templates, caller_params, out, seen);
+        scan_stmt_for_deps(stmt, templates, caller_params, out, seen)?;
     }
+    Ok(())
 }
 
 fn scan_stmt_for_deps(
@@ -1635,64 +1614,64 @@ fn scan_stmt_for_deps(
     caller_params: &[String],
     out: &mut Vec<TemplateDep>,
     seen: &mut BTreeSet<String>,
-) {
+) -> Result<(), crate::parse::Error> {
     match stmt {
         Stmt::Local(l) => {
             if let Some(init) = &l.init {
-                scan_expr_for_deps(&init.expr, templates, caller_params, out, seen);
+                scan_expr_for_deps(&init.expr, templates, caller_params, out, seen)?;
             }
         }
-        Stmt::Const(c) => scan_expr_for_deps(&c.expr, templates, caller_params, out, seen),
+        Stmt::Const(c) => scan_expr_for_deps(&c.expr, templates, caller_params, out, seen)?,
         Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
-            scan_expr_for_deps(rhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(rhs, templates, caller_params, out, seen)?;
         }
         Stmt::While {
             condition, body, ..
         } => {
-            scan_expr_for_deps(condition, templates, caller_params, out, seen);
-            scan_block_for_deps(body, templates, caller_params, out, seen);
+            scan_expr_for_deps(condition, templates, caller_params, out, seen)?;
+            scan_block_for_deps(body, templates, caller_params, out, seen)?;
         }
-        Stmt::Loop { body, .. } => scan_block_for_deps(body, templates, caller_params, out, seen),
-        Stmt::Expr { expr, .. } => scan_expr_for_deps(expr, templates, caller_params, out, seen),
+        Stmt::Loop { body, .. } => scan_block_for_deps(body, templates, caller_params, out, seen)?,
+        Stmt::Expr { expr, .. } => scan_expr_for_deps(expr, templates, caller_params, out, seen)?,
         Stmt::If(s) => {
-            scan_expr_for_deps(&s.condition, templates, caller_params, out, seen);
-            scan_block_for_deps(&s.then_block, templates, caller_params, out, seen);
+            scan_expr_for_deps(&s.condition, templates, caller_params, out, seen)?;
+            scan_block_for_deps(&s.then_block, templates, caller_params, out, seen)?;
             if let Some(eb) = &s.else_branch {
                 match &eb.body {
                     ElseBody::Block(b) => {
-                        scan_block_for_deps(b, templates, caller_params, out, seen)
+                        scan_block_for_deps(b, templates, caller_params, out, seen)?
                     }
                     ElseBody::If(nested) => {
-                        scan_expr_for_deps(&nested.condition, templates, caller_params, out, seen);
+                        scan_expr_for_deps(&nested.condition, templates, caller_params, out, seen)?;
                         scan_block_for_deps(
                             &nested.then_block,
                             templates,
                             caller_params,
                             out,
                             seen,
-                        );
+                        )?;
                     }
                 }
             }
         }
         Stmt::For(f) => {
-            scan_expr_for_deps(&f.from, templates, caller_params, out, seen);
-            scan_expr_for_deps(&f.to, templates, caller_params, out, seen);
-            scan_block_for_deps(&f.body, templates, caller_params, out, seen);
+            scan_expr_for_deps(&f.from, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(&f.to, templates, caller_params, out, seen)?;
+            scan_block_for_deps(&f.body, templates, caller_params, out, seen)?;
         }
         Stmt::Switch(sw) => {
-            scan_expr_for_deps(&sw.selector, templates, caller_params, out, seen);
+            scan_expr_for_deps(&sw.selector, templates, caller_params, out, seen)?;
             for arm in &sw.arms {
-                scan_block_for_deps(&arm.body, templates, caller_params, out, seen);
+                scan_block_for_deps(&arm.body, templates, caller_params, out, seen)?;
             }
         }
         Stmt::Return { expr, .. } => {
             if let Some(e) = expr {
-                scan_expr_for_deps(e, templates, caller_params, out, seen);
+                scan_expr_for_deps(e, templates, caller_params, out, seen)?;
             }
         }
-        Stmt::Block(b) => scan_block_for_deps(b, templates, caller_params, out, seen),
+        Stmt::Block(b) => scan_block_for_deps(b, templates, caller_params, out, seen)?,
         Stmt::SlabRead {
             slab,
             offset,
@@ -1700,10 +1679,10 @@ fn scan_stmt_for_deps(
             size,
             ..
         } => {
-            scan_expr_for_deps(slab, templates, caller_params, out, seen);
-            scan_expr_for_deps(offset, templates, caller_params, out, seen);
-            scan_expr_for_deps(dest, templates, caller_params, out, seen);
-            scan_expr_for_deps(size, templates, caller_params, out, seen);
+            scan_expr_for_deps(slab, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(offset, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(dest, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(size, templates, caller_params, out, seen)?;
         }
         Stmt::SlabWrite {
             slab,
@@ -1712,15 +1691,16 @@ fn scan_stmt_for_deps(
             size,
             ..
         } => {
-            scan_expr_for_deps(slab, templates, caller_params, out, seen);
-            scan_expr_for_deps(offset, templates, caller_params, out, seen);
-            scan_expr_for_deps(src, templates, caller_params, out, seen);
+            scan_expr_for_deps(slab, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(offset, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(src, templates, caller_params, out, seen)?;
             if let Some(s) = size {
-                scan_expr_for_deps(s, templates, caller_params, out, seen);
+                scan_expr_for_deps(s, templates, caller_params, out, seen)?;
             }
         }
         Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
     }
+    Ok(())
 }
 
 fn scan_expr_for_deps(
@@ -1729,7 +1709,7 @@ fn scan_expr_for_deps(
     caller_params: &[String],
     out: &mut Vec<TemplateDep>,
     seen: &mut BTreeSet<String>,
-) {
+) -> Result<(), crate::parse::Error> {
     match expr {
         Expr::FnCall {
             path,
@@ -1748,21 +1728,38 @@ fn scan_expr_for_deps(
                     && templates.contains_key(&fn_name)
                     && seen.insert(fn_name.clone())
                 {
+                    let span = match path {
+                        FnPath::Ident(id) => id.span(),
+                        FnPath::TypeMethod { ty, .. } => ty.span(),
+                    };
+
                     // Build the type param mapping: for each type_arg, find
                     // which caller param it refers to.
-                    let mapping: Vec<usize> = type_args
-                        .iter()
-                        .map(|ta| {
-                            if let Type::TypeParam { ident } = ta {
-                                caller_params
-                                    .iter()
-                                    .position(|p| p == &ident.to_string())
-                                    .unwrap_or(0)
-                            } else {
-                                0 // Concrete type — not a param reference
-                            }
-                        })
-                        .collect();
+                    let mut mapping = Vec::with_capacity(type_args.len());
+                    for ta in type_args {
+                        let Type::TypeParam { ident } = ta else {
+                            return Err(crate::parse::Error::unsupported(
+                                span,
+                                format!(
+                                    "template dependency '{fn_name}' must use caller type \
+                                     parameters directly; concrete dependency type arguments are \
+                                     not supported yet"
+                                ),
+                            ));
+                        };
+
+                        let Some(idx) = caller_params.iter().position(|p| p == &ident.to_string())
+                        else {
+                            return Err(crate::parse::Error::unsupported(
+                                span,
+                                format!(
+                                    "template dependency '{fn_name}' uses unknown type parameter \
+                                     '{ident}'"
+                                ),
+                            ));
+                        };
+                        mapping.push(idx);
+                    }
                     out.push(TemplateDep {
                         callee: fn_name,
                         type_param_mapping: mapping,
@@ -1770,49 +1767,50 @@ fn scan_expr_for_deps(
                 }
             }
             for param in params.iter() {
-                scan_expr_for_deps(param, templates, caller_params, out, seen);
+                scan_expr_for_deps(param, templates, caller_params, out, seen)?;
             }
         }
         Expr::Binary { lhs, rhs, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
-            scan_expr_for_deps(rhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(rhs, templates, caller_params, out, seen)?;
         }
         Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
-            scan_expr_for_deps(expr, templates, caller_params, out, seen);
+            scan_expr_for_deps(expr, templates, caller_params, out, seen)?;
         }
         Expr::Array { elems, .. } => {
             for e in elems.iter() {
-                scan_expr_for_deps(e, templates, caller_params, out, seen);
+                scan_expr_for_deps(e, templates, caller_params, out, seen)?;
             }
         }
         Expr::ArrayIndexing { lhs, index, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
-            scan_expr_for_deps(index, templates, caller_params, out, seen);
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
+            scan_expr_for_deps(index, templates, caller_params, out, seen)?;
         }
         Expr::Swizzle { lhs, params, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
             if let Some(ps) = params {
                 for p in ps.iter() {
-                    scan_expr_for_deps(p, templates, caller_params, out, seen);
+                    scan_expr_for_deps(p, templates, caller_params, out, seen)?;
                 }
             }
         }
         Expr::Cast { lhs, .. } | Expr::FieldAccess { base: lhs, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
         }
         Expr::Struct { fields, .. } => {
             for f in fields.iter() {
-                scan_expr_for_deps(&f.expr, templates, caller_params, out, seen);
+                scan_expr_for_deps(&f.expr, templates, caller_params, out, seen)?;
             }
         }
         Expr::Reference { expr, .. } => {
-            scan_expr_for_deps(expr, templates, caller_params, out, seen)
+            scan_expr_for_deps(expr, templates, caller_params, out, seen)?;
         }
         Expr::ZeroValueArray { len, .. } => {
-            scan_expr_for_deps(len, templates, caller_params, out, seen)
+            scan_expr_for_deps(len, templates, caller_params, out, seen)?;
         }
         Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
     }
+    Ok(())
 }
 
 // ===== Type-to-ident conversion =====
@@ -2273,7 +2271,6 @@ mod test {
         let tmpl = &result.template_macros[0];
         assert_eq!(tmpl.fn_name, "identity");
         assert_eq!(tmpl.type_param_names, vec!["T"]);
-        assert_eq!(tmpl.module_name, "test_mod");
         assert!(
             tmpl.template_wgsl.contains("__TPT__"),
             "Template WGSL should contain __TPT__ placeholder, got: {}",
@@ -2354,5 +2351,31 @@ mod test {
             .find(|t| t.fn_name == "inner")
             .expect("Expected template for 'inner'");
         assert!(inner_tmpl.dependencies.is_empty());
+    }
+
+    #[test]
+    fn template_dependency_concrete_type_arg_rejected() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn inner<U>(x: U) -> U {
+                    x
+                }
+
+                pub fn outer<T>(x: T) -> T {
+                    let y: f32 = inner::<f32>(1.0);
+                    let _keep = y;
+                    x
+                }
+
+                pub fn caller() -> u32 {
+                    outer::<u32>(1u32)
+                }
+            }
+        };
+        let err = mono_err(input);
+        assert!(
+            err.contains("concrete dependency type arguments are not supported yet"),
+            "Expected dependency mapping error, got: {err}"
+        );
     }
 }

@@ -9,30 +9,108 @@
 //! 3. Generating monomorphized copies with mangled names
 //! 4. Rewriting call sites to use the mangled names
 //!
-//! After this pass, no `Type::TypeParam` or non-empty `Expr::FnCall.type_args`
-//! should remain in the module.
+//! For same-module generics, all type params are resolved at macro time.
+//! For cross-module generics (turbofish calls to functions from imported
+//! modules), the defining module exports `macro_rules!` macros that produce
+//! monomorphized WGSL via `concat!`, and the consuming module invokes them.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use proc_macro2::Span;
 use syn::Ident;
 
-use crate::parse::{
-    Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemMod, ReturnType, Stmt, Type,
+use crate::{
+    code_gen::{self, GenerateCode},
+    parse::{
+        Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemMod, ReturnType, Stmt, Type,
+    },
 };
+
+/// A cross-module template instantiation that needs to be included in the
+/// consuming module's `WGSL_MODULE.source` as a macro invocation.
+#[derive(Debug, Clone)]
+pub struct CrossModuleInstantiation {
+    /// The `use` path prefix that identifies the crate/module containing the
+    /// template (e.g., `super::renderer_specialization`).
+    pub import_path: syn::Path,
+    /// The module name where the template is defined (for macro name
+    /// construction).
+    pub module_name: String,
+    /// The generic function name.
+    pub fn_name: String,
+    /// The lowercased mangled type argument names.
+    pub mangled_type_args: Vec<String>,
+}
+
+/// Result of the monomorphization pass.
+#[derive(Debug)]
+pub struct MonoResult {
+    /// Cross-module template instantiations that need macro invocations in
+    /// the consuming module's `WGSL_MODULE.source`.
+    pub cross_module_instantiations: Vec<CrossModuleInstantiation>,
+    /// Template macros to generate for generic functions defined in this
+    /// module.
+    pub template_macros: Vec<TemplateMacro>,
+}
+
+/// Information needed to generate a `#[macro_export] macro_rules!` for a
+/// generic function template.
+#[derive(Debug)]
+pub struct TemplateMacro {
+    /// The module name (for macro name prefixing).
+    pub module_name: String,
+    /// The generic function name.
+    pub fn_name: String,
+    /// Type parameter names (e.g., `["M", "L", "N"]`).
+    pub type_param_names: Vec<String>,
+    /// The template WGSL source with `__TP{name}__` placeholders.
+    pub template_wgsl: String,
+    /// Transitive calls to other generic functions within this template.
+    pub dependencies: Vec<TemplateDep>,
+}
+
+/// A dependency from one template to another generic function.
+#[derive(Debug)]
+pub struct TemplateDep {
+    /// Name of the callee generic function.
+    pub callee: String,
+    /// Maps each of the callee's type params to one of the caller's type
+    /// params, by index.
+    pub type_param_mapping: Vec<usize>,
+}
 
 /// Run the monomorphization pass on a parsed module.
 ///
-/// This is a no-op for modules without generic functions.
-pub fn run(module: &mut ItemMod) -> Result<(), crate::parse::Error> {
+/// Returns information about cross-module instantiations and template macros
+/// that need to be generated.
+pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     let mut ctx = MonoCtx::new(module)?;
-    if ctx.templates.is_empty() {
-        return Ok(());
+
+    // Generate template macros for generic functions defined in this module
+    let template_macros = ctx.generate_template_macros(module)?;
+
+    // Run same-module monomorphization if there are local templates
+    if !ctx.templates.is_empty() {
+        ctx.discover_instantiations(module)?;
+        ctx.process_queue()?;
+        ctx.apply(module)?;
     }
-    ctx.discover_instantiations(module)?;
-    ctx.process_queue()?;
-    ctx.apply(module)?;
-    Ok(())
+
+    // Resolve cross-module turbofish calls (rewrites call sites and collects
+    // instantiation info). This must run before the missing-turbofish check
+    // because it clears type_args on cross-module calls.
+    let cross_module_instantiations = collect_cross_module_instantiations(module, &ctx.templates)?;
+
+    // Check for any remaining unresolved turbofish calls (missing turbofish
+    // on calls to local generic functions)
+    for item in &module.content {
+        check_unresolved_generic_calls(item, &ctx.templates)?;
+    }
+
+    Ok(MonoResult {
+        cross_module_instantiations,
+        template_macros,
+    })
 }
 
 /// Maximum number of monomorphized instances to prevent runaway expansion.
@@ -146,6 +224,93 @@ impl MonoCtx {
             generated: Vec::new(),
             reserved_names,
         })
+    }
+
+    /// Generate template macros for generic functions defined in this module.
+    ///
+    /// For each generic function, produces a `TemplateMacro` containing the
+    /// WGSL source with `__TP{name}__` placeholders that can be used for
+    /// cross-module instantiation via string substitution.
+    fn generate_template_macros(
+        &self,
+        module: &ItemMod,
+    ) -> Result<Vec<TemplateMacro>, crate::parse::Error> {
+        let module_name = module.ident.to_string();
+        let mut macros = Vec::new();
+
+        for template in self.templates.values() {
+            // Build a substitution map that replaces type params with
+            // placeholder Type::Struct identifiers (e.g., M → __TPM__).
+            // This ensures both Type::TypeParam and FnPath::TypeMethod.ty
+            // get replaced with placeholders in the generated WGSL.
+            let placeholder_subst: BTreeMap<String, Type> = template
+                .type_params
+                .iter()
+                .map(|id| {
+                    let name = id.to_string();
+                    let placeholder = format!("__TP{name}__");
+                    (
+                        name,
+                        Type::Struct {
+                            ident: Ident::new(&placeholder, id.span()),
+                        },
+                    )
+                })
+                .collect();
+
+            // Clone the template and substitute placeholders
+            let mut tmpl_fn = template.clone();
+            tmpl_fn.type_params.clear();
+
+            // Mangle the function name with placeholders
+            let param_placeholders: Vec<String> = template
+                .type_params
+                .iter()
+                .map(|id| format!("__TP{}__", id))
+                .collect();
+            let mangled_name = std::iter::once(template.ident.to_string())
+                .chain(param_placeholders.into_iter())
+                .collect::<Vec<_>>()
+                .join("_");
+            tmpl_fn.ident = Ident::new(&mangled_name, template.ident.span());
+
+            // Substitute types in inputs
+            for pair in tmpl_fn.inputs.iter_mut() {
+                substitute_type(&mut pair.ty, &placeholder_subst);
+            }
+            // Substitute in return type
+            if let ReturnType::Type { ty, .. } = &mut tmpl_fn.return_type {
+                substitute_type(ty, &placeholder_subst);
+            }
+            // Substitute in block
+            substitute_block(&mut tmpl_fn.block, &placeholder_subst);
+
+            // Generate WGSL
+            let mut code = code_gen::GeneratedWgslCode::default();
+            tmpl_fn.write_code(&mut code);
+            let template_wgsl = code.source_lines().join("\n");
+
+            // Compute transitive dependencies by scanning the original
+            // (pre-substitution) template body for turbofish calls to other
+            // generic functions.
+            let type_param_names: Vec<String> = template
+                .type_params
+                .iter()
+                .map(|id| id.to_string())
+                .collect();
+            let dependencies =
+                collect_template_dependencies(&template.block, &self.templates, &type_param_names);
+
+            macros.push(TemplateMacro {
+                module_name: module_name.clone(),
+                fn_name: template.ident.to_string(),
+                type_param_names,
+                template_wgsl,
+                dependencies,
+            });
+        }
+
+        Ok(macros)
     }
 
     /// Walk all concrete items to find turbofish call sites.
@@ -476,11 +641,6 @@ impl MonoCtx {
         // Rewrite all call sites in all items
         for item in &mut module.content {
             rewrite_calls_in_item(item, &self.templates);
-        }
-
-        // Check for calls to generic functions that are missing turbofish
-        for item in &module.content {
-            check_unresolved_generic_calls(item, &self.templates)?;
         }
 
         Ok(())
@@ -1081,6 +1241,579 @@ fn check_unresolved_in_expr(
     }
 }
 
+// ===== Cross-module instantiation collection =====
+
+/// Collect turbofish calls that reference generic functions from imported
+/// modules. These become `CrossModuleInstantiation`s that the consuming
+/// module uses to generate macro invocations.
+///
+/// Also rewrites the call sites to use the mangled concrete function name.
+fn collect_cross_module_instantiations(
+    module: &mut ItemMod,
+    local_templates: &BTreeMap<String, ItemFn>,
+) -> Result<Vec<CrossModuleInstantiation>, crate::parse::Error> {
+    // Build the import path lookup: for each use statement, record the
+    // paths so we can attribute unresolved calls to an imported module.
+    let import_paths: Vec<syn::Path> = module
+        .content
+        .iter()
+        .filter_map(|item| {
+            if let Item::Use(use_item) = item {
+                Some(use_item.modules.clone())
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .collect();
+
+    let mut instantiations = Vec::new();
+    let mut seen_mangled: BTreeSet<String> = BTreeSet::new();
+
+    for item in &mut module.content {
+        collect_cross_module_from_item(
+            item,
+            local_templates,
+            &import_paths,
+            &mut instantiations,
+            &mut seen_mangled,
+        )?;
+    }
+
+    Ok(instantiations)
+}
+
+fn collect_cross_module_from_item(
+    item: &mut Item,
+    local_templates: &BTreeMap<String, ItemFn>,
+    import_paths: &[syn::Path],
+    out: &mut Vec<CrossModuleInstantiation>,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), crate::parse::Error> {
+    match item {
+        Item::Fn(f) => {
+            collect_cross_module_from_block(&mut f.block, local_templates, import_paths, out, seen)
+        }
+        Item::Impl(impl_item) => {
+            for ii in &mut impl_item.items {
+                if let crate::parse::ImplItem::Fn(f) = ii {
+                    collect_cross_module_from_block(
+                        &mut f.block,
+                        local_templates,
+                        import_paths,
+                        out,
+                        seen,
+                    )?;
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn collect_cross_module_from_block(
+    block: &mut Block,
+    local_templates: &BTreeMap<String, ItemFn>,
+    import_paths: &[syn::Path],
+    out: &mut Vec<CrossModuleInstantiation>,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), crate::parse::Error> {
+    for stmt in &mut block.stmt {
+        collect_cross_module_from_stmt(stmt, local_templates, import_paths, out, seen)?;
+    }
+    Ok(())
+}
+
+fn collect_cross_module_from_stmt(
+    stmt: &mut Stmt,
+    local_templates: &BTreeMap<String, ItemFn>,
+    import_paths: &[syn::Path],
+    out: &mut Vec<CrossModuleInstantiation>,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), crate::parse::Error> {
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some(init) = &mut local.init {
+                collect_cross_module_from_expr(
+                    &mut init.expr,
+                    local_templates,
+                    import_paths,
+                    out,
+                    seen,
+                )?;
+            }
+        }
+        Stmt::Const(c) => {
+            collect_cross_module_from_expr(&mut c.expr, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(rhs, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            collect_cross_module_from_expr(condition, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_block(body, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::Loop { body, .. } => {
+            collect_cross_module_from_block(body, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::Expr { expr, .. } => {
+            collect_cross_module_from_expr(expr, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::If(s) => {
+            collect_cross_module_from_expr(
+                &mut s.condition,
+                local_templates,
+                import_paths,
+                out,
+                seen,
+            )?;
+            collect_cross_module_from_block(
+                &mut s.then_block,
+                local_templates,
+                import_paths,
+                out,
+                seen,
+            )?;
+            if let Some(eb) = &mut s.else_branch {
+                match &mut eb.body {
+                    ElseBody::Block(b) => collect_cross_module_from_block(
+                        b,
+                        local_templates,
+                        import_paths,
+                        out,
+                        seen,
+                    )?,
+                    ElseBody::If(nested) => {
+                        collect_cross_module_from_expr(
+                            &mut nested.condition,
+                            local_templates,
+                            import_paths,
+                            out,
+                            seen,
+                        )?;
+                        collect_cross_module_from_block(
+                            &mut nested.then_block,
+                            local_templates,
+                            import_paths,
+                            out,
+                            seen,
+                        )?;
+                    }
+                }
+            }
+        }
+        Stmt::For(f) => {
+            collect_cross_module_from_expr(&mut f.from, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(&mut f.to, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_block(&mut f.body, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::Switch(sw) => {
+            collect_cross_module_from_expr(
+                &mut sw.selector,
+                local_templates,
+                import_paths,
+                out,
+                seen,
+            )?;
+            for arm in &mut sw.arms {
+                collect_cross_module_from_block(
+                    &mut arm.body,
+                    local_templates,
+                    import_paths,
+                    out,
+                    seen,
+                )?;
+            }
+        }
+        Stmt::Return { expr, .. } => {
+            if let Some(e) = expr {
+                collect_cross_module_from_expr(e, local_templates, import_paths, out, seen)?;
+            }
+        }
+        Stmt::Block(b) => {
+            collect_cross_module_from_block(b, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+            ..
+        } => {
+            collect_cross_module_from_expr(slab, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(offset, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(dest, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(size, local_templates, import_paths, out, seen)?;
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+            ..
+        } => {
+            collect_cross_module_from_expr(slab, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(offset, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(src, local_templates, import_paths, out, seen)?;
+            if let Some(s) = size {
+                collect_cross_module_from_expr(s, local_templates, import_paths, out, seen)?;
+            }
+        }
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
+    }
+    Ok(())
+}
+
+fn collect_cross_module_from_expr(
+    expr: &mut Expr,
+    local_templates: &BTreeMap<String, ItemFn>,
+    import_paths: &[syn::Path],
+    out: &mut Vec<CrossModuleInstantiation>,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), crate::parse::Error> {
+    match expr {
+        Expr::FnCall {
+            path,
+            type_args,
+            params,
+            ..
+        } => {
+            if !type_args.is_empty() {
+                let fn_name = match &*path {
+                    FnPath::Ident(id) => id.to_string(),
+                    FnPath::TypeMethod { ty, method, .. } => {
+                        format!("{}_{}", ty, method)
+                    }
+                };
+
+                // Skip if this is a local template (already handled by same-module mono)
+                if !local_templates.contains_key(&fn_name) {
+                    // This is a cross-module generic call. We need an import path.
+                    if import_paths.is_empty() {
+                        let span = match &*path {
+                            FnPath::Ident(id) => id.span(),
+                            FnPath::TypeMethod { ty, .. } => ty.span(),
+                        };
+                        return Err(crate::parse::Error::unsupported(
+                            span,
+                            format!(
+                                "generic function '{fn_name}' is not defined in this module and \
+                                 no imports are available. Define it in this module or import the \
+                                 module that defines it."
+                            ),
+                        ));
+                    }
+
+                    // Compute mangled type arg names
+                    let mangled_type_args: Vec<String> = type_args
+                        .iter()
+                        .map(|ty| mangle_type(ty))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mangled_name = mangle_name(&fn_name, type_args)?;
+
+                    // Determine the import path — use the last segment as the module name.
+                    // For `use super::renderer_specialization::*;`, the path is
+                    // `super::renderer_specialization`, and the module name is
+                    // `renderer_specialization`.
+                    // We use the first import path that exists. In practice there's
+                    // usually just one relevant import.
+                    let import_path = import_paths[0].clone();
+                    let module_name = import_path
+                        .segments
+                        .last()
+                        .map(|s| s.ident.to_string())
+                        .unwrap_or_default();
+
+                    // Rewrite the call site to use the mangled name
+                    let span = match &*path {
+                        FnPath::Ident(id) => id.span(),
+                        FnPath::TypeMethod { ty, .. } => ty.span(),
+                    };
+                    *path = FnPath::Ident(Ident::new(&mangled_name, span));
+                    type_args.clear();
+
+                    // Add instantiation if not already seen
+                    if seen.insert(mangled_name) {
+                        out.push(CrossModuleInstantiation {
+                            import_path,
+                            module_name,
+                            fn_name,
+                            mangled_type_args,
+                        });
+                    }
+                }
+            }
+
+            for param in params.iter_mut() {
+                collect_cross_module_from_expr(param, local_templates, import_paths, out, seen)?;
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(rhs, local_templates, import_paths, out, seen)?;
+        }
+        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
+            collect_cross_module_from_expr(expr, local_templates, import_paths, out, seen)?;
+        }
+        Expr::Array { elems, .. } => {
+            for e in elems.iter_mut() {
+                collect_cross_module_from_expr(e, local_templates, import_paths, out, seen)?;
+            }
+        }
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(index, local_templates, import_paths, out, seen)?;
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
+            if let Some(ps) = params {
+                for p in ps.iter_mut() {
+                    collect_cross_module_from_expr(p, local_templates, import_paths, out, seen)?;
+                }
+            }
+        }
+        Expr::Cast { lhs, .. } | Expr::FieldAccess { base: lhs, .. } => {
+            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
+        }
+        Expr::Struct { fields, .. } => {
+            for f in fields.iter_mut() {
+                collect_cross_module_from_expr(
+                    &mut f.expr,
+                    local_templates,
+                    import_paths,
+                    out,
+                    seen,
+                )?;
+            }
+        }
+        Expr::Reference { expr, .. } => {
+            collect_cross_module_from_expr(expr, local_templates, import_paths, out, seen)?;
+        }
+        Expr::ZeroValueArray { len, .. } => {
+            collect_cross_module_from_expr(len, local_templates, import_paths, out, seen)?;
+        }
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+    }
+    Ok(())
+}
+
+// ===== Template dependency scanning =====
+
+/// Scan a block for turbofish calls to other generic functions and build
+/// `TemplateDep` entries recording the type param mappings.
+fn collect_template_dependencies(
+    block: &Block,
+    templates: &BTreeMap<String, ItemFn>,
+    caller_type_params: &[String],
+) -> Vec<TemplateDep> {
+    let mut deps = Vec::new();
+    let mut seen = BTreeSet::new();
+    scan_block_for_deps(block, templates, caller_type_params, &mut deps, &mut seen);
+    deps
+}
+
+fn scan_block_for_deps(
+    block: &Block,
+    templates: &BTreeMap<String, ItemFn>,
+    caller_params: &[String],
+    out: &mut Vec<TemplateDep>,
+    seen: &mut BTreeSet<String>,
+) {
+    for stmt in &block.stmt {
+        scan_stmt_for_deps(stmt, templates, caller_params, out, seen);
+    }
+}
+
+fn scan_stmt_for_deps(
+    stmt: &Stmt,
+    templates: &BTreeMap<String, ItemFn>,
+    caller_params: &[String],
+    out: &mut Vec<TemplateDep>,
+    seen: &mut BTreeSet<String>,
+) {
+    match stmt {
+        Stmt::Local(l) => {
+            if let Some(init) = &l.init {
+                scan_expr_for_deps(&init.expr, templates, caller_params, out, seen);
+            }
+        }
+        Stmt::Const(c) => scan_expr_for_deps(&c.expr, templates, caller_params, out, seen),
+        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(rhs, templates, caller_params, out, seen);
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            scan_expr_for_deps(condition, templates, caller_params, out, seen);
+            scan_block_for_deps(body, templates, caller_params, out, seen);
+        }
+        Stmt::Loop { body, .. } => scan_block_for_deps(body, templates, caller_params, out, seen),
+        Stmt::Expr { expr, .. } => scan_expr_for_deps(expr, templates, caller_params, out, seen),
+        Stmt::If(s) => {
+            scan_expr_for_deps(&s.condition, templates, caller_params, out, seen);
+            scan_block_for_deps(&s.then_block, templates, caller_params, out, seen);
+            if let Some(eb) = &s.else_branch {
+                match &eb.body {
+                    ElseBody::Block(b) => {
+                        scan_block_for_deps(b, templates, caller_params, out, seen)
+                    }
+                    ElseBody::If(nested) => {
+                        scan_expr_for_deps(&nested.condition, templates, caller_params, out, seen);
+                        scan_block_for_deps(
+                            &nested.then_block,
+                            templates,
+                            caller_params,
+                            out,
+                            seen,
+                        );
+                    }
+                }
+            }
+        }
+        Stmt::For(f) => {
+            scan_expr_for_deps(&f.from, templates, caller_params, out, seen);
+            scan_expr_for_deps(&f.to, templates, caller_params, out, seen);
+            scan_block_for_deps(&f.body, templates, caller_params, out, seen);
+        }
+        Stmt::Switch(sw) => {
+            scan_expr_for_deps(&sw.selector, templates, caller_params, out, seen);
+            for arm in &sw.arms {
+                scan_block_for_deps(&arm.body, templates, caller_params, out, seen);
+            }
+        }
+        Stmt::Return { expr, .. } => {
+            if let Some(e) = expr {
+                scan_expr_for_deps(e, templates, caller_params, out, seen);
+            }
+        }
+        Stmt::Block(b) => scan_block_for_deps(b, templates, caller_params, out, seen),
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+            ..
+        } => {
+            scan_expr_for_deps(slab, templates, caller_params, out, seen);
+            scan_expr_for_deps(offset, templates, caller_params, out, seen);
+            scan_expr_for_deps(dest, templates, caller_params, out, seen);
+            scan_expr_for_deps(size, templates, caller_params, out, seen);
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+            ..
+        } => {
+            scan_expr_for_deps(slab, templates, caller_params, out, seen);
+            scan_expr_for_deps(offset, templates, caller_params, out, seen);
+            scan_expr_for_deps(src, templates, caller_params, out, seen);
+            if let Some(s) = size {
+                scan_expr_for_deps(s, templates, caller_params, out, seen);
+            }
+        }
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
+    }
+}
+
+fn scan_expr_for_deps(
+    expr: &Expr,
+    templates: &BTreeMap<String, ItemFn>,
+    caller_params: &[String],
+    out: &mut Vec<TemplateDep>,
+    seen: &mut BTreeSet<String>,
+) {
+    match expr {
+        Expr::FnCall {
+            path,
+            type_args,
+            params,
+            ..
+        } => {
+            if !type_args.is_empty() {
+                let fn_name = match path {
+                    FnPath::Ident(id) => id.to_string(),
+                    FnPath::TypeMethod { .. } => String::new(), /* TypeMethod deps are handled
+                                                                 * differently */
+                };
+
+                if !fn_name.is_empty()
+                    && templates.contains_key(&fn_name)
+                    && seen.insert(fn_name.clone())
+                {
+                    // Build the type param mapping: for each type_arg, find
+                    // which caller param it refers to.
+                    let mapping: Vec<usize> = type_args
+                        .iter()
+                        .map(|ta| {
+                            if let Type::TypeParam { ident } = ta {
+                                caller_params
+                                    .iter()
+                                    .position(|p| p == &ident.to_string())
+                                    .unwrap_or(0)
+                            } else {
+                                0 // Concrete type — not a param reference
+                            }
+                        })
+                        .collect();
+                    out.push(TemplateDep {
+                        callee: fn_name,
+                        type_param_mapping: mapping,
+                    });
+                }
+            }
+            for param in params.iter() {
+                scan_expr_for_deps(param, templates, caller_params, out, seen);
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(rhs, templates, caller_params, out, seen);
+        }
+        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
+            scan_expr_for_deps(expr, templates, caller_params, out, seen);
+        }
+        Expr::Array { elems, .. } => {
+            for e in elems.iter() {
+                scan_expr_for_deps(e, templates, caller_params, out, seen);
+            }
+        }
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+            scan_expr_for_deps(index, templates, caller_params, out, seen);
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+            if let Some(ps) = params {
+                for p in ps.iter() {
+                    scan_expr_for_deps(p, templates, caller_params, out, seen);
+                }
+            }
+        }
+        Expr::Cast { lhs, .. } | Expr::FieldAccess { base: lhs, .. } => {
+            scan_expr_for_deps(lhs, templates, caller_params, out, seen);
+        }
+        Expr::Struct { fields, .. } => {
+            for f in fields.iter() {
+                scan_expr_for_deps(&f.expr, templates, caller_params, out, seen);
+            }
+        }
+        Expr::Reference { expr, .. } => {
+            scan_expr_for_deps(expr, templates, caller_params, out, seen)
+        }
+        Expr::ZeroValueArray { len, .. } => {
+            scan_expr_for_deps(len, templates, caller_params, out, seen)
+        }
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+    }
+}
+
 // ===== Type-to-ident conversion =====
 
 /// Convert a concrete `Type` to the `Ident` used in `FnPath::TypeMethod`
@@ -1129,7 +1862,7 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             ..
         } => format!("vec{}{}", elements, scalar_ty.short_name()),
         Type::Matrix { size, .. } => format!("mat{}x{}f", size, size),
-        Type::Struct { ident } => ident.to_string().to_lowercase(),
+        Type::Struct { ident } => ident.to_string(),
         Type::Array { elem, len, .. } => {
             format!("array_{}_{}", mangle_type(elem)?, len_to_string(len))
         }
@@ -1517,5 +2250,108 @@ mod test {
             err.contains("identity"),
             "Error should name the generic function, got: {err}"
         );
+    }
+
+    #[test]
+    fn template_macro_generation() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn identity<T>(x: T) -> T {
+                    x
+                }
+
+                pub fn caller() -> f32 {
+                    identity::<f32>(1.0)
+                }
+            }
+        };
+        let mut wgsl_module = ItemMod::try_from(&input).unwrap();
+        let result = super::run(&mut wgsl_module).unwrap();
+
+        assert_eq!(result.template_macros.len(), 1, "Expected 1 template macro");
+        let tmpl = &result.template_macros[0];
+        assert_eq!(tmpl.fn_name, "identity");
+        assert_eq!(tmpl.type_param_names, vec!["T"]);
+        assert_eq!(tmpl.module_name, "test_mod");
+        assert!(
+            tmpl.template_wgsl.contains("__TPT__"),
+            "Template WGSL should contain __TPT__ placeholder, got: {}",
+            tmpl.template_wgsl
+        );
+    }
+
+    #[test]
+    fn template_wgsl_mangles_turbofish_calls() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn inner<T>(x: T) -> T {
+                    x
+                }
+
+                pub fn outer<T>(x: T) -> T {
+                    inner::<T>(x)
+                }
+
+                pub fn caller() -> f32 {
+                    outer::<f32>(1.0)
+                }
+            }
+        };
+        let mut wgsl_module = ItemMod::try_from(&input).unwrap();
+        let result = super::run(&mut wgsl_module).unwrap();
+
+        // Find the template for `outer`
+        let outer_tmpl = result
+            .template_macros
+            .iter()
+            .find(|t| t.fn_name == "outer")
+            .expect("Expected template for 'outer'");
+
+        // The template WGSL should contain inner___TPT__ (mangled turbofish call)
+        assert!(
+            outer_tmpl.template_wgsl.contains("inner___TPT__"),
+            "Template WGSL for outer should contain mangled call 'inner___TPT__', got:\n{}",
+            outer_tmpl.template_wgsl
+        );
+    }
+
+    #[test]
+    fn template_dependency_metadata() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn inner<T>(x: T) -> T {
+                    x
+                }
+
+                pub fn outer<T>(x: T) -> T {
+                    inner::<T>(x)
+                }
+
+                pub fn caller() -> f32 {
+                    outer::<f32>(1.0)
+                }
+            }
+        };
+        let mut wgsl_module = ItemMod::try_from(&input).unwrap();
+        let result = super::run(&mut wgsl_module).unwrap();
+
+        let outer_tmpl = result
+            .template_macros
+            .iter()
+            .find(|t| t.fn_name == "outer")
+            .expect("Expected template for 'outer'");
+
+        // outer depends on inner, with T mapped to outer's 0th param
+        assert_eq!(outer_tmpl.dependencies.len(), 1);
+        assert_eq!(outer_tmpl.dependencies[0].callee, "inner");
+        assert_eq!(outer_tmpl.dependencies[0].type_param_mapping, vec![0]);
+
+        // inner has no dependencies
+        let inner_tmpl = result
+            .template_macros
+            .iter()
+            .find(|t| t.fn_name == "inner")
+            .expect("Expected template for 'inner'");
+        assert!(inner_tmpl.dependencies.is_empty());
     }
 }

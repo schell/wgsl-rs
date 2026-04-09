@@ -72,8 +72,8 @@ pub struct TemplateDependency {
 
 /// A request to instantiate a generic template with concrete types.
 pub struct TemplateInstantiation {
-    /// The imported module containing the template.
-    pub module: &'static Module,
+    /// Candidate imported modules that may contain the template.
+    pub modules: &'static [&'static Module],
     /// The generic function name to instantiate.
     pub template_name: &'static str,
     /// Concrete type names to substitute for each type parameter.
@@ -96,12 +96,12 @@ impl Module {
             src.push(line.to_string());
         }
         // Resolve cross-module template instantiations (with transitive deps)
-        let mut instantiated: ::std::collections::HashSet<(String, Vec<String>)> =
+        let mut instantiated: ::std::collections::HashSet<(String, String, Vec<String>)> =
             ::std::collections::HashSet::new();
         for inst in self.instantiations {
             let type_args: Vec<String> = inst.type_args.iter().map(|s| s.to_string()).collect();
             Self::instantiate_template(
-                inst.module,
+                inst.modules,
                 inst.template_name,
                 &type_args,
                 &mut src,
@@ -115,19 +115,31 @@ impl Module {
     /// dependencies. Tracks already-instantiated `(name, type_args)` pairs
     /// to avoid duplicates.
     fn instantiate_template(
-        module: &Module,
+        modules: &[&Module],
         template_name: &str,
         type_args: &[String],
         out: &mut Vec<String>,
-        seen: &mut ::std::collections::HashSet<(String, Vec<String>)>,
+        seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
     ) {
-        let key = (template_name.to_string(), type_args.to_vec());
+        let Some(module) = modules
+            .iter()
+            .copied()
+            .find(|m| m.templates.iter().any(|t| t.name == template_name))
+        else {
+            return; // Template not found in imported modules
+        };
+
+        let key = (
+            module.name.to_string(),
+            template_name.to_string(),
+            type_args.to_vec(),
+        );
         if !seen.insert(key) {
             return; // Already instantiated
         }
 
         let Some(template) = module.templates.iter().find(|t| t.name == template_name) else {
-            return; // Template not found (might be a non-generic imported function)
+            return;
         };
 
         // Recursively instantiate dependencies first (so callees appear before callers)
@@ -138,7 +150,7 @@ impl Module {
                 .iter()
                 .map(|&idx| type_args[idx].clone())
                 .collect();
-            Self::instantiate_template(module, dep.callee, &dep_type_args, out, seen);
+            Self::instantiate_template(&[module], dep.callee, &dep_type_args, out, seen);
         }
 
         // Substitute placeholders in the template WGSL

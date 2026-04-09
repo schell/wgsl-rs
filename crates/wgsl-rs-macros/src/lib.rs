@@ -253,6 +253,21 @@ fn gen_wgsl_module(
     source_lines: &[String],
     mono_result: &monomorphize::MonoResult,
 ) -> proc_macro2::TokenStream {
+    fn is_wgsl_std_import(crate_path: &syn::Path, path: &syn::Path) -> bool {
+        let wgsl_std = {
+            let mut std = crate_path.clone();
+            if !std.segments.empty_or_trailing() {
+                std.segments.push_punct(syn::token::PathSep::default());
+            }
+            std.segments.push_value(syn::PathSegment {
+                ident: quote::format_ident!("std"),
+                arguments: syn::PathArguments::None,
+            });
+            std
+        };
+        wgsl_std.into_token_stream().to_string() == path.into_token_stream().to_string()
+    }
+
     // Generate template entries for generic functions defined in this module
     let template_entries: Vec<proc_macro2::TokenStream> = mono_result
         .template_macros
@@ -296,6 +311,7 @@ fn gen_wgsl_module(
             let args: Vec<&str> = inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
             let modules: Vec<proc_macro2::TokenStream> = import_paths
                 .iter()
+                .filter(|path| !is_wgsl_std_import(crate_path, path))
                 .map(|path| {
                     quote! {
                         &#path::WGSL_MODULE

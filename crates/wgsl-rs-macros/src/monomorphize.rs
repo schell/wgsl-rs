@@ -1590,7 +1590,7 @@ fn collect_template_dependencies(
     caller_type_params: &[String],
 ) -> Result<Vec<TemplateDep>, crate::parse::Error> {
     let mut deps = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut seen: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();
     scan_block_for_deps(block, templates, caller_type_params, &mut deps, &mut seen)?;
     Ok(deps)
 }
@@ -1600,7 +1600,7 @@ fn scan_block_for_deps(
     templates: &BTreeMap<String, ItemFn>,
     caller_params: &[String],
     out: &mut Vec<TemplateDep>,
-    seen: &mut BTreeSet<String>,
+    seen: &mut BTreeSet<(String, Vec<usize>)>,
 ) -> Result<(), crate::parse::Error> {
     for stmt in &block.stmt {
         scan_stmt_for_deps(stmt, templates, caller_params, out, seen)?;
@@ -1613,7 +1613,7 @@ fn scan_stmt_for_deps(
     templates: &BTreeMap<String, ItemFn>,
     caller_params: &[String],
     out: &mut Vec<TemplateDep>,
-    seen: &mut BTreeSet<String>,
+    seen: &mut BTreeSet<(String, Vec<usize>)>,
 ) -> Result<(), crate::parse::Error> {
     match stmt {
         Stmt::Local(l) => {
@@ -1708,7 +1708,7 @@ fn scan_expr_for_deps(
     templates: &BTreeMap<String, ItemFn>,
     caller_params: &[String],
     out: &mut Vec<TemplateDep>,
-    seen: &mut BTreeSet<String>,
+    seen: &mut BTreeSet<(String, Vec<usize>)>,
 ) -> Result<(), crate::parse::Error> {
     match expr {
         Expr::FnCall {
@@ -1724,10 +1724,7 @@ fn scan_expr_for_deps(
                                                                  * differently */
                 };
 
-                if !fn_name.is_empty()
-                    && templates.contains_key(&fn_name)
-                    && seen.insert(fn_name.clone())
-                {
+                if !fn_name.is_empty() && templates.contains_key(&fn_name) {
                     let span = match path {
                         FnPath::Ident(id) => id.span(),
                         FnPath::TypeMethod { ty, .. } => ty.span(),
@@ -1760,10 +1757,12 @@ fn scan_expr_for_deps(
                         };
                         mapping.push(idx);
                     }
-                    out.push(TemplateDep {
-                        callee: fn_name,
-                        type_param_mapping: mapping,
-                    });
+                    if seen.insert((fn_name.clone(), mapping.clone())) {
+                        out.push(TemplateDep {
+                            callee: fn_name,
+                            type_param_mapping: mapping,
+                        });
+                    }
                 }
             }
             for param in params.iter() {
@@ -2376,6 +2375,52 @@ mod test {
         assert!(
             err.contains("concrete dependency type arguments are not supported yet"),
             "Expected dependency mapping error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn template_dependency_keeps_distinct_mappings_per_callee() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn inner<U>(x: U) -> U {
+                    x
+                }
+
+                pub fn outer<T, U>(a: T, b: U) -> U {
+                    let _a = inner::<T>(a);
+                    inner::<U>(b)
+                }
+
+                pub fn caller() -> f32 {
+                    outer::<i32, f32>(1, 2.0)
+                }
+            }
+        };
+
+        let mut module = crate::parse::ItemMod::try_from(&input).unwrap();
+        let result = super::run(&mut module).unwrap();
+        let tmpl = result
+            .template_macros
+            .iter()
+            .find(|t| t.fn_name == "outer")
+            .expect("Expected template for 'outer'");
+
+        assert_eq!(
+            tmpl.dependencies.len(),
+            2,
+            "Expected both inner::<T> and inner::<U> mappings to be preserved"
+        );
+        assert!(
+            tmpl.dependencies
+                .iter()
+                .any(|d| d.callee == "inner" && d.type_param_mapping == vec![0]),
+            "Missing dependency mapping inner::<T> -> [0]"
+        );
+        assert!(
+            tmpl.dependencies
+                .iter()
+                .any(|d| d.callee == "inner" && d.type_param_mapping == vec![1]),
+            "Missing dependency mapping inner::<U> -> [1]"
         );
     }
 }

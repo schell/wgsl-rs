@@ -3,6 +3,7 @@
 //! The `storage!` macro defines the Rust binding as well as the WGSL binding.
 //! It also creates linkage.
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
@@ -18,26 +19,29 @@ pub fn storage(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input as ItemStorage);
 
-    let name_str = name.to_string();
-
     let access_mode = if matches!(access, StorageAccess::ReadWrite) {
         quote! { ReadWrite }
     } else {
         quote! { Read }
     };
 
-    // Generate buffer descriptor constant name: INPUT -> INPUT_BUFFER_DESCRIPTOR
-    let buffer_descriptor_name = format_ident!("{}_BUFFER_DESCRIPTOR", name);
-
-    // Generate buffer creation function name: INPUT -> create_input_buffer
-    let snake_name = to_snake_case(&name_str);
-    let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
-
-    let expanded = quote! {
+    let mut expanded: TokenStream2 = quote! {
         pub static #name: Storage<#rust_ty, #access_mode> = Storage::new(
             #group,
             #binding,
         );
+    };
+
+    if cfg!(feature = "linkage-wgpu") {
+        let name_str = name.to_string();
+        // Generate buffer descriptor constant name: INPUT -> INPUT_BUFFER_DESCRIPTOR
+        let buffer_descriptor_name = format_ident!("{}_BUFFER_DESCRIPTOR", name);
+        // Generate buffer creation function name: INPUT -> create_input_buffer
+        let snake_name = to_snake_case(&name_str);
+        let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
+
+        expanded.extend(quote! {
+
         /// Buffer descriptor for the storage variable.
         ///
         /// This descriptor defines the properties of the GPU buffer that will store
@@ -111,7 +115,8 @@ pub fn storage(input: TokenStream) -> TokenStream {
         pub fn #create_buffer_fn_name(device: &wgpu::Device) -> wgpu::Buffer {
             device.create_buffer(&#buffer_descriptor_name)
         }
-    };
+        });
+    }
 
     expanded.into()
 }

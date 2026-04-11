@@ -79,8 +79,18 @@ pub struct TemplateInstantiation {
     pub modules: &'static [&'static Module],
     /// The generic function name to instantiate.
     pub template_name: &'static str,
-    /// Concrete type names to substitute for each type parameter.
+    /// Identifier-safe mangled type argument names, used for deduplication
+    /// keys and the `seen` set (e.g. `"array_f32_4"`, `"ptr_function_f32"`).
+    ///
+    /// These are NOT valid WGSL syntax — see `wgsl_type_args` for that.
     pub type_args: &'static [&'static str],
+    /// Valid WGSL type syntax strings for each type argument (e.g.
+    /// `"array<f32, 4>"`, `"ptr<function, f32>"`).
+    ///
+    /// Used for placeholder substitution in template WGSL source. For scalar
+    /// types these match `type_args`, but for composite types like arrays,
+    /// atomics, and pointers they differ.
+    pub wgsl_type_args: &'static [&'static str],
 }
 
 impl Module {
@@ -111,23 +121,39 @@ impl Module {
         }
         for inst in self.instantiations {
             let type_args: Vec<String> = inst.type_args.iter().map(|s| s.to_string()).collect();
-            Self::instantiate_template(inst.modules, inst.template_name, &type_args, out, seen);
+            let wgsl_type_args: Vec<String> =
+                inst.wgsl_type_args.iter().map(|s| s.to_string()).collect();
+            Self::instantiate_template(
+                inst.modules,
+                inst.template_name,
+                &type_args,
+                &wgsl_type_args,
+                out,
+                seen,
+            );
         }
     }
 
     /// Instantiate a single template and recursively instantiate its
     /// dependencies.
     ///
+    /// `type_args` are identifier-safe mangled names used for deduplication
+    /// (e.g. `"array_f32_4"`). `wgsl_type_args` are valid WGSL type syntax
+    /// strings used for placeholder substitution (e.g. `"array<f32, 4>"`).
+    /// For scalar types these are identical, but for composite types they
+    /// diverge.
+    ///
     /// Resolution is strict: if no candidate module (or more than one) defines
     /// the requested template, this panics with a diagnostic listing available
     /// template names.
     ///
-    /// Tracks already-instantiated `(name, type_args)` pairs to avoid
-    /// duplicates.
+    /// Tracks already-instantiated `(module, name, type_args)` triples to
+    /// avoid duplicates.
     fn instantiate_template(
         modules: &[&Module],
         template_name: &str,
         type_args: &[String],
+        wgsl_type_args: &[String],
         out: &mut Vec<String>,
         seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
     ) {
@@ -181,20 +207,35 @@ impl Module {
             return; // Already instantiated
         }
 
-        // Recursively instantiate dependencies first (so callees appear before callers)
+        // Recursively instantiate dependencies first (so callees appear before
+        // callers). For transitive deps within the same module, the mangled and
+        // WGSL type args are always identical (they go through the same
+        // type-param mapping from the caller).
         for dep in template.dependencies {
-            // Map the dependency's type params through the current type_args
             let dep_type_args: Vec<String> = dep
                 .type_param_mapping
                 .iter()
                 .map(|&idx| type_args[idx].clone())
                 .collect();
-            Self::instantiate_template(&[module], dep.callee, &dep_type_args, out, seen);
+            let dep_wgsl_type_args: Vec<String> = dep
+                .type_param_mapping
+                .iter()
+                .map(|&idx| wgsl_type_args[idx].clone())
+                .collect();
+            Self::instantiate_template(
+                &[module],
+                dep.callee,
+                &dep_type_args,
+                &dep_wgsl_type_args,
+                out,
+                seen,
+            );
         }
 
-        // Substitute placeholders in the template WGSL
+        // Substitute placeholders in the template WGSL using the WGSL type
+        // args (valid type syntax), not the mangled identifier fragments.
         let mut wgsl = template.wgsl_source.to_string();
-        for (param_name, arg) in template.type_params.iter().zip(type_args.iter()) {
+        for (param_name, arg) in template.type_params.iter().zip(wgsl_type_args.iter()) {
             let placeholder = format!("__TP{param_name}__");
             wgsl = wgsl.replace(&placeholder, arg);
         }
@@ -482,6 +523,7 @@ mod test {
             modules: &[&MOD_A, &MOD_B],
             template_name: "shared",
             type_args: &["f32"],
+            wgsl_type_args: &["f32"],
         }];
         static ROOT: Module = Module {
             name: "root",

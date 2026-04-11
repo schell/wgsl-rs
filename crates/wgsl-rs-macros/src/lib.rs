@@ -308,7 +308,12 @@ fn gen_wgsl_module(
         .map(|inst| {
             let import_paths = &inst.import_paths;
             let tmpl_name = &inst.fn_name;
-            let args: Vec<&str> = inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
+            // mangled: identifier-safe strings for dedup (e.g. "array_f32_4")
+            let mangled_args: Vec<&str> =
+                inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
+            // wgsl: valid WGSL type syntax for placeholder substitution
+            // (e.g. "array<f32, 4>")
+            let wgsl_args: Vec<&str> = inst.wgsl_type_args.iter().map(|s| s.as_str()).collect();
             let modules: Vec<proc_macro2::TokenStream> = import_paths
                 .iter()
                 .filter(|path| !is_wgsl_std_import(crate_path, path))
@@ -322,7 +327,8 @@ fn gen_wgsl_module(
                 #crate_path::TemplateInstantiation {
                     modules: &[#(#modules),*],
                     template_name: #tmpl_name,
-                    type_args: &[#(#args),*],
+                    type_args: &[#(#mangled_args),*],
+                    wgsl_type_args: &[#(#wgsl_args),*],
                 }
             }
         })

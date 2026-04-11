@@ -34,8 +34,18 @@ pub struct CrossModuleInstantiation {
     pub import_paths: Vec<syn::Path>,
     /// The generic function name.
     pub fn_name: String,
-    /// The lowercased mangled type argument names.
+    /// Identifier-safe mangled type argument names, used for function name
+    /// mangling and deduplication keys (e.g. `"array_f32_4"`,
+    /// `"ptr_function_f32"`).
+    ///
+    /// These are NOT valid WGSL syntax — see `wgsl_type_args` for that.
     pub mangled_type_args: Vec<String>,
+    /// Valid WGSL type syntax strings for each type argument (e.g.
+    /// `"array<f32, 4>"`, `"ptr<function, f32>"`).
+    ///
+    /// These are used at runtime for placeholder substitution in template WGSL
+    /// source (`__TPT__` -> `array<f32, 4>`).
+    pub wgsl_type_args: Vec<String>,
 }
 
 /// Result of the monomorphization pass.
@@ -1501,10 +1511,18 @@ fn collect_cross_module_from_expr(
                         ));
                     }
 
-                    // Compute mangled type arg names
+                    // Compute two parallel representations for each type arg:
+                    // 1. mangled: identifier-safe strings for function name mangling (e.g.
+                    //    "array_f32_4")
+                    // 2. wgsl: valid WGSL type syntax for placeholder substitution (e.g.
+                    //    "array<f32, 4>")
                     let mangled_type_args: Vec<String> = type_args
                         .iter()
                         .map(|ty| mangle_type(ty))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let wgsl_type_args: Vec<String> = type_args
+                        .iter()
+                        .map(|ty| type_to_wgsl(ty))
                         .collect::<Result<Vec<_>, _>>()?;
                     let mangled_name = mangle_name(&fn_name, type_args)?;
 
@@ -1522,6 +1540,7 @@ fn collect_cross_module_from_expr(
                             import_paths: import_paths.to_vec(),
                             fn_name,
                             mangled_type_args,
+                            wgsl_type_args,
                         });
                     }
                 }
@@ -1870,10 +1889,81 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
         Type::SamplerComparison { .. } => "sampler_comparison".to_string(),
         Type::Texture { kind, .. } => kind.wgsl_name().replace("texture_", "tex_"),
         Type::TextureDepth { kind, .. } => kind.wgsl_name().replace("texture_", "tex_"),
-        Type::Ptr { elem, .. } => format!("ptr_{}", mangle_type(elem)?),
+        // Include address space so that e.g. `ptr<function, f32>` and
+        // `ptr<private, f32>` produce distinct mangled names and don't
+        // falsely collide.
+        Type::Ptr {
+            address_space,
+            elem,
+            ..
+        } => {
+            let space = match address_space {
+                crate::parse::AddressSpace::Function => "function",
+                crate::parse::AddressSpace::Private => "private",
+                crate::parse::AddressSpace::Workgroup => "workgroup",
+            };
+            format!("ptr_{}_{}", space, mangle_type(elem)?)
+        }
         Type::TypeParam { ident } => {
             // This shouldn't happen for fully resolved instantiations
             ident.to_string().to_lowercase()
+        }
+    })
+}
+
+/// Convert a concrete `Type` to a valid WGSL type syntax string.
+///
+/// Unlike [`mangle_type`] (which produces identifier-safe fragments for
+/// function name mangling), this function produces the actual WGSL type
+/// syntax used in generated shader code. For example:
+///
+/// | Type                    | `mangle_type`       | `type_to_wgsl`           |
+/// |------------------------|---------------------|--------------------------|
+/// | `f32`                  | `"f32"`             | `"f32"`                  |
+/// | `array<f32, 4>`        | `"array_f32_4"`     | `"array<f32, 4>"`        |
+/// | `atomic<i32>`          | `"atomic_i32"`      | `"atomic<i32>"`          |
+/// | `ptr<function, f32>`   | `"ptr_function_f32"`| `"ptr<function, f32>"`   |
+///
+/// Scalars and vectors happen to produce identical output from both functions,
+/// but composite types diverge.
+fn type_to_wgsl(ty: &Type) -> Result<String, crate::parse::Error> {
+    Ok(match ty {
+        Type::Scalar { ty: scalar, .. } => scalar.wgsl_name().to_string(),
+        Type::Vector {
+            elements,
+            scalar_ty,
+            ..
+        } => format!("vec{}{}", elements, scalar_ty.short_name()),
+        Type::Matrix { size, .. } => format!("mat{}x{}f", size, size),
+        Type::Struct { ident } => ident.to_string(),
+        Type::Array { elem, len, .. } => {
+            format!("array<{}, {}>", type_to_wgsl(elem)?, len_to_string(len))
+        }
+        Type::RuntimeArray { elem, .. } => format!("array<{}>", type_to_wgsl(elem)?),
+        Type::Atomic { elem, .. } => format!("atomic<{}>", type_to_wgsl(elem)?),
+        Type::Sampler { .. } => "sampler".to_string(),
+        Type::SamplerComparison { .. } => "sampler_comparison".to_string(),
+        Type::Texture {
+            kind, sampled_type, ..
+        } => format!("{}<{}>", kind.wgsl_name(), sampled_type.wgsl_name()),
+        Type::TextureDepth { kind, .. } => kind.wgsl_name().to_string(),
+        Type::Ptr {
+            address_space,
+            elem,
+            ..
+        } => {
+            let space = match address_space {
+                crate::parse::AddressSpace::Function => "function",
+                crate::parse::AddressSpace::Private => "private",
+                crate::parse::AddressSpace::Workgroup => "workgroup",
+            };
+            format!("ptr<{}, {}>", space, type_to_wgsl(elem)?)
+        }
+        Type::TypeParam { ident } => {
+            return Err(crate::parse::Error::unsupported(
+                ident.span(),
+                format!("cannot produce WGSL type string for unresolved type parameter '{ident}'"),
+            ));
         }
     })
 }

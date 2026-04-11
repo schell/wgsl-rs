@@ -73,6 +73,9 @@ pub struct TemplateDependency {
 /// A request to instantiate a generic template with concrete types.
 pub struct TemplateInstantiation {
     /// Candidate imported modules that may contain the template.
+    ///
+    /// Resolution must find exactly one matching module; missing or ambiguous
+    /// matches are treated as hard failures during `wgsl_source()` assembly.
     pub modules: &'static [&'static Module],
     /// The generic function name to instantiate.
     pub template_name: &'static str,
@@ -113,8 +116,14 @@ impl Module {
     }
 
     /// Instantiate a single template and recursively instantiate its
-    /// dependencies. Tracks already-instantiated `(name, type_args)` pairs
-    /// to avoid duplicates.
+    /// dependencies.
+    ///
+    /// Resolution is strict: if no candidate module (or more than one) defines
+    /// the requested template, this panics with a diagnostic listing available
+    /// template names.
+    ///
+    /// Tracks already-instantiated `(name, type_args)` pairs to avoid
+    /// duplicates.
     fn instantiate_template(
         modules: &[&Module],
         template_name: &str,
@@ -122,12 +131,45 @@ impl Module {
         out: &mut Vec<String>,
         seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
     ) {
-        let Some(module) = modules
+        let available_templates: Vec<String> = modules
             .iter()
             .copied()
-            .find(|m| m.templates.iter().any(|t| t.name == template_name))
-        else {
-            return; // Template not found in imported modules
+            .flat_map(|m| m.templates.iter().map(|t| t.name.to_string()))
+            .collect();
+
+        let mut matching_modules: Vec<&Module> = modules
+            .iter()
+            .copied()
+            .filter(|m| m.templates.iter().any(|t| t.name == template_name))
+            .collect();
+
+        if matching_modules.is_empty() {
+            panic!(
+                "unable to resolve template '{template_name}' for type args {:?}; available \
+                 templates: {:?}",
+                type_args, available_templates
+            );
+        }
+
+        if matching_modules.len() > 1 {
+            let module_names: Vec<&str> = matching_modules.iter().map(|m| m.name).collect();
+            panic!(
+                "ambiguous template instantiation '{template_name}' for type args {:?}; matching \
+                 modules: {:?}; available templates: {:?}",
+                type_args, module_names, available_templates
+            );
+        }
+
+        let module = matching_modules
+            .pop()
+            .expect("matching_modules is guaranteed to be non-empty after checks");
+
+        let Some(template) = module.templates.iter().find(|t| t.name == template_name) else {
+            panic!(
+                "internal error: resolved module '{}' does not contain template '{}'; available \
+                 templates: {:?}",
+                module.name, template_name, available_templates
+            );
         };
 
         let key = (
@@ -138,10 +180,6 @@ impl Module {
         if !seen.insert(key) {
             return; // Already instantiated
         }
-
-        let Some(template) = module.templates.iter().find(|t| t.name == template_name) else {
-            return;
-        };
 
         // Recursively instantiate dependencies first (so callees appear before callers)
         for dep in template.dependencies {
@@ -210,7 +248,7 @@ pub mod std;
 
 #[cfg(test)]
 mod test {
-    use crate::wgsl;
+    use crate::{GenericTemplate, Module, TemplateDependency, TemplateInstantiation, wgsl};
 
     #[wgsl(crate_path = crate)]
     pub mod a {
@@ -405,5 +443,54 @@ mod test {
             1,
             "expected id_f32 to appear once, got:\n{full_src}"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "ambiguous template instantiation")]
+    fn ambiguous_template_provider_panics() {
+        static DEP: [TemplateDependency; 0] = [];
+        static A_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
+            name: "shared",
+            type_params: &["T"],
+            wgsl_source: "fn shared___TPT__(x: __TPT__) -> __TPT__ { return x; }",
+            dependencies: &DEP,
+        }];
+        static B_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
+            name: "shared",
+            type_params: &["T"],
+            wgsl_source: "fn shared___TPT__(x: __TPT__) -> __TPT__ { return x; }",
+            dependencies: &DEP,
+        }];
+        static EMPTY_MODS: [&Module; 0] = [];
+        static EMPTY_INSTS: [TemplateInstantiation; 0] = [];
+        static EMPTY_LINES: [&str; 0] = [];
+        static MOD_A: Module = Module {
+            name: "a",
+            imports: &EMPTY_MODS,
+            source: &EMPTY_LINES,
+            templates: &A_TEMPLATES,
+            instantiations: &EMPTY_INSTS,
+        };
+        static MOD_B: Module = Module {
+            name: "b",
+            imports: &EMPTY_MODS,
+            source: &EMPTY_LINES,
+            templates: &B_TEMPLATES,
+            instantiations: &EMPTY_INSTS,
+        };
+        static ROOT_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+            modules: &[&MOD_A, &MOD_B],
+            template_name: "shared",
+            type_args: &["f32"],
+        }];
+        static ROOT: Module = Module {
+            name: "root",
+            imports: &EMPTY_MODS,
+            source: &EMPTY_LINES,
+            templates: &[],
+            instantiations: &ROOT_INSTS,
+        };
+
+        let _ = ROOT.wgsl_source();
     }
 }

@@ -415,7 +415,8 @@ pub fn fract<T: NumericBuiltinFract>(e: T) -> T {
 mod fract {
     use super::*;
 
-    /// WGSL `fract(e) = e - floor(e)`, which is always in `[0, 1)`.
+    /// WGSL `fract(e) = e - floor(e)`, which for finite inputs is in `[0, 1)`.
+    /// For NaN and +/-infinity, the result is NaN.
     ///
     /// This differs from Rust's `f32::fract()` which computes `self -
     /// self.trunc()` and can return negative values for negative inputs.
@@ -1933,18 +1934,22 @@ mod modf_impl {
                 fn modf(self) -> ModfResult<Self> {
                     let g: $glam_ty = self.into();
                     let whole_g = g.trunc();
-                    let fract_g = g - whole_g;
-                    // For each component, if it's not finite, the fractional part should be 0 (or
-                    // -0) with the original sign
-                    let fract_corrected = fract_g.map(|v| {
-                        if v.is_nan() {
-                            v
-                        } else if !v.is_finite() {
-                            f32::copysign(0.0, v)
-                        } else {
-                            v
-                        }
-                    });
+                    // Match scalar semantics per component: NaN -> NaN, +/-inf -> signed zero,
+                    // finite -> x - trunc(x).
+                    let fract_corrected = {
+                        let input = g.to_array();
+                        let whole = whole_g.to_array();
+                        <$glam_ty>::from_array(core::array::from_fn(|i| {
+                            let v = input[i];
+                            if v.is_nan() {
+                                v
+                            } else if !v.is_finite() {
+                                f32::copysign(0.0, v)
+                            } else {
+                                v - whole[i]
+                            }
+                        }))
+                    };
                     ModfResult {
                         fract: fract_corrected.into(),
                         whole: whole_g.into(),

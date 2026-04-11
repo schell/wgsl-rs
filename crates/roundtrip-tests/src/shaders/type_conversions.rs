@@ -71,8 +71,7 @@ pub mod convert_u32_to_f32 {
     #[workgroup_size(64)]
     pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
         let idx = global_id.x as usize;
-        let x_bits = bitcast_f32(get!(INPUT)[idx] as u32);
-        let x = bitcast_u32(x_bits);
+        let x = bitcast_u32(get!(INPUT)[idx]);
         get_mut!(OUTPUT)[idx] = f32(x);
     }
 }
@@ -92,8 +91,7 @@ pub mod convert_i32_to_f32 {
     #[workgroup_size(64)]
     pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
         let idx = global_id.x as usize;
-        let x_bits = bitcast_f32(get!(INPUT)[idx] as u32);
-        let x = bitcast_i32(x_bits);
+        let x = bitcast_i32(get!(INPUT)[idx]);
         get_mut!(OUTPUT)[idx] = f32(x);
     }
 }
@@ -113,8 +111,7 @@ pub mod convert_u32_to_i32 {
     #[workgroup_size(64)]
     pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
         let idx = global_id.x as usize;
-        let x_bits = bitcast_f32(get!(INPUT)[idx] as u32);
-        let x = bitcast_u32(x_bits);
+        let x = bitcast_u32(get!(INPUT)[idx]);
         let result = i32(x);
         // Bitcast i32 to u32 for storage
         get_mut!(OUTPUT)[idx] = bitcast_u32(result);

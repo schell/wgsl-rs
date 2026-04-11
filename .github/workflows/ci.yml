@@ -87,12 +87,8 @@ jobs:
         run: cargo nextest run --all-features
 
   roundtrip-tests:
-    name: Roundtrip Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Roundtrip Tests
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

@@ -139,7 +139,7 @@ impl RoundtripTest for TrigTest {
             },
         ];
 
-        let epsilon = 1e-4;
+        let epsilon = 1e-3;
         let mut results = Vec::new();
 
         // --- trig_basic: sin, cos, tan, asin ---

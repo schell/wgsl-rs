@@ -1,5 +1,6 @@
 //! Provides the `uniform!` macro in `wgsl_rs::std`.
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
@@ -14,17 +15,19 @@ pub fn uniform(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input as ItemUniform);
 
-    let name_str = name.to_string();
-
-    // Generate buffer descriptor constant name: FRAME -> FRAME_BUFFER_DESCRIPTOR
-    let buffer_descriptor_name = format_ident!("{}_BUFFER_DESCRIPTOR", name);
-
-    // Generate buffer creation function name: FRAME -> create_frame_buffer
-    let snake_name = to_snake_case(&name_str);
-    let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
-
-    let expanded = quote! {
+    let mut expanded: TokenStream2 = quote! {
         pub static #name: Uniform<#rust_ty> = Uniform::new(#group, #binding);
+    };
+
+    if cfg!(feature = "linkage-wgpu") {
+        let name_str = name.to_string();
+        // Generate buffer descriptor constant name: FRAME -> FRAME_BUFFER_DESCRIPTOR
+        let buffer_descriptor_name = format_ident!("{}_BUFFER_DESCRIPTOR", name);
+        // Generate buffer creation function name: FRAME -> create_frame_buffer
+        let snake_name = to_snake_case(&name_str);
+        let create_buffer_fn_name = format_ident!("create_{}_buffer", snake_name);
+
+        expanded.extend(quote! {
 
         /// Buffer descriptor for the uniform variable.
         ///
@@ -75,7 +78,8 @@ pub fn uniform(input: TokenStream) -> TokenStream {
         pub fn #create_buffer_fn_name(device: &wgpu::Device) -> wgpu::Buffer {
             device.create_buffer(&#buffer_descriptor_name)
         }
-    };
+        });
+    }
 
     expanded.into()
 }

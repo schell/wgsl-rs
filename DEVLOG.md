@@ -279,3 +279,10 @@ Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without s
 These are used in storage buffers, typically as the last field of a struct.
 On CPU, `RuntimeArray<T>` is backed by `Vec<T>` with full indexing support.
 Transpiles to `array<T>` in WGSL.
+
+### 2026-04-08: Generic function monomorphization
+
+Added support for generic free functions via macro-time monomorphization. Turbofish syntax
+required at call sites (e.g., `foo::<f32>(x)`). Trait bounds are Rust-only and stripped from
+WGSL output. Supports transitive generic calls, multiple type params, and deduplication.
+Generic impl methods and entry points are explicitly rejected (MVP scope).

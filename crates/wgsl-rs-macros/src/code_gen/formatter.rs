@@ -663,6 +663,15 @@ impl GenerateCode for Type {
                 // WGSL format: texture_depth_2d, texture_depth_cube, etc.
                 code.write_str(ident.span(), kind.wgsl_name());
             }
+            Type::TypeParam { ident } => {
+                // When generating template WGSL for cross-module generic
+                // functions, type params are emitted as placeholders that
+                // will be substituted by the consuming module's macro.
+                // For same-module codegen, TypeParams should have been
+                // resolved by monomorphization before reaching here.
+                let placeholder = format!("__TP{}__", ident);
+                code.write_str(ident.span(), &placeholder);
+            }
         }
     }
 }
@@ -860,10 +869,19 @@ impl GenerateCode for Expr {
             }
             Expr::FnCall {
                 path,
+                type_args,
                 paren_token,
                 params,
             } => {
+                // For normal codegen, type_args is empty (resolved by
+                // monomorphization). For template WGSL generation, type_args
+                // may contain placeholder types — append them to the function
+                // name so that `double::<T>()` becomes `double___TPT__()`.
                 path.write_code(code);
+                for ta in type_args {
+                    code.write_str(paren_token.span.open(), "_");
+                    ta.write_code(code);
+                }
                 let indented = params.len() > 4;
                 code.write_surrounded(
                     Surrounded {
@@ -1603,6 +1621,7 @@ impl GenerateCode for FnAttrs {
 impl GenerateCode for ItemFn {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemFn {
+            type_params: _,
             fn_attrs,
             fn_token,
             ident,
@@ -1973,6 +1992,7 @@ impl GenerateCode for ItemImpl {
                 }
                 ImplItem::Fn(item_fn) => {
                     let ItemFn {
+                        type_params: _,
                         fn_attrs,
                         fn_token,
                         ident,
@@ -2086,9 +2106,6 @@ impl GenerateCode for Item {
             }
             Item::Trait => {
                 // Trait definitions are Rust-only and produce no WGSL.
-            }
-            Item::TraitImpl => {
-                // Trait impl blocks are Rust-only and produce no WGSL.
             }
         }
     }

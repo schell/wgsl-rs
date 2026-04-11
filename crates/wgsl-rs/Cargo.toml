@@ -19,3 +19,4 @@ wgpu = { workspace = true, optional = true }
 wgsl-rs-macros = { version = "0.1.0", path = "../wgsl-rs-macros" }
 
 [dev-dependencies]
+trybuild = "1"

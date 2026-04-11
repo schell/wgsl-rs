@@ -88,27 +88,28 @@ impl Module {
     /// then appends this module's source lines, then appends any instantiated
     /// template functions (including transitive dependencies).
     pub fn wgsl_source(&self) -> Vec<String> {
-        let mut src = vec![];
-        for module in self.imports.iter() {
-            src.extend(module.wgsl_source());
-        }
-        for line in self.source {
-            src.push(line.to_string());
-        }
-        // Resolve cross-module template instantiations (with transitive deps)
         let mut instantiated: ::std::collections::HashSet<(String, String, Vec<String>)> =
             ::std::collections::HashSet::new();
+        let mut src = vec![];
+        self.collect_wgsl_source(&mut src, &mut instantiated);
+        src
+    }
+
+    fn collect_wgsl_source(
+        &self,
+        out: &mut Vec<String>,
+        seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
+    ) {
+        for module in self.imports.iter() {
+            module.collect_wgsl_source(out, seen);
+        }
+        for line in self.source {
+            out.push(line.to_string());
+        }
         for inst in self.instantiations {
             let type_args: Vec<String> = inst.type_args.iter().map(|s| s.to_string()).collect();
-            Self::instantiate_template(
-                inst.modules,
-                inst.template_name,
-                &type_args,
-                &mut src,
-                &mut instantiated,
-            );
+            Self::instantiate_template(inst.modules, inst.template_name, &type_args, out, seen);
         }
-        src
     }
 
     /// Instantiate a single template and recursively instantiate its
@@ -350,6 +351,53 @@ mod test {
         assert!(
             (result - 6.0).abs() < f32::EPSILON,
             "2.0 * 3.0 should be 6.0, got {result}"
+        );
+    }
+
+    #[wgsl(crate_path = crate)]
+    mod dedupe_provider {
+        pub fn id<T: Copy>(v: T) -> T {
+            v
+        }
+    }
+
+    #[wgsl(crate_path = crate)]
+    mod dedupe_left {
+        use super::dedupe_provider::*;
+
+        pub fn left() -> f32 {
+            id::<f32>(1.0)
+        }
+    }
+
+    #[wgsl(crate_path = crate)]
+    mod dedupe_right {
+        use super::dedupe_provider::*;
+
+        pub fn right() -> f32 {
+            id::<f32>(2.0)
+        }
+    }
+
+    #[wgsl(crate_path = crate)]
+    mod dedupe_root {
+        #[rustfmt::skip]
+        use super::dedupe_left::*;
+        #[rustfmt::skip]
+        use super::dedupe_right::*;
+
+        pub fn root() -> f32 {
+            left() + right()
+        }
+    }
+
+    #[test]
+    fn cross_module_instantiations_are_deduped_globally() {
+        let full_src = dedupe_root::WGSL_MODULE.wgsl_source().join("\n");
+        assert_eq!(
+            full_src.matches("fn id_f32(").count(),
+            1,
+            "expected id_f32 to appear once, got:\n{full_src}"
         );
     }
 }

@@ -704,6 +704,150 @@ macro_rules! impl_vec4_ops {
     };
 }
 
+/// Implements vector-vector binary operations (Add, Sub, Mul, Div) for Vec2
+/// with wrapping arithmetic. This is required for integer types (u32, i32) to
+/// match WGSL spec behavior.
+macro_rules! impl_vec2_ops_wrapping {
+    ($scalar:ty) => {
+        impl std::ops::Add for Vec2<$scalar> {
+            type Output = Self;
+            fn add(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_add(rhs.x),
+                    y: self.y.wrapping_add(rhs.y),
+                }
+            }
+        }
+        impl std::ops::Sub for Vec2<$scalar> {
+            type Output = Self;
+            fn sub(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_sub(rhs.x),
+                    y: self.y.wrapping_sub(rhs.y),
+                }
+            }
+        }
+        impl std::ops::Mul for Vec2<$scalar> {
+            type Output = Self;
+            fn mul(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_mul(rhs.x),
+                    y: self.y.wrapping_mul(rhs.y),
+                }
+            }
+        }
+        impl std::ops::Div for Vec2<$scalar> {
+            type Output = Self;
+            fn div(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_div(rhs.x),
+                    y: self.y.wrapping_div(rhs.y),
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-vector binary operations (Add, Sub, Mul, Div) for Vec3
+/// with wrapping arithmetic. This is required for integer types (u32, i32) to
+/// match WGSL spec behavior.
+macro_rules! impl_vec3_ops_wrapping {
+    ($scalar:ty) => {
+        impl std::ops::Add for Vec3<$scalar> {
+            type Output = Self;
+            fn add(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_add(rhs.x),
+                    y: self.y.wrapping_add(rhs.y),
+                    z: self.z.wrapping_add(rhs.z),
+                }
+            }
+        }
+        impl std::ops::Sub for Vec3<$scalar> {
+            type Output = Self;
+            fn sub(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_sub(rhs.x),
+                    y: self.y.wrapping_sub(rhs.y),
+                    z: self.z.wrapping_sub(rhs.z),
+                }
+            }
+        }
+        impl std::ops::Mul for Vec3<$scalar> {
+            type Output = Self;
+            fn mul(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_mul(rhs.x),
+                    y: self.y.wrapping_mul(rhs.y),
+                    z: self.z.wrapping_mul(rhs.z),
+                }
+            }
+        }
+        impl std::ops::Div for Vec3<$scalar> {
+            type Output = Self;
+            fn div(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_div(rhs.x),
+                    y: self.y.wrapping_div(rhs.y),
+                    z: self.z.wrapping_div(rhs.z),
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-vector binary operations (Add, Sub, Mul, Div) for Vec4
+/// with wrapping arithmetic. This is required for integer types (u32, i32) to
+/// match WGSL spec behavior.
+macro_rules! impl_vec4_ops_wrapping {
+    ($scalar:ty) => {
+        impl std::ops::Add for Vec4<$scalar> {
+            type Output = Self;
+            fn add(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_add(rhs.x),
+                    y: self.y.wrapping_add(rhs.y),
+                    z: self.z.wrapping_add(rhs.z),
+                    w: self.w.wrapping_add(rhs.w),
+                }
+            }
+        }
+        impl std::ops::Sub for Vec4<$scalar> {
+            type Output = Self;
+            fn sub(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_sub(rhs.x),
+                    y: self.y.wrapping_sub(rhs.y),
+                    z: self.z.wrapping_sub(rhs.z),
+                    w: self.w.wrapping_sub(rhs.w),
+                }
+            }
+        }
+        impl std::ops::Mul for Vec4<$scalar> {
+            type Output = Self;
+            fn mul(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_mul(rhs.x),
+                    y: self.y.wrapping_mul(rhs.y),
+                    z: self.z.wrapping_mul(rhs.z),
+                    w: self.w.wrapping_mul(rhs.w),
+                }
+            }
+        }
+        impl std::ops::Div for Vec4<$scalar> {
+            type Output = Self;
+            fn div(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_div(rhs.x),
+                    y: self.y.wrapping_div(rhs.y),
+                    z: self.z.wrapping_div(rhs.z),
+                    w: self.w.wrapping_div(rhs.w),
+                }
+            }
+        }
+    };
+}
+
 /// Implements vector-vector Rem for Vec2.
 macro_rules! impl_vec2_rem {
     ($scalar:ty) => {
@@ -1010,6 +1154,270 @@ macro_rules! impl_vec4_scalar_ops {
     };
 }
 
+/// Implements vector-scalar and scalar-vector binary operations for Vec2 with
+/// wrapping arithmetic. This is required for integer types (u32, i32) to match
+/// WGSL spec behavior.
+macro_rules! impl_vec2_scalar_ops_wrapping {
+    ($scalar:ty) => {
+        impl std::ops::Add<$scalar> for Vec2<$scalar> {
+            type Output = Self;
+            fn add(self, rhs: $scalar) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_add(rhs),
+                    y: self.y.wrapping_add(rhs),
+                }
+            }
+        }
+        impl std::ops::Sub<$scalar> for Vec2<$scalar> {
+            type Output = Self;
+            fn sub(self, rhs: $scalar) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_sub(rhs),
+                    y: self.y.wrapping_sub(rhs),
+                }
+            }
+        }
+        impl std::ops::Mul<$scalar> for Vec2<$scalar> {
+            type Output = Self;
+            fn mul(self, rhs: $scalar) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_mul(rhs),
+                    y: self.y.wrapping_mul(rhs),
+                }
+            }
+        }
+        impl std::ops::Div<$scalar> for Vec2<$scalar> {
+            type Output = Self;
+            fn div(self, rhs: $scalar) -> Self {
+                Vec2 {
+                    x: self.x.wrapping_div(rhs),
+                    y: self.y.wrapping_div(rhs),
+                }
+            }
+        }
+        impl std::ops::Add<Vec2<$scalar>> for $scalar {
+            type Output = Vec2<$scalar>;
+            fn add(self, rhs: Vec2<$scalar>) -> Vec2<$scalar> {
+                Vec2 {
+                    x: self.wrapping_add(rhs.x),
+                    y: self.wrapping_add(rhs.y),
+                }
+            }
+        }
+        impl std::ops::Sub<Vec2<$scalar>> for $scalar {
+            type Output = Vec2<$scalar>;
+            fn sub(self, rhs: Vec2<$scalar>) -> Vec2<$scalar> {
+                Vec2 {
+                    x: self.wrapping_sub(rhs.x),
+                    y: self.wrapping_sub(rhs.y),
+                }
+            }
+        }
+        impl std::ops::Mul<Vec2<$scalar>> for $scalar {
+            type Output = Vec2<$scalar>;
+            fn mul(self, rhs: Vec2<$scalar>) -> Vec2<$scalar> {
+                Vec2 {
+                    x: self.wrapping_mul(rhs.x),
+                    y: self.wrapping_mul(rhs.y),
+                }
+            }
+        }
+        impl std::ops::Div<Vec2<$scalar>> for $scalar {
+            type Output = Vec2<$scalar>;
+            fn div(self, rhs: Vec2<$scalar>) -> Vec2<$scalar> {
+                Vec2 {
+                    x: self.wrapping_div(rhs.x),
+                    y: self.wrapping_div(rhs.y),
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-scalar and scalar-vector binary operations for Vec3 with
+/// wrapping arithmetic. This is required for integer types (u32, i32) to match
+/// WGSL spec behavior.
+macro_rules! impl_vec3_scalar_ops_wrapping {
+    ($scalar:ty) => {
+        impl std::ops::Add<$scalar> for Vec3<$scalar> {
+            type Output = Self;
+            fn add(self, rhs: $scalar) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_add(rhs),
+                    y: self.y.wrapping_add(rhs),
+                    z: self.z.wrapping_add(rhs),
+                }
+            }
+        }
+        impl std::ops::Sub<$scalar> for Vec3<$scalar> {
+            type Output = Self;
+            fn sub(self, rhs: $scalar) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_sub(rhs),
+                    y: self.y.wrapping_sub(rhs),
+                    z: self.z.wrapping_sub(rhs),
+                }
+            }
+        }
+        impl std::ops::Mul<$scalar> for Vec3<$scalar> {
+            type Output = Self;
+            fn mul(self, rhs: $scalar) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_mul(rhs),
+                    y: self.y.wrapping_mul(rhs),
+                    z: self.z.wrapping_mul(rhs),
+                }
+            }
+        }
+        impl std::ops::Div<$scalar> for Vec3<$scalar> {
+            type Output = Self;
+            fn div(self, rhs: $scalar) -> Self {
+                Vec3 {
+                    x: self.x.wrapping_div(rhs),
+                    y: self.y.wrapping_div(rhs),
+                    z: self.z.wrapping_div(rhs),
+                }
+            }
+        }
+        impl std::ops::Add<Vec3<$scalar>> for $scalar {
+            type Output = Vec3<$scalar>;
+            fn add(self, rhs: Vec3<$scalar>) -> Vec3<$scalar> {
+                Vec3 {
+                    x: self.wrapping_add(rhs.x),
+                    y: self.wrapping_add(rhs.y),
+                    z: self.wrapping_add(rhs.z),
+                }
+            }
+        }
+        impl std::ops::Sub<Vec3<$scalar>> for $scalar {
+            type Output = Vec3<$scalar>;
+            fn sub(self, rhs: Vec3<$scalar>) -> Vec3<$scalar> {
+                Vec3 {
+                    x: self.wrapping_sub(rhs.x),
+                    y: self.wrapping_sub(rhs.y),
+                    z: self.wrapping_sub(rhs.z),
+                }
+            }
+        }
+        impl std::ops::Mul<Vec3<$scalar>> for $scalar {
+            type Output = Vec3<$scalar>;
+            fn mul(self, rhs: Vec3<$scalar>) -> Vec3<$scalar> {
+                Vec3 {
+                    x: self.wrapping_mul(rhs.x),
+                    y: self.wrapping_mul(rhs.y),
+                    z: self.wrapping_mul(rhs.z),
+                }
+            }
+        }
+        impl std::ops::Div<Vec3<$scalar>> for $scalar {
+            type Output = Vec3<$scalar>;
+            fn div(self, rhs: Vec3<$scalar>) -> Vec3<$scalar> {
+                Vec3 {
+                    x: self.wrapping_div(rhs.x),
+                    y: self.wrapping_div(rhs.y),
+                    z: self.wrapping_div(rhs.z),
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-scalar and scalar-vector binary operations for Vec4 with
+/// wrapping arithmetic. This is required for integer types (u32, i32) to match
+/// WGSL spec behavior.
+macro_rules! impl_vec4_scalar_ops_wrapping {
+    ($scalar:ty) => {
+        impl std::ops::Add<$scalar> for Vec4<$scalar> {
+            type Output = Self;
+            fn add(self, rhs: $scalar) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_add(rhs),
+                    y: self.y.wrapping_add(rhs),
+                    z: self.z.wrapping_add(rhs),
+                    w: self.w.wrapping_add(rhs),
+                }
+            }
+        }
+        impl std::ops::Sub<$scalar> for Vec4<$scalar> {
+            type Output = Self;
+            fn sub(self, rhs: $scalar) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_sub(rhs),
+                    y: self.y.wrapping_sub(rhs),
+                    z: self.z.wrapping_sub(rhs),
+                    w: self.w.wrapping_sub(rhs),
+                }
+            }
+        }
+        impl std::ops::Mul<$scalar> for Vec4<$scalar> {
+            type Output = Self;
+            fn mul(self, rhs: $scalar) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_mul(rhs),
+                    y: self.y.wrapping_mul(rhs),
+                    z: self.z.wrapping_mul(rhs),
+                    w: self.w.wrapping_mul(rhs),
+                }
+            }
+        }
+        impl std::ops::Div<$scalar> for Vec4<$scalar> {
+            type Output = Self;
+            fn div(self, rhs: $scalar) -> Self {
+                Vec4 {
+                    x: self.x.wrapping_div(rhs),
+                    y: self.y.wrapping_div(rhs),
+                    z: self.z.wrapping_div(rhs),
+                    w: self.w.wrapping_div(rhs),
+                }
+            }
+        }
+        impl std::ops::Add<Vec4<$scalar>> for $scalar {
+            type Output = Vec4<$scalar>;
+            fn add(self, rhs: Vec4<$scalar>) -> Vec4<$scalar> {
+                Vec4 {
+                    x: self.wrapping_add(rhs.x),
+                    y: self.wrapping_add(rhs.y),
+                    z: self.wrapping_add(rhs.z),
+                    w: self.wrapping_add(rhs.w),
+                }
+            }
+        }
+        impl std::ops::Sub<Vec4<$scalar>> for $scalar {
+            type Output = Vec4<$scalar>;
+            fn sub(self, rhs: Vec4<$scalar>) -> Vec4<$scalar> {
+                Vec4 {
+                    x: self.wrapping_sub(rhs.x),
+                    y: self.wrapping_sub(rhs.y),
+                    z: self.wrapping_sub(rhs.z),
+                    w: self.wrapping_sub(rhs.w),
+                }
+            }
+        }
+        impl std::ops::Mul<Vec4<$scalar>> for $scalar {
+            type Output = Vec4<$scalar>;
+            fn mul(self, rhs: Vec4<$scalar>) -> Vec4<$scalar> {
+                Vec4 {
+                    x: self.wrapping_mul(rhs.x),
+                    y: self.wrapping_mul(rhs.y),
+                    z: self.wrapping_mul(rhs.z),
+                    w: self.wrapping_mul(rhs.w),
+                }
+            }
+        }
+        impl std::ops::Div<Vec4<$scalar>> for $scalar {
+            type Output = Vec4<$scalar>;
+            fn div(self, rhs: Vec4<$scalar>) -> Vec4<$scalar> {
+                Vec4 {
+                    x: self.wrapping_div(rhs.x),
+                    y: self.wrapping_div(rhs.y),
+                    z: self.wrapping_div(rhs.z),
+                    w: self.wrapping_div(rhs.w),
+                }
+            }
+        }
+    };
+}
+
 /// Implements vector-scalar and scalar-vector Rem for Vec2.
 macro_rules! impl_vec2_scalar_rem {
     ($scalar:ty) => {
@@ -1102,21 +1510,24 @@ impl_vec2_scalar_rem!(f32);
 impl_vec3_scalar_rem!(f32);
 impl_vec4_scalar_rem!(f32);
 
-// Signed integer vectors: Add, Sub, Mul, Div (no Rem)
-impl_vec2_ops!(i32);
-impl_vec3_ops!(i32);
-impl_vec4_ops!(i32);
-impl_vec2_scalar_ops!(i32);
-impl_vec3_scalar_ops!(i32);
-impl_vec4_scalar_ops!(i32);
+// Signed integer vectors: Add, Sub, Mul, Div (no Rem) with wrapping arithmetic
+// WGSL spec requires integer operations to wrap on overflow (modulo 2^32)
+impl_vec2_ops_wrapping!(i32);
+impl_vec3_ops_wrapping!(i32);
+impl_vec4_ops_wrapping!(i32);
+impl_vec2_scalar_ops_wrapping!(i32);
+impl_vec3_scalar_ops_wrapping!(i32);
+impl_vec4_scalar_ops_wrapping!(i32);
 
-// Unsigned integer vectors: Add, Sub, Mul, Div (no Rem)
-impl_vec2_ops!(u32);
-impl_vec3_ops!(u32);
-impl_vec4_ops!(u32);
-impl_vec2_scalar_ops!(u32);
-impl_vec3_scalar_ops!(u32);
-impl_vec4_scalar_ops!(u32);
+// Unsigned integer vectors: Add, Sub, Mul, Div (no Rem) with wrapping
+// arithmetic WGSL spec requires integer operations to wrap on overflow (modulo
+// 2^32)
+impl_vec2_ops_wrapping!(u32);
+impl_vec3_ops_wrapping!(u32);
+impl_vec4_ops_wrapping!(u32);
+impl_vec2_scalar_ops_wrapping!(u32);
+impl_vec3_scalar_ops_wrapping!(u32);
+impl_vec4_scalar_ops_wrapping!(u32);
 
 // Neg impls for signed types.
 
@@ -1157,8 +1568,8 @@ impl std::ops::Neg for Vec2<i32> {
     type Output = Self;
     fn neg(self) -> Self {
         Vec2 {
-            x: -self.x,
-            y: -self.y,
+            x: self.x.wrapping_neg(),
+            y: self.y.wrapping_neg(),
         }
     }
 }
@@ -1167,9 +1578,9 @@ impl std::ops::Neg for Vec3<i32> {
     type Output = Self;
     fn neg(self) -> Self {
         Vec3 {
-            x: -self.x,
-            y: -self.y,
-            z: -self.z,
+            x: self.x.wrapping_neg(),
+            y: self.y.wrapping_neg(),
+            z: self.z.wrapping_neg(),
         }
     }
 }
@@ -1178,10 +1589,10 @@ impl std::ops::Neg for Vec4<i32> {
     type Output = Self;
     fn neg(self) -> Self {
         Vec4 {
-            x: -self.x,
-            y: -self.y,
-            z: -self.z,
-            w: -self.w,
+            x: self.x.wrapping_neg(),
+            y: self.y.wrapping_neg(),
+            z: self.z.wrapping_neg(),
+            w: self.w.wrapping_neg(),
         }
     }
 }

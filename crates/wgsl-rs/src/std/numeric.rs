@@ -181,17 +181,18 @@ pub fn tan<T: NumericBuiltinTan>(e: T) -> T {
 
 mod abs {
     use super::*;
-    macro_rules! impl_abs_scalar {
-        ($ty:ty) => {
-            impl NumericBuiltinAbs for $ty {
-                fn abs(self) -> Self {
-                    self.abs()
-                }
-            }
-        };
+    impl NumericBuiltinAbs for f32 {
+        fn abs(self) -> Self {
+            self.abs()
+        }
     }
-    impl_abs_scalar!(f32);
-    impl_abs_scalar!(i32);
+
+    impl NumericBuiltinAbs for i32 {
+        fn abs(self) -> Self {
+            // Use wrapping_abs to match WGSL spec behavior and avoid panic on i32::MIN
+            self.wrapping_abs()
+        }
+    }
 
     macro_rules! impl_abs_uself {
         ($ty:ty) => {
@@ -207,7 +208,7 @@ mod abs {
     impl_abs_uself!(Vec3u);
     impl_abs_uself!(Vec4u);
 
-    macro_rules! impl_abs_vec {
+    macro_rules! impl_abs_vec_f32 {
         ($ty:ty) => {
             impl NumericBuiltinAbs for $ty {
                 fn abs(self) -> Self {
@@ -216,12 +217,23 @@ mod abs {
             }
         };
     }
-    impl_abs_vec!(Vec2f);
-    impl_abs_vec!(Vec3f);
-    impl_abs_vec!(Vec4f);
-    impl_abs_vec!(Vec2i);
-    impl_abs_vec!(Vec3i);
-    impl_abs_vec!(Vec4i);
+    impl_abs_vec_f32!(Vec2f);
+    impl_abs_vec_f32!(Vec3f);
+    impl_abs_vec_f32!(Vec4f);
+
+    macro_rules! impl_abs_vec_i32 {
+        ($ty:ty) => {
+            impl NumericBuiltinAbs for $ty {
+                fn abs(self) -> Self {
+                    // Use wrapping_abs to match WGSL spec and avoid panic on i32::MIN
+                    Self::from_array(self.to_array().map(|t| t.wrapping_abs()))
+                }
+            }
+        };
+    }
+    impl_abs_vec_i32!(Vec2i);
+    impl_abs_vec_i32!(Vec3i);
+    impl_abs_vec_i32!(Vec4i);
 }
 
 mod acos {
@@ -402,16 +414,26 @@ pub fn fract<T: NumericBuiltinFract>(e: T) -> T {
 }
 mod fract {
     use super::*;
+
+    /// WGSL `fract(e) = e - floor(e)`, which for finite inputs is in `[0, 1)`.
+    /// For NaN and +/-infinity, the result is NaN.
+    ///
+    /// This differs from Rust's `f32::fract()` which computes `self -
+    /// self.trunc()` and can return negative values for negative inputs.
+    fn wgsl_fract(x: f32) -> f32 {
+        x - x.floor()
+    }
+
     impl NumericBuiltinFract for f32 {
         fn fract(self) -> Self {
-            self.fract()
+            wgsl_fract(self)
         }
     }
     macro_rules! impl_fract_vec {
         ($ty:ty) => {
             impl NumericBuiltinFract for $ty {
                 fn fract(self) -> Self {
-                    Self::from_array(self.to_array().map(|t| t.fract()))
+                    Self::from_array(self.to_array().map(wgsl_fract))
                 }
             }
         };
@@ -673,16 +695,36 @@ pub fn round<T: NumericBuiltinRound>(e: T) -> T {
 }
 mod round {
     use super::*;
+
+    /// WGSL "round half to even" (banker's rounding).
+    ///
+    /// When the value is exactly halfway between two integers, the result is
+    /// the nearest even integer. This differs from Rust's `f32::round()` which
+    /// rounds half away from zero.
+    fn wgsl_round(x: f32) -> f32 {
+        let rounded = x.round();
+        // Check if we're exactly at a .5 boundary
+        let diff = x - rounded;
+        if diff == 0.5 || diff == -0.5 {
+            // At a halfway point — pick the even integer
+            let floor = x.floor();
+            let ceil = x.ceil();
+            if floor as i32 % 2 == 0 { floor } else { ceil }
+        } else {
+            rounded
+        }
+    }
+
     impl NumericBuiltinRound for f32 {
         fn round(self) -> Self {
-            self.round()
+            wgsl_round(self)
         }
     }
     macro_rules! impl_round_vec {
         ($ty:ty) => {
             impl NumericBuiltinRound for $ty {
                 fn round(self) -> Self {
-                    Self::from_array(self.to_array().map(|t| t.round()))
+                    Self::from_array(self.to_array().map(wgsl_round))
                 }
             }
         };
@@ -1873,10 +1915,16 @@ mod modf_impl {
     impl NumericBuiltinModf for f32 {
         fn modf(self) -> ModfResult<Self> {
             let whole = self.trunc();
-            ModfResult {
-                fract: self - whole,
-                whole,
-            }
+            // For infinity, the fractional part should be 0 (or -0) with the original sign.
+            // For NaN, the fractional part should be NaN.
+            let fract = if self.is_nan() {
+                self
+            } else if !self.is_finite() {
+                f32::copysign(0.0, self)
+            } else {
+                self - whole
+            };
+            ModfResult { fract, whole }
         }
     }
 
@@ -1886,8 +1934,24 @@ mod modf_impl {
                 fn modf(self) -> ModfResult<Self> {
                     let g: $glam_ty = self.into();
                     let whole_g = g.trunc();
+                    // Match scalar semantics per component: NaN -> NaN, +/-inf -> signed zero,
+                    // finite -> x - trunc(x).
+                    let fract_corrected = {
+                        let input = g.to_array();
+                        let whole = whole_g.to_array();
+                        <$glam_ty>::from_array(core::array::from_fn(|i| {
+                            let v = input[i];
+                            if v.is_nan() {
+                                v
+                            } else if !v.is_finite() {
+                                f32::copysign(0.0, v)
+                            } else {
+                                v - whole[i]
+                            }
+                        }))
+                    };
                     ModfResult {
-                        fract: (g - whole_g).into(),
+                        fract: fract_corrected.into(),
                         whole: whole_g.into(),
                     }
                 }

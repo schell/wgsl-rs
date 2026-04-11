@@ -1,0 +1,108 @@
+//! Shader modules for roundtrip testing.
+//!
+//! Each submodule defines one or more `#[wgsl]` compute shader modules that
+//! exercise a category of `wgsl_rs::std` builtin functions, along with a
+//! [`RoundtripTest`](crate::harness::RoundtripTest) implementation that drives
+//! the GPU vs CPU comparison.
+//!
+//! ## Current coverage
+//!
+//! - [`trig`] — Trigonometric functions: `sin`, `cos`, `tan`, `asin`, `acos`,
+//!   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`
+//! - [`exponential`] — Exponential functions: `exp`, `exp2`, `log`, `log2`,
+//!   `pow`, `sqrt`, `inverse_sqrt`
+//! - [`rounding`] — Rounding functions: `ceil`, `floor`, `round`, `trunc`,
+//!   `fract`, `saturate`
+//! - [`clamping`] — Clamping and interpolation: `clamp`, `min`, `max`, `mix`,
+//!   `smoothstep`, `step`, `select`
+//! - [`geometric`] — Geometric and conversion functions: `dot`, `cross`,
+//!   `normalize`, `length`, `distance`, `reflect`, `refract`, `face_forward`,
+//!   `degrees`, `radians`, `sign`, `abs`, `fma`
+//! - [`bit_manipulation`] — Bit manipulation: `count_leading_zeros`,
+//!   `count_one_bits`, `count_trailing_zeros`, `reverse_bits`,
+//!   `first_leading_bit`, `first_trailing_bit`, `extract_bits`, `insert_bits`
+//! - [`bitcast`] — Bitcast reinterpretation: `bitcast_f32`, `bitcast_u32`,
+//!   `bitcast_i32`, `bitcast_vec4f`, `bitcast_vec4u`
+//! - [`packing`] — Pack/unpack quantization: `pack4x8snorm`, `pack4x8unorm`,
+//!   `pack2x16snorm`, `pack2x16unorm`, `pack2x16float`, `unpack4x8snorm`,
+//!   `unpack4x8unorm`, `unpack2x16snorm`, `unpack2x16unorm`, `unpack2x16float`
+//! - [`modf_frexp_ldexp`] — Struct-returning numeric builtins: `modf`, `frexp`,
+//!   `ldexp`
+//! - [`type_conversions`] — Type casting functions: `f32()`, `u32()`, `i32()`
+//! - [`vector_arithmetic`] — Vector arithmetic operators: `+`, `-`, `*`, `/`,
+//!   `%`, unary `-` for Vec2/3/4 with f32, i32, u32
+//! - [`basic_numeric`] — Basic numeric functions: `abs`, `sign`, `degrees`,
+//!   `radians`
+//! - [`logical_operations`] — Logical builtins: `all`, `any` on bool vectors
+//!   (Vec2b, Vec3b, Vec4b)
+//! - [`select_operations`] — Conditional selection: `select` on scalar and
+//!   vector types (f32, i32, u32) with scalar and vector bool conditions
+//! - [`matrix_operations`] — Matrix builtins and arithmetic: `determinant`,
+//!   `transpose`, matrix-vector multiplication, matrix-matrix multiplication
+//! - [`synchronization`] — Synchronization builtins: `workgroup_barrier`,
+//!   `storage_barrier`, `workgroup_uniform_load`
+//! - [`atomic_operations`] — Atomic builtins for `u32` and `i32`: load/store,
+//!   arithmetic, bitwise, exchange, compare_exchange_weak
+//! - [`derivative_operations`] — Fragment derivatives: `dpdx`, `dpdy`,
+//!   `fwidth`, and fine/coarse variants
+//! - [`texture_operations`] — Texture functions: `texture_load`,
+//!   `texture_sample` on 2D sampled textures
+//! - [`advanced_texture_operations`] — Advanced texture builtins:
+//!   `texture_sample_grad/level/bias`, offsets, gather, and 2D-array variants
+//!
+//! ## Planned coverage
+//!
+//! The following categories are intended for future implementation:
+//! - **Depth texture GPU roundtrip** — `texture_sample_compare*` and
+//!   `texture_gather_compare*` (depth upload/readback path)
+//! - **Additional texture families** — cube/3D/multisampled and remaining
+//!   gather/sample variant combinations
+
+pub mod advanced_texture_operations;
+pub mod atomic_operations;
+pub mod basic_numeric;
+pub mod bit_manipulation;
+pub mod bitcast;
+pub mod clamping;
+pub mod derivative_operations;
+pub mod exponential;
+pub mod geometric;
+pub mod logical_operations;
+pub mod matrix_operations;
+pub mod modf_frexp_ldexp;
+pub mod packing;
+pub mod rounding;
+pub mod select_operations;
+pub mod synchronization;
+pub mod texture_operations;
+pub mod trig;
+pub mod type_conversions;
+pub mod vector_arithmetic;
+
+use crate::harness::RoundtripTest;
+
+/// Returns all available roundtrip tests.
+pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
+    vec![
+        Box::new(trig::TrigTest),
+        Box::new(exponential::ExponentialTest),
+        Box::new(rounding::RoundingTest),
+        Box::new(clamping::ClampingTest),
+        Box::new(geometric::GeometricTest),
+        Box::new(bit_manipulation::BitManipulationTest),
+        Box::new(bitcast::BitcastTest),
+        Box::new(packing::PackingTest),
+        Box::new(modf_frexp_ldexp::ModfFrexpLdexpTest),
+        Box::new(type_conversions::TypeConversionsTest),
+        Box::new(vector_arithmetic::VectorArithmeticTest),
+        Box::new(basic_numeric::BasicNumericTest),
+        Box::new(logical_operations::LogicalOperationsTest),
+        Box::new(select_operations::SelectOperationsTest),
+        Box::new(matrix_operations::MatrixOperationsTest),
+        Box::new(synchronization::SynchronizationTest),
+        Box::new(atomic_operations::AtomicOperationsTest),
+        Box::new(derivative_operations::DerivativeOperationsTest),
+        Box::new(texture_operations::TextureOperationsTest),
+        Box::new(advanced_texture_operations::AdvancedTextureOperationsTest),
+    ]
+}

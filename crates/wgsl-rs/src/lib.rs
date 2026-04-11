@@ -160,7 +160,7 @@ impl Module {
             let placeholder = format!("__TP{param_name}__");
             wgsl = wgsl.replace(&placeholder, arg);
         }
-        out.push(wgsl);
+        out.extend(wgsl.split('\n').map(str::to_owned));
     }
 }
 
@@ -344,6 +344,12 @@ mod test {
         assert!(
             full_src.contains("fn f32_scale(") && full_src.contains("fn apply_scale_f32("),
             "concatenated source should have both functions, got:\n{full_src}"
+        );
+
+        let full_lines = trait_consumer::WGSL_MODULE.wgsl_source();
+        assert!(
+            full_lines.iter().all(|line| !line.contains('\n')),
+            "wgsl_source() should return one source line per element"
         );
 
         // Verify Rust-side execution works too

@@ -105,7 +105,8 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     // Resolve cross-module turbofish calls (rewrites call sites and collects
     // instantiation info). This must run before the missing-turbofish check
     // because it clears type_args on cross-module calls.
-    let cross_module_instantiations = collect_cross_module_instantiations(module, &ctx.templates)?;
+    let cross_module_instantiations =
+        collect_cross_module_instantiations(module, &ctx.templates, &ctx.struct_templates)?;
 
     // Check for any remaining unresolved turbofish calls (missing turbofish
     // on calls to local generic functions)
@@ -274,17 +275,117 @@ impl MonoCtx {
         })
     }
 
-    /// Generate template macros for generic functions defined in this module.
+    /// Generate template macros for generic functions and structs defined in
+    /// this module.
     ///
-    /// For each generic function, produces a `TemplateMacro` containing the
-    /// WGSL source with `__TP{name}__` placeholders that can be used for
-    /// cross-module instantiation via string substitution.
+    /// For each generic function or struct, produces a `TemplateMacro`
+    /// containing WGSL source with `__TP{name}__` placeholders that can be
+    /// used for cross-module instantiation via string substitution.
     fn generate_template_macros(
         &self,
         _module: &ItemMod,
     ) -> Result<Vec<TemplateMacro>, crate::parse::Error> {
         let mut macros = Vec::new();
 
+        // --- Generic struct templates ---
+        for template in self.struct_templates.values() {
+            let placeholder_subst: BTreeMap<String, Type> = template
+                .type_params
+                .iter()
+                .map(|id| {
+                    let name = id.to_string();
+                    let placeholder = format!("__TP{name}__");
+                    (
+                        name,
+                        Type::Struct {
+                            ident: Ident::new(&placeholder, id.span()),
+                            type_args: vec![],
+                        },
+                    )
+                })
+                .collect();
+
+            // Build the mangled struct name with placeholders
+            let param_placeholders: Vec<String> = template
+                .type_params
+                .iter()
+                .map(|id| format!("__TP{}__", id))
+                .collect();
+            let mangled_struct_name = std::iter::once(template.ident.to_string())
+                .chain(param_placeholders.into_iter())
+                .collect::<Vec<_>>()
+                .join("_");
+
+            // Clone and substitute the struct definition
+            let mut mono_struct = template.clone();
+            mono_struct.type_params.clear();
+            mono_struct.ident = Ident::new(&mangled_struct_name, template.ident.span());
+            for pair in mono_struct.fields.named.iter_mut() {
+                substitute_type(&mut pair.ty, &placeholder_subst);
+            }
+
+            // Generate WGSL for the struct definition
+            let mut code = code_gen::GeneratedWgslCode::default();
+            mono_struct.write_code(&mut code);
+
+            // Also generate WGSL for all associated impl block methods
+            let original_name = template.ident.to_string();
+            if let Some(impl_blocks) = self.impl_templates.get(&original_name) {
+                for impl_block in impl_blocks {
+                    for ii in &impl_block.items {
+                        match ii {
+                            crate::parse::ImplItem::Fn(f) => {
+                                let method_name = format!("{}_{}", mangled_struct_name, f.ident);
+                                let mut mono_fn = f.clone();
+                                mono_fn.ident = Ident::new(&method_name, f.ident.span());
+                                for pair in mono_fn.inputs.iter_mut() {
+                                    substitute_type(&mut pair.ty, &placeholder_subst);
+                                }
+                                if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
+                                    substitute_type(ty, &placeholder_subst);
+                                }
+                                substitute_block(&mut mono_fn.block, &placeholder_subst);
+                                // Rewrite struct type refs within the method body
+                                rewrite_struct_type_placeholders(
+                                    &mut mono_fn,
+                                    &template.ident.to_string(),
+                                    &mangled_struct_name,
+                                );
+                                mono_fn.write_code(&mut code);
+                            }
+                            crate::parse::ImplItem::Const(c) => {
+                                let const_name = format!("{}_{}", mangled_struct_name, c.ident);
+                                let mut mono_const = c.clone();
+                                mono_const.ident = Ident::new(&const_name, c.ident.span());
+                                substitute_type(&mut mono_const.ty, &placeholder_subst);
+                                substitute_expr(&mut mono_const.expr, &placeholder_subst);
+                                mono_const.write_code(&mut code);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let template_wgsl = code.source_lines().join("\n");
+            let type_param_names: Vec<String> = template
+                .type_params
+                .iter()
+                .map(|id| id.to_string())
+                .collect();
+
+            // TODO: compute dependencies for struct templates (nested generic
+            // struct or function references). For now, empty.
+            let dependencies = vec![];
+
+            macros.push(TemplateMacro {
+                fn_name: template.ident.to_string(),
+                type_param_names,
+                template_wgsl,
+                dependencies,
+            });
+        }
+
+        // --- Generic function templates ---
         for template in self.templates.values() {
             // Build a substitution map that replaces type params with
             // placeholder Type::Struct identifiers (e.g., M → __TPM__).
@@ -1419,6 +1520,222 @@ fn rewrite_calls_in_expr(expr: &mut Expr, templates: &BTreeMap<String, ItemFn>) 
     }
 }
 
+// ===== Template struct placeholder rewriting =====
+//
+// When generating WGSL for a struct template's impl methods, references to the
+// struct type (e.g., `Pair<__TPT__>`) need to be flattened to the
+// placeholder-mangled name (e.g., `Pair___TPT__`). This must happen before code
+// generation, which asserts that `type_args` is empty on all struct types.
+
+/// Rewrite references to a generic struct within a method to use the
+/// placeholder-mangled struct name. Converts `Type::Struct { ident:
+/// orig_name, type_args: [...] }` to `Type::Struct { ident: mangled_name,
+/// type_args: [] }`.
+fn rewrite_struct_type_placeholders(f: &mut ItemFn, orig_name: &str, mangled_name: &str) {
+    for pair in f.inputs.iter_mut() {
+        flatten_struct_placeholder(&mut pair.ty, orig_name, mangled_name);
+    }
+    if let ReturnType::Type { ty, .. } = &mut f.return_type {
+        flatten_struct_placeholder(ty, orig_name, mangled_name);
+    }
+    flatten_struct_placeholder_block(&mut f.block, orig_name, mangled_name);
+}
+
+fn flatten_struct_placeholder(ty: &mut Type, orig_name: &str, mangled_name: &str) {
+    match ty {
+        Type::Struct { ident, type_args } if ident == orig_name && !type_args.is_empty() => {
+            *ident = Ident::new(mangled_name, ident.span());
+            type_args.clear();
+        }
+        Type::Struct { type_args, .. } => {
+            for ta in type_args.iter_mut() {
+                flatten_struct_placeholder(ta, orig_name, mangled_name);
+            }
+        }
+        Type::Array { elem, .. } => flatten_struct_placeholder(elem, orig_name, mangled_name),
+        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
+            flatten_struct_placeholder(elem, orig_name, mangled_name);
+        }
+        _ => {}
+    }
+}
+
+fn flatten_struct_placeholder_block(block: &mut Block, orig_name: &str, mangled_name: &str) {
+    for stmt in &mut block.stmt {
+        flatten_struct_placeholder_stmt(stmt, orig_name, mangled_name);
+    }
+}
+
+fn flatten_struct_placeholder_stmt(stmt: &mut Stmt, orig_name: &str, mangled_name: &str) {
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some((_, ty)) = &mut local.ty {
+                flatten_struct_placeholder(ty, orig_name, mangled_name);
+            }
+            if let Some(init) = &mut local.init {
+                flatten_struct_placeholder_expr(&mut init.expr, orig_name, mangled_name);
+            }
+        }
+        Stmt::Const(c) => {
+            flatten_struct_placeholder(&mut c.ty, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(&mut c.expr, orig_name, mangled_name);
+        }
+        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(rhs, orig_name, mangled_name);
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            flatten_struct_placeholder_expr(condition, orig_name, mangled_name);
+            flatten_struct_placeholder_block(body, orig_name, mangled_name);
+        }
+        Stmt::Loop { body, .. } => flatten_struct_placeholder_block(body, orig_name, mangled_name),
+        Stmt::Expr { expr, .. } => {
+            flatten_struct_placeholder_expr(expr, orig_name, mangled_name);
+        }
+        Stmt::If(if_stmt) => {
+            flatten_struct_placeholder_expr(&mut if_stmt.condition, orig_name, mangled_name);
+            flatten_struct_placeholder_block(&mut if_stmt.then_block, orig_name, mangled_name);
+            if let Some(else_branch) = &mut if_stmt.else_branch {
+                match &mut else_branch.body {
+                    ElseBody::Block(block) => {
+                        flatten_struct_placeholder_block(block, orig_name, mangled_name)
+                    }
+                    ElseBody::If(nested_if) => {
+                        flatten_struct_placeholder_expr(
+                            &mut nested_if.condition,
+                            orig_name,
+                            mangled_name,
+                        );
+                        flatten_struct_placeholder_block(
+                            &mut nested_if.then_block,
+                            orig_name,
+                            mangled_name,
+                        );
+                    }
+                }
+            }
+        }
+        Stmt::For(for_loop) => {
+            if let Some((_, ty)) = &mut for_loop.ty {
+                flatten_struct_placeholder(ty, orig_name, mangled_name);
+            }
+            flatten_struct_placeholder_expr(&mut for_loop.from, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(&mut for_loop.to, orig_name, mangled_name);
+            flatten_struct_placeholder_block(&mut for_loop.body, orig_name, mangled_name);
+        }
+        Stmt::Switch(switch) => {
+            flatten_struct_placeholder_expr(&mut switch.selector, orig_name, mangled_name);
+            for arm in &mut switch.arms {
+                flatten_struct_placeholder_block(&mut arm.body, orig_name, mangled_name);
+            }
+        }
+        Stmt::Return { expr, .. } => {
+            if let Some(e) = expr {
+                flatten_struct_placeholder_expr(e, orig_name, mangled_name);
+            }
+        }
+        Stmt::Block(block) => flatten_struct_placeholder_block(block, orig_name, mangled_name),
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+            ..
+        } => {
+            flatten_struct_placeholder_expr(slab, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(offset, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(dest, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(size, orig_name, mangled_name);
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+            ..
+        } => {
+            flatten_struct_placeholder_expr(slab, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(offset, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(src, orig_name, mangled_name);
+            if let Some(s) = size {
+                flatten_struct_placeholder_expr(s, orig_name, mangled_name);
+            }
+        }
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
+    }
+}
+
+fn flatten_struct_placeholder_expr(expr: &mut Expr, orig_name: &str, mangled_name: &str) {
+    match expr {
+        Expr::FnCall {
+            type_args, params, ..
+        } => {
+            for ta in type_args.iter_mut() {
+                flatten_struct_placeholder(ta, orig_name, mangled_name);
+            }
+            for param in params.iter_mut() {
+                flatten_struct_placeholder_expr(param, orig_name, mangled_name);
+            }
+        }
+        Expr::Struct {
+            ident,
+            type_args,
+            fields,
+            ..
+        } => {
+            if ident == orig_name && !type_args.is_empty() {
+                *ident = Ident::new(mangled_name, ident.span());
+                type_args.clear();
+            }
+            for field in fields.iter_mut() {
+                flatten_struct_placeholder_expr(&mut field.expr, orig_name, mangled_name);
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(rhs, orig_name, mangled_name);
+        }
+        Expr::Unary { expr, .. } => flatten_struct_placeholder_expr(expr, orig_name, mangled_name),
+        Expr::Paren { inner, .. } => {
+            flatten_struct_placeholder_expr(inner, orig_name, mangled_name)
+        }
+        Expr::Array { elems, .. } => {
+            for elem in elems.iter_mut() {
+                flatten_struct_placeholder_expr(elem, orig_name, mangled_name);
+            }
+        }
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(index, orig_name, mangled_name);
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
+            if let Some(ps) = params {
+                for p in ps.iter_mut() {
+                    flatten_struct_placeholder_expr(p, orig_name, mangled_name);
+                }
+            }
+        }
+        Expr::Cast { lhs, ty } => {
+            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
+            flatten_struct_placeholder(ty, orig_name, mangled_name);
+        }
+        Expr::FieldAccess { base, .. } => {
+            flatten_struct_placeholder_expr(base, orig_name, mangled_name)
+        }
+        Expr::Reference { expr, .. } => {
+            flatten_struct_placeholder_expr(expr, orig_name, mangled_name)
+        }
+        Expr::ZeroValueArray { elem_type, len, .. } => {
+            flatten_struct_placeholder(elem_type, orig_name, mangled_name);
+            flatten_struct_placeholder_expr(len, orig_name, mangled_name);
+        }
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+    }
+}
+
 // ===== Struct type rewriting =====
 
 /// Rewrite generic struct types in an item to use mangled names.
@@ -1893,6 +2210,7 @@ fn check_unresolved_in_expr(
 fn collect_cross_module_instantiations(
     module: &mut ItemMod,
     local_templates: &BTreeMap<String, ItemFn>,
+    local_struct_templates: &BTreeMap<String, ItemStruct>,
 ) -> Result<Vec<CrossModuleInstantiation>, crate::parse::Error> {
     // Build the import path lookup: for each use statement, record the
     // paths so we can attribute unresolved calls to an imported module.
@@ -1916,6 +2234,7 @@ fn collect_cross_module_instantiations(
         collect_cross_module_from_item(
             item,
             local_templates,
+            local_struct_templates,
             &import_paths,
             &mut instantiations,
             &mut seen_mangled,
@@ -1928,20 +2247,66 @@ fn collect_cross_module_instantiations(
 fn collect_cross_module_from_item(
     item: &mut Item,
     local_templates: &BTreeMap<String, ItemFn>,
+    local_struct_templates: &BTreeMap<String, ItemStruct>,
     import_paths: &[syn::Path],
     out: &mut Vec<CrossModuleInstantiation>,
     seen: &mut BTreeSet<String>,
 ) -> Result<(), crate::parse::Error> {
     match item {
         Item::Fn(f) => {
-            collect_cross_module_from_block(&mut f.block, local_templates, import_paths, out, seen)
+            // Scan function signature types for cross-module struct usages
+            for pair in f.inputs.iter_mut() {
+                collect_cross_module_from_type(
+                    &mut pair.ty,
+                    local_struct_templates,
+                    import_paths,
+                    out,
+                    seen,
+                )?;
+            }
+            if let ReturnType::Type { ty, .. } = &mut f.return_type {
+                collect_cross_module_from_type(
+                    ty,
+                    local_struct_templates,
+                    import_paths,
+                    out,
+                    seen,
+                )?;
+            }
+            collect_cross_module_from_block(
+                &mut f.block,
+                local_templates,
+                local_struct_templates,
+                import_paths,
+                out,
+                seen,
+            )
         }
         Item::Impl(impl_item) => {
             for ii in &mut impl_item.items {
                 if let crate::parse::ImplItem::Fn(f) = ii {
+                    for pair in f.inputs.iter_mut() {
+                        collect_cross_module_from_type(
+                            &mut pair.ty,
+                            local_struct_templates,
+                            import_paths,
+                            out,
+                            seen,
+                        )?;
+                    }
+                    if let ReturnType::Type { ty, .. } = &mut f.return_type {
+                        collect_cross_module_from_type(
+                            ty,
+                            local_struct_templates,
+                            import_paths,
+                            out,
+                            seen,
+                        )?;
+                    }
                     collect_cross_module_from_block(
                         &mut f.block,
                         local_templates,
+                        local_struct_templates,
                         import_paths,
                         out,
                         seen,
@@ -1954,15 +2319,86 @@ fn collect_cross_module_from_item(
     }
 }
 
+/// Scan a type for cross-module generic struct usages and rewrite them.
+fn collect_cross_module_from_type(
+    ty: &mut Type,
+    local_struct_templates: &BTreeMap<String, ItemStruct>,
+    import_paths: &[syn::Path],
+    out: &mut Vec<CrossModuleInstantiation>,
+    seen: &mut BTreeSet<String>,
+) -> Result<(), crate::parse::Error> {
+    match ty {
+        Type::Struct { ident, type_args } if !type_args.is_empty() => {
+            let struct_name = ident.to_string();
+            // Only handle non-local struct templates (local ones are already
+            // monomorphized by the same-module pass).
+            if !local_struct_templates.contains_key(&struct_name) {
+                let mangled_type_args: Vec<String> = type_args
+                    .iter()
+                    .map(mangle_type)
+                    .collect::<Result<_, _>>()?;
+                let wgsl_type_args: Vec<String> = type_args
+                    .iter()
+                    .map(type_to_wgsl)
+                    .collect::<Result<_, _>>()?;
+                let mangled_name = mangle_name(&struct_name, type_args)?;
+
+                // Rewrite the type to use the mangled name
+                *ident = Ident::new(&mangled_name, ident.span());
+                let cleared_args = std::mem::take(type_args);
+
+                if seen.insert(mangled_name) {
+                    out.push(CrossModuleInstantiation {
+                        import_paths: import_paths.to_vec(),
+                        fn_name: struct_name,
+                        mangled_type_args,
+                        wgsl_type_args,
+                    });
+                }
+
+                // Recurse into the (now-cleared) original type args
+                let _ = cleared_args;
+            } else {
+                // Local struct — recurse into type_args
+                for ta in type_args.iter_mut() {
+                    collect_cross_module_from_type(
+                        ta,
+                        local_struct_templates,
+                        import_paths,
+                        out,
+                        seen,
+                    )?;
+                }
+            }
+        }
+        Type::Array { elem, .. } => {
+            collect_cross_module_from_type(elem, local_struct_templates, import_paths, out, seen)?;
+        }
+        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
+            collect_cross_module_from_type(elem, local_struct_templates, import_paths, out, seen)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn collect_cross_module_from_block(
     block: &mut Block,
     local_templates: &BTreeMap<String, ItemFn>,
+    local_struct_templates: &BTreeMap<String, ItemStruct>,
     import_paths: &[syn::Path],
     out: &mut Vec<CrossModuleInstantiation>,
     seen: &mut BTreeSet<String>,
 ) -> Result<(), crate::parse::Error> {
     for stmt in &mut block.stmt {
-        collect_cross_module_from_stmt(stmt, local_templates, import_paths, out, seen)?;
+        collect_cross_module_from_stmt(
+            stmt,
+            local_templates,
+            local_struct_templates,
+            import_paths,
+            out,
+            seen,
+        )?;
     }
     Ok(())
 }
@@ -1970,77 +2406,65 @@ fn collect_cross_module_from_block(
 fn collect_cross_module_from_stmt(
     stmt: &mut Stmt,
     local_templates: &BTreeMap<String, ItemFn>,
+    local_struct_templates: &BTreeMap<String, ItemStruct>,
     import_paths: &[syn::Path],
     out: &mut Vec<CrossModuleInstantiation>,
     seen: &mut BTreeSet<String>,
 ) -> Result<(), crate::parse::Error> {
+    let lt = local_templates;
+    let lst = local_struct_templates;
+    let ip = import_paths;
     match stmt {
         Stmt::Local(local) => {
+            if let Some((_, ty)) = &mut local.ty {
+                collect_cross_module_from_type(ty, lst, ip, out, seen)?;
+            }
             if let Some(init) = &mut local.init {
-                collect_cross_module_from_expr(
-                    &mut init.expr,
-                    local_templates,
-                    import_paths,
-                    out,
-                    seen,
-                )?;
+                collect_cross_module_from_expr(&mut init.expr, lt, lst, ip, out, seen)?;
             }
         }
         Stmt::Const(c) => {
-            collect_cross_module_from_expr(&mut c.expr, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_type(&mut c.ty, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(&mut c.expr, lt, lst, ip, out, seen)?;
         }
         Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(rhs, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(rhs, lt, lst, ip, out, seen)?;
         }
         Stmt::While {
             condition, body, ..
         } => {
-            collect_cross_module_from_expr(condition, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_block(body, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(condition, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_block(body, lt, lst, ip, out, seen)?;
         }
         Stmt::Loop { body, .. } => {
-            collect_cross_module_from_block(body, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_block(body, lt, lst, ip, out, seen)?;
         }
         Stmt::Expr { expr, .. } => {
-            collect_cross_module_from_expr(expr, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(expr, lt, lst, ip, out, seen)?;
         }
         Stmt::If(s) => {
-            collect_cross_module_from_expr(
-                &mut s.condition,
-                local_templates,
-                import_paths,
-                out,
-                seen,
-            )?;
-            collect_cross_module_from_block(
-                &mut s.then_block,
-                local_templates,
-                import_paths,
-                out,
-                seen,
-            )?;
+            collect_cross_module_from_expr(&mut s.condition, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_block(&mut s.then_block, lt, lst, ip, out, seen)?;
             if let Some(eb) = &mut s.else_branch {
                 match &mut eb.body {
-                    ElseBody::Block(b) => collect_cross_module_from_block(
-                        b,
-                        local_templates,
-                        import_paths,
-                        out,
-                        seen,
-                    )?,
+                    ElseBody::Block(b) => {
+                        collect_cross_module_from_block(b, lt, lst, ip, out, seen)?
+                    }
                     ElseBody::If(nested) => {
                         collect_cross_module_from_expr(
                             &mut nested.condition,
-                            local_templates,
-                            import_paths,
+                            lt,
+                            lst,
+                            ip,
                             out,
                             seen,
                         )?;
                         collect_cross_module_from_block(
                             &mut nested.then_block,
-                            local_templates,
-                            import_paths,
+                            lt,
+                            lst,
+                            ip,
                             out,
                             seen,
                         )?;
@@ -2049,35 +2473,26 @@ fn collect_cross_module_from_stmt(
             }
         }
         Stmt::For(f) => {
-            collect_cross_module_from_expr(&mut f.from, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(&mut f.to, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_block(&mut f.body, local_templates, import_paths, out, seen)?;
+            if let Some((_, ty)) = &mut f.ty {
+                collect_cross_module_from_type(ty, lst, ip, out, seen)?;
+            }
+            collect_cross_module_from_expr(&mut f.from, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(&mut f.to, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_block(&mut f.body, lt, lst, ip, out, seen)?;
         }
         Stmt::Switch(sw) => {
-            collect_cross_module_from_expr(
-                &mut sw.selector,
-                local_templates,
-                import_paths,
-                out,
-                seen,
-            )?;
+            collect_cross_module_from_expr(&mut sw.selector, lt, lst, ip, out, seen)?;
             for arm in &mut sw.arms {
-                collect_cross_module_from_block(
-                    &mut arm.body,
-                    local_templates,
-                    import_paths,
-                    out,
-                    seen,
-                )?;
+                collect_cross_module_from_block(&mut arm.body, lt, lst, ip, out, seen)?;
             }
         }
         Stmt::Return { expr, .. } => {
             if let Some(e) = expr {
-                collect_cross_module_from_expr(e, local_templates, import_paths, out, seen)?;
+                collect_cross_module_from_expr(e, lt, lst, ip, out, seen)?;
             }
         }
         Stmt::Block(b) => {
-            collect_cross_module_from_block(b, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_block(b, lt, lst, ip, out, seen)?;
         }
         Stmt::SlabRead {
             slab,
@@ -2086,10 +2501,10 @@ fn collect_cross_module_from_stmt(
             size,
             ..
         } => {
-            collect_cross_module_from_expr(slab, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(offset, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(dest, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(size, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(slab, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(offset, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(dest, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(size, lt, lst, ip, out, seen)?;
         }
         Stmt::SlabWrite {
             slab,
@@ -2098,11 +2513,11 @@ fn collect_cross_module_from_stmt(
             size,
             ..
         } => {
-            collect_cross_module_from_expr(slab, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(offset, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(src, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(slab, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(offset, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(src, lt, lst, ip, out, seen)?;
             if let Some(s) = size {
-                collect_cross_module_from_expr(s, local_templates, import_paths, out, seen)?;
+                collect_cross_module_from_expr(s, lt, lst, ip, out, seen)?;
             }
         }
         Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
@@ -2113,10 +2528,14 @@ fn collect_cross_module_from_stmt(
 fn collect_cross_module_from_expr(
     expr: &mut Expr,
     local_templates: &BTreeMap<String, ItemFn>,
+    local_struct_templates: &BTreeMap<String, ItemStruct>,
     import_paths: &[syn::Path],
     out: &mut Vec<CrossModuleInstantiation>,
     seen: &mut BTreeSet<String>,
 ) -> Result<(), crate::parse::Error> {
+    let lt = local_templates;
+    let lst = local_struct_templates;
+    let ip = import_paths;
     match expr {
         Expr::FnCall {
             path,
@@ -2125,113 +2544,174 @@ fn collect_cross_module_from_expr(
             ..
         } => {
             if !type_args.is_empty() {
-                let fn_name = match &*path {
-                    FnPath::Ident(id) => id.to_string(),
-                    FnPath::TypeMethod { ty, method, .. } => {
-                        format!("{}_{}", ty, method)
-                    }
-                };
+                // Check if this is a TypeMethod call to a generic struct
+                // from an imported module (e.g., Pair::<f32>::first(p)).
+                if let FnPath::TypeMethod { ty, method, .. } = &*path {
+                    let ty_name = ty.to_string();
+                    // If it's not a local struct template, it must be
+                    // cross-module.
+                    if !lst.contains_key(&ty_name)
+                        && !lt.contains_key(&format!("{ty_name}_{method}"))
+                    {
+                        let mangled_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(mangle_type)
+                            .collect::<Result<_, _>>()?;
+                        let wgsl_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(type_to_wgsl)
+                            .collect::<Result<_, _>>()?;
+                        let mangled_struct = mangle_name(&ty_name, type_args)?;
+                        let mangled_fn = format!("{}_{}", mangled_struct, method);
+                        let span = ty.span();
+                        *path = FnPath::Ident(Ident::new(&mangled_fn, span));
+                        type_args.clear();
 
-                // Skip if this is a local template (already handled by same-module mono)
-                if !local_templates.contains_key(&fn_name) {
-                    // This is a cross-module generic call. We need an import path.
-                    if import_paths.is_empty() {
+                        // Record the struct template instantiation
+                        if seen.insert(mangled_struct) {
+                            out.push(CrossModuleInstantiation {
+                                import_paths: ip.to_vec(),
+                                fn_name: ty_name,
+                                mangled_type_args,
+                                wgsl_type_args,
+                            });
+                        }
+                    }
+                }
+
+                // Handle regular function templates
+                if !type_args.is_empty() {
+                    let fn_name = match &*path {
+                        FnPath::Ident(id) => id.to_string(),
+                        FnPath::TypeMethod { ty, method, .. } => {
+                            format!("{}_{}", ty, method)
+                        }
+                    };
+
+                    // Skip if this is a local template (already handled)
+                    if !lt.contains_key(&fn_name) {
+                        if ip.is_empty() {
+                            let span = match &*path {
+                                FnPath::Ident(id) => id.span(),
+                                FnPath::TypeMethod { ty, .. } => ty.span(),
+                            };
+                            return Err(crate::parse::Error::unsupported(
+                                span,
+                                format!(
+                                    "generic function '{fn_name}' is not defined in this module \
+                                     and no imports are available. Define it in this module or \
+                                     import the module that defines it."
+                                ),
+                            ));
+                        }
+
+                        let mangled_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(mangle_type)
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let wgsl_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(type_to_wgsl)
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mangled_name = mangle_name(&fn_name, type_args)?;
+
                         let span = match &*path {
                             FnPath::Ident(id) => id.span(),
                             FnPath::TypeMethod { ty, .. } => ty.span(),
                         };
-                        return Err(crate::parse::Error::unsupported(
-                            span,
-                            format!(
-                                "generic function '{fn_name}' is not defined in this module and \
-                                 no imports are available. Define it in this module or import the \
-                                 module that defines it."
-                            ),
-                        ));
-                    }
+                        *path = FnPath::Ident(Ident::new(&mangled_name, span));
+                        type_args.clear();
 
-                    // Compute two parallel representations for each type arg:
-                    // 1. mangled: identifier-safe strings for function name mangling (e.g.
-                    //    "array_f32_4")
-                    // 2. wgsl: valid WGSL type syntax for placeholder substitution (e.g.
-                    //    "array<f32, 4>")
+                        if seen.insert(mangled_name) {
+                            out.push(CrossModuleInstantiation {
+                                import_paths: ip.to_vec(),
+                                fn_name,
+                                mangled_type_args,
+                                wgsl_type_args,
+                            });
+                        }
+                    }
+                }
+            }
+
+            for param in params.iter_mut() {
+                collect_cross_module_from_expr(param, lt, lst, ip, out, seen)?;
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(rhs, lt, lst, ip, out, seen)?;
+        }
+        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
+            collect_cross_module_from_expr(expr, lt, lst, ip, out, seen)?;
+        }
+        Expr::Array { elems, .. } => {
+            for e in elems.iter_mut() {
+                collect_cross_module_from_expr(e, lt, lst, ip, out, seen)?;
+            }
+        }
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(index, lt, lst, ip, out, seen)?;
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
+            if let Some(ps) = params {
+                for p in ps.iter_mut() {
+                    collect_cross_module_from_expr(p, lt, lst, ip, out, seen)?;
+                }
+            }
+        }
+        Expr::Cast { lhs, ty, .. } => {
+            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
+            collect_cross_module_from_type(ty, lst, ip, out, seen)?;
+        }
+        Expr::FieldAccess { base, .. } => {
+            collect_cross_module_from_expr(base, lt, lst, ip, out, seen)?;
+        }
+        Expr::Struct {
+            ident,
+            type_args,
+            fields,
+            ..
+        } => {
+            // Handle cross-module generic struct construction
+            if !type_args.is_empty() {
+                let struct_name = ident.to_string();
+                if !lst.contains_key(&struct_name) {
                     let mangled_type_args: Vec<String> = type_args
                         .iter()
-                        .map(|ty| mangle_type(ty))
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .map(mangle_type)
+                        .collect::<Result<_, _>>()?;
                     let wgsl_type_args: Vec<String> = type_args
                         .iter()
-                        .map(|ty| type_to_wgsl(ty))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let mangled_name = mangle_name(&fn_name, type_args)?;
+                        .map(type_to_wgsl)
+                        .collect::<Result<_, _>>()?;
+                    let mangled_name = mangle_name(&struct_name, type_args)?;
 
-                    // Rewrite the call site to use the mangled name
-                    let span = match &*path {
-                        FnPath::Ident(id) => id.span(),
-                        FnPath::TypeMethod { ty, .. } => ty.span(),
-                    };
-                    *path = FnPath::Ident(Ident::new(&mangled_name, span));
+                    *ident = Ident::new(&mangled_name, ident.span());
                     type_args.clear();
 
-                    // Add instantiation if not already seen
                     if seen.insert(mangled_name) {
                         out.push(CrossModuleInstantiation {
-                            import_paths: import_paths.to_vec(),
-                            fn_name,
+                            import_paths: ip.to_vec(),
+                            fn_name: struct_name,
                             mangled_type_args,
                             wgsl_type_args,
                         });
                     }
                 }
             }
-
-            for param in params.iter_mut() {
-                collect_cross_module_from_expr(param, local_templates, import_paths, out, seen)?;
-            }
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(rhs, local_templates, import_paths, out, seen)?;
-        }
-        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
-            collect_cross_module_from_expr(expr, local_templates, import_paths, out, seen)?;
-        }
-        Expr::Array { elems, .. } => {
-            for e in elems.iter_mut() {
-                collect_cross_module_from_expr(e, local_templates, import_paths, out, seen)?;
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
-            collect_cross_module_from_expr(index, local_templates, import_paths, out, seen)?;
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
-            if let Some(ps) = params {
-                for p in ps.iter_mut() {
-                    collect_cross_module_from_expr(p, local_templates, import_paths, out, seen)?;
-                }
-            }
-        }
-        Expr::Cast { lhs, .. } | Expr::FieldAccess { base: lhs, .. } => {
-            collect_cross_module_from_expr(lhs, local_templates, import_paths, out, seen)?;
-        }
-        Expr::Struct { fields, .. } => {
             for f in fields.iter_mut() {
-                collect_cross_module_from_expr(
-                    &mut f.expr,
-                    local_templates,
-                    import_paths,
-                    out,
-                    seen,
-                )?;
+                collect_cross_module_from_expr(&mut f.expr, lt, lst, ip, out, seen)?;
             }
         }
         Expr::Reference { expr, .. } => {
-            collect_cross_module_from_expr(expr, local_templates, import_paths, out, seen)?;
+            collect_cross_module_from_expr(expr, lt, lst, ip, out, seen)?;
         }
-        Expr::ZeroValueArray { len, .. } => {
-            collect_cross_module_from_expr(len, local_templates, import_paths, out, seen)?;
+        Expr::ZeroValueArray { elem_type, len, .. } => {
+            collect_cross_module_from_type(elem_type, lst, ip, out, seen)?;
+            collect_cross_module_from_expr(len, lt, lst, ip, out, seen)?;
         }
         Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
     }

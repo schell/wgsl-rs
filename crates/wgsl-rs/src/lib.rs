@@ -535,4 +535,65 @@ mod test {
 
         let _ = ROOT.wgsl_source();
     }
+
+    // --- Cross-module generic struct tests ---
+
+    #[wgsl(crate_path = crate)]
+    mod struct_provider {
+        pub struct Pair<T: Copy> {
+            pub a: T,
+            pub b: T,
+        }
+
+        impl<T: Copy + std::ops::Add<Output = T>> Pair<T> {
+            pub fn sum(p: Pair<T>) -> T {
+                return p.a + p.b;
+            }
+        }
+    }
+
+    #[wgsl(crate_path = crate)]
+    mod struct_consumer {
+        use super::struct_provider::*;
+
+        pub fn use_pair() -> f32 {
+            let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+            return Pair::<f32>::sum(p);
+        }
+    }
+
+    #[test]
+    fn cross_module_generic_struct() {
+        // The provider should have a template for "Pair"
+        assert!(
+            struct_provider::WGSL_MODULE
+                .templates
+                .iter()
+                .any(|t| t.name == "Pair"),
+            "struct_provider should have a template named 'Pair', templates: {:?}",
+            struct_provider::WGSL_MODULE
+                .templates
+                .iter()
+                .map(|t| t.name)
+                .collect::<Vec<_>>()
+        );
+
+        // The consumer should produce WGSL with Pair_f32 and Pair_f32_sum
+        let full_src = struct_consumer::WGSL_MODULE.wgsl_source().join("\n");
+        assert!(
+            full_src.contains("Pair_f32"),
+            "Expected Pair_f32 in assembled WGSL, got:\n{full_src}"
+        );
+        assert!(
+            full_src.contains("Pair_f32_sum"),
+            "Expected Pair_f32_sum in assembled WGSL, got:\n{full_src}"
+        );
+
+        // Verify Rust-side execution
+        let result = struct_consumer::use_pair();
+        assert!(
+            (result - 3.0).abs() < f32::EPSILON,
+            "1.0 + 2.0 should be 3.0, got {result}"
+        );
+    }
 }

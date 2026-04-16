@@ -312,7 +312,7 @@ impl MonoCtx {
                 .map(|id| format!("__TP{}__", id))
                 .collect();
             let mangled_struct_name = std::iter::once(template.ident.to_string())
-                .chain(param_placeholders.into_iter())
+                .chain(param_placeholders)
                 .collect::<Vec<_>>()
                 .join("_");
 
@@ -418,7 +418,7 @@ impl MonoCtx {
                 .map(|id| format!("__TP{}__", id))
                 .collect();
             let mangled_name = std::iter::once(template.ident.to_string())
-                .chain(param_placeholders.into_iter())
+                .chain(param_placeholders)
                 .collect::<Vec<_>>()
                 .join("_");
             tmpl_fn.ident = Ident::new(&mangled_name, template.ident.span());
@@ -1250,11 +1250,10 @@ fn substitute_expr(expr: &mut Expr, subst: &BTreeMap<String, Type>) {
             ..
         } => {
             // Substitute type params in TypeMethod paths (e.g., T::method -> f32::method)
-            if let FnPath::TypeMethod { ty, .. } = path {
-                if let Some(concrete) = subst.get(&ty.to_string()) {
+            if let FnPath::TypeMethod { ty, .. } = path
+                && let Some(concrete) = subst.get(&ty.to_string()) {
                     *ty = type_to_ident(concrete, ty.span());
                 }
-            }
             for ta in type_args.iter_mut() {
                 substitute_type(ta, subst);
             }
@@ -1783,15 +1782,14 @@ fn rewrite_struct_types_in_fn(f: &mut ItemFn, struct_templates: &BTreeMap<String
 
 fn rewrite_struct_type(ty: &mut Type, struct_templates: &BTreeMap<String, ItemStruct>) {
     match ty {
-        Type::Struct { ident, type_args } if !type_args.is_empty() => {
-            if struct_templates.contains_key(&ident.to_string()) {
+        Type::Struct { ident, type_args } if !type_args.is_empty()
+            && struct_templates.contains_key(&ident.to_string()) => {
                 // Mangle the name and clear type_args
                 let mangled = mangle_name(&ident.to_string(), type_args)
                     .expect("mangle_name should not fail for concrete types");
                 *ident = Ident::new(&mangled, ident.span());
                 type_args.clear();
             }
-        }
         Type::Array { elem, .. } => {
             rewrite_struct_type(elem, struct_templates);
         }
@@ -2137,8 +2135,8 @@ fn check_unresolved_in_expr(
             params,
             ..
         } => {
-            if type_args.is_empty() {
-                if let FnPath::Ident(id) = path {
+            if type_args.is_empty()
+                && let FnPath::Ident(id) = path {
                     let name = id.to_string();
                     if let Some(template) = templates.get(&name) {
                         let param_names: Vec<_> =
@@ -2153,7 +2151,6 @@ fn check_unresolved_in_expr(
                         ));
                     }
                 }
-            }
             for param in params.iter() {
                 check_unresolved_in_expr(param, templates)?;
             }

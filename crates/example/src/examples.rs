@@ -1750,24 +1750,24 @@ pub mod generic_structs {
     impl<T: Copy + std::ops::Add<Output = T>> Pair<T> {
         /// Extract the first element.
         pub fn first(p: Pair<T>) -> T {
-            return p.a;
+            p.a
         }
 
         /// Sum both elements.
         pub fn sum(p: Pair<T>) -> T {
-            return p.a + p.b;
+            p.a + p.b
         }
     }
 
     /// Uses Pair<f32>.
     pub fn use_pair_f32() -> f32 {
         let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
-        return Pair::<f32>::sum(p);
+        Pair::<f32>::sum(p)
     }
 
     /// Uses Pair<i32>.
     pub fn use_pair_i32() -> i32 {
         let p: Pair<i32> = Pair::<i32> { a: 10, b: 20 };
-        return Pair::<i32>::first(p);
+        Pair::<i32>::first(p)
     }
 }

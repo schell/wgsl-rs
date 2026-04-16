@@ -1587,7 +1587,7 @@ impl Expr {
                 let mut expr_elems = syn::punctuated::Punctuated::new();
                 for pair in elems.pairs() {
                     let expr = pair.value();
-                    let parsed = Expr::parse(*expr, ctx)?;
+                    let parsed = Expr::parse(expr, ctx)?;
                     expr_elems.push_value(parsed);
                     if let Some(comma) = pair.punct() {
                         expr_elems.push_punct(**comma);
@@ -1845,7 +1845,7 @@ impl Expr {
                     let mut params = syn::punctuated::Punctuated::new();
                     for pair in args.pairs() {
                         let expr = pair.value();
-                        let param = Expr::parse(*expr, ctx)?;
+                        let param = Expr::parse(expr, ctx)?;
                         params.push_value(param);
                         if let Some(comma) = pair.punct() {
                             params.push_punct(**comma);
@@ -1924,7 +1924,7 @@ impl Expr {
                 let mut parsed_fields = syn::punctuated::Punctuated::new();
                 for pair in fields.pairs() {
                     let field = pair.value();
-                    let parsed = FieldValue::parse(*field, ctx)?;
+                    let parsed = FieldValue::parse(field, ctx)?;
                     parsed_fields.push_value(parsed);
                     if let Some(comma) = pair.punct() {
                         parsed_fields.push_punct(**comma);
@@ -3874,7 +3874,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
-            let arg = FnArg::parse(*input, &ctx)?;
+            let arg = FnArg::parse(input, &ctx)?;
             inputs.push_value(arg);
             if let Some(comma) = pair.punct() {
                 inputs.push_punct(**comma);
@@ -3975,7 +3975,7 @@ impl ItemFn {
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
-            let arg = FnArg::parse(*input, ctx)?;
+            let arg = FnArg::parse(input, ctx)?;
             inputs.push_value(arg);
             if let Some(comma) = pair.punct() {
                 inputs.push_punct(**comma);
@@ -4824,7 +4824,7 @@ impl FieldsNamed {
         let mut named = syn::punctuated::Punctuated::new();
         for pair in value.named.pairs() {
             let field = pair.value();
-            let parsed = Field::parse_with_ctx(*field, ctx)?;
+            let parsed = Field::parse_with_ctx(field, ctx)?;
             named.push_value(parsed);
             if let Some(comma) = pair.punct() {
                 named.push_punct(**comma);

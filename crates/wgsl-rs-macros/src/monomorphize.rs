@@ -1251,9 +1251,10 @@ fn substitute_expr(expr: &mut Expr, subst: &BTreeMap<String, Type>) {
         } => {
             // Substitute type params in TypeMethod paths (e.g., T::method -> f32::method)
             if let FnPath::TypeMethod { ty, .. } = path
-                && let Some(concrete) = subst.get(&ty.to_string()) {
-                    *ty = type_to_ident(concrete, ty.span());
-                }
+                && let Some(concrete) = subst.get(&ty.to_string())
+            {
+                *ty = type_to_ident(concrete, ty.span());
+            }
             for ta in type_args.iter_mut() {
                 substitute_type(ta, subst);
             }
@@ -1782,14 +1783,15 @@ fn rewrite_struct_types_in_fn(f: &mut ItemFn, struct_templates: &BTreeMap<String
 
 fn rewrite_struct_type(ty: &mut Type, struct_templates: &BTreeMap<String, ItemStruct>) {
     match ty {
-        Type::Struct { ident, type_args } if !type_args.is_empty()
-            && struct_templates.contains_key(&ident.to_string()) => {
-                // Mangle the name and clear type_args
-                let mangled = mangle_name(&ident.to_string(), type_args)
-                    .expect("mangle_name should not fail for concrete types");
-                *ident = Ident::new(&mangled, ident.span());
-                type_args.clear();
-            }
+        Type::Struct { ident, type_args }
+            if !type_args.is_empty() && struct_templates.contains_key(&ident.to_string()) =>
+        {
+            // Mangle the name and clear type_args
+            let mangled = mangle_name(&ident.to_string(), type_args)
+                .expect("mangle_name should not fail for concrete types");
+            *ident = Ident::new(&mangled, ident.span());
+            type_args.clear();
+        }
         Type::Array { elem, .. } => {
             rewrite_struct_type(elem, struct_templates);
         }
@@ -2136,21 +2138,22 @@ fn check_unresolved_in_expr(
             ..
         } => {
             if type_args.is_empty()
-                && let FnPath::Ident(id) = path {
-                    let name = id.to_string();
-                    if let Some(template) = templates.get(&name) {
-                        let param_names: Vec<_> =
-                            template.type_params.iter().map(|p| p.to_string()).collect();
-                        return Err(crate::parse::Error::unsupported(
-                            id.span(),
-                            format!(
-                                "calling generic function '{name}' requires type arguments, e.g., \
-                                 {name}::<{}>(...)",
-                                param_names.join(", ")
-                            ),
-                        ));
-                    }
+                && let FnPath::Ident(id) = path
+            {
+                let name = id.to_string();
+                if let Some(template) = templates.get(&name) {
+                    let param_names: Vec<_> =
+                        template.type_params.iter().map(|p| p.to_string()).collect();
+                    return Err(crate::parse::Error::unsupported(
+                        id.span(),
+                        format!(
+                            "calling generic function '{name}' requires type arguments, e.g., \
+                             {name}::<{}>(...)",
+                            param_names.join(", ")
+                        ),
+                    ));
                 }
+            }
             for param in params.iter() {
                 check_unresolved_in_expr(param, templates)?;
             }

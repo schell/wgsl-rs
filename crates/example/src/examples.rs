@@ -36,6 +36,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &trait_impl_example::WGSL_MODULE,
     &renderer_specialization::WGSL_MODULE,
     &renderer_specialization_simple::WGSL_MODULE,
+    &generic_structs::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1726,5 +1727,47 @@ pub mod renderer_specialization_simple {
     /// Simple renderer: checkerboard + Lambert + geometric normals.
     pub fn shade_simple(uv: Vec2f, normal: Vec3f, light_dir: Vec3f, view_dir: Vec3f) -> Vec4f {
         shade_fragment::<Checker, Lambert, GeomNormal>(uv, normal, light_dir, view_dir)
+    }
+}
+
+/// Demonstrates generic struct monomorphization.
+///
+/// Generic structs use Rust generics with concrete type arguments at usage
+/// sites. The `#[wgsl]` macro monomorphizes each unique instantiation into a
+/// concrete WGSL struct with a mangled name (e.g., `Pair_f32`).
+///
+/// Generic impl blocks are also monomorphized: `impl<T> Pair<T>` produces
+/// `fn Pair_f32_first(...)` etc. for each concrete instantiation.
+#[wgsl]
+pub mod generic_structs {
+    /// A generic pair of values.
+    pub struct Pair<T: Copy> {
+        pub a: T,
+        pub b: T,
+    }
+
+    /// Methods on the generic Pair struct.
+    impl<T: Copy + std::ops::Add<Output = T>> Pair<T> {
+        /// Extract the first element.
+        pub fn first(p: Pair<T>) -> T {
+            return p.a;
+        }
+
+        /// Sum both elements.
+        pub fn sum(p: Pair<T>) -> T {
+            return p.a + p.b;
+        }
+    }
+
+    /// Uses Pair<f32>.
+    pub fn use_pair_f32() -> f32 {
+        let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+        return Pair::<f32>::sum(p);
+    }
+
+    /// Uses Pair<i32>.
+    pub fn use_pair_i32() -> i32 {
+        let p: Pair<i32> = Pair::<i32> { a: 10, b: 20 };
+        return Pair::<i32>::first(p);
     }
 }

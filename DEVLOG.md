@@ -304,3 +304,11 @@ Added support for generic free functions via macro-time monomorphization. Turbof
 required at call sites (e.g., `foo::<f32>(x)`). Trait bounds are Rust-only and stripped from
 WGSL output. Supports transitive generic calls, multiple type params, and deduplication.
 Generic impl methods and entry points are explicitly rejected (MVP scope).
+
+### 2026-04-17: Generic struct monomorphization
+
+Added same-module generic struct support. `pub struct Pair<T> { a: T, b: T }` used as
+`Pair<f32>` monomorphizes to `struct Pair_f32 { a: f32, b: f32 }` in WGSL. Generic impl
+blocks (`impl<T> Pair<T>`) produce concrete methods (`Pair_f32_first`, etc.). Struct
+construction `Pair::<f32> { a: 1.0, b: 2.0 }` becomes `Pair_f32(1.0, 2.0)` in WGSL.
+Cross-module generic structs are not yet supported (same-module only for now).

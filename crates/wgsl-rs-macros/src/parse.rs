@@ -533,8 +533,13 @@ pub enum Type {
         gt_token: Token![>],
     },
 
-    /// Struct type: eg. MyStruct
-    Struct { ident: Ident },
+    /// Struct type: eg. `MyStruct` or generic struct instantiation like
+    /// `Pair<f32>`.
+    ///
+    /// `type_args` is empty for non-generic struct types. For generic struct
+    /// types, it contains the concrete type arguments (e.g., `[f32]` for
+    /// `Pair<f32>`).
+    Struct { ident: Ident, type_args: Vec<Type> },
 
     /// Pointer type: ptr<address_space, T>
     /// Created from `ptr!(address_space, T)` macro invocations.
@@ -730,177 +735,201 @@ impl Type {
                                 // We assume this is a struct
                                 Type::Struct {
                                     ident: ident.clone(),
+                                    type_args: vec![],
                                 }
                             }
                         }
                     })
                 }
                 syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
-                    colon2_token,
+                    colon2_token: _,
                     lt_token,
                     args,
                     gt_token,
                 }) => {
-                    // Expect this to be a vector or matrix of the form `Vec{N}<{scalar}>` or
-                    // `Mat{N}<f32>`
-                    util::some_is_unsupported(
-                        colon2_token.as_ref(),
-                        "Prefix path syntax unsupported in WGSL",
-                    )?;
-
-                    snafu::ensure!(
-                        args.len() == 1,
-                        UnsupportedSnafu {
-                            span: args.span(),
-                            note: "Unsupported generics"
-                        }
-                    );
-
                     let ident_str = ident.to_string();
 
-                    // Check for vector types
-                    let elements = match ident_str.as_str() {
-                        "Vec2" => Some(2u8),
-                        "Vec3" => Some(3),
-                        "Vec4" => Some(4),
-                        _ => None,
-                    };
+                    // Check for known builtin generic types first (these all
+                    // take exactly one type argument).
+                    let is_builtin_generic = matches!(
+                        ident_str.as_str(),
+                        "Vec2"
+                            | "Vec3"
+                            | "Vec4"
+                            | "Mat2"
+                            | "Mat3"
+                            | "Mat4"
+                            | "RuntimeArray"
+                            | "Atomic"
+                    ) || TextureKind::from_rust_name(&ident_str).is_some();
 
-                    // Check for matrix types
-                    let matrix_size = match ident_str.as_str() {
-                        "Mat2" => Some(2u8),
-                        "Mat3" => Some(3),
-                        "Mat4" => Some(4),
-                        _ => None,
-                    };
-
-                    // Check for RuntimeArray
-                    let is_runtime_array = ident_str == "RuntimeArray";
-
-                    // Check for Atomic
-                    let is_atomic = ident_str == "Atomic";
-
-                    let arg = args.first().expect("checked that len was 1");
-                    match arg {
-                        syn::GenericArgument::Type(ty) => {
-                            // Handle RuntimeArray<T> first - it can take any element type
-                            if is_runtime_array {
-                                let elem_type = Type::parse(ty, ctx)?;
-                                return Ok(Type::RuntimeArray {
-                                    ident: ident.clone(),
-                                    lt_token: *lt_token,
-                                    elem: Box::new(elem_type),
-                                    gt_token: *gt_token,
-                                });
+                    if is_builtin_generic {
+                        snafu::ensure!(
+                            args.len() == 1,
+                            UnsupportedSnafu {
+                                span: args.span(),
+                                note: "Built-in generic types take exactly one type argument"
                             }
+                        );
 
-                            // Handle Atomic<T> - only i32 or u32 allowed
-                            if is_atomic {
-                                let elem_type = Type::parse(ty, ctx)?;
-                                match &elem_type {
-                                    Type::Scalar {
-                                        ty: ScalarType::I32 | ScalarType::U32,
-                                        ..
-                                    } => {
-                                        return Ok(Type::Atomic {
-                                            ident: ident.clone(),
-                                            lt_token: *lt_token,
-                                            elem: Box::new(elem_type),
-                                            gt_token: *gt_token,
-                                        });
-                                    }
-                                    _ => {
-                                        return UnsupportedSnafu {
-                                            span: ty.span(),
-                                            note: "Atomic<T> requires T to be i32 or u32",
+                        // Check for vector types
+                        let elements = match ident_str.as_str() {
+                            "Vec2" => Some(2u8),
+                            "Vec3" => Some(3),
+                            "Vec4" => Some(4),
+                            _ => None,
+                        };
+
+                        // Check for matrix types
+                        let matrix_size = match ident_str.as_str() {
+                            "Mat2" => Some(2u8),
+                            "Mat3" => Some(3),
+                            "Mat4" => Some(4),
+                            _ => None,
+                        };
+
+                        let arg = args.first().expect("checked that len was 1");
+                        match arg {
+                            syn::GenericArgument::Type(ty) => {
+                                // Handle RuntimeArray<T>
+                                if ident_str == "RuntimeArray" {
+                                    let elem_type = Type::parse(ty, ctx)?;
+                                    return Ok(Type::RuntimeArray {
+                                        ident: ident.clone(),
+                                        lt_token: *lt_token,
+                                        elem: Box::new(elem_type),
+                                        gt_token: *gt_token,
+                                    });
+                                }
+
+                                // Handle Atomic<T> - only i32 or u32 allowed
+                                if ident_str == "Atomic" {
+                                    let elem_type = Type::parse(ty, ctx)?;
+                                    match &elem_type {
+                                        Type::Scalar {
+                                            ty: ScalarType::I32 | ScalarType::U32,
+                                            ..
+                                        } => {
+                                            return Ok(Type::Atomic {
+                                                ident: ident.clone(),
+                                                lt_token: *lt_token,
+                                                elem: Box::new(elem_type),
+                                                gt_token: *gt_token,
+                                            });
                                         }
-                                        .fail();
+                                        _ => {
+                                            return UnsupportedSnafu {
+                                                span: ty.span(),
+                                                note: "Atomic<T> requires T to be i32 or u32",
+                                            }
+                                            .fail();
+                                        }
                                     }
                                 }
-                            }
 
-                            // Handle sampled texture types: Texture1D<T>, Texture2D<T>, etc.
-                            // T must be f32, i32, or u32
-                            if let Some(texture_kind) = TextureKind::from_rust_name(&ident_str) {
-                                let elem_type = Type::parse(ty, ctx)?;
-                                match &elem_type {
-                                    Type::Scalar {
-                                        ty:
-                                            sampled_type @ (ScalarType::F32
-                                            | ScalarType::I32
-                                            | ScalarType::U32),
-                                        ..
-                                    } => {
-                                        return Ok(Type::Texture {
-                                            kind: texture_kind,
-                                            sampled_type: *sampled_type,
-                                            ident: ident.clone(),
-                                        });
-                                    }
-                                    _ => {
-                                        return UnsupportedSnafu {
-                                            span: ty.span(),
-                                            note: "Sampled texture type parameter must be f32, \
-                                                   i32, or u32",
+                                // Handle sampled texture types
+                                if let Some(texture_kind) = TextureKind::from_rust_name(&ident_str)
+                                {
+                                    let elem_type = Type::parse(ty, ctx)?;
+                                    match &elem_type {
+                                        Type::Scalar {
+                                            ty:
+                                                sampled_type @ (ScalarType::F32
+                                                | ScalarType::I32
+                                                | ScalarType::U32),
+                                            ..
+                                        } => {
+                                            return Ok(Type::Texture {
+                                                kind: texture_kind,
+                                                sampled_type: *sampled_type,
+                                                ident: ident.clone(),
+                                            });
                                         }
-                                        .fail();
+                                        _ => {
+                                            return UnsupportedSnafu {
+                                                span: ty.span(),
+                                                note: "Sampled texture type parameter must be \
+                                                       f32, i32, or u32",
+                                            }
+                                            .fail();
+                                        }
                                     }
                                 }
-                            }
 
-                            if let Type::Scalar {
-                                ty: scalar_ty,
-                                ident: scalar_ident,
-                            } = Type::parse(ty, ctx)?
-                            {
-                                if let Some(elements) = elements {
-                                    // Vector type
-                                    Ok(Type::Vector {
-                                        elements,
-                                        scalar_ty,
-                                        ident: ident.clone(),
-                                        scalar: Some((*lt_token, scalar_ident, *gt_token)),
-                                    })
-                                } else if let Some(size) = matrix_size {
-                                    // Matrix type - only f32 is supported
-                                    if !matches!(scalar_ty, ScalarType::F32) {
-                                        UnsupportedSnafu {
-                                            span: ty.span(),
-                                            note: "Only f32 matrices are supported in WGSL",
+                                // Vector or matrix with scalar type argument
+                                if let Type::Scalar {
+                                    ty: scalar_ty,
+                                    ident: scalar_ident,
+                                } = Type::parse(ty, ctx)?
+                                {
+                                    if let Some(elements) = elements {
+                                        Ok(Type::Vector {
+                                            elements,
+                                            scalar_ty,
+                                            ident: ident.clone(),
+                                            scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                        })
+                                    } else if let Some(size) = matrix_size {
+                                        if !matches!(scalar_ty, ScalarType::F32) {
+                                            UnsupportedSnafu {
+                                                span: ty.span(),
+                                                note: "Only f32 matrices are supported in WGSL",
+                                            }
+                                            .fail()?
                                         }
-                                        .fail()?
+                                        Ok(Type::Matrix {
+                                            size,
+                                            ident: ident.clone(),
+                                            scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                        })
+                                    } else {
+                                        unreachable!(
+                                            "already checked this is a builtin generic type"
+                                        )
                                     }
-                                    Ok(Type::Matrix {
-                                        size,
-                                        ident: ident.clone(),
-                                        scalar: Some((*lt_token, scalar_ident, *gt_token)),
-                                    })
                                 } else {
                                     UnsupportedSnafu {
-                                        span: ident.span(),
-                                        note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, \
-                                               Atomic, or a texture type (Texture1D, Texture2D, \
-                                               etc.)",
+                                        span: ty.span(),
+                                        note: format!(
+                                            "Expected concrete scalar type. Saw '{}'",
+                                            ty.into_token_stream()
+                                        ),
                                     }
                                     .fail()
                                 }
-                            } else {
-                                UnsupportedSnafu {
-                                    span: ty.span(),
-                                    note: format!(
-                                        "Expected concrete scalar type. Saw '{}'",
-                                        ty.into_token_stream()
-                                    ),
+                            }
+                            other => UnsupportedSnafu {
+                                span: other.span(),
+                                note: format!("'{}' is unsupported", other.into_token_stream()),
+                            }
+                            .fail(),
+                        }
+                    } else {
+                        // Not a known builtin — treat as a generic struct
+                        // instantiation (e.g., `Pair<f32>`, `Wrapper<i32,
+                        // u32>`).
+                        let mut type_args = Vec::new();
+                        for arg in args {
+                            match arg {
+                                syn::GenericArgument::Type(ty) => {
+                                    type_args.push(Type::parse(ty, ctx)?);
                                 }
-                                .fail()
+                                other => {
+                                    return UnsupportedSnafu {
+                                        span: other.span(),
+                                        note: format!(
+                                            "unsupported generic argument '{}' on struct type",
+                                            other.into_token_stream()
+                                        ),
+                                    }
+                                    .fail();
+                                }
                             }
                         }
-                        other => UnsupportedSnafu {
-                            span: other.span(),
-                            note: format!("'{}' is unsupported", other.into_token_stream()),
-                        }
-                        .fail(),
+                        Ok(Type::Struct {
+                            ident: ident.clone(),
+                            type_args,
+                        })
                     }
                 }
                 other => UnsupportedSnafu {
@@ -1431,9 +1460,15 @@ pub enum Expr {
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
     },
-    /// Struct constructor
+    /// Struct constructor.
+    ///
+    /// `type_args` carries concrete type arguments for generic struct
+    /// construction (e.g., `Pair::<f32> { ... }`). Empty for non-generic
+    /// structs. After monomorphization, the ident is rewritten to the mangled
+    /// name and type_args is cleared.
     Struct {
         ident: Ident,
+        type_args: Vec<Type>,
         brace_token: syn::token::Brace,
         fields: syn::punctuated::Punctuated<FieldValue, syn::Token![,]>,
     },
@@ -1756,18 +1791,39 @@ impl Expr {
                         }
                     } else if syn_path.segments.len() == 2 {
                         // Type::method call: Light::attenuate(args)
+                        // or generic struct method: Pair::<f32>::first(args)
                         let ty = syn_path.segments[0].ident.clone();
                         let method = syn_path.segments[1].ident.clone();
-                        // Check for no generics on segments
-                        for seg in &syn_path.segments {
-                            if !matches!(seg.arguments, syn::PathArguments::None) {
-                                return UnsupportedSnafu {
-                                    span: seg.arguments.span(),
-                                    note: "generic arguments in type::method paths are not \
-                                           supported",
+
+                        // Extract type args from the first segment (the type)
+                        // for generic struct method calls like Pair::<f32>::first()
+                        let mut type_args = Vec::new();
+                        if let syn::PathArguments::AngleBracketed(angle_args) =
+                            &syn_path.segments[0].arguments
+                        {
+                            for arg in &angle_args.args {
+                                match arg {
+                                    syn::GenericArgument::Type(ty) => {
+                                        type_args.push(Type::parse(ty, ctx)?);
+                                    }
+                                    other => {
+                                        return UnsupportedSnafu {
+                                            span: other.span(),
+                                            note: "only type arguments are supported in \
+                                                   type::method paths",
+                                        }
+                                        .fail();
+                                    }
                                 }
-                                .fail();
                             }
+                        }
+                        // The method segment should not have its own generics
+                        if !matches!(syn_path.segments[1].arguments, syn::PathArguments::None) {
+                            return UnsupportedSnafu {
+                                span: syn_path.segments[1].arguments.span(),
+                                note: "generic arguments on the method segment are not supported",
+                            }
+                            .fail();
                         }
                         (
                             FnPath::TypeMethod {
@@ -1775,7 +1831,7 @@ impl Expr {
                                 colon2_token: Token![::](syn_path.segments[0].ident.span()),
                                 method,
                             },
-                            vec![],
+                            type_args,
                         )
                     } else {
                         return UnsupportedSnafu {
@@ -1821,12 +1877,49 @@ impl Expr {
                 rest,
             }) => {
                 util::some_is_unsupported(qself.as_ref(), "")?;
-                let ident = path.get_ident().context(UnsupportedSnafu {
-                    span: path.span(),
-                    note: "Struct name cannot be a path",
-                })?;
                 util::some_is_unsupported(dot2_token.as_ref(), "Default struct construction")?;
                 util::some_is_unsupported(rest.as_ref(), "Default struct construction")?;
+
+                // Extract the struct ident and optional type arguments.
+                // For `Pair::<f32> { ... }`, the path has one segment with
+                // angle-bracketed args.
+                let segment = path.segments.first().context(UnsupportedSnafu {
+                    span: path.span(),
+                    note: "Struct constructor requires a name",
+                })?;
+                snafu::ensure!(
+                    path.segments.len() == 1,
+                    UnsupportedSnafu {
+                        span: path.span(),
+                        note: "Struct name cannot be a multi-segment path"
+                    }
+                );
+
+                let struct_ident = segment.ident.clone();
+                let mut type_args = Vec::new();
+                if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                    args,
+                    ..
+                }) = &segment.arguments
+                {
+                    for arg in args {
+                        match arg {
+                            syn::GenericArgument::Type(ty) => {
+                                type_args.push(Type::parse(ty, ctx)?);
+                            }
+                            other => {
+                                return UnsupportedSnafu {
+                                    span: other.span(),
+                                    note: format!(
+                                        "unsupported generic argument '{}' in struct constructor",
+                                        other.into_token_stream()
+                                    ),
+                                }
+                                .fail();
+                            }
+                        }
+                    }
+                }
 
                 let mut parsed_fields = syn::punctuated::Punctuated::new();
                 for pair in fields.pairs() {
@@ -1839,7 +1932,8 @@ impl Expr {
                 }
 
                 Expr::Struct {
-                    ident: ident.clone(),
+                    ident: struct_ident,
+                    type_args,
                     brace_token: *brace_token,
                     fields: parsed_fields,
                 }
@@ -1958,7 +2052,7 @@ impl Expr {
                     Type::Array { bracket_token, .. } => bracket_token.span.join(),
                     Type::RuntimeArray { ident, .. } => ident.span(),
                     Type::Atomic { ident, .. } => ident.span(),
-                    Type::Struct { ident } => ident.span(),
+                    Type::Struct { ident, .. } => ident.span(),
                     Type::Ptr { span, .. } => *span,
                     Type::Sampler { ident } => ident.span(),
                     Type::SamplerComparison { ident } => ident.span(),
@@ -3827,8 +3921,14 @@ impl ItemFn {
     /// Convert an impl item function to an ItemFn.
     ///
     /// This is similar to `TryFrom<&syn::ItemFn>` but handles the slightly
-    /// different structure of `syn::ImplItemFn`.
-    pub fn try_from_impl_fn(value: &syn::ImplItemFn, is_trait_impl: bool) -> Result<Self, Error> {
+    /// different structure of `syn::ImplItemFn`. The `ctx` carries type
+    /// parameters from the parent `impl<T>` block so method signatures and
+    /// bodies can reference them.
+    pub fn try_from_impl_fn(
+        value: &syn::ImplItemFn,
+        is_trait_impl: bool,
+        ctx: &ParseContext,
+    ) -> Result<Self, Error> {
         let syn::ImplItemFn {
             attrs,
             vis,
@@ -3856,7 +3956,8 @@ impl ItemFn {
 
         ensure_ident_is_not_shadowing_builtin(&sig.ident)?;
 
-        // Reject generic methods in impl blocks for now
+        // Reject generic methods in impl blocks (methods with their own type
+        // params, as opposed to the impl block's type params).
         if sig
             .generics
             .params
@@ -3874,14 +3975,14 @@ impl ItemFn {
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
-            let arg = FnArg::try_from(*input)?;
+            let arg = FnArg::parse(*input, ctx)?;
             inputs.push_value(arg);
             if let Some(comma) = pair.punct() {
                 inputs.push_punct(**comma);
             }
         }
 
-        let mut return_type = ReturnType::try_from(&sig.output)?;
+        let mut return_type = ReturnType::parse(&sig.output, ctx)?;
         match &mut return_type {
             ReturnType::Default => {}
             ReturnType::Type {
@@ -3912,7 +4013,7 @@ impl ItemFn {
             paren_token: sig.paren_token,
             inputs,
             return_type,
-            block: Block::try_from(block)?,
+            block: Block::parse(block, ctx)?,
         })
     }
 }
@@ -4680,16 +4781,15 @@ pub struct Field {
     pub ty: Type,
 }
 
-impl TryFrom<&syn::Field> for Field {
-    type Error = Error;
-
-    fn try_from(value: &syn::Field) -> Result<Self, Self::Error> {
+impl Field {
+    /// Parse a field with a context for resolving type parameters.
+    fn parse_with_ctx(value: &syn::Field, ctx: &ParseContext) -> Result<Self, Error> {
         let ident = value
             .ident
             .clone()
             .expect("only named fields are supported, and we checked for that before parsing this");
         let colon_token = value.colon_token;
-        let ty = Type::try_from(&value.ty)?;
+        let ty = Type::parse(&value.ty, ctx)?;
         let mut inter_stage_io = vec![];
         for attr in value.attrs.iter() {
             inter_stage_io.push(InterStageIo::try_from(attr)?);
@@ -4703,21 +4803,28 @@ impl TryFrom<&syn::Field> for Field {
     }
 }
 
+impl TryFrom<&syn::Field> for Field {
+    type Error = Error;
+
+    fn try_from(value: &syn::Field) -> Result<Self, Self::Error> {
+        Field::parse_with_ctx(value, &ParseContext::default())
+    }
+}
+
 #[derive(Clone)]
 pub struct FieldsNamed {
     pub brace_token: syn::token::Brace,
     pub named: syn::punctuated::Punctuated<Field, Token![,]>,
 }
 
-impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
-    type Error = Error;
-
-    fn try_from(value: &syn::FieldsNamed) -> Result<Self, Self::Error> {
+impl FieldsNamed {
+    /// Parse fields with a context for resolving type parameters.
+    fn parse(value: &syn::FieldsNamed, ctx: &ParseContext) -> Result<Self, Error> {
         let brace_token = value.brace_token;
         let mut named = syn::punctuated::Punctuated::new();
         for pair in value.named.pairs() {
             let field = pair.value();
-            let parsed = Field::try_from(*field)?;
+            let parsed = Field::parse_with_ctx(*field, ctx)?;
             named.push_value(parsed);
             if let Some(comma) = pair.punct() {
                 named.push_punct(**comma);
@@ -4727,8 +4834,18 @@ impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
     }
 }
 
+impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
+    type Error = Error;
+
+    fn try_from(value: &syn::FieldsNamed) -> Result<Self, Self::Error> {
+        FieldsNamed::parse(value, &ParseContext::default())
+    }
+}
+
 #[derive(Clone)]
 pub struct ItemStruct {
+    /// Type parameters for generic structs (empty for non-generic).
+    pub type_params: Vec<Ident>,
     pub struct_token: Token![struct],
     pub ident: Ident,
     pub fields: FieldsNamed,
@@ -4755,13 +4872,31 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
                 item: "Structs"
             }
         );
-        snafu::ensure!(
-            generics.lt_token.is_none(),
-            UnsupportedSnafu {
-                span: generics.span(),
-                note: "Generics are not supported"
+        // Extract type parameters from generics (ignore bounds and where
+        // clauses — those are Rust-only).
+        let mut type_params = Vec::new();
+        for param in &generics.params {
+            match param {
+                syn::GenericParam::Type(tp) => {
+                    type_params.push(tp.ident.clone());
+                }
+                syn::GenericParam::Lifetime(lt) => {
+                    return UnsupportedSnafu {
+                        span: lt.lifetime.span(),
+                        note: "lifetime parameters are not supported on WGSL structs",
+                    }
+                    .fail();
+                }
+                syn::GenericParam::Const(cp) => {
+                    return UnsupportedSnafu {
+                        span: cp.ident.span(),
+                        note: "const generic parameters are not yet supported on WGSL structs",
+                    }
+                    .fail();
+                }
             }
-        );
+        }
+
         let fields = match fields {
             syn::Fields::Named(fields_named) => fields_named,
             syn::Fields::Unnamed(fields_unnamed) => UnsupportedSnafu {
@@ -4775,8 +4910,16 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             }
             .fail()?,
         };
-        let fields = FieldsNamed::try_from(fields)?;
+
+        // Build parse context with type params so field types containing T
+        // resolve to Type::TypeParam.
+        let ctx = ParseContext {
+            type_params: type_params.iter().map(|id| id.to_string()).collect(),
+        };
+        let fields = FieldsNamed::parse(fields, &ctx)?;
+
         Ok(ItemStruct {
+            type_params,
             struct_token: *struct_token,
             ident: ident.clone(),
             fields,
@@ -4972,6 +5115,8 @@ pub enum ImplItem {
 /// ```
 #[derive(Clone)]
 pub struct ItemImpl {
+    /// Type parameters for generic impl blocks (empty for non-generic).
+    pub type_params: Vec<Ident>,
     pub _impl_token: Token![impl],
     pub self_ty: Ident,
     pub _brace_token: syn::token::Brace,
@@ -5001,29 +5146,49 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         )?;
         util::some_is_unsupported(unsafety.as_ref(), "unsafe impls are not supported in WGSL")?;
 
-        // Reject generics
-        if !generics.params.is_empty() {
-            return UnsupportedSnafu {
-                span: generics.span(),
-                note: "generic impl blocks are not supported in WGSL",
+        // Extract type parameters from generics (ignore bounds and where
+        // clauses — those are Rust-only).
+        let mut type_params = Vec::new();
+        for param in &generics.params {
+            match param {
+                syn::GenericParam::Type(tp) => {
+                    type_params.push(tp.ident.clone());
+                }
+                syn::GenericParam::Lifetime(lt) => {
+                    return UnsupportedSnafu {
+                        span: lt.lifetime.span(),
+                        note: "lifetime parameters are not supported on WGSL impl blocks",
+                    }
+                    .fail();
+                }
+                syn::GenericParam::Const(cp) => {
+                    return UnsupportedSnafu {
+                        span: cp.ident.span(),
+                        note: "const generic parameters are not yet supported on WGSL impl blocks",
+                    }
+                    .fail();
+                }
             }
-            .fail();
         }
 
         // For trait impls (e.g. `impl Foo for Bar { ... }`), we ignore the
         // trait path and just use the self_ty + methods, same as inherent impls.
         let is_trait_impl = trait_.is_some();
 
-        // Get the type name (self_ty must be a simple ident)
+        // Get the type name. For non-generic impls, self_ty must be a simple
+        // ident. For generic impls like `impl<T> Pair<T>`, self_ty is a path
+        // with angle brackets — we extract just the ident.
         let self_ty_ident = match self_ty.as_ref() {
-            syn::Type::Path(type_path) => type_path
-                .path
-                .get_ident()
-                .context(UnsupportedSnafu {
+            syn::Type::Path(type_path) => {
+                let segment = type_path.path.segments.first().context(UnsupportedSnafu {
                     span: type_path.span(),
                     note: "impl block type must be a simple identifier",
-                })?
-                .clone(),
+                })?;
+                // Verify the type args on self_ty (if any) match the impl's
+                // type params. We don't store them — the monomorphization pass
+                // uses the impl's type_params directly.
+                segment.ident.clone()
+            }
             other => {
                 return UnsupportedSnafu {
                     span: other.span(),
@@ -5033,12 +5198,18 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             }
         };
 
+        // Build parse context with type params so method bodies and signatures
+        // can reference them.
+        let ctx = ParseContext {
+            type_params: type_params.iter().map(|id| id.to_string()).collect(),
+        };
+
         // Parse impl items (functions and constants)
         let mut parsed_items = Vec::new();
         for item in items {
             match item {
                 syn::ImplItem::Fn(impl_fn) => {
-                    let item_fn = ItemFn::try_from_impl_fn(impl_fn, is_trait_impl)?;
+                    let item_fn = ItemFn::try_from_impl_fn(impl_fn, is_trait_impl, &ctx)?;
                     parsed_items.push(ImplItem::Fn(item_fn));
                 }
                 syn::ImplItem::Const(impl_const) => {
@@ -5056,6 +5227,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         }
 
         let mut result = ItemImpl {
+            type_params,
             _impl_token: *impl_token,
             self_ty: self_ty_ident,
             _brace_token: *brace_token,
@@ -5109,7 +5281,14 @@ fn resolve_self_in_return_type(name: &Ident, rt: &mut ReturnType) {
 
 fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
     match ty {
-        Type::Struct { ident } => maybe_replace_self(name, ident),
+        Type::Struct {
+            ident, type_args, ..
+        } => {
+            maybe_replace_self(name, ident);
+            for ta in type_args.iter_mut() {
+                resolve_self_in_type(name, ta);
+            }
+        }
         Type::Array { elem, len, .. } => {
             resolve_self_in_type(name, elem);
             resolve_self_in_expr(name, len);
@@ -6015,20 +6194,21 @@ mod test {
     }
 
     #[test]
-    fn parse_impl_rejects_generics() {
+    fn parse_generic_impl_block() {
         let item: syn::Item = syn::parse_quote! {
             impl<T> Light {
                 pub fn foo() {}
             }
         };
         let result = Item::try_from(&item);
-        assert!(result.is_err());
-        let err = format!("{}", result.err().unwrap());
-        assert!(
-            err.contains("generic impl blocks are not supported"),
-            "Expected error about generics, got: {}",
-            err
-        );
+        match result {
+            Ok(Item::Impl(impl_item)) => {
+                assert_eq!(impl_item.type_params.len(), 1);
+                assert_eq!(impl_item.type_params[0].to_string(), "T");
+                assert_eq!(impl_item.self_ty.to_string(), "Light");
+            }
+            other => panic!("Expected Ok(Item::Impl), got: {:?}", other.is_err()),
+        }
     }
 
     #[test]
@@ -8003,6 +8183,172 @@ mod test {
         assert!(
             matches!(item, Item::Trait),
             "Trait definition should be Item::Trait (Rust-only)"
+        );
+    }
+
+    #[test]
+    fn parse_generic_struct() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct Pair<T> {
+                pub a: T,
+                pub b: T,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Struct(s) => {
+                assert_eq!(s.ident.to_string(), "Pair");
+                assert_eq!(s.type_params.len(), 1);
+                assert_eq!(s.type_params[0].to_string(), "T");
+                assert_eq!(s.fields.named.len(), 2);
+                // Both fields should have TypeParam type
+                for field in s.fields.named.iter() {
+                    assert!(
+                        matches!(&field.ty, Type::TypeParam { ident } if ident == "T"),
+                        "Expected field type to be TypeParam T",
+                    );
+                }
+            }
+            _ => panic!("Expected Item::Struct"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct_multiple_type_params() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct KeyValue<K, V> {
+                pub key: K,
+                pub value: V,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Struct(s) => {
+                assert_eq!(s.type_params.len(), 2);
+                assert_eq!(s.type_params[0].to_string(), "K");
+                assert_eq!(s.type_params[1].to_string(), "V");
+                assert!(
+                    matches!(&s.fields.named[0].ty, Type::TypeParam { ident } if ident == "K"),
+                    "Expected first field type to be TypeParam K",
+                );
+                assert!(
+                    matches!(&s.fields.named[1].ty, Type::TypeParam { ident } if ident == "V"),
+                    "Expected second field type to be TypeParam V",
+                );
+            }
+            _ => panic!("Expected Item::Struct"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct_type_in_function() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn make_pair() -> f32 {
+                let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+                return p.a;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                // Check that the local variable has a Struct type with type_args
+                let first_stmt = &f.block.stmt[0];
+                match first_stmt {
+                    Stmt::Local(local) => {
+                        let (_, ty) = local.ty.as_ref().expect("local should have type");
+                        match ty {
+                            Type::Struct { ident, type_args } => {
+                                assert_eq!(ident.to_string(), "Pair");
+                                assert_eq!(type_args.len(), 1);
+                                assert!(matches!(
+                                    &type_args[0],
+                                    Type::Scalar {
+                                        ty: ScalarType::F32,
+                                        ..
+                                    }
+                                ));
+                            }
+                            _ => panic!("Expected Type::Struct with type_args"),
+                        }
+                        // Also check the struct constructor expression
+                        let init = local.init.as_ref().expect("local should have init");
+                        match &init.expr {
+                            Expr::Struct {
+                                ident, type_args, ..
+                            } => {
+                                assert_eq!(ident.to_string(), "Pair");
+                                assert_eq!(type_args.len(), 1);
+                            }
+                            _ => panic!("Expected Expr::Struct"),
+                        }
+                    }
+                    _ => panic!("Expected Stmt::Local"),
+                }
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_impl_block_with_methods() {
+        let item: syn::Item = syn::parse_quote! {
+            impl<T> Pair<T> {
+                pub fn first(p: Pair<T>) -> T {
+                    return p.a;
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(impl_item) => {
+                assert_eq!(impl_item.type_params.len(), 1);
+                assert_eq!(impl_item.type_params[0].to_string(), "T");
+                assert_eq!(impl_item.self_ty.to_string(), "Pair");
+                assert_eq!(impl_item.items.len(), 1);
+                match &impl_item.items[0] {
+                    ImplItem::Fn(f) => {
+                        assert_eq!(f.ident.to_string(), "first");
+                        // The parameter type should be Struct with TypeParam args
+                        let param_ty = &f.inputs.first().unwrap().ty;
+                        match param_ty {
+                            Type::Struct { ident, type_args } => {
+                                assert_eq!(ident.to_string(), "Pair");
+                                assert_eq!(type_args.len(), 1);
+                                assert!(matches!(
+                                    &type_args[0],
+                                    Type::TypeParam { ident } if ident == "T"
+                                ));
+                            }
+                            _ => panic!("Expected Struct type with type_args"),
+                        }
+                        // Return type should be TypeParam
+                        match &f.return_type {
+                            ReturnType::Type { ty, .. } => {
+                                assert!(matches!(ty.as_ref(), Type::TypeParam { .. }));
+                            }
+                            _ => panic!("Expected return type"),
+                        }
+                    }
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct_rejects_lifetime() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct Bad<'a> {
+                pub x: f32,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("lifetime"),
+            "Expected error about lifetimes, got: {err}"
         );
     }
 }

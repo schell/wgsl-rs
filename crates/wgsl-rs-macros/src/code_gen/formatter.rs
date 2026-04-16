@@ -606,7 +606,19 @@ impl GenerateCode for Type {
                 elem.write_code(code);
                 code.write_atom(gt_token);
             }
-            Type::Struct { ident } => code.write_atom(ident),
+            Type::Struct { ident, type_args } => {
+                // After monomorphization, type_args should be empty and the
+                // ident should already be the mangled name (e.g., Pair_f32).
+                // If type_args are present, this is an unresolved generic
+                // struct type — which is a bug.
+                debug_assert!(
+                    type_args.is_empty(),
+                    "Type::Struct should have been monomorphized before code generation, but \
+                     found type_args on '{}'",
+                    ident
+                );
+                code.write_atom(ident);
+            }
             Type::Matrix {
                 size,
                 ident,
@@ -906,9 +918,16 @@ impl GenerateCode for Expr {
             }
             Expr::Struct {
                 ident,
+                type_args,
                 brace_token,
                 fields,
             } => {
+                debug_assert!(
+                    type_args.is_empty(),
+                    "Expr::Struct should have been monomorphized before code generation, but \
+                     found type_args on '{}'",
+                    ident
+                );
                 ident.write_code(code);
                 code.write_surrounded(
                     Surrounded::parens().with_span(brace_token.span.join()),
@@ -1918,6 +1937,7 @@ impl GenerateCode for FieldsNamed {
 impl GenerateCode for ItemStruct {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemStruct {
+            type_params: _,
             struct_token,
             ident,
             fields,
@@ -1948,6 +1968,7 @@ impl GenerateCode for ItemMod {
 impl GenerateCode for ItemImpl {
     fn write_code(&self, code: &mut GeneratedWgslCode) {
         let ItemImpl {
+            type_params: _,
             _impl_token: _,
             self_ty,
             _brace_token: _,

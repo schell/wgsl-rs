@@ -22,7 +22,8 @@ use syn::Ident;
 use crate::{
     code_gen::{self, GenerateCode},
     parse::{
-        Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemMod, ReturnType, Stmt, Type,
+        Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct,
+        ReturnType, Stmt, Type,
     },
 };
 
@@ -93,8 +94,9 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     // Generate template macros for generic functions defined in this module
     let template_macros = ctx.generate_template_macros(module)?;
 
-    // Run same-module monomorphization if there are local templates
-    if !ctx.templates.is_empty() {
+    // Run same-module monomorphization if there are any generic templates
+    let has_templates = !ctx.templates.is_empty() || !ctx.struct_templates.is_empty();
+    if has_templates {
         ctx.discover_instantiations(module)?;
         ctx.process_queue()?;
         ctx.apply(module)?;
@@ -160,15 +162,34 @@ struct InstRequest {
 struct MonoCtx {
     /// Generic function templates, keyed by original function name.
     templates: BTreeMap<String, ItemFn>,
-    /// Queue of instantiations to process.
+    /// Generic struct templates, keyed by struct name.
+    struct_templates: BTreeMap<String, ItemStruct>,
+    /// Generic impl blocks for generic structs, keyed by struct name.
+    /// A single struct can have multiple impl blocks (inherent + trait impls).
+    impl_templates: BTreeMap<String, Vec<ItemImpl>>,
+    /// Queue of function instantiations to process.
     queue: VecDeque<InstRequest>,
-    /// Set of already-processed or enqueued keys.
+    /// Queue of struct instantiations to process.
+    struct_queue: VecDeque<StructInstRequest>,
+    /// Set of already-processed or enqueued function keys.
     seen: BTreeSet<InstKey>,
-    /// Generated concrete functions to insert into the module.
+    /// Set of already-processed or enqueued struct keys.
+    struct_seen: BTreeSet<InstKey>,
+    /// Generated concrete items (functions and structs) to insert into the
+    /// module.
     generated: Vec<Item>,
     /// Reserved function names (from non-generic items) for collision
     /// detection.
     reserved_names: BTreeSet<String>,
+}
+
+/// A request to instantiate a generic struct with specific types.
+struct StructInstRequest {
+    key: InstKey,
+    /// Span of the usage site, for error diagnostics.
+    span: Span,
+    /// The actual `Type` values to substitute (parallel to key.type_args).
+    concrete_types: Vec<Type>,
 }
 
 impl MonoCtx {
@@ -176,6 +197,8 @@ impl MonoCtx {
     /// reserved names.
     fn new(module: &ItemMod) -> Result<Self, crate::parse::Error> {
         let mut templates = BTreeMap::new();
+        let mut struct_templates = BTreeMap::new();
+        let mut impl_templates: BTreeMap<String, Vec<ItemImpl>> = BTreeMap::new();
         let mut reserved_names = BTreeSet::new();
 
         for item in &module.content {
@@ -187,31 +210,48 @@ impl MonoCtx {
                         templates.insert(f.ident.to_string(), f.as_ref().clone());
                     }
                 }
+                Item::Struct(s) => {
+                    if s.type_params.is_empty() {
+                        reserved_names.insert(s.ident.to_string());
+                    } else {
+                        struct_templates.insert(s.ident.to_string(), s.clone());
+                    }
+                }
                 Item::Impl(impl_item) => {
-                    for ii in &impl_item.items {
-                        match ii {
-                            crate::parse::ImplItem::Fn(f) => {
-                                let mangled = format!("{}_{}", impl_item.self_ty, f.ident);
-                                if !reserved_names.insert(mangled.clone()) {
-                                    return Err(crate::parse::Error::unsupported(
-                                        f.ident.span(),
-                                        format!(
-                                            "duplicate impl method '{mangled}': another impl \
-                                             block already defines a method with this name"
-                                        ),
-                                    ));
+                    if !impl_item.type_params.is_empty() {
+                        // Generic impl block — store as a template
+                        impl_templates
+                            .entry(impl_item.self_ty.to_string())
+                            .or_default()
+                            .push(impl_item.clone());
+                    } else {
+                        // Concrete impl block — register reserved names
+                        for ii in &impl_item.items {
+                            match ii {
+                                crate::parse::ImplItem::Fn(f) => {
+                                    let mangled = format!("{}_{}", impl_item.self_ty, f.ident);
+                                    if !reserved_names.insert(mangled.clone()) {
+                                        return Err(crate::parse::Error::unsupported(
+                                            f.ident.span(),
+                                            format!(
+                                                "duplicate impl method '{mangled}': another impl \
+                                                 block already defines a method with this name"
+                                            ),
+                                        ));
+                                    }
                                 }
-                            }
-                            crate::parse::ImplItem::Const(c) => {
-                                let mangled = format!("{}_{}", impl_item.self_ty, c.ident);
-                                if !reserved_names.insert(mangled.clone()) {
-                                    return Err(crate::parse::Error::unsupported(
-                                        c.ident.span(),
-                                        format!(
-                                            "duplicate impl constant '{mangled}': another impl \
-                                             block already defines a constant with this name"
-                                        ),
-                                    ));
+                                crate::parse::ImplItem::Const(c) => {
+                                    let mangled = format!("{}_{}", impl_item.self_ty, c.ident);
+                                    if !reserved_names.insert(mangled.clone()) {
+                                        return Err(crate::parse::Error::unsupported(
+                                            c.ident.span(),
+                                            format!(
+                                                "duplicate impl constant '{mangled}': another \
+                                                 impl block already defines a constant with this \
+                                                 name"
+                                            ),
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -223,8 +263,12 @@ impl MonoCtx {
 
         Ok(MonoCtx {
             templates,
+            struct_templates,
+            impl_templates,
             queue: VecDeque::new(),
+            struct_queue: VecDeque::new(),
             seen: BTreeSet::new(),
+            struct_seen: BTreeSet::new(),
             generated: Vec::new(),
             reserved_names,
         })
@@ -256,6 +300,7 @@ impl MonoCtx {
                         name,
                         Type::Struct {
                             ident: Ident::new(&placeholder, id.span()),
+                            type_args: vec![],
                         },
                     )
                 })
@@ -315,18 +360,26 @@ impl MonoCtx {
         Ok(macros)
     }
 
-    /// Walk all concrete items to find turbofish call sites.
+    /// Walk all concrete items to find turbofish call sites and generic struct
+    /// usages.
     fn discover_instantiations(&mut self, module: &ItemMod) -> Result<(), crate::parse::Error> {
         for item in &module.content {
             match item {
                 Item::Fn(f) if f.type_params.is_empty() => {
                     self.collect_from_fn(f)?;
                 }
-                Item::Impl(impl_item) => {
+                Item::Impl(impl_item) if impl_item.type_params.is_empty() => {
                     for ii in &impl_item.items {
                         if let crate::parse::ImplItem::Fn(f) = ii {
                             self.collect_from_fn(f)?;
                         }
+                    }
+                }
+                Item::Struct(s) if s.type_params.is_empty() => {
+                    // Walk field types in concrete structs to find generic
+                    // struct type arguments (e.g., `field: Pair<f32>`).
+                    for pair in s.fields.named.iter() {
+                        self.collect_struct_insts_from_type(&pair.ty, pair.ident.span())?;
                     }
                 }
                 _ => {}
@@ -336,7 +389,76 @@ impl MonoCtx {
     }
 
     fn collect_from_fn(&mut self, f: &ItemFn) -> Result<(), crate::parse::Error> {
+        // Walk function signature types for generic struct usages
+        for pair in f.inputs.iter() {
+            self.collect_struct_insts_from_type(&pair.ty, pair.ident.span())?;
+        }
+        if let ReturnType::Type { ty, .. } = &f.return_type {
+            self.collect_struct_insts_from_type(ty, f.ident.span())?;
+        }
         self.collect_from_block(&f.block)
+    }
+
+    /// Recursively walk a type to find generic struct instantiations
+    /// (e.g., `Pair<f32>`) and enqueue them for monomorphization.
+    fn collect_struct_insts_from_type(
+        &mut self,
+        ty: &Type,
+        span: Span,
+    ) -> Result<(), crate::parse::Error> {
+        match ty {
+            Type::Struct { ident, type_args } if !type_args.is_empty() => {
+                let struct_name = ident.to_string();
+
+                if let Some(template) = self.struct_templates.get(&struct_name) {
+                    if type_args.len() != template.type_params.len() {
+                        return Err(crate::parse::Error::unsupported(
+                            span,
+                            format!(
+                                "'{}' expects {} type argument(s), but {} were provided",
+                                struct_name,
+                                template.type_params.len(),
+                                type_args.len()
+                            ),
+                        ));
+                    }
+
+                    // Only enqueue if all type args are concrete
+                    if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                        let key = InstKey {
+                            fn_name: struct_name.clone(),
+                            type_args: type_args
+                                .iter()
+                                .map(type_to_key)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        };
+                        if !self.struct_seen.contains(&key) {
+                            self.struct_seen.insert(key.clone());
+                            self.struct_queue.push_back(StructInstRequest {
+                                key,
+                                span,
+                                concrete_types: type_args.clone(),
+                            });
+                        }
+                    }
+                }
+
+                // Also recurse into the type args themselves
+                for ta in type_args {
+                    self.collect_struct_insts_from_type(ta, span)?;
+                }
+            }
+            Type::Array { elem, .. } => {
+                self.collect_struct_insts_from_type(elem, span)?;
+            }
+            Type::RuntimeArray { elem, .. }
+            | Type::Atomic { elem, .. }
+            | Type::Ptr { elem, .. } => {
+                self.collect_struct_insts_from_type(elem, span)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn collect_from_block(&mut self, block: &Block) -> Result<(), crate::parse::Error> {
@@ -349,11 +471,16 @@ impl MonoCtx {
     fn collect_from_stmt(&mut self, stmt: &Stmt) -> Result<(), crate::parse::Error> {
         match stmt {
             Stmt::Local(local) => {
+                // Check the type annotation for generic struct usages
+                if let Some((_, ty)) = &local.ty {
+                    self.collect_struct_insts_from_type(ty, local.ident.span())?;
+                }
                 if let Some(init) = &local.init {
                     self.collect_from_expr(&init.expr)?;
                 }
             }
             Stmt::Const(c) => {
+                self.collect_struct_insts_from_type(&c.ty, c.ident.span())?;
                 self.collect_from_expr(&c.expr)?;
             }
             Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
@@ -460,6 +587,44 @@ impl MonoCtx {
                         FnPath::TypeMethod { ty, .. } => ty.span(),
                     };
 
+                    // Check if this is a generic struct method call
+                    // (Pair::<f32>::first). The type_args are struct type args.
+                    if let FnPath::TypeMethod { ty, .. } = path {
+                        let ty_name = ty.to_string();
+                        if let Some(struct_tmpl) = self.struct_templates.get(&ty_name) {
+                            if type_args.len() != struct_tmpl.type_params.len() {
+                                return Err(crate::parse::Error::unsupported(
+                                    span,
+                                    format!(
+                                        "'{}' expects {} type argument(s), but {} were provided",
+                                        ty_name,
+                                        struct_tmpl.type_params.len(),
+                                        type_args.len()
+                                    ),
+                                ));
+                            }
+                            // Enqueue the struct instantiation
+                            if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                                let key = InstKey {
+                                    fn_name: ty_name.clone(),
+                                    type_args: type_args.iter().map(type_to_key).collect::<Result<
+                                        Vec<_>,
+                                        _,
+                                    >>(
+                                    )?,
+                                };
+                                if !self.struct_seen.contains(&key) {
+                                    self.struct_seen.insert(key.clone());
+                                    self.struct_queue.push_back(StructInstRequest {
+                                        key,
+                                        span,
+                                        concrete_types: type_args.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(template) = self.templates.get(&fn_name) {
                         if type_args.len() != template.type_params.len() {
                             return Err(crate::parse::Error::unsupported(
@@ -540,10 +705,53 @@ impl MonoCtx {
                     }
                 }
             }
-            Expr::Cast { lhs, .. } => {
+            Expr::Cast { lhs, ty } => {
                 self.collect_from_expr(lhs)?;
+                self.collect_struct_insts_from_type(ty, lhs.span())?;
             }
-            Expr::Struct { fields, .. } => {
+            Expr::Struct {
+                ident,
+                type_args,
+                fields,
+                ..
+            } => {
+                // If this is a generic struct construction, enqueue it
+                if !type_args.is_empty() {
+                    let struct_name = ident.to_string();
+                    let span = ident.span();
+
+                    if let Some(template) = self.struct_templates.get(&struct_name) {
+                        if type_args.len() != template.type_params.len() {
+                            return Err(crate::parse::Error::unsupported(
+                                span,
+                                format!(
+                                    "'{}' expects {} type argument(s), but {} were provided",
+                                    struct_name,
+                                    template.type_params.len(),
+                                    type_args.len()
+                                ),
+                            ));
+                        }
+
+                        if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                            let key = InstKey {
+                                fn_name: struct_name.clone(),
+                                type_args: type_args
+                                    .iter()
+                                    .map(type_to_key)
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            };
+                            if !self.struct_seen.contains(&key) {
+                                self.struct_seen.insert(key.clone());
+                                self.struct_queue.push_back(StructInstRequest {
+                                    key,
+                                    span,
+                                    concrete_types: type_args.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
                 for field in fields.iter() {
                     self.collect_from_expr(&field.expr)?;
                 }
@@ -562,16 +770,47 @@ impl MonoCtx {
         Ok(())
     }
 
-    /// Process the instantiation queue, generating monomorphized functions.
+    /// Process both function and struct instantiation queues until empty.
+    ///
+    /// Struct instantiations may produce new function instantiations (from impl
+    /// methods) and vice versa (a monomorphized function body may reference new
+    /// generic struct types), so we drain both queues in a loop.
     fn process_queue(&mut self) -> Result<(), crate::parse::Error> {
-        while let Some(request) = self.queue.pop_front() {
-            if self.generated.len() + self.queue.len() > MAX_INSTANTIATIONS {
-                return Err(crate::parse::Error::unsupported(
-                    request.span,
-                    format!("exceeded maximum of {MAX_INSTANTIATIONS} generic instantiations"),
-                ));
+        loop {
+            let mut made_progress = false;
+
+            // Process struct queue first (struct defs must come before
+            // functions that use them).
+            while let Some(request) = self.struct_queue.pop_front() {
+                if self.generated.len() + self.struct_queue.len() + self.queue.len()
+                    > MAX_INSTANTIATIONS
+                {
+                    return Err(crate::parse::Error::unsupported(
+                        request.span,
+                        format!("exceeded maximum of {MAX_INSTANTIATIONS} generic instantiations"),
+                    ));
+                }
+                self.instantiate_struct(request)?;
+                made_progress = true;
             }
-            self.instantiate(request)?;
+
+            // Process function queue
+            while let Some(request) = self.queue.pop_front() {
+                if self.generated.len() + self.queue.len() + self.struct_queue.len()
+                    > MAX_INSTANTIATIONS
+                {
+                    return Err(crate::parse::Error::unsupported(
+                        request.span,
+                        format!("exceeded maximum of {MAX_INSTANTIATIONS} generic instantiations"),
+                    ));
+                }
+                self.instantiate(request)?;
+                made_progress = true;
+            }
+
+            if !made_progress {
+                break;
+            }
         }
         Ok(())
     }
@@ -626,24 +865,135 @@ impl MonoCtx {
         Ok(())
     }
 
-    /// Apply the results: remove generic templates, add monomorphized fns,
-    /// rewrite call sites.
-    fn apply(&self, module: &mut ItemMod) -> Result<(), crate::parse::Error> {
-        // Remove generic template functions
-        module.content.retain(|item| {
-            if let Item::Fn(f) = item {
-                f.type_params.is_empty()
-            } else {
-                true
+    /// Instantiate a generic struct with concrete types, and also instantiate
+    /// all associated impl block methods.
+    fn instantiate_struct(
+        &mut self,
+        request: StructInstRequest,
+    ) -> Result<(), crate::parse::Error> {
+        let template = self.struct_templates[&request.key.fn_name].clone();
+        let mangled_name = mangle_name(&request.key.fn_name, &request.concrete_types)?;
+
+        // Check for name collisions
+        if self.reserved_names.contains(&mangled_name) {
+            return Err(crate::parse::Error::unsupported(
+                request.span,
+                format!(
+                    "generated monomorphized struct name '{mangled_name}' collides with an \
+                     existing item"
+                ),
+            ));
+        }
+        self.reserved_names.insert(mangled_name.clone());
+
+        // Build substitution map: type_param_name -> concrete Type
+        let subst: BTreeMap<String, Type> = template
+            .type_params
+            .iter()
+            .zip(request.concrete_types.iter())
+            .map(|(param, ty)| (param.to_string(), ty.clone()))
+            .collect();
+
+        // Clone and substitute fields
+        let mut mono_struct = template.clone();
+        mono_struct.type_params.clear();
+        mono_struct.ident = Ident::new(&mangled_name, template.ident.span());
+
+        for pair in mono_struct.fields.named.iter_mut() {
+            substitute_type(&mut pair.ty, &subst);
+        }
+
+        // Discover any new struct instantiations from monomorphized fields
+        for pair in mono_struct.fields.named.iter() {
+            self.collect_struct_insts_from_type(&pair.ty, pair.ident.span())?;
+        }
+
+        self.generated.push(Item::Struct(mono_struct));
+
+        // Also instantiate all associated generic impl blocks
+        let original_name = request.key.fn_name.clone();
+        if let Some(impl_blocks) = self.impl_templates.get(&original_name).cloned() {
+            for impl_template in &impl_blocks {
+                // Build substitution for the impl block's type params
+                let impl_subst: BTreeMap<String, Type> = impl_template
+                    .type_params
+                    .iter()
+                    .zip(request.concrete_types.iter())
+                    .map(|(param, ty)| (param.to_string(), ty.clone()))
+                    .collect();
+
+                // Monomorphize each method and constant
+                for ii in &impl_template.items {
+                    match ii {
+                        crate::parse::ImplItem::Fn(f) => {
+                            let method_mangled_name = format!("{}_{}", mangled_name, f.ident);
+
+                            if self.reserved_names.contains(&method_mangled_name) {
+                                return Err(crate::parse::Error::unsupported(
+                                    f.ident.span(),
+                                    format!(
+                                        "generated monomorphized method name \
+                                         '{method_mangled_name}' collides with an existing item"
+                                    ),
+                                ));
+                            }
+                            self.reserved_names.insert(method_mangled_name.clone());
+
+                            let mut mono_fn = f.clone();
+                            mono_fn.ident = Ident::new(&method_mangled_name, f.ident.span());
+
+                            // Substitute types in inputs
+                            for pair in mono_fn.inputs.iter_mut() {
+                                substitute_type(&mut pair.ty, &impl_subst);
+                            }
+                            // Substitute in return type
+                            if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
+                                substitute_type(ty, &impl_subst);
+                            }
+                            // Substitute in block
+                            substitute_block(&mut mono_fn.block, &impl_subst);
+
+                            // Discover any new instantiations from monomorphized body
+                            self.collect_from_fn(&mono_fn)?;
+
+                            self.generated.push(Item::Fn(Box::new(mono_fn)));
+                        }
+                        crate::parse::ImplItem::Const(c) => {
+                            let const_mangled_name = format!("{}_{}", mangled_name, c.ident);
+
+                            let mut mono_const = c.clone();
+                            mono_const.ident = Ident::new(&const_mangled_name, c.ident.span());
+                            substitute_type(&mut mono_const.ty, &impl_subst);
+                            substitute_expr(&mut mono_const.expr, &impl_subst);
+
+                            self.generated.push(Item::Const(Box::new(mono_const)));
+                        }
+                    }
+                }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Apply the results: remove generic templates, add monomorphized items,
+    /// rewrite all types and call sites.
+    fn apply(&self, module: &mut ItemMod) -> Result<(), crate::parse::Error> {
+        // Remove generic template functions, structs, and impl blocks
+        module.content.retain(|item| match item {
+            Item::Fn(f) => f.type_params.is_empty(),
+            Item::Struct(s) => s.type_params.is_empty(),
+            Item::Impl(i) => i.type_params.is_empty(),
+            _ => true,
         });
 
-        // Add generated monomorphized functions
+        // Add generated monomorphized items
         module.content.extend(self.generated.clone());
 
-        // Rewrite all call sites in all items
+        // Rewrite all call sites and struct types in all items
         for item in &mut module.content {
             rewrite_calls_in_item(item, &self.templates);
+            rewrite_struct_types_in_item(item, &self.struct_templates);
         }
 
         Ok(())
@@ -666,10 +1016,16 @@ fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>) {
         Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
             substitute_type(elem, subst);
         }
+        Type::Struct { type_args, .. } => {
+            // Substitute type params inside generic struct type arguments
+            // (e.g., Pair<T> where T is in the substitution map).
+            for ta in type_args.iter_mut() {
+                substitute_type(ta, subst);
+            }
+        }
         Type::Scalar { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }
-        | Type::Struct { .. }
         | Type::Sampler { .. }
         | Type::SamplerComparison { .. }
         | Type::Texture { .. }
@@ -836,7 +1192,19 @@ fn substitute_expr(expr: &mut Expr, subst: &BTreeMap<String, Type>) {
             substitute_expr(lhs, subst);
             substitute_type(ty, subst);
         }
-        Expr::Struct { fields, .. } => {
+        Expr::Struct {
+            ident,
+            type_args,
+            fields,
+            ..
+        } => {
+            // Substitute TypeMethod-style ident if it's a type param
+            if let Some(concrete) = subst.get(&ident.to_string()) {
+                *ident = type_to_ident(concrete, ident.span());
+            }
+            for ta in type_args.iter_mut() {
+                substitute_type(ta, subst);
+            }
             for field in fields.iter_mut() {
                 substitute_expr(&mut field.expr, subst);
             }
@@ -1046,6 +1414,277 @@ fn rewrite_calls_in_expr(expr: &mut Expr, templates: &BTreeMap<String, ItemFn>) 
         }
         Expr::ZeroValueArray { len, .. } => {
             rewrite_calls_in_expr(len, templates);
+        }
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+    }
+}
+
+// ===== Struct type rewriting =====
+
+/// Rewrite generic struct types in an item to use mangled names.
+///
+/// After monomorphization, `Type::Struct { ident: "Pair", type_args: [f32] }`
+/// becomes `Type::Struct { ident: "Pair_f32", type_args: [] }`.
+fn rewrite_struct_types_in_item(item: &mut Item, struct_templates: &BTreeMap<String, ItemStruct>) {
+    match item {
+        Item::Fn(f) => rewrite_struct_types_in_fn(f, struct_templates),
+        Item::Impl(impl_item) => {
+            for ii in &mut impl_item.items {
+                match ii {
+                    crate::parse::ImplItem::Fn(f) => {
+                        rewrite_struct_types_in_fn(f, struct_templates);
+                    }
+                    crate::parse::ImplItem::Const(c) => {
+                        rewrite_struct_type(&mut c.ty, struct_templates);
+                        rewrite_struct_types_in_expr(&mut c.expr, struct_templates);
+                    }
+                }
+            }
+        }
+        Item::Struct(s) => {
+            for pair in s.fields.named.iter_mut() {
+                rewrite_struct_type(&mut pair.ty, struct_templates);
+            }
+        }
+        Item::Const(c) => {
+            rewrite_struct_type(&mut c.ty, struct_templates);
+            rewrite_struct_types_in_expr(&mut c.expr, struct_templates);
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_struct_types_in_fn(f: &mut ItemFn, struct_templates: &BTreeMap<String, ItemStruct>) {
+    for pair in f.inputs.iter_mut() {
+        rewrite_struct_type(&mut pair.ty, struct_templates);
+    }
+    if let ReturnType::Type { ty, .. } = &mut f.return_type {
+        rewrite_struct_type(ty, struct_templates);
+    }
+    rewrite_struct_types_in_block(&mut f.block, struct_templates);
+}
+
+fn rewrite_struct_type(ty: &mut Type, struct_templates: &BTreeMap<String, ItemStruct>) {
+    match ty {
+        Type::Struct { ident, type_args } if !type_args.is_empty() => {
+            if struct_templates.contains_key(&ident.to_string()) {
+                // Mangle the name and clear type_args
+                let mangled = mangle_name(&ident.to_string(), type_args)
+                    .expect("mangle_name should not fail for concrete types");
+                *ident = Ident::new(&mangled, ident.span());
+                type_args.clear();
+            }
+        }
+        Type::Array { elem, .. } => {
+            rewrite_struct_type(elem, struct_templates);
+        }
+        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
+            rewrite_struct_type(elem, struct_templates);
+        }
+        Type::Struct { type_args, .. } => {
+            // Non-generic struct or struct with type_args already cleared
+            for ta in type_args.iter_mut() {
+                rewrite_struct_type(ta, struct_templates);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_struct_types_in_block(
+    block: &mut Block,
+    struct_templates: &BTreeMap<String, ItemStruct>,
+) {
+    for stmt in &mut block.stmt {
+        rewrite_struct_types_in_stmt(stmt, struct_templates);
+    }
+}
+
+fn rewrite_struct_types_in_stmt(stmt: &mut Stmt, struct_templates: &BTreeMap<String, ItemStruct>) {
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some((_, ty)) = &mut local.ty {
+                rewrite_struct_type(ty, struct_templates);
+            }
+            if let Some(init) = &mut local.init {
+                rewrite_struct_types_in_expr(&mut init.expr, struct_templates);
+            }
+        }
+        Stmt::Const(c) => {
+            rewrite_struct_type(&mut c.ty, struct_templates);
+            rewrite_struct_types_in_expr(&mut c.expr, struct_templates);
+        }
+        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            rewrite_struct_types_in_expr(lhs, struct_templates);
+            rewrite_struct_types_in_expr(rhs, struct_templates);
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            rewrite_struct_types_in_expr(condition, struct_templates);
+            rewrite_struct_types_in_block(body, struct_templates);
+        }
+        Stmt::Loop { body, .. } => {
+            rewrite_struct_types_in_block(body, struct_templates);
+        }
+        Stmt::Expr { expr, .. } => {
+            rewrite_struct_types_in_expr(expr, struct_templates);
+        }
+        Stmt::If(if_stmt) => {
+            rewrite_struct_types_in_if(if_stmt, struct_templates);
+        }
+        Stmt::For(for_loop) => {
+            if let Some((_, ty)) = &mut for_loop.ty {
+                rewrite_struct_type(ty, struct_templates);
+            }
+            rewrite_struct_types_in_expr(&mut for_loop.from, struct_templates);
+            rewrite_struct_types_in_expr(&mut for_loop.to, struct_templates);
+            rewrite_struct_types_in_block(&mut for_loop.body, struct_templates);
+        }
+        Stmt::Switch(switch) => {
+            rewrite_struct_types_in_expr(&mut switch.selector, struct_templates);
+            for arm in &mut switch.arms {
+                rewrite_struct_types_in_block(&mut arm.body, struct_templates);
+            }
+        }
+        Stmt::Return { expr, .. } => {
+            if let Some(e) = expr {
+                rewrite_struct_types_in_expr(e, struct_templates);
+            }
+        }
+        Stmt::Block(block) => {
+            rewrite_struct_types_in_block(block, struct_templates);
+        }
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+            ..
+        } => {
+            rewrite_struct_types_in_expr(slab, struct_templates);
+            rewrite_struct_types_in_expr(offset, struct_templates);
+            rewrite_struct_types_in_expr(dest, struct_templates);
+            rewrite_struct_types_in_expr(size, struct_templates);
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+            ..
+        } => {
+            rewrite_struct_types_in_expr(slab, struct_templates);
+            rewrite_struct_types_in_expr(offset, struct_templates);
+            rewrite_struct_types_in_expr(src, struct_templates);
+            if let Some(s) = size {
+                rewrite_struct_types_in_expr(s, struct_templates);
+            }
+        }
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
+    }
+}
+
+fn rewrite_struct_types_in_if(
+    if_stmt: &mut crate::parse::StmtIf,
+    struct_templates: &BTreeMap<String, ItemStruct>,
+) {
+    rewrite_struct_types_in_expr(&mut if_stmt.condition, struct_templates);
+    rewrite_struct_types_in_block(&mut if_stmt.then_block, struct_templates);
+    if let Some(else_branch) = &mut if_stmt.else_branch {
+        match &mut else_branch.body {
+            ElseBody::Block(block) => rewrite_struct_types_in_block(block, struct_templates),
+            ElseBody::If(nested_if) => rewrite_struct_types_in_if(nested_if, struct_templates),
+        }
+    }
+}
+
+fn rewrite_struct_types_in_expr(expr: &mut Expr, struct_templates: &BTreeMap<String, ItemStruct>) {
+    match expr {
+        Expr::FnCall {
+            path,
+            type_args,
+            params,
+            ..
+        } => {
+            // Rewrite TypeMethod paths for generic struct methods.
+            // For `Pair::<f32>::first(p)`, the type_args hold [f32] and the
+            // path is TypeMethod { ty: "Pair", method: "first" }.
+            // We mangle this to a simple Ident: "Pair_f32_first".
+            if let FnPath::TypeMethod { ty, method, .. } = path {
+                let ty_name = ty.to_string();
+                if struct_templates.contains_key(&ty_name) && !type_args.is_empty() {
+                    let mangled_struct = mangle_name(&ty_name, type_args)
+                        .expect("mangle_name should not fail for concrete types");
+                    let mangled_fn = format!("{}_{}", mangled_struct, method);
+                    let span = ty.span();
+                    *path = FnPath::Ident(Ident::new(&mangled_fn, span));
+                    type_args.clear();
+                }
+            }
+            for ta in type_args.iter_mut() {
+                rewrite_struct_type(ta, struct_templates);
+            }
+            for param in params.iter_mut() {
+                rewrite_struct_types_in_expr(param, struct_templates);
+            }
+        }
+        Expr::Struct {
+            ident,
+            type_args,
+            fields,
+            ..
+        } => {
+            if !type_args.is_empty() && struct_templates.contains_key(&ident.to_string()) {
+                let mangled = mangle_name(&ident.to_string(), type_args)
+                    .expect("mangle_name should not fail for concrete types");
+                *ident = Ident::new(&mangled, ident.span());
+                type_args.clear();
+            }
+            for field in fields.iter_mut() {
+                rewrite_struct_types_in_expr(&mut field.expr, struct_templates);
+            }
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            rewrite_struct_types_in_expr(lhs, struct_templates);
+            rewrite_struct_types_in_expr(rhs, struct_templates);
+        }
+        Expr::Unary { expr, .. } => {
+            rewrite_struct_types_in_expr(expr, struct_templates);
+        }
+        Expr::Paren { inner, .. } => {
+            rewrite_struct_types_in_expr(inner, struct_templates);
+        }
+        Expr::Array { elems, .. } => {
+            for elem in elems.iter_mut() {
+                rewrite_struct_types_in_expr(elem, struct_templates);
+            }
+        }
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            rewrite_struct_types_in_expr(lhs, struct_templates);
+            rewrite_struct_types_in_expr(index, struct_templates);
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            rewrite_struct_types_in_expr(lhs, struct_templates);
+            if let Some(ps) = params {
+                for p in ps.iter_mut() {
+                    rewrite_struct_types_in_expr(p, struct_templates);
+                }
+            }
+        }
+        Expr::Cast { lhs, ty } => {
+            rewrite_struct_types_in_expr(lhs, struct_templates);
+            rewrite_struct_type(ty, struct_templates);
+        }
+        Expr::FieldAccess { base, .. } => {
+            rewrite_struct_types_in_expr(base, struct_templates);
+        }
+        Expr::Reference { expr, .. } => {
+            rewrite_struct_types_in_expr(expr, struct_templates);
+        }
+        Expr::ZeroValueArray { elem_type, len, .. } => {
+            rewrite_struct_type(elem_type, struct_templates);
+            rewrite_struct_types_in_expr(len, struct_templates);
         }
         Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
     }
@@ -1844,7 +2483,7 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
             ..
         } => format!("Vec{}{}", elements, scalar_ty.short_name()),
         Type::Matrix { size, .. } => format!("Mat{}f", size),
-        Type::Struct { ident } => return ident.clone(),
+        Type::Struct { ident, .. } => return ident.clone(),
         Type::Sampler { ident } => return ident.clone(),
         Type::SamplerComparison { ident } => return ident.clone(),
         Type::Texture { ident, .. } => return ident.clone(),
@@ -1879,7 +2518,17 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             ..
         } => format!("vec{}{}", elements, scalar_ty.short_name()),
         Type::Matrix { size, .. } => format!("mat{}x{}f", size, size),
-        Type::Struct { ident } => ident.to_string(),
+        Type::Struct { ident, type_args } => {
+            if type_args.is_empty() {
+                ident.to_string()
+            } else {
+                let mangled_args: Vec<String> = type_args
+                    .iter()
+                    .map(mangle_type)
+                    .collect::<Result<_, _>>()?;
+                format!("{}_{}", ident, mangled_args.join("_"))
+            }
+        }
         Type::Array { elem, len, .. } => {
             format!("array_{}_{}", mangle_type(elem)?, len_to_string(len))
         }
@@ -1935,7 +2584,24 @@ fn type_to_wgsl(ty: &Type) -> Result<String, crate::parse::Error> {
             ..
         } => format!("vec{}{}", elements, scalar_ty.short_name()),
         Type::Matrix { size, .. } => format!("mat{}x{}f", size, size),
-        Type::Struct { ident } => ident.to_string(),
+        Type::Struct { ident, type_args } => {
+            if type_args.is_empty() {
+                ident.to_string()
+            } else {
+                let wgsl_args: Vec<String> = type_args
+                    .iter()
+                    .map(type_to_wgsl)
+                    .collect::<Result<_, _>>()?;
+                // Generic struct types in WGSL are monomorphized, so use the
+                // mangled name.
+                let mangled_args: Vec<String> = type_args
+                    .iter()
+                    .map(mangle_type)
+                    .collect::<Result<_, _>>()?;
+                let _ = wgsl_args; // future: may use for template placeholders
+                format!("{}_{}", ident, mangled_args.join("_"))
+            }
+        }
         Type::Array { elem, len, .. } => {
             format!("array<{}, {}>", type_to_wgsl(elem)?, len_to_string(len))
         }
@@ -1991,7 +2657,19 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
             Box::new(TypeKey::Scalar(scalar_ty.wgsl_name().to_string())),
         ),
         Type::Matrix { size, .. } => TypeKey::Matrix(*size),
-        Type::Struct { ident } => TypeKey::Struct(ident.to_string()),
+        Type::Struct { ident, type_args } => {
+            if type_args.is_empty() {
+                TypeKey::Struct(ident.to_string())
+            } else {
+                // For generic struct instantiations, include the mangled name
+                // so different instantiations get different keys.
+                let mangled_args: Vec<String> = type_args
+                    .iter()
+                    .map(mangle_type)
+                    .collect::<Result<_, _>>()?;
+                TypeKey::Struct(format!("{}_{}", ident, mangled_args.join("_")))
+            }
+        }
         Type::Array { elem, len, .. } => {
             TypeKey::Array(Box::new(type_to_key(elem)?), len_to_string(len))
         }
@@ -2511,6 +3189,160 @@ mod test {
                 .iter()
                 .any(|d| d.callee == "inner" && d.type_param_mapping == vec![1]),
             "Missing dependency mapping inner::<U> -> [1]"
+        );
+    }
+
+    #[test]
+    fn mono_generic_struct_simple() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Pair<T> {
+                    pub a: T,
+                    pub b: T,
+                }
+
+                pub fn make_pair() -> f32 {
+                    let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+                    return p.a;
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("struct Pair_f32"),
+            "Expected monomorphized struct Pair_f32, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("a:") && wgsl.contains("f32"),
+            "Expected field 'a: f32' in monomorphized struct, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("b:") && wgsl.contains("f32"),
+            "Expected field 'b: f32' in monomorphized struct, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("Pair_f32("),
+            "Expected rewritten struct constructor, got:\n{wgsl}"
+        );
+        assert!(
+            !wgsl.contains("struct Pair {"),
+            "Generic struct template should be removed, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn mono_generic_struct_multiple_instantiations() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Wrapper<T> {
+                    pub value: T,
+                }
+
+                pub fn use_both() -> f32 {
+                    let a: Wrapper<f32> = Wrapper::<f32> { value: 1.0 };
+                    let b: Wrapper<i32> = Wrapper::<i32> { value: 1 };
+                    return a.value;
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("struct Wrapper_f32"),
+            "Expected Wrapper_f32, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("struct Wrapper_i32"),
+            "Expected Wrapper_i32, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn mono_generic_struct_with_impl() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Pair<T> {
+                    pub a: T,
+                    pub b: T,
+                }
+
+                impl<T> Pair<T> {
+                    pub fn first(p: Pair<T>) -> T {
+                        return p.a;
+                    }
+                }
+
+                pub fn main_fn() -> f32 {
+                    let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+                    return Pair::<f32>::first(p);
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("struct Pair_f32"),
+            "Expected monomorphized struct, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("fn Pair_f32_first("),
+            "Expected monomorphized method, got:\n{wgsl}"
+        );
+        // The method should take Pair_f32 and return f32
+        assert!(
+            wgsl.contains("p:Pair_f32") || wgsl.contains("p: Pair_f32"),
+            "Expected monomorphized param type, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn mono_generic_struct_in_function_param() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Container<T> {
+                    pub val: T,
+                }
+
+                pub fn extract(c: Container<f32>) -> f32 {
+                    return c.val;
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("struct Container_f32"),
+            "Expected monomorphized struct, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("c:Container_f32") || wgsl.contains("c: Container_f32"),
+            "Expected monomorphized param type, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn mono_generic_struct_template_removed() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Pair<T> {
+                    pub a: T,
+                    pub b: T,
+                }
+
+                impl<T> Pair<T> {
+                    pub fn first(p: Pair<T>) -> T {
+                        return p.a;
+                    }
+                }
+
+                pub fn use_it() -> f32 {
+                    let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+                    return Pair::<f32>::first(p);
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        // The generic impl block should be removed
+        assert!(
+            !wgsl.contains("fn first("),
+            "Generic impl methods should be removed from WGSL, got:\n{wgsl}"
         );
     }
 }

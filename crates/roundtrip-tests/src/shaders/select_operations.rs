@@ -453,6 +453,8 @@ impl RoundtripTest for SelectOperationsTest {
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
+        use wgsl_rs::std::*;
+
         let mut results = Vec::new();
 
         // select_f32_scalar test
@@ -472,14 +474,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let true_val = f32::from_bits(inputs[i * 3]);
-                    let false_val = f32::from_bits(inputs[i * 3 + 1]);
-                    let condition = inputs[i * 3 + 2] != 0;
-                    if condition { true_val } else { false_val }.to_bits()
-                })
-                .collect();
+
+            select_f32_scalar::INPUT.set(inputs);
+            select_f32_scalar::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_f32_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_f32_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_f32_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N)
                 .map(|i| format!("select_f32_scalar[{}]", i))
@@ -511,14 +516,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let true_val = inputs[i * 3] as i32;
-                    let false_val = inputs[i * 3 + 1] as i32;
-                    let condition = inputs[i * 3 + 2] != 0;
-                    (if condition { true_val } else { false_val }) as u32
-                })
-                .collect();
+
+            select_i32_scalar::INPUT.set(inputs);
+            select_i32_scalar::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_i32_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_i32_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_i32_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N)
                 .map(|i| format!("select_i32_scalar[{}]", i))
@@ -550,14 +558,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let true_val = inputs[i * 3];
-                    let false_val = inputs[i * 3 + 1];
-                    let condition = inputs[i * 3 + 2] != 0;
-                    if condition { true_val } else { false_val }
-                })
-                .collect();
+
+            select_u32_scalar::INPUT.set(inputs);
+            select_u32_scalar::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_u32_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_u32_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_u32_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N)
                 .map(|i| format!("select_u32_scalar[{}]", i))
@@ -589,28 +600,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 2)
-                .map(|i| {
-                    let test_idx = i / 2;
-                    let component = i % 2;
-                    let base = test_idx * 5;
-                    let true_val = [
-                        f32::from_bits(inputs[base]),
-                        f32::from_bits(inputs[base + 1]),
-                    ];
-                    let false_val = [
-                        f32::from_bits(inputs[base + 2]),
-                        f32::from_bits(inputs[base + 3]),
-                    ];
-                    let condition = inputs[base + 4] != 0;
-                    if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }
-                    .to_bits()
-                })
-                .collect();
+
+            select_vec2f_scalar::INPUT.set(inputs);
+            select_vec2f_scalar::OUTPUT.set([0u32; N * 2]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec2f_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec2f_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec2f_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 2)
                 .map(|i| format!("select_vec2f_scalar[{}]", i))
@@ -642,32 +642,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 4)
-                .map(|i| {
-                    let test_idx = i / 4;
-                    let component = i % 4;
-                    let base = test_idx * 9;
-                    let true_val = [
-                        f32::from_bits(inputs[base]),
-                        f32::from_bits(inputs[base + 1]),
-                        f32::from_bits(inputs[base + 2]),
-                        f32::from_bits(inputs[base + 3]),
-                    ];
-                    let false_val = [
-                        f32::from_bits(inputs[base + 4]),
-                        f32::from_bits(inputs[base + 5]),
-                        f32::from_bits(inputs[base + 6]),
-                        f32::from_bits(inputs[base + 7]),
-                    ];
-                    let condition = inputs[base + 8] != 0;
-                    if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }
-                    .to_bits()
-                })
-                .collect();
+
+            select_vec4f_scalar::INPUT.set(inputs);
+            select_vec4f_scalar::OUTPUT.set([0u32; N * 4]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec4f_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec4f_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec4f_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4f_scalar[{}]", i))
@@ -699,31 +684,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 4)
-                .map(|i| {
-                    let test_idx = i / 4;
-                    let component = i % 4;
-                    let base = test_idx * 9;
-                    let true_val = [
-                        inputs[base] as i32,
-                        inputs[base + 1] as i32,
-                        inputs[base + 2] as i32,
-                        inputs[base + 3] as i32,
-                    ];
-                    let false_val = [
-                        inputs[base + 4] as i32,
-                        inputs[base + 5] as i32,
-                        inputs[base + 6] as i32,
-                        inputs[base + 7] as i32,
-                    ];
-                    let condition = inputs[base + 8] != 0;
-                    (if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }) as u32
-                })
-                .collect();
+
+            select_vec4i_scalar::INPUT.set(inputs);
+            select_vec4i_scalar::OUTPUT.set([0u32; N * 4]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec4i_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec4i_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec4i_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4i_scalar[{}]", i))
@@ -755,31 +726,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 4)
-                .map(|i| {
-                    let test_idx = i / 4;
-                    let component = i % 4;
-                    let base = test_idx * 9;
-                    let true_val = [
-                        inputs[base],
-                        inputs[base + 1],
-                        inputs[base + 2],
-                        inputs[base + 3],
-                    ];
-                    let false_val = [
-                        inputs[base + 4],
-                        inputs[base + 5],
-                        inputs[base + 6],
-                        inputs[base + 7],
-                    ];
-                    let condition = inputs[base + 8] != 0;
-                    if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }
-                })
-                .collect();
+
+            select_vec4u_scalar::INPUT.set(inputs);
+            select_vec4u_scalar::OUTPUT.set([0u32; N * 4]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec4u_scalar::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec4u_scalar::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec4u_scalar::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4u_scalar[{}]", i))
@@ -811,32 +768,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 4)
-                .map(|i| {
-                    let test_idx = i / 4;
-                    let component = i % 4;
-                    let base = test_idx * 12;
-                    let true_val = [
-                        f32::from_bits(inputs[base]),
-                        f32::from_bits(inputs[base + 1]),
-                        f32::from_bits(inputs[base + 2]),
-                        f32::from_bits(inputs[base + 3]),
-                    ];
-                    let false_val = [
-                        f32::from_bits(inputs[base + 4]),
-                        f32::from_bits(inputs[base + 5]),
-                        f32::from_bits(inputs[base + 6]),
-                        f32::from_bits(inputs[base + 7]),
-                    ];
-                    let condition = inputs[base + 8 + component] != 0;
-                    if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }
-                    .to_bits()
-                })
-                .collect();
+
+            select_vec4f_vec4b::INPUT.set(inputs);
+            select_vec4f_vec4b::OUTPUT.set([0u32; N * 4]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec4f_vec4b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec4f_vec4b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec4f_vec4b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4f_vec4b[{}]", i))
@@ -868,31 +810,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 4)
-                .map(|i| {
-                    let test_idx = i / 4;
-                    let component = i % 4;
-                    let base = test_idx * 12;
-                    let true_val = [
-                        inputs[base] as i32,
-                        inputs[base + 1] as i32,
-                        inputs[base + 2] as i32,
-                        inputs[base + 3] as i32,
-                    ];
-                    let false_val = [
-                        inputs[base + 4] as i32,
-                        inputs[base + 5] as i32,
-                        inputs[base + 6] as i32,
-                        inputs[base + 7] as i32,
-                    ];
-                    let condition = inputs[base + 8 + component] != 0;
-                    (if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }) as u32
-                })
-                .collect();
+
+            select_vec4i_vec4b::INPUT.set(inputs);
+            select_vec4i_vec4b::OUTPUT.set([0u32; N * 4]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec4i_vec4b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec4i_vec4b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec4i_vec4b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4i_vec4b[{}]", i))
@@ -924,31 +852,17 @@ impl RoundtripTest for SelectOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N * 4)
-                .map(|i| {
-                    let test_idx = i / 4;
-                    let component = i % 4;
-                    let base = test_idx * 12;
-                    let true_val = [
-                        inputs[base],
-                        inputs[base + 1],
-                        inputs[base + 2],
-                        inputs[base + 3],
-                    ];
-                    let false_val = [
-                        inputs[base + 4],
-                        inputs[base + 5],
-                        inputs[base + 6],
-                        inputs[base + 7],
-                    ];
-                    let condition = inputs[base + 8 + component] != 0;
-                    if condition {
-                        true_val[component]
-                    } else {
-                        false_val[component]
-                    }
-                })
-                .collect();
+
+            select_vec4u_vec4b::INPUT.set(inputs);
+            select_vec4u_vec4b::OUTPUT.set([0u32; N * 4]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                select_vec4u_vec4b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    select_vec4u_vec4b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = select_vec4u_vec4b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4u_vec4b[{}]", i))

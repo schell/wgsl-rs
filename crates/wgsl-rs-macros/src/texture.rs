@@ -32,7 +32,8 @@ pub fn texture(input: TokenStream) -> TokenStream {
             quote! {
                 #[doc(hidden)]
                 static #inner_name: #rust_type<#sample_type> = #rust_type::new(#group, #binding);
-                const #name: &'static #rust_type<#sample_type> = &#inner_name;
+                #[doc(hidden)]
+                pub const #name: &'static #rust_type<#sample_type> = &#inner_name;
             }
         }
         Type::TextureDepth { kind, .. } => {
@@ -41,7 +42,8 @@ pub fn texture(input: TokenStream) -> TokenStream {
             quote! {
                 #[doc(hidden)]
                 static #inner_name: #rust_type = #rust_type::new(#group, #binding);
-                const #name: &'static #rust_type = &#inner_name;
+                #[doc(hidden)]
+                pub const #name: &'static #rust_type = &#inner_name;
             }
         }
         _ => {

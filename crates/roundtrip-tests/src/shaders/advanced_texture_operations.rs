@@ -698,29 +698,18 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 ),
             );
 
-            let cpu_tex: Texture2D<f32> = Texture2D::new(0, 0);
-            write_cpu_texture2d(&cpu_tex, &color0);
-            let cpu_sampler: Sampler = Sampler::new(0, 0);
-            cpu_sampler.set(SamplerState::default());
+            write_cpu_texture2d(tex2d_variants::TEX, &color0);
+            tex2d_variants::S.set(SamplerState::default());
 
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let dims = texture_dimensions(&cpu_tex);
-                    let uv = vec2f(
-                        builtins.position.x / dims.x() as f32,
-                        builtins.position.y / dims.y() as f32,
-                    );
-                    let ddx = vec2f(1.0 / dims.x() as f32, 0.0);
-                    let ddy = vec2f(0.0, 1.0 / dims.y() as f32);
-                    let a = texture_sample_level(&cpu_tex, &cpu_sampler, uv, 0.0);
-                    let b = texture_sample_bias(&cpu_tex, &cpu_sampler, uv, 0.0);
-                    let c = texture_sample_grad(&cpu_tex, &cpu_sampler, uv, ddx, ddy);
-                    let d =
-                        texture_sample_level_offset(&cpu_tex, &cpu_sampler, uv, 0.0, vec2i(1, 0));
-                    [a.x, b.y, c.z, d.w]
+                    let result = tex2d_variants::frag_main(tex2d_variants::FragInput {
+                        position: builtins.position,
+                    });
+                    [result.x, result.y, result.z, result.w]
                 },
             );
             results.push(compare_rgba("advanced_tex2d_variants", &gpu, &cpu));
@@ -789,23 +778,18 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 ),
             );
 
-            let cpu_tex: Texture2D<f32> = Texture2D::new(0, 0);
-            write_cpu_texture2d(&cpu_tex, &color0);
-            let cpu_sampler: Sampler = Sampler::new(0, 0);
-            cpu_sampler.set(SamplerState::default());
+            write_cpu_texture2d(tex2d_gather_variants::TEX, &color0);
+            tex2d_gather_variants::S.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let dims = texture_dimensions(&cpu_tex);
-                    let uv = vec2f(
-                        builtins.position.x / dims.x() as f32,
-                        builtins.position.y / dims.y() as f32,
-                    );
-                    let g0 = texture_gather(0u32, &cpu_tex, &cpu_sampler, uv);
-                    let g1 = texture_gather_offset(1u32, &cpu_tex, &cpu_sampler, uv, vec2i(1, 0));
-                    [g0.x, g0.y, g1.z, g1.w]
+                    let result =
+                        tex2d_gather_variants::frag_main(tex2d_gather_variants::FragInput {
+                            position: builtins.position,
+                        });
+                    [result.x, result.y, result.z, result.w]
                 },
             );
             results.push(compare_rgba("advanced_tex2d_gather", &gpu, &cpu));
@@ -877,33 +861,17 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 ),
             );
 
-            let cpu_tex: Texture2DArray<f32> = Texture2DArray::new(0, 0);
-            write_cpu_texture2d_array(&cpu_tex, &color_layers);
-            let cpu_sampler: Sampler = Sampler::new(0, 0);
-            cpu_sampler.set(SamplerState::default());
+            write_cpu_texture2d_array(tex2d_array_variants::TEX, &color_layers);
+            tex2d_array_variants::S.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let dims = texture_dimensions(&cpu_tex);
-                    let uv = vec2f(
-                        builtins.position.x / dims.x() as f32,
-                        builtins.position.y / dims.y() as f32,
-                    );
-                    let ddx = vec2f(1.0 / dims.x() as f32, 0.0);
-                    let ddy = vec2f(0.0, 1.0 / dims.y() as f32);
-                    let layer = if (builtins.position.x as i32 & 1) == 0 {
-                        0u32
-                    } else {
-                        1u32
-                    };
-                    let a = texture_sample_array(&cpu_tex, &cpu_sampler, uv, layer);
-                    let b = texture_sample_level_array(&cpu_tex, &cpu_sampler, uv, layer, 0.0);
-                    let c = texture_sample_grad_array(&cpu_tex, &cpu_sampler, uv, layer, ddx, ddy);
-                    let d =
-                        texture_sample_array_offset(&cpu_tex, &cpu_sampler, uv, layer, vec2i(1, 0));
-                    [a.x, b.y, c.z, d.w]
+                    let result = tex2d_array_variants::frag_main(tex2d_array_variants::FragInput {
+                        position: builtins.position,
+                    });
+                    [result.x, result.y, result.z, result.w]
                 },
             );
             results.push(compare_rgba("advanced_tex2d_array_variants", &gpu, &cpu));

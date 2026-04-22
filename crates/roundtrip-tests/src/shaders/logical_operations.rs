@@ -258,6 +258,8 @@ impl RoundtripTest for LogicalOperationsTest {
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
+        use wgsl_rs::std::*;
+
         let mut results = Vec::new();
 
         // all_vec2b test
@@ -277,13 +279,17 @@ impl RoundtripTest for LogicalOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let a = inputs[i * 2] != 0;
-                    let b = inputs[i * 2 + 1] != 0;
-                    if a && b { 1u32 } else { 0u32 }
-                })
-                .collect();
+
+            all_vec2b::INPUT.set(inputs);
+            all_vec2b::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                all_vec2b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    all_vec2b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = all_vec2b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("all_vec2b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -313,14 +319,17 @@ impl RoundtripTest for LogicalOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let a = inputs[i * 3] != 0;
-                    let b = inputs[i * 3 + 1] != 0;
-                    let c = inputs[i * 3 + 2] != 0;
-                    if a && b && c { 1u32 } else { 0u32 }
-                })
-                .collect();
+
+            all_vec3b::INPUT.set(inputs);
+            all_vec3b::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                all_vec3b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    all_vec3b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = all_vec3b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("all_vec3b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -350,15 +359,17 @@ impl RoundtripTest for LogicalOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let a = inputs[i * 4] != 0;
-                    let b = inputs[i * 4 + 1] != 0;
-                    let c = inputs[i * 4 + 2] != 0;
-                    let d = inputs[i * 4 + 3] != 0;
-                    if a && b && c && d { 1u32 } else { 0u32 }
-                })
-                .collect();
+
+            all_vec4b::INPUT.set(inputs);
+            all_vec4b::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                all_vec4b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    all_vec4b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = all_vec4b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("all_vec4b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -388,13 +399,17 @@ impl RoundtripTest for LogicalOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let a = inputs[i * 2] != 0;
-                    let b = inputs[i * 2 + 1] != 0;
-                    if a || b { 1u32 } else { 0u32 }
-                })
-                .collect();
+
+            any_vec2b::INPUT.set(inputs);
+            any_vec2b::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                any_vec2b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    any_vec2b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = any_vec2b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("any_vec2b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -424,14 +439,17 @@ impl RoundtripTest for LogicalOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let a = inputs[i * 3] != 0;
-                    let b = inputs[i * 3 + 1] != 0;
-                    let c = inputs[i * 3 + 2] != 0;
-                    if a || b || c { 1u32 } else { 0u32 }
-                })
-                .collect();
+
+            any_vec3b::INPUT.set(inputs);
+            any_vec3b::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                any_vec3b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    any_vec3b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = any_vec3b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("any_vec3b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -461,15 +479,17 @@ impl RoundtripTest for LogicalOperationsTest {
             });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
-            let cpu_results: Vec<u32> = (0..N)
-                .map(|i| {
-                    let a = inputs[i * 4] != 0;
-                    let b = inputs[i * 4 + 1] != 0;
-                    let c = inputs[i * 4 + 2] != 0;
-                    let d = inputs[i * 4 + 3] != 0;
-                    if a || b || c || d { 1u32 } else { 0u32 }
-                })
-                .collect();
+
+            any_vec4b::INPUT.set(inputs);
+            any_vec4b::OUTPUT.set([0u32; N]);
+            dispatch_workgroups(
+                (1, 1, 1),
+                any_vec4b::linkage::main::WORKGROUP_SIZE,
+                |builtins| {
+                    any_vec4b::main(builtins.global_invocation_id);
+                },
+            );
+            let cpu_results: Vec<u32> = any_vec4b::OUTPUT.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("any_vec4b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();

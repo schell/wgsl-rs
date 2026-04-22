@@ -394,17 +394,17 @@ impl RoundtripTest for TextureOperationsTest {
         let pixels = build_rgba8_pixels();
         let gpu_source_texture = create_gpu_source_texture(device, queue, &pixels);
 
-        let cpu_tex_load: Texture2D<f32> = Texture2D::new(0, 0);
-        write_cpu_texture(&cpu_tex_load, &pixels);
+        write_cpu_texture(texture_load_2d::TEX, &pixels);
         let gpu_load_pixels = render_texture_load_gpu(device, queue, &gpu_source_texture);
         let cpu_load_grid = dispatch_fragments(
             WIDTH,
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let p = builtins.position;
-                let c = texture_load(&cpu_tex_load, vec2i(p.x as i32, p.y as i32), 0u32);
-                [c.x, c.y, c.z, c.w]
+                let result = texture_load_2d::frag_main(texture_load_2d::FragInput {
+                    position: builtins.position,
+                });
+                [result.x, result.y, result.z, result.w]
             },
         );
 
@@ -420,21 +420,18 @@ impl RoundtripTest for TextureOperationsTest {
             epsilon,
         ));
 
-        let cpu_tex_sample: Texture2D<f32> = Texture2D::new(0, 0);
-        write_cpu_texture(&cpu_tex_sample, &pixels);
-        let cpu_sampler: Sampler = Sampler::new(0, 0);
-        cpu_sampler.set(SamplerState::default());
+        write_cpu_texture(texture_sample_2d::TEX, &pixels);
+        texture_sample_2d::TEX_SAMPLER.set(SamplerState::default());
         let gpu_sample_pixels = render_texture_sample_gpu(device, queue, &gpu_source_texture);
         let cpu_sample_grid = dispatch_fragments(
             WIDTH,
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let p = builtins.position;
-                let dims = texture_dimensions(&cpu_tex_sample);
-                let uv = vec2f(p.x / dims.x() as f32, p.y / dims.y() as f32);
-                let c = texture_sample(&cpu_tex_sample, &cpu_sampler, uv);
-                [c.x, c.y, c.z, c.w]
+                let result = texture_sample_2d::frag_main(texture_sample_2d::FragInput {
+                    position: builtins.position,
+                });
+                [result.x, result.y, result.z, result.w]
             },
         );
 

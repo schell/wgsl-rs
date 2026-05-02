@@ -339,9 +339,7 @@ fn build_linkage() {
                                 return;
                             }
                             wgpu::CurrentSurfaceTexture::Validation => {
-                                log::warn!(
-                                    "surface acquire returned Validation; skipping frame"
-                                );
+                                log::warn!("surface acquire returned Validation; skipping frame");
                                 window.request_redraw();
                                 return;
                             }

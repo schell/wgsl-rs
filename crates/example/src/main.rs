@@ -131,6 +131,7 @@ fn build_linkage() {
     struct WgpuStuff {
         _instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
+        surface_config: wgpu::SurfaceConfiguration,
         _adapter: wgpu::Adapter,
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -152,14 +153,15 @@ fn build_linkage() {
             let (device, queue) =
                 block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                     .expect("Failed to create device");
-            let config = surface
+            let surface_config = surface
                 .get_default_config(&adapter, 800, 600)
                 .expect("no default surface config");
-            surface.configure(&device, &config);
+            surface.configure(&device, &surface_config);
 
             Self {
                 _instance: instance,
                 surface,
+                surface_config,
                 _adapter: adapter,
                 device,
                 queue,
@@ -303,7 +305,33 @@ fn build_linkage() {
                         let texture = match wgpu_stuff.surface.get_current_texture() {
                             wgpu::CurrentSurfaceTexture::Success(t)
                             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-                            other => panic!("unexpected surface texture state: {other:?}"),
+                            wgpu::CurrentSurfaceTexture::Outdated => {
+                                log::warn!(
+                                    "surface acquire returned Outdated; reconfiguring and \
+                                     skipping frame"
+                                );
+                                wgpu_stuff
+                                    .surface
+                                    .configure(&wgpu_stuff.device, &wgpu_stuff.surface_config);
+                                window.request_redraw();
+                                return;
+                            }
+                            wgpu::CurrentSurfaceTexture::Timeout
+                            | wgpu::CurrentSurfaceTexture::Occluded => {
+                                log::debug!(
+                                    "surface acquire returned Timeout/Occluded; skipping frame"
+                                );
+                                window.request_redraw();
+                                return;
+                            }
+                            wgpu::CurrentSurfaceTexture::Lost
+                            | wgpu::CurrentSurfaceTexture::Validation => {
+                                log::warn!(
+                                    "surface acquire failed (Lost/Validation); skipping frame"
+                                );
+                                window.request_redraw();
+                                return;
+                            }
                         };
                         {
                             let mut render_pass =

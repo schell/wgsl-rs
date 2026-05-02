@@ -275,7 +275,7 @@ Added `discard!()` macro for the WGSL `discard` statement (fragment shaders only
 
 ### 2026-05-02: Bumped wgpu and naga to 29
 
-Migrated `PipelineLayoutDescriptor::bind_group_layouts` to `&[Option<&BindGroupLayout>]`, switched `InstanceDescriptor::default()` to `new_with_display_handle` / `new_without_display_handle`, and updated `Surface::get_current_texture()` callers to match the new `CurrentSurfaceTexture` enum.
+Migrated `PipelineLayoutDescriptor::bind_group_layouts` to `&[Option<&BindGroupLayout>]`, switched `InstanceDescriptor::default()` to `new_with_display_handle` / `new_without_display_handle`, and updated `Surface::get_current_texture()` callers to match the new `CurrentSurfaceTexture` enum. Examples now reconfigure the surface on `Outdated` and skip the frame on `Timeout` / `Occluded` / `Lost` / `Validation` instead of panicking.
 
 ### 2026-03-22: Roundtrip tests — bit manipulation, bitcast, packing
 

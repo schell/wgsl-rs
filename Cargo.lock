@@ -642,6 +642,7 @@ dependencies = [
  "clap",
  "futures",
  "glam",
+ "log",
  "naga",
  "wgpu",
  "wgsl-rs",
@@ -660,6 +661,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "futures",
+ "log",
  "wgpu",
  "wgsl-rs",
  "winit",

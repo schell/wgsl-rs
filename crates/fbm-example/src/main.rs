@@ -192,7 +192,24 @@ impl AppInner {
         let texture = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            other => panic!("unexpected surface texture state: {other:?}"),
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                log::warn!("surface acquire returned Outdated; reconfiguring and skipping frame");
+                self.gpu
+                    .surface
+                    .configure(&self.gpu.device, &self.gpu.surface_config);
+                self.window.request_redraw();
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                log::debug!("surface acquire returned Timeout/Occluded; skipping frame");
+                self.window.request_redraw();
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Validation => {
+                log::warn!("surface acquire failed (Lost/Validation); skipping frame");
+                self.window.request_redraw();
+                return;
+            }
         };
         let view = texture
             .texture

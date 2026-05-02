@@ -324,10 +324,23 @@ fn build_linkage() {
                                 window.request_redraw();
                                 return;
                             }
-                            wgpu::CurrentSurfaceTexture::Lost
-                            | wgpu::CurrentSurfaceTexture::Validation => {
+                            wgpu::CurrentSurfaceTexture::Lost => {
                                 log::warn!(
-                                    "surface acquire failed (Lost/Validation); skipping frame"
+                                    "surface acquire returned Lost; reconfiguring and skipping \
+                                     frame"
+                                );
+                                let size = window.inner_size();
+                                wgpu_stuff.surface_config.width = size.width;
+                                wgpu_stuff.surface_config.height = size.height;
+                                wgpu_stuff
+                                    .surface
+                                    .configure(&wgpu_stuff.device, &wgpu_stuff.surface_config);
+                                window.request_redraw();
+                                return;
+                            }
+                            wgpu::CurrentSurfaceTexture::Validation => {
+                                log::warn!(
+                                    "surface acquire returned Validation; skipping frame"
                                 );
                                 window.request_redraw();
                                 return;

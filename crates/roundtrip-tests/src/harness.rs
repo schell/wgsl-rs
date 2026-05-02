@@ -8,9 +8,9 @@ use futures::executor::block_on;
 /// Creates a headless wgpu device and queue, or returns `None` if no adapter
 /// is available.
 pub fn create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::default(),
@@ -180,7 +180,7 @@ pub fn run_gpu_compute(params: &GpuComputeParams<'_>) -> Vec<u8> {
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("roundtrip_test"),
-        bind_group_layouts: &[&bind_group_layout],
+        bind_group_layouts: &[Some(&bind_group_layout)],
         immediate_size: 0,
     });
 

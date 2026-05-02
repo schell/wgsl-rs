@@ -549,7 +549,7 @@ fn generate_compute_entry_modules(entries: &[ComputeEntry], module_name: &str) -
 
                     /// Creates a pipeline layout descriptor.
                     pub fn pipeline_layout_descriptor<'a>(
-                        bind_group_layouts: &'a [&'a wgpu::BindGroupLayout],
+                        bind_group_layouts: &'a [Option<&'a wgpu::BindGroupLayout>],
                     ) -> wgpu::PipelineLayoutDescriptor<'a> {
                         wgpu::PipelineLayoutDescriptor {
                             label: Some(#label),
@@ -561,7 +561,7 @@ fn generate_compute_entry_modules(entries: &[ComputeEntry], module_name: &str) -
                     /// Creates a pipeline layout.
                     pub fn pipeline_layout(
                         device: &wgpu::Device,
-                        bind_group_layouts: &[&wgpu::BindGroupLayout],
+                        bind_group_layouts: &[Option<&wgpu::BindGroupLayout>],
                     ) -> wgpu::PipelineLayout {
                         device.create_pipeline_layout(&pipeline_layout_descriptor(bind_group_layouts))
                     }

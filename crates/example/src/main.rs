@@ -131,14 +131,17 @@ fn build_linkage() {
     struct WgpuStuff {
         _instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
+        surface_config: wgpu::SurfaceConfiguration,
         _adapter: wgpu::Adapter,
         device: wgpu::Device,
         queue: wgpu::Queue,
     }
 
     impl WgpuStuff {
-        fn new(window: Arc<Window>) -> Self {
-            let instance = wgpu::Instance::default();
+        fn new(window: Arc<Window>, display_handle: winit::event_loop::OwnedDisplayHandle) -> Self {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+                Box::new(display_handle),
+            ));
             let surface = instance.create_surface(window).unwrap();
             let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -150,14 +153,15 @@ fn build_linkage() {
             let (device, queue) =
                 block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                     .expect("Failed to create device");
-            let config = surface
+            let surface_config = surface
                 .get_default_config(&adapter, 800, 600)
                 .expect("no default surface config");
-            surface.configure(&device, &config);
+            surface.configure(&device, &surface_config);
 
             Self {
                 _instance: instance,
                 surface,
+                surface_config,
                 _adapter: adapter,
                 device,
                 queue,
@@ -190,7 +194,7 @@ fn build_linkage() {
             let module = hello_triangle::linkage::shader_module(device);
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("hello_triangle"),
-                bind_group_layouts: &[&bindgroup_layout],
+                bind_group_layouts: &[Some(&bindgroup_layout)],
                 immediate_size: 0,
             });
             let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -246,7 +250,7 @@ fn build_linkage() {
                     .create_window(Window::default_attributes())
                     .unwrap(),
             );
-            let wgpu_stuff = WgpuStuff::new(window.clone());
+            let wgpu_stuff = WgpuStuff::new(window.clone(), event_loop.owned_display_handle());
             let hello_triangle = HelloTriangle::new(&wgpu_stuff);
             Self {
                 window,
@@ -298,10 +302,48 @@ fn build_linkage() {
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: Some("pass"),
                             });
-                        let texture = wgpu_stuff
-                            .surface
-                            .get_current_texture()
-                            .expect("couldn't get current texture");
+                        let texture = match wgpu_stuff.surface.get_current_texture() {
+                            wgpu::CurrentSurfaceTexture::Success(t)
+                            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                            wgpu::CurrentSurfaceTexture::Outdated => {
+                                log::warn!(
+                                    "surface acquire returned Outdated; reconfiguring and \
+                                     skipping frame"
+                                );
+                                wgpu_stuff
+                                    .surface
+                                    .configure(&wgpu_stuff.device, &wgpu_stuff.surface_config);
+                                window.request_redraw();
+                                return;
+                            }
+                            wgpu::CurrentSurfaceTexture::Timeout
+                            | wgpu::CurrentSurfaceTexture::Occluded => {
+                                log::debug!(
+                                    "surface acquire returned Timeout/Occluded; skipping frame"
+                                );
+                                window.request_redraw();
+                                return;
+                            }
+                            wgpu::CurrentSurfaceTexture::Lost => {
+                                log::warn!(
+                                    "surface acquire returned Lost; reconfiguring and skipping \
+                                     frame"
+                                );
+                                let size = window.inner_size();
+                                wgpu_stuff.surface_config.width = size.width;
+                                wgpu_stuff.surface_config.height = size.height;
+                                wgpu_stuff
+                                    .surface
+                                    .configure(&wgpu_stuff.device, &wgpu_stuff.surface_config);
+                                window.request_redraw();
+                                return;
+                            }
+                            wgpu::CurrentSurfaceTexture::Validation => {
+                                log::warn!("surface acquire returned Validation; skipping frame");
+                                window.request_redraw();
+                                return;
+                            }
+                        };
                         {
                             let mut render_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

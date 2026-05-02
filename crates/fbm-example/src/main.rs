@@ -205,8 +205,19 @@ impl AppInner {
                 self.window.request_redraw();
                 return;
             }
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Validation => {
-                log::warn!("surface acquire failed (Lost/Validation); skipping frame");
+            wgpu::CurrentSurfaceTexture::Lost => {
+                log::warn!("surface acquire returned Lost; reconfiguring and skipping frame");
+                let size = self.window.inner_size();
+                self.gpu.surface_config.width = size.width;
+                self.gpu.surface_config.height = size.height;
+                self.gpu
+                    .surface
+                    .configure(&self.gpu.device, &self.gpu.surface_config);
+                self.window.request_redraw();
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                log::warn!("surface acquire failed with Validation; skipping frame");
                 self.window.request_redraw();
                 return;
             }

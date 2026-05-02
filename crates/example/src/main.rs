@@ -137,8 +137,10 @@ fn build_linkage() {
     }
 
     impl WgpuStuff {
-        fn new(window: Arc<Window>) -> Self {
-            let instance = wgpu::Instance::default();
+        fn new(window: Arc<Window>, display_handle: winit::event_loop::OwnedDisplayHandle) -> Self {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+                Box::new(display_handle),
+            ));
             let surface = instance.create_surface(window).unwrap();
             let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -190,7 +192,7 @@ fn build_linkage() {
             let module = hello_triangle::linkage::shader_module(device);
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("hello_triangle"),
-                bind_group_layouts: &[&bindgroup_layout],
+                bind_group_layouts: &[Some(&bindgroup_layout)],
                 immediate_size: 0,
             });
             let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -246,7 +248,7 @@ fn build_linkage() {
                     .create_window(Window::default_attributes())
                     .unwrap(),
             );
-            let wgpu_stuff = WgpuStuff::new(window.clone());
+            let wgpu_stuff = WgpuStuff::new(window.clone(), event_loop.owned_display_handle());
             let hello_triangle = HelloTriangle::new(&wgpu_stuff);
             Self {
                 window,
@@ -298,10 +300,11 @@ fn build_linkage() {
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: Some("pass"),
                             });
-                        let texture = wgpu_stuff
-                            .surface
-                            .get_current_texture()
-                            .expect("couldn't get current texture");
+                        let texture = match wgpu_stuff.surface.get_current_texture() {
+                            wgpu::CurrentSurfaceTexture::Success(t)
+                            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                            other => panic!("unexpected surface texture state: {other:?}"),
+                        };
                         {
                             let mut render_pass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

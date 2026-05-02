@@ -28,8 +28,10 @@ struct GpuContext {
 }
 
 impl GpuContext {
-    fn new(window: Arc<Window>) -> Self {
-        let instance = wgpu::Instance::default();
+    fn new(window: Arc<Window>, display_handle: winit::event_loop::OwnedDisplayHandle) -> Self {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
+            Box::new(display_handle),
+        ));
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
@@ -95,7 +97,7 @@ impl FbmPipeline {
         let module = fbm_shader::linkage::shader_module(device);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("fbm"),
-            bind_group_layouts: &[&bg_layout],
+            bind_group_layouts: &[Some(&bg_layout)],
             immediate_size: 0,
         });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -153,7 +155,7 @@ impl AppInner {
                 )
                 .unwrap(),
         );
-        let gpu = GpuContext::new(window.clone());
+        let gpu = GpuContext::new(window.clone(), event_loop.owned_display_handle());
         let pipeline = FbmPipeline::new(&gpu);
 
         Self {
@@ -187,11 +189,11 @@ impl AppInner {
         queue.write_buffer(&self.pipeline.time_buffer, 0, bytemuck::bytes_of(&elapsed));
 
         // Render.
-        let texture = self
-            .gpu
-            .surface
-            .get_current_texture()
-            .expect("couldn't get current texture");
+        let texture = match self.gpu.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            other => panic!("unexpected surface texture state: {other:?}"),
+        };
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());

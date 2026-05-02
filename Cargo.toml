@@ -18,7 +18,7 @@ futures = "0.3"
 glam = "0.30.9"
 itertools = "0.14.0"
 log = "0.4"
-naga = { version = "28", features = ["wgsl-in", "wgsl-out"] }
+naga = { version = "29", features = ["wgsl-in", "wgsl-out"] }
 rayon = "1"
 html2text = "0.16.5"
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
@@ -28,5 +28,5 @@ quote = "1.0"
 snafu = "0.8.9"
 syn = { version = "2.0", features = ["full", "printing", "extra-traits", "visit-mut"] }
 bytemuck = { version = "1", features = ["derive"] }
-wgpu = "28"
+wgpu = "29"
 winit = "0.30"

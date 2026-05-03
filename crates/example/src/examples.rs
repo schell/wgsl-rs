@@ -1449,3 +1449,17 @@ pub mod discard_example {
         vec4f(1.0, 0.0, 0.0, 1.0)
     }
 }
+
+#[wgsl]
+pub mod ignore_items {
+    //! Demonstrates how to use the `#[wgsl_ignore]` attribute to ignore an item
+    //! during parsing, generating no WGSL code, but producing the expected Rust
+    //! code.
+    //!
+    //! This provides an escape hatch to use arbitrary Rust code within your
+    //! module without having a WGSL representation.
+    use wgsl_rs::std::*;
+
+    #[wgsl_ignore]
+    const MODULE_PATH: &str = "hello/there/friend.png";
+}

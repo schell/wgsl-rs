@@ -1,5 +1,5 @@
 //! WGSL in Rust.
-pub use wgsl_rs_macros::{wgsl, wgsl_allow};
+pub use wgsl_rs_macros::{wgsl, wgsl_allow, wgsl_ignore};
 
 /// A WGSL "module".
 ///

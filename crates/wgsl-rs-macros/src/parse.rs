@@ -3768,10 +3768,6 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
         // Only handle inline modules (with content)
         if let Some((_, items)) = &item_mod.content {
             for item in items {
-                if ItemMod::syn_item_has_wgsl_ignore_attribute(item) {
-                    // Skip this item and produce no WGSL.
-                    continue;
-                }
                 content.push(Item::try_from(item)?);
             }
             Ok(ItemMod { ident, content })
@@ -5013,12 +5009,18 @@ pub enum Item {
     Trait,
     /// Trait impl blocks are Rust-only and produce no WGSL output.
     TraitImpl,
+    /// Skip this item, it is Rust-only
+    Ignored,
 }
 
 impl TryFrom<&syn::Item> for Item {
     type Error = Error;
 
     fn try_from(value: &syn::Item) -> Result<Self, Self::Error> {
+        if ItemMod::syn_item_has_wgsl_ignore_attribute(value) {
+            return Ok(Self::Ignored);
+        }
+
         match value {
             syn::Item::Mod(item_mod) => Ok(Item::Mod(ItemMod::try_from(item_mod)?)),
             syn::Item::Macro(item_macro) => {

@@ -2090,6 +2090,9 @@ impl GenerateCode for Item {
             Item::TraitImpl => {
                 // Trait impl blocks are Rust-only and produce no WGSL.
             }
+            Item::Ignored => {
+                // This item was explicitly ignored with `#[wgsl_ignore]`
+            }
         }
     }
 }

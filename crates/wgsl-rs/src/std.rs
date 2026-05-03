@@ -18,7 +18,7 @@ use std::{
 
 pub use wgsl_rs_macros::{
     builtin, compute, fragment, input, output, ptr, sampler, storage, texture, uniform, vertex,
-    wgsl_allow, workgroup, workgroup_size,
+    wgsl_allow, wgsl_ignore, workgroup, workgroup_size,
 };
 
 pub use crate::{discard, get, get_mut, slab_read_array, slab_write_array};

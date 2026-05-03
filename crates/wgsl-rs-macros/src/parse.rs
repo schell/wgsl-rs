@@ -2547,6 +2547,18 @@ fn parse_wgsl_allow(attrs: &[syn::Attribute]) -> Result<Vec<WarningName>, Error>
     Ok(allowed)
 }
 
+/// Parse `#[wgsl_ignore]` attribute.
+///
+/// Returns `true` if `wgsl_ignore` was recognized.
+fn attrs_contain_wgsl_ignore(attrs: &[syn::Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path().is_ident("wgsl_ignore") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Parse a for-loop pattern to extract the identifier and optional type
 /// annotation.
 fn parse_for_loop_pattern(pat: &syn::Pat) -> Result<(Ident, Option<(Token![:], Type)>), Error> {
@@ -3771,6 +3783,28 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
 }
 
 impl ItemMod {
+    pub fn syn_item_has_wgsl_ignore_attribute(item: &syn::Item) -> bool {
+        let attrs: &[_] = match item {
+            syn::Item::Const(item_const) => &item_const.attrs,
+            syn::Item::Enum(item_enum) => &item_enum.attrs,
+            syn::Item::ExternCrate(item_extern_crate) => &item_extern_crate.attrs,
+            syn::Item::Fn(item_fn) => &item_fn.attrs,
+            syn::Item::ForeignMod(item_foreign_mod) => &item_foreign_mod.attrs,
+            syn::Item::Impl(item_impl) => &item_impl.attrs,
+            syn::Item::Macro(item_macro) => &item_macro.attrs,
+            syn::Item::Mod(item_mod) => &item_mod.attrs,
+            syn::Item::Static(item_static) => &item_static.attrs,
+            syn::Item::Struct(item_struct) => &item_struct.attrs,
+            syn::Item::Trait(item_trait) => &item_trait.attrs,
+            syn::Item::TraitAlias(item_trait_alias) => &item_trait_alias.attrs,
+            syn::Item::Type(item_type) => &item_type.attrs,
+            syn::Item::Union(item_union) => &item_union.attrs,
+            syn::Item::Use(item_use) => &item_use.attrs,
+            _ => &[],
+        };
+        attrs_contain_wgsl_ignore(attrs)
+    }
+
     pub fn imports(&self, wgsl_rs_crate_path: &syn::Path) -> Vec<proc_macro2::TokenStream> {
         fn is_wgsl_std(wgsl_rs_crate_path: &syn::Path, path: &syn::Path) -> bool {
             let wgsl_std = {
@@ -4975,12 +5009,18 @@ pub enum Item {
     Trait,
     /// Trait impl blocks are Rust-only and produce no WGSL output.
     TraitImpl,
+    /// Skip this item, it is Rust-only
+    Ignored,
 }
 
 impl TryFrom<&syn::Item> for Item {
     type Error = Error;
 
     fn try_from(value: &syn::Item) -> Result<Self, Self::Error> {
+        if ItemMod::syn_item_has_wgsl_ignore_attribute(value) {
+            return Ok(Self::Ignored);
+        }
+
         match value {
             syn::Item::Mod(item_mod) => Ok(Item::Mod(ItemMod::try_from(item_mod)?)),
             syn::Item::Macro(item_macro) => {

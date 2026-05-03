@@ -1461,5 +1461,5 @@ pub mod ignore_items {
     use wgsl_rs::std::*;
 
     #[wgsl_ignore]
-    const MODULE_PATH: &'static str = "hello/there/friend.png";
+    const MODULE_PATH: &str = "hello/there/friend.png";
 }

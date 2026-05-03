@@ -854,6 +854,23 @@ pub fn wgsl_allow(_attr: TokenStream, token_stream: TokenStream) -> TokenStream 
     token_stream
 }
 
+
+/// Ignores any item following the attribute during parsing, skipping WGSL code
+/// generation.
+///
+/// This provides an escape hatch to use arbitrary Rust code within your
+/// module without having a WGSL representation, but only from the Rust side,
+/// as the code annotated with `#[wgsl_ignore]` has no WGSL representation.
+///
+/// # Note
+///
+/// This attribute is stripped from the emitted Rust code by the `#[wgsl]`
+/// macro, allowing statement-level attributes to work on stable Rust.
+#[proc_macro_attribute]
+pub fn wgsl_ignore(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
+    token_stream
+}
+
 /// Declares a uniform buffer binding.
 ///
 /// Emits `@group(G) @binding(B) var<uniform> NAME: TYPE;` in WGSL.

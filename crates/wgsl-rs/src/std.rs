@@ -116,6 +116,44 @@ struct ModuleVar<T = WgslTypeVariable> {
     _phantom: PhantomData<T>,
 }
 
+impl ModuleVar {
+    /// Like `read`, but for dynamic module variables.
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
+    pub fn get<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
+        let lock = self
+            .inner
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on a module variable"));
+        ModuleVarReadGuard {
+            inner: lock,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Returns a mutable reference to the inner `T`.
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
+    pub fn get_mut<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
+        self.guard_on_generic_use();
+
+        let lock = self
+            .inner
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
+        ModuleVarWriteGuard {
+            inner: lock,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<T: Wgsl> ModuleVar<T> {
     pub const fn new() -> Self {
         Self {

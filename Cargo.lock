@@ -3750,6 +3750,7 @@ dependencies = [
  "naga",
  "paste",
  "rayon",
+ "snafu",
  "trybuild",
  "wgpu",
  "wgsl-rs-macros",

@@ -11,6 +11,8 @@
 //! `Vec3f`, etc. and constructors like `vec2`, `vec2f` and `vec3i`, etc.
 
 use std::{
+    any::TypeId,
+    collections::HashMap,
     marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
@@ -47,82 +49,134 @@ pub use synchronization::*;
 pub use texture::*;
 pub use vector::*;
 
+pub enum Error {}
+
+/// Marker trait for a WGSL _value_.
+pub trait Wgsl: std::any::Any + Send + Sync {}
+impl<T: std::any::Any + Send + Sync> Wgsl for T {}
+
 /// Shared reference to a uniform, storage or workgroup variable.
 pub struct ModuleVarReadGuard<'a, T> {
-    inner: RwLockReadGuard<'a, Option<T>>,
+    inner: RwLockReadGuard<'a, TypeMap>,
+    _phantom: PhantomData<T>,
 }
 
-impl<T> Deref for ModuleVarReadGuard<'_, T> {
+impl<T: Wgsl> Deref for ModuleVarReadGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.inner
-            .as_ref()
-            .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"))
+        let box_any = self
+            .inner
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"));
+        box_any
+            .downcast_ref()
+            .unwrap_or_else(|| panic!("Value was not of type {}", std::any::type_name::<T>()))
     }
 }
 
 /// Exclusive reference to a storage or workgroup variable.
 pub struct ModuleVarWriteGuard<'a, T> {
-    inner: RwLockWriteGuard<'a, Option<T>>,
+    inner: RwLockWriteGuard<'a, TypeMap>,
+    _phantom: PhantomData<T>,
 }
 
-impl<T> Deref for ModuleVarWriteGuard<'_, T> {
+impl<T: Wgsl> Deref for ModuleVarWriteGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         self.inner
-            .as_ref()
+            .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"))
+            .downcast_ref()
+            .unwrap_or_else(|| panic!("Value was not of type {}", std::any::type_name::<T>()))
     }
 }
 
-impl<T> DerefMut for ModuleVarWriteGuard<'_, T> {
+impl<T: Wgsl> DerefMut for ModuleVarWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
-            .as_mut()
+            .get_mut(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("Mutably accessed an uninitialized module variable"))
+            .downcast_mut()
+            .unwrap_or_else(|| panic!("Value was not of type {}", std::any::type_name::<T>()))
     }
 }
+
+
+/// A `TypeMap` holds values of any WGSL type, but only one of that type.
+type TypeMap = HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>;
+
+struct WgslTypeVariable;
 
 /// Thread-safe module level variable that can be read from or written
 /// to from anywhere.
-struct ModuleVar<T> {
-    inner: LazyLock<Arc<RwLock<Option<T>>>>,
+struct ModuleVar<T = WgslTypeVariable> {
+    inner: LazyLock<Arc<RwLock<TypeMap>>>,
+    _phantom: PhantomData<T>,
 }
 
-impl<T> ModuleVar<T> {
+impl<T: Wgsl> ModuleVar<T> {
     pub const fn new() -> Self {
         Self {
             inner: LazyLock::new(Default::default),
+            _phantom: PhantomData,
         }
     }
-    /// Returns a reference to the inner `T`.
+
+    /// Ensures module variable types adhere to some rules.
     ///
     /// ## Panics
     /// - Panics if the underlying lock has been poisoned.
     /// - Dereferencing the returned guard will panic if it has not previously
     ///   been set.
+    fn guard_on_generic_use(&self) {
+        if TypeId::of::<T>() == TypeId::of::<WgslTypeVariable>() {
+            panic!(
+                "Requested a generic module variable. All runtime use of generic variables must \
+                 be monomorphized."
+            );
+        }
+    }
+
+    /// Returns a reference to the inner `T`.
+    ///
+    /// ## Panics
+    /// - Panics if the variable has not been monomorphized.
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
     pub fn read(&self) -> ModuleVarReadGuard<'_, T> {
+        self.guard_on_generic_use();
+
         let lock = self
             .inner
             .read()
             .unwrap_or_else(|_| panic!("could not acquire a read lock on a module variable"));
-        ModuleVarReadGuard { inner: lock }
+        ModuleVarReadGuard {
+            inner: lock,
+            _phantom: PhantomData,
+        }
     }
 
     /// Returns a mutable reference to the inner `T`.
     ///
     /// ## Panics
+    /// - Panics if the variable has not been monomorphized.
     /// - Panics if the underlying lock has been poisoned.
     /// - Dereferencing the returned guard will panic if it has not previously
     ///   been set.
     pub fn write(&self) -> ModuleVarWriteGuard<'_, T> {
+        self.guard_on_generic_use();
+
         let lock = self
             .inner
             .write()
             .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
-        ModuleVarWriteGuard { inner: lock }
+        ModuleVarWriteGuard {
+            inner: lock,
+            _phantom: PhantomData,
+        }
     }
 
     /// Set the inner `T`.
@@ -130,11 +184,7 @@ impl<T> ModuleVar<T> {
     /// ## Panics
     /// Panics if the underlying lock on the inner data has been poisoned.
     pub fn set(&self, data: T) {
-        *self
-            .inner
-            .write()
-            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable")) =
-            Some(data);
+        *self.write() = data;
     }
 }
 
@@ -143,7 +193,7 @@ pub struct Workgroup<T> {
     data: ModuleVar<T>,
 }
 
-impl<T> Workgroup<T> {
+impl<T: Wgsl> Workgroup<T> {
     /// Creates a new workgroup variable.
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -189,7 +239,7 @@ pub struct Uniform<T> {
     data: ModuleVar<T>,
 }
 
-impl<T> Uniform<T> {
+impl<T: Wgsl> Uniform<T> {
     /// Creates a new uniform.
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
@@ -244,7 +294,7 @@ pub trait AccessMode {}
 impl AccessMode for Read {}
 impl AccessMode for ReadWrite {}
 
-impl<T, AM: AccessMode> Storage<T, AM> {
+impl<T: Wgsl, AM: AccessMode> Storage<T, AM> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Storage {
             data: ModuleVar::new(),
@@ -456,13 +506,13 @@ impl Convert<i32> for i32 {
     }
 }
 
-impl<A: Clone + Convert<B>, B> Convert<B> for ModuleVarReadGuard<'_, A> {
+impl<A: Clone + Convert<B> + Wgsl, B> Convert<B> for ModuleVarReadGuard<'_, A> {
     fn convert(self) -> B {
         self.clone().convert()
     }
 }
 
-impl<A: Clone + Convert<B>, B> Convert<B> for ModuleVarWriteGuard<'_, A> {
+impl<A: Clone + Convert<B> + Wgsl, B> Convert<B> for ModuleVarWriteGuard<'_, A> {
     fn convert(self) -> B {
         self.clone().convert()
     }

@@ -15,6 +15,7 @@ half = "2"
 naga = { workspace = true, optional = true }
 paste = "1"
 rayon = { workspace = true, optional = true }
+snafu.workspace = true
 wgpu = { workspace = true, optional = true }
 wgsl-rs-macros = { version = "0.1.0", path = "../wgsl-rs-macros" }
 

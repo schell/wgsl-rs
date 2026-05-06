@@ -10,8 +10,8 @@
 //! On the GPU side, these types transpile to their WGSL equivalents.
 
 use crate::std::{
-    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3u, Vec4f, Vec4i, Vec4u, vec2f, vec2u,
-    vec3u, vec4f, vec4i, vec4u,
+    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3u, Vec4f, Vec4i, Vec4u, Wgsl, vec2f,
+    vec2u, vec3u, vec4f, vec4i, vec4u,
 };
 
 mod builtins;
@@ -183,7 +183,7 @@ pub struct Texture1D<T> {
     data: ModuleVar<TextureData1D<T>>,
 }
 
-impl<T> Texture1D<T> {
+impl<T: Wgsl> Texture1D<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -215,7 +215,7 @@ impl<T> Texture1D<T> {
     }
 }
 
-impl<T: Default + Copy> Texture1D<T> {
+impl<T: Wgsl + Default + Copy> Texture1D<T> {
     /// Initialize the texture with the given width.
     ///
     /// Not available in WGSL.
@@ -224,7 +224,7 @@ impl<T: Default + Copy> Texture1D<T> {
     }
 }
 
-impl<T> TextureDimensionsQuery for Texture1D<T> {
+impl<T: Wgsl> TextureDimensionsQuery for Texture1D<T> {
     type Output = u32;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -232,7 +232,7 @@ impl<T> TextureDimensionsQuery for Texture1D<T> {
     }
 }
 
-impl<T> TextureNumLevelsQuery for Texture1D<T> {
+impl<T: Wgsl> TextureNumLevelsQuery for Texture1D<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -347,7 +347,7 @@ pub struct Texture2D<T> {
     data: ModuleVar<TextureData2D<T>>,
 }
 
-impl<T> Texture2D<T> {
+impl<T: Wgsl> Texture2D<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -379,7 +379,7 @@ impl<T> Texture2D<T> {
     }
 }
 
-impl<T: Default + Copy> Texture2D<T> {
+impl<T: Wgsl + Default + Copy> Texture2D<T> {
     /// Initialize the texture with the given dimensions.
     ///
     /// Not available in WGSL.
@@ -395,7 +395,7 @@ impl<T: Default + Copy> Texture2D<T> {
     }
 }
 
-impl<T> TextureDimensionsQuery for Texture2D<T> {
+impl<T: Wgsl> TextureDimensionsQuery for Texture2D<T> {
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -404,7 +404,7 @@ impl<T> TextureDimensionsQuery for Texture2D<T> {
     }
 }
 
-impl<T> TextureNumLevelsQuery for Texture2D<T> {
+impl<T: Wgsl> TextureNumLevelsQuery for Texture2D<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -753,7 +753,7 @@ pub struct Texture2DArray<T> {
     data: ModuleVar<TextureData2DArray<T>>,
 }
 
-impl<T> Texture2DArray<T> {
+impl<T: Wgsl> Texture2DArray<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -785,14 +785,14 @@ impl<T> Texture2DArray<T> {
     }
 }
 
-impl<T: Default + Copy> Texture2DArray<T> {
+impl<T: Wgsl + Default + Copy> Texture2DArray<T> {
     /// Initialize the texture with the given dimensions.
     pub fn init(&self, width: u32, height: u32, layers: u32) {
         self.set(TextureData2DArray::new(width, height, layers))
     }
 }
 
-impl<T> TextureDimensionsQuery for Texture2DArray<T> {
+impl<T: Wgsl> TextureDimensionsQuery for Texture2DArray<T> {
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -801,13 +801,13 @@ impl<T> TextureDimensionsQuery for Texture2DArray<T> {
     }
 }
 
-impl<T> TextureNumLayersQuery for Texture2DArray<T> {
+impl<T: Wgsl> TextureNumLayersQuery for Texture2DArray<T> {
     fn query_num_layers(&self) -> u32 {
         self.get().num_layers()
     }
 }
 
-impl<T: Default + Clone> TextureNumLevelsQuery for Texture2DArray<T> {
+impl<T: Wgsl + Default + Clone> TextureNumLevelsQuery for Texture2DArray<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -1037,7 +1037,7 @@ pub struct Texture3D<T> {
     data: ModuleVar<TextureData3D<T>>,
 }
 
-impl<T> Texture3D<T> {
+impl<T: Wgsl> Texture3D<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1055,14 +1055,14 @@ impl<T> Texture3D<T> {
     }
 }
 
-impl<T: Default + Copy> Texture3D<T> {
+impl<T: Wgsl + Default + Copy> Texture3D<T> {
     /// Initialize the texture with the given dimensions.
     pub fn init(&self, width: u32, height: u32, depth: u32) {
         self.set(TextureData3D::new(width, height, depth))
     }
 }
 
-impl<T> Texture3D<T> {
+impl<T: Wgsl> Texture3D<T> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
@@ -1078,7 +1078,7 @@ impl<T> Texture3D<T> {
     }
 }
 
-impl<T: Default + Clone> TextureDimensionsQuery for Texture3D<T> {
+impl<T: Wgsl + Default + Clone> TextureDimensionsQuery for Texture3D<T> {
     type Output = Vec3u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -1087,7 +1087,7 @@ impl<T: Default + Clone> TextureDimensionsQuery for Texture3D<T> {
     }
 }
 
-impl<T: Default + Clone> TextureNumLevelsQuery for Texture3D<T> {
+impl<T: Wgsl + Default + Clone> TextureNumLevelsQuery for Texture3D<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -1111,7 +1111,7 @@ pub struct TextureCube<T> {
     data: ModuleVar<TextureDataCube<T>>,
 }
 
-impl<T> TextureCube<T> {
+impl<T: Wgsl> TextureCube<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1143,14 +1143,14 @@ impl<T> TextureCube<T> {
     }
 }
 
-impl<T: Default + Copy> TextureCube<T> {
+impl<T: Wgsl + Default + Copy> TextureCube<T> {
     /// Initialize the texture with the given face size.
     pub fn init(&self, size: u32) {
         self.set(TextureDataCube::new(size))
     }
 }
 
-impl<T: Default + Copy> TextureDimensionsQuery for TextureCube<T> {
+impl<T: Wgsl + Default + Copy> TextureDimensionsQuery for TextureCube<T> {
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -1159,7 +1159,7 @@ impl<T: Default + Copy> TextureDimensionsQuery for TextureCube<T> {
     }
 }
 
-impl<T: Default + Clone> TextureNumLevelsQuery for TextureCube<T> {
+impl<T: Wgsl + Default + Clone> TextureNumLevelsQuery for TextureCube<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -1183,7 +1183,7 @@ pub struct TextureCubeArray<T> {
     data: ModuleVar<TextureDataCubeArray<T>>,
 }
 
-impl<T> TextureCubeArray<T> {
+impl<T: Wgsl> TextureCubeArray<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1215,14 +1215,14 @@ impl<T> TextureCubeArray<T> {
     }
 }
 
-impl<T: Default + Copy> TextureCubeArray<T> {
+impl<T: Wgsl + Default + Copy> TextureCubeArray<T> {
     /// Initialize the texture with the given face size and layer count.
     pub fn init(&self, size: u32, layers: u32) {
         self.set(TextureDataCubeArray::new(size, layers))
     }
 }
 
-impl<T> TextureDimensionsQuery for TextureCubeArray<T> {
+impl<T: Wgsl> TextureDimensionsQuery for TextureCubeArray<T> {
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -1231,13 +1231,13 @@ impl<T> TextureDimensionsQuery for TextureCubeArray<T> {
     }
 }
 
-impl<T> TextureNumLayersQuery for TextureCubeArray<T> {
+impl<T: Wgsl> TextureNumLayersQuery for TextureCubeArray<T> {
     fn query_num_layers(&self) -> u32 {
         self.get().num_layers()
     }
 }
 
-impl<T> TextureNumLevelsQuery for TextureCubeArray<T> {
+impl<T: Wgsl> TextureNumLevelsQuery for TextureCubeArray<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -1261,7 +1261,7 @@ pub struct TextureMultisampled2D<T> {
     data: ModuleVar<TextureDataMultisampled2D<T>>,
 }
 
-impl<T> TextureMultisampled2D<T> {
+impl<T: Wgsl> TextureMultisampled2D<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1293,14 +1293,14 @@ impl<T> TextureMultisampled2D<T> {
     }
 }
 
-impl<T: Default + Copy> TextureMultisampled2D<T> {
+impl<T: Wgsl + Default + Copy> TextureMultisampled2D<T> {
     /// Initialize the texture with the given dimensions and sample count.
     pub fn init(&self, width: u32, height: u32, sample_count: u32) {
         self.set(TextureDataMultisampled2D::new(width, height, sample_count));
     }
 }
 
-impl<T> TextureDimensionsQuery for TextureMultisampled2D<T> {
+impl<T: Wgsl> TextureDimensionsQuery for TextureMultisampled2D<T> {
     type Output = Vec2u;
 
     fn query_dimensions(&self, _level: u32) -> Self::Output {
@@ -1309,7 +1309,7 @@ impl<T> TextureDimensionsQuery for TextureMultisampled2D<T> {
     }
 }
 
-impl<T: Default + Clone> TextureNumSamplesQuery for TextureMultisampled2D<T> {
+impl<T: Wgsl + Default + Clone> TextureNumSamplesQuery for TextureMultisampled2D<T> {
     fn query_num_samples(&self) -> u32 {
         self.get().num_samples()
     }

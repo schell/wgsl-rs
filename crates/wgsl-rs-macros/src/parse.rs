@@ -23,10 +23,69 @@ use crate::parse::util::in_progress;
 /// When parsing inside a generic function, this context holds the names of
 /// type parameters so that identifiers like `T` can be recognized as
 /// `Type::TypeParam` instead of `Type::Struct`.
-#[derive(Default)]
+///
+/// When parsing module-level items (uniforms/storages/samplers/textures),
+/// this context holds the union of type parameters from all entry points
+/// in the module, so a uniform like `uniform!(group(0), binding(0), FRAME: T)`
+/// where `T` is an entry-point type parameter can be parsed correctly.
+#[derive(Default, Clone)]
 pub struct ParseContext {
     /// Names of type parameters currently in scope (e.g., `"T"`, `"U"`).
     pub type_params: HashSet<String>,
+}
+
+impl ParseContext {
+    /// Build a context from an iterator of type parameter identifiers.
+    pub fn from_type_params<I: IntoIterator<Item = Ident>>(iter: I) -> Self {
+        Self {
+            type_params: iter.into_iter().map(|id| id.to_string()).collect(),
+        }
+    }
+}
+
+/// Collect the union of type parameters declared on shader entry points
+/// (`#[vertex]`, `#[fragment]`, `#[compute]`) within a list of `syn::Item`s.
+///
+/// These become module-level type parameters: any `uniform!`, `storage!`,
+/// `workgroup!`, `sampler!`, or `texture!` declaration in the same module
+/// may reference them.
+pub fn collect_module_type_params(items: &[syn::Item]) -> Result<Vec<Ident>, Error> {
+    let mut params: Vec<Ident> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for item in items {
+        let syn::Item::Fn(item_fn) = item else {
+            continue;
+        };
+        if ItemMod::syn_item_has_wgsl_ignore_attribute(item) {
+            continue;
+        }
+
+        // Only entry point functions contribute module-level type params.
+        let fn_attrs = match FnAttrs::try_from(&item_fn.attrs) {
+            Ok(attrs) => attrs,
+            Err(_) => continue,
+        };
+        if matches!(fn_attrs, FnAttrs::None) {
+            continue;
+        }
+
+        for param in &item_fn.sig.generics.params {
+            match param {
+                syn::GenericParam::Type(tp) => {
+                    let name = tp.ident.to_string();
+                    if seen.insert(name) {
+                        params.push(tp.ident.clone());
+                    }
+                }
+                syn::GenericParam::Lifetime(_) | syn::GenericParam::Const(_) => {
+                    // These are rejected during full parsing; skip here.
+                }
+            }
+        }
+    }
+
+    Ok(params)
 }
 
 #[derive(Debug, Snafu)]
@@ -1976,17 +2035,39 @@ impl Expr {
                     }
                     .fail()
                 };
-                // Some macros have no meaning in WGSL, and we will simply strip them
+                // Some macros have no meaning in WGSL, and we will simply strip them.
+                //
+                // `get!`/`get_mut!` accept two forms:
+                //   - `get!(IDENT)` for concrete module variables
+                //   - `get!(IDENT, T)` for generic module variables (the concrete type only
+                //     matters on the Rust side)
+                // In both cases, only the identifier is meaningful for WGSL.
                 let noop_macros = ["get_mut", "get"];
                 if let Some(macro_ident) = mac.path.get_ident() {
                     let macro_ident_str = macro_ident.to_string();
                     if noop_macros.contains(&macro_ident_str.as_str()) {
-                        // Parse the tokens inside the macro as a single identifier
-                        let ident: Ident = syn::parse2(mac.tokens.clone()).map_err(|e| {
+                        // Parse the tokens inside as either `IDENT` or
+                        // `IDENT, TYPE` — only the identifier is kept for
+                        // WGSL emission.
+                        struct GetArgs {
+                            ident: Ident,
+                        }
+                        impl syn::parse::Parse for GetArgs {
+                            fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+                                let ident: Ident = input.parse()?;
+                                if input.peek(syn::Token![,]) {
+                                    let _: syn::Token![,] = input.parse()?;
+                                    let _: syn::Type = input.parse()?;
+                                }
+                                Ok(GetArgs { ident })
+                            }
+                        }
+                        let GetArgs { ident } = syn::parse2(mac.tokens.clone()).map_err(|e| {
                             UnsupportedSnafu {
                                 span: mac.path.span(),
                                 note: format!(
-                                    "{macro_ident_str}! expects a single identifier, got: {e}"
+                                    "{macro_ident_str}! expects an identifier (optionally \
+                                     followed by `, T`), got: {e}"
                                 ),
                             }
                             .build()
@@ -3856,15 +3937,10 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
 
-        // Reject generic entry points
-        if !type_params.is_empty() && !matches!(fn_attrs, FnAttrs::None) {
-            return UnsupportedSnafu {
-                span: sig.generics.span(),
-                note: "generic functions cannot be shader entry points (#[vertex], #[fragment], \
-                       #[compute])",
-            }
-            .fail();
-        }
+        // Generic entry points are now supported. The entry point's type
+        // parameters become module-level type parameters (their union across
+        // all entry points), and the entire module's WGSL becomes a template
+        // with `__TP{name}__` placeholders.
 
         // Build parse context with type params in scope
         let ctx = ParseContext {
@@ -4143,22 +4219,34 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
 
     fn try_from(item_mod: &syn::ItemMod) -> Result<Self, Self::Error> {
         let ident = item_mod.ident.clone();
-        let mut content = Vec::new();
 
         // Only handle inline modules (with content)
-        if let Some((_, items)) = &item_mod.content {
-            for item in items {
-                content.push(Item::try_from(item)?);
-            }
-            Ok(ItemMod { ident, content })
-        } else {
-            // For now, error on modules without inline content
-            UnsupportedSnafu {
+        let Some((_, items)) = &item_mod.content else {
+            return UnsupportedSnafu {
                 span: item_mod.span(),
                 note: "Modules without inline content are not supported.",
             }
-            .fail()
+            .fail();
+        };
+
+        // First pass: collect module-level type parameters from entry points.
+        let module_type_params = collect_module_type_params(items)?;
+        let module_ctx = ParseContext::from_type_params(module_type_params.iter().cloned());
+
+        // Second pass: parse each item, re-resolving linkage types using the
+        // module-level context so type params are recognized.
+        let mut content = Vec::new();
+        for item in items {
+            let parsed = Item::try_from(item)?;
+            let parsed = match parsed {
+                Item::Uniform(u) => Item::Uniform(Box::new((*u).with_context(&module_ctx)?)),
+                Item::Storage(s) => Item::Storage(Box::new((*s).with_context(&module_ctx)?)),
+                Item::Workgroup(w) => Item::Workgroup(Box::new((*w).with_context(&module_ctx)?)),
+                other => other,
+            };
+            content.push(parsed);
         }
+        Ok(ItemMod { ident, content })
     }
 }
 
@@ -4328,6 +4416,9 @@ impl syn::parse::Parse for ItemUniform {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
+        // Initial parse uses an empty context; callers that have a context
+        // (e.g. with module-level type params) re-resolve via
+        // `ItemUniform::with_context`.
         let ty = Type::try_from(&rust_ty)?;
 
         Ok(ItemUniform {
@@ -4342,6 +4433,18 @@ impl syn::parse::Parse for ItemUniform {
             binding_ident,
             binding_paren_token,
         })
+    }
+}
+
+impl ItemUniform {
+    /// Re-parse this uniform's type using the given parse context. This
+    /// upgrades any type identifiers that match a known type parameter from
+    /// `Type::Struct` to `Type::TypeParam`.
+    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
+        if !ctx.type_params.is_empty() {
+            self.ty = Type::parse(&self.rust_ty, ctx)?;
+        }
+        Ok(self)
     }
 }
 
@@ -4459,6 +4562,9 @@ impl syn::parse::Parse for ItemStorage {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
+        // Initial parse uses an empty context; callers that have a context
+        // (e.g. with module-level type params) re-resolve via
+        // `ItemStorage::with_context`.
         let ty = Type::try_from(&rust_ty)?;
 
         Ok(ItemStorage {
@@ -4474,6 +4580,18 @@ impl syn::parse::Parse for ItemStorage {
             binding_ident,
             binding_paren_token,
         })
+    }
+}
+
+impl ItemStorage {
+    /// Re-parse this storage's type using the given parse context. This
+    /// upgrades any type identifiers that match a known type parameter from
+    /// `Type::Struct` to `Type::TypeParam`.
+    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
+        if !ctx.type_params.is_empty() {
+            self.ty = Type::parse(&self.rust_ty, ctx)?;
+        }
+        Ok(self)
     }
 }
 
@@ -4734,6 +4852,9 @@ impl syn::parse::Parse for ItemWorkgroup {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
+        // Initial parse uses an empty context; callers that have a context
+        // (e.g. with module-level type params) re-resolve via
+        // `ItemWorkgroup::with_context`.
         let ty = Type::try_from(&rust_ty)?;
 
         Ok(ItemWorkgroup {
@@ -4742,6 +4863,18 @@ impl syn::parse::Parse for ItemWorkgroup {
             ty,
             rust_ty,
         })
+    }
+}
+
+impl ItemWorkgroup {
+    /// Re-parse this workgroup variable's type using the given parse context.
+    /// This upgrades any type identifiers that match a known type parameter
+    /// from `Type::Struct` to `Type::TypeParam`.
+    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
+        if !ctx.type_params.is_empty() {
+            self.ty = Type::parse(&self.rust_ty, ctx)?;
+        }
+        Ok(self)
     }
 }
 
@@ -8099,7 +8232,10 @@ mod test {
     }
 
     #[test]
-    fn parse_generic_entrypoint_rejected() {
+    fn parse_generic_entrypoint_accepted() {
+        // Generic entry points are now supported. Their type parameters
+        // become module-level type parameters and the resulting WGSL
+        // module is treated as a template.
         let item: syn::Item = syn::parse_quote! {
             #[vertex]
             pub fn my_vertex<T>() -> Vec4f {
@@ -8107,12 +8243,83 @@ mod test {
             }
         };
         let result = Item::try_from(&item);
-        assert!(result.is_err());
-        let err = format!("{}", result.err().unwrap());
-        assert!(
-            err.contains("generic functions cannot be shader entry points"),
-            "Expected error about generic entrypoints, got: {err}"
-        );
+        assert!(result.is_ok(), "expected Ok");
+        match result.unwrap() {
+            Item::Fn(item_fn) => {
+                assert_eq!(item_fn.type_params.len(), 1);
+                assert_eq!(item_fn.type_params[0].to_string(), "T");
+                assert!(matches!(item_fn.fn_attrs, FnAttrs::Vertex(_)));
+            }
+            _ => panic!("expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_module_resolves_uniform_type_param() {
+        // A uniform whose type is a type parameter of an entry point should
+        // be parsed with the type recognized as `Type::TypeParam`, not
+        // `Type::Struct`.
+        let item: syn::Item = syn::parse_quote! {
+            pub mod my_shader {
+                use wgsl_rs::std::*;
+
+                uniform!(group(0), binding(0), FRAME: T);
+
+                #[fragment]
+                pub fn frag_main<T: Convert<f32>>() -> Vec4f {
+                    Vec4f { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+                }
+            }
+        };
+        let syn::Item::Mod(item_mod) = &item else {
+            panic!("expected Mod");
+        };
+        let parsed = ItemMod::try_from(item_mod).expect("parse");
+
+        let mut found = false;
+        for it in &parsed.content {
+            if let Item::Uniform(u) = it {
+                assert_eq!(u.name.to_string(), "FRAME");
+                match &u.ty {
+                    Type::TypeParam { ident } => {
+                        assert_eq!(ident.to_string(), "T");
+                        found = true;
+                    }
+                    _ => panic!("expected Type::TypeParam"),
+                }
+            }
+        }
+        assert!(found, "FRAME uniform not found in parsed module");
+    }
+
+    #[test]
+    fn parse_generic_module_resolves_storage_type_param() {
+        let item: syn::Item = syn::parse_quote! {
+            pub mod my_shader {
+                use wgsl_rs::std::*;
+
+                storage!(group(0), binding(0), read_write, DATA: T);
+
+                #[compute]
+                #[workgroup_size(1)]
+                pub fn cs_main<T>() {}
+            }
+        };
+        let syn::Item::Mod(item_mod) = &item else {
+            panic!("expected Mod");
+        };
+        let parsed = ItemMod::try_from(item_mod).expect("parse");
+        let mut found = false;
+        for it in &parsed.content {
+            if let Item::Storage(s) = it {
+                assert_eq!(s.name.to_string(), "DATA");
+                if let Type::TypeParam { ident } = &s.ty {
+                    assert_eq!(ident.to_string(), "T");
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "DATA storage not found");
     }
 
     #[test]

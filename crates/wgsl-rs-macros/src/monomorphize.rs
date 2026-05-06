@@ -205,7 +205,15 @@ impl MonoCtx {
         for item in &module.content {
             match item {
                 Item::Fn(f) => {
-                    if f.type_params.is_empty() {
+                    // Generic entry points (`#[vertex]`, `#[fragment]`,
+                    // `#[compute]`) are not template-instantiated within the
+                    // module. They remain in the WGSL source with
+                    // `__TP{name}__` placeholders, and the module-level
+                    // template machinery substitutes them at instantiation
+                    // time via `Module::instantiate`.
+                    let is_generic_entry_point = !f.type_params.is_empty()
+                        && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
+                    if f.type_params.is_empty() || is_generic_entry_point {
                         reserved_names.insert(f.ident.to_string());
                     } else {
                         templates.insert(f.ident.to_string(), f.as_ref().clone());
@@ -1080,9 +1088,16 @@ impl MonoCtx {
     /// Apply the results: remove generic templates, add monomorphized items,
     /// rewrite all types and call sites.
     fn apply(&self, module: &mut ItemMod) -> Result<(), crate::parse::Error> {
-        // Remove generic template functions, structs, and impl blocks
+        // Remove generic template functions, structs, and impl blocks.
+        // Generic entry points are kept (they aren't templates — they remain
+        // in the module's WGSL source with `__TP{name}__` placeholders for
+        // module-level instantiation).
         module.content.retain(|item| match item {
-            Item::Fn(f) => f.type_params.is_empty(),
+            Item::Fn(f) => {
+                let is_generic_entry_point =
+                    !f.type_params.is_empty() && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
+                f.type_params.is_empty() || is_generic_entry_point
+            }
             Item::Struct(s) => s.type_params.is_empty(),
             Item::Impl(i) => i.type_params.is_empty(),
             _ => true,

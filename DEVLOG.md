@@ -325,3 +325,18 @@ pattern as the existing `StripWgslAllowAttrs` visitor. The two attributes were
 semantically identical and only existed to clean up field attributes for Rust
 compilation. Removing them enables the natural pattern of using a single struct
 as both vertex output and fragment input, mirroring standard WGSL.
+
+### 2026-05-06: Generic linkages and shader entry points
+
+Shader entry points (`#[vertex]`, `#[fragment]`, `#[compute]`) and module
+linkages (`uniform!`, `storage!`, `workgroup!`) can now declare type
+parameters. A module containing such generics produces a *template* WGSL
+source with `__TP{name}__` placeholders; `Module::instantiate(&["f32"])`
+substitutes them at runtime to produce a concrete shader. Rust-side
+linkage statics use `Uniform`/`Storage`/`Workgroup` with a default
+`WgslTypeVariable` type parameter, backed by a `TypeId`-keyed map inside
+`ModuleVar`; access is via the new `get!(VAR, T)` / `get_mut!(VAR, T)`
+two-arg form. Per-entry-point type params are unioned into a single
+`module_type_params` slice on `Module`. Linkage-wgpu generation and
+WGSL validation are skipped for template modules — callers must
+instantiate first.

@@ -107,7 +107,21 @@ impl<T: Wgsl> DerefMut for ModuleVarWriteGuard<'_, T> {
 /// A `TypeMap` holds values of any WGSL type, but only one of that type.
 type TypeMap = HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>;
 
-struct WgslTypeVariable;
+/// Default placeholder type for module-level variables that are generic over
+/// a WGSL type parameter.
+///
+/// When a `uniform!`, `storage!` or `workgroup!` declaration uses a type
+/// parameter (e.g. `uniform!(group(0), binding(0), FRAME: T)` where `T` is
+/// a type parameter of an entry point), the generated Rust `static` is
+/// declared as `Uniform<WgslTypeVariable>` (i.e. `Uniform`). This is because
+/// Rust statics require concrete types and `T` is not in scope at module
+/// level.
+///
+/// Such "generic" module variables are accessed via `get_typed::<T>()` /
+/// `set_typed::<T>()` (or the two-arg `get!(VAR, T)` / `get_mut!(VAR, T)`
+/// macros), which use the underlying type-keyed map to read/write a value
+/// of the requested concrete type.
+pub struct WgslTypeVariable;
 
 /// Thread-safe module level variable that can be read from or written
 /// to from anywhere.
@@ -141,8 +155,6 @@ impl ModuleVar {
     /// - Dereferencing the returned guard will panic if it has not previously
     ///   been set.
     pub fn get_mut<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.guard_on_generic_use();
-
         let lock = self
             .inner
             .write()
@@ -151,6 +163,18 @@ impl ModuleVar {
             inner: lock,
             _phantom: PhantomData,
         }
+    }
+
+    /// Set the inner data for type `T` on a generic module variable.
+    ///
+    /// ## Panics
+    /// Panics if the underlying lock on the inner data has been poisoned.
+    pub fn set_typed<T: Wgsl>(&self, data: T) {
+        let mut map = self
+            .inner
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
+        map.insert(TypeId::of::<T>(), Box::new(data));
     }
 }
 
@@ -222,12 +246,18 @@ impl<T: Wgsl> ModuleVar<T> {
     /// ## Panics
     /// Panics if the underlying lock on the inner data has been poisoned.
     pub fn set(&self, data: T) {
-        *self.write() = data;
+        self.guard_on_generic_use();
+
+        let mut map = self
+            .inner
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
+        map.insert(TypeId::of::<T>(), Box::new(data));
     }
 }
 
 /// A workgroup variable.
-pub struct Workgroup<T> {
+pub struct Workgroup<T = WgslTypeVariable> {
     data: ModuleVar<T>,
 }
 
@@ -270,8 +300,38 @@ impl<T: Wgsl> Workgroup<T> {
     }
 }
 
+impl Workgroup<WgslTypeVariable> {
+    /// Get a reference to the inner data, as a concrete type `T`.
+    ///
+    /// This is the dynamic accessor for a "generic" workgroup variable
+    /// (one whose type was a type parameter of an entry point).
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard panics if no value has been set for
+    ///   `T`.
+    pub fn get_typed<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
+        self.data.get::<T>()
+    }
+
+    /// Get a mutable reference to the inner data, as a concrete type `T`.
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard panics if no value has been set for
+    ///   `T`.
+    pub fn get_mut_typed<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
+        self.data.get_mut::<T>()
+    }
+
+    /// Set the inner data for type `T` on a generic workgroup variable.
+    pub fn set_typed<T: Wgsl>(&self, data: T) {
+        self.data.set_typed::<T>(data);
+    }
+}
+
 /// A shader uniform, backed by a `RwLock<T>` on the CPU.
-pub struct Uniform<T> {
+pub struct Uniform<T = WgslTypeVariable> {
     pub group: u32,
     pub binding: u32,
     data: ModuleVar<T>,
@@ -312,6 +372,29 @@ impl<T: Wgsl> Uniform<T> {
     }
 }
 
+impl Uniform<WgslTypeVariable> {
+    /// Get a reference to the inner data, as a concrete type `T`.
+    ///
+    /// This is the dynamic accessor for a "generic" uniform (one whose type
+    /// was a type parameter of an entry point). Use the two-arg form of the
+    /// `get!` macro: `get!(FRAME, T)`.
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard panics if no value has been set for
+    ///   `T`.
+    pub fn get_typed<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
+        self.data.get::<T>()
+    }
+
+    /// Set the inner data for type `T` on a generic uniform variable.
+    ///
+    /// Not available in WGSL.
+    pub fn set_typed<T: Wgsl>(&self, data: T) {
+        self.data.set_typed::<T>(data);
+    }
+}
+
 /// Marker type for read-only access-mode.
 pub struct Read;
 
@@ -319,7 +402,7 @@ pub struct Read;
 pub struct ReadWrite;
 
 /// A shader storage buffer, backed by a `T`.
-pub struct Storage<T, AM = Read> {
+pub struct Storage<T = WgslTypeVariable, AM = Read> {
     group: u32,
     binding: u32,
     access_mode: PhantomData<AM>,
@@ -383,10 +466,52 @@ impl<T: Wgsl, AM: AccessMode> Storage<T, AM> {
     }
 }
 
-/// Provides access to a storage variable.
+impl<AM: AccessMode> Storage<WgslTypeVariable, AM> {
+    /// Get a reference to the inner data, as a concrete type `T`.
+    ///
+    /// This is the dynamic accessor for a "generic" storage variable (one
+    /// whose type was a type parameter of an entry point). Use the two-arg
+    /// form of the `get!` macro: `get!(BUFFER, T)`.
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard panics if no value has been set for
+    ///   `T`.
+    pub fn get_typed<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
+        self.data.get::<T>()
+    }
+
+    /// Get a mutable reference to the inner data, as a concrete type `T`.
+    ///
+    /// This is the dynamic accessor for a "generic" storage variable. Use
+    /// the two-arg form of the `get_mut!` macro: `get_mut!(BUFFER, T)`.
+    ///
+    /// ## Panics
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard panics if no value has been set for
+    ///   `T`.
+    pub fn get_mut_typed<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
+        self.data.get_mut::<T>()
+    }
+
+    /// Set the inner data for type `T` on a generic storage variable.
+    pub fn set_typed<T: Wgsl>(&self, data: T) {
+        self.data.set_typed::<T>(data);
+    }
+}
+
+/// Provides access to a storage, uniform, or workgroup variable.
 ///
-/// Since storage variables are `static` and implemented with locks,
+/// Since module variables are `static` and implemented with locks,
 /// normal borrows aren't possible.
+///
+/// # Forms
+///
+/// - `get!(VAR)` — reads the inner value of a concrete module variable.
+/// - `get!(VAR, T)` — reads the inner value of a *generic* module variable,
+///   downcasting to the concrete type `T`. The variable must have been declared
+///   with a type parameter (e.g. `uniform!(group(0), binding(0), FRAME: T)`);
+///   using this form on a non-generic variable is a compile-time error.
 ///
 /// # Example
 /// ```ignore
@@ -394,19 +519,36 @@ impl<T: Wgsl, AM: AccessMode> Storage<T, AM> {
 ///
 /// let value = get!(OUTPUT)[idx];
 /// let value = get!(OUTPUT).field;
+///
+/// // Generic uniform usage:
+/// uniform!(group(0), binding(0), FRAME: T);
+///
+/// fn use_frame<T: Wgsl + Convert<f32>>() -> f32 {
+///     f32(get!(FRAME, T))
+/// }
 /// ```
 #[macro_export]
 macro_rules! get {
     ($var:ident) => {
         $var.get()
     };
+    ($var:ident, $ty:ty) => {
+        $var.get_typed::<$ty>()
+    };
 }
 
-/// Provides mutable access to a storage variable.
+/// Provides mutable access to a storage or workgroup variable.
 ///
-/// Since storage variables are `static` and implemented with locks,
+/// Since module variables are `static` and implemented with locks,
 /// normal mutable borrows aren't possible.
 /// This macro uses interior mutability to enable writes.
+///
+/// # Forms
+///
+/// - `get_mut!(VAR)` — mutably accesses a concrete module variable.
+/// - `get_mut!(VAR, T)` — mutably accesses a *generic* module variable,
+///   downcasting to the concrete type `T`. Using this form on a non-generic
+///   variable is a compile-time error.
 ///
 /// # Example
 /// ```ignore
@@ -419,6 +561,9 @@ macro_rules! get {
 macro_rules! get_mut {
     ($var:ident) => {
         $var.get_mut()
+    };
+    ($var:ident, $ty:ty) => {
+        $var.get_mut_typed::<$ty>()
     };
 }
 

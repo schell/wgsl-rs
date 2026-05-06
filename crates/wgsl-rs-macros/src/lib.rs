@@ -265,12 +265,170 @@ fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<()
     Ok(())
 }
 
+/// Collect the union of type parameters declared on shader entry points
+/// (`#[vertex]`, `#[fragment]`, `#[compute]`) within the parsed module.
+///
+/// The order is the order of first appearance.
+fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> {
+    use parse::{FnAttrs, Item};
+    let mut params: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &wgsl_module.content {
+        let Item::Fn(f) = item else { continue };
+        if matches!(f.fn_attrs, FnAttrs::None) {
+            continue;
+        }
+        for tp in &f.type_params {
+            let name = tp.to_string();
+            if seen.insert(name.clone()) {
+                params.push(name);
+            }
+        }
+    }
+    params
+}
+
+/// Replace any `uniform!`/`storage!`/`workgroup!` macro item in the input
+/// Rust module whose declared type is a *type parameter* of one of the
+/// module's entry points with the pre-expanded "type-erased" form
+/// (e.g. `pub static FRAME: Uniform = Uniform::new(0, 0);`).
+///
+/// The default of `Uniform` / `Storage` / `Workgroup` is `WgslTypeVariable`,
+/// which keeps a runtime `TypeId`-keyed map of values; `get!(VAR, T)` /
+/// `get_mut!(VAR, T)` then read/write a value of the requested concrete
+/// type.
+fn rewrite_generic_linkages(
+    input_mod: &mut syn::ItemMod,
+    wgsl_module: &parse::ItemMod,
+    crate_path: &syn::Path,
+) -> Result<(), WgslGenError> {
+    use parse::{Item, Type};
+
+    // Collect the names of generic linkage items by scanning the parsed
+    // `wgsl_module`. We key on the linkage variable's `name` so we can find
+    // the matching `syn::Item::Macro` in `input_mod`.
+    let mut generic_uniforms: std::collections::BTreeMap<String, (syn::LitInt, syn::LitInt)> =
+        Default::default();
+    let mut generic_storages: std::collections::BTreeMap<
+        String,
+        (syn::LitInt, syn::LitInt, parse::StorageAccess),
+    > = Default::default();
+    let mut generic_workgroups: std::collections::BTreeSet<String> = Default::default();
+
+    for item in &wgsl_module.content {
+        match item {
+            Item::Uniform(u) if matches!(u.ty, Type::TypeParam { .. }) => {
+                generic_uniforms.insert(u.name.to_string(), (u.group.clone(), u.binding.clone()));
+            }
+            Item::Storage(s) if matches!(s.ty, Type::TypeParam { .. }) => {
+                generic_storages.insert(
+                    s.name.to_string(),
+                    (s.group.clone(), s.binding.clone(), s.access),
+                );
+            }
+            Item::Workgroup(w) if matches!(w.ty, Type::TypeParam { .. }) => {
+                generic_workgroups.insert(w.name.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if generic_uniforms.is_empty() && generic_storages.is_empty() && generic_workgroups.is_empty() {
+        return Ok(());
+    }
+
+    let Some((_, items)) = input_mod.content.as_mut() else {
+        return Ok(());
+    };
+
+    for item in items.iter_mut() {
+        let syn::Item::Macro(item_macro) = item else {
+            continue;
+        };
+        let Some(macro_ident) = item_macro.mac.path.get_ident() else {
+            continue;
+        };
+        let macro_name = macro_ident.to_string();
+
+        // Find the variable name that this macro declares (the bare ident
+        // after the last `,` and before the `:`).
+        let var_name = match macro_name.as_str() {
+            "uniform" | "storage" | "workgroup" => {
+                extract_linkage_var_name(item_macro.mac.tokens.clone())
+            }
+            _ => None,
+        };
+        let Some(var_name) = var_name else {
+            continue;
+        };
+
+        let replacement: Option<proc_macro2::TokenStream> = match macro_name.as_str() {
+            "uniform" => generic_uniforms.get(&var_name).map(|(group, binding)| {
+                let name = quote::format_ident!("{}", var_name);
+                quote! {
+                    pub static #name: #crate_path::std::Uniform =
+                        #crate_path::std::Uniform::new(#group, #binding);
+                }
+            }),
+            "storage" => generic_storages
+                .get(&var_name)
+                .map(|(group, binding, access)| {
+                    let name = quote::format_ident!("{}", var_name);
+                    let access_mode = match access {
+                        parse::StorageAccess::Read => quote!(#crate_path::std::Read),
+                        parse::StorageAccess::ReadWrite => quote!(#crate_path::std::ReadWrite),
+                    };
+                    quote! {
+                        pub static #name: #crate_path::std::Storage<
+                            #crate_path::std::WgslTypeVariable,
+                            #access_mode,
+                        > = #crate_path::std::Storage::new(#group, #binding);
+                    }
+                }),
+            "workgroup" => generic_workgroups.get(&var_name).map(|_| {
+                let name = quote::format_ident!("{}", var_name);
+                quote! {
+                    pub static #name: #crate_path::std::Workgroup =
+                        #crate_path::std::Workgroup::new();
+                }
+            }),
+            _ => None,
+        };
+
+        if let Some(tokens) = replacement {
+            *item = syn::parse2::<syn::Item>(tokens)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Extracts the variable name from a `uniform!` / `storage!` / `workgroup!`
+/// macro token stream. Returns `None` if the tokens don't match the
+/// expected form.
+fn extract_linkage_var_name(tokens: proc_macro2::TokenStream) -> Option<String> {
+    use proc_macro2::TokenTree;
+    let mut last_ident: Option<String> = None;
+    for tt in tokens {
+        if let TokenTree::Punct(p) = &tt
+            && p.as_char() == ':'
+        {
+            return last_ident;
+        }
+        if let TokenTree::Ident(id) = &tt {
+            last_ident = Some(id.to_string());
+        }
+    }
+    None
+}
+
 fn gen_wgsl_module(
     name: &syn::Ident,
     crate_path: &syn::Path,
     imports: &[proc_macro2::TokenStream],
     source_lines: &[String],
     mono_result: &monomorphize::MonoResult,
+    module_type_params: &[String],
 ) -> proc_macro2::TokenStream {
     fn is_wgsl_std_import(crate_path: &syn::Path, path: &syn::Path) -> bool {
         let wgsl_std = {
@@ -353,6 +511,9 @@ fn gen_wgsl_module(
         })
         .collect();
 
+    let module_type_params_lits: Vec<&str> =
+        module_type_params.iter().map(|s| s.as_str()).collect();
+
     quote! {
         pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {
             name: stringify!(#name),
@@ -367,6 +528,9 @@ fn gen_wgsl_module(
             ],
             instantiations: &[
                 #(#inst_entries),*
+            ],
+            module_type_params: &[
+                #(#module_type_params_lits),*
             ],
         };
     }
@@ -401,8 +565,21 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let mono_result = monomorphize::run(&mut wgsl_module)?;
     let imports = wgsl_module.imports(&crate_path);
 
+    // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
+    // input Rust module that have a type-parameter type (e.g.
+    // `uniform!(group(0), binding(0), FRAME: T)` where `T` is a type
+    // parameter of an entry point). The generated `pub static` for such a
+    // declaration must use the type-erased default (`Uniform<WgslTypeVariable>`,
+    // i.e. just `Uniform`) because `T` is not in scope at module level.
+    rewrite_generic_linkages(&mut input_mod, &wgsl_module, &crate_path)?;
+
     let code = code_gen::generate_wgsl(&wgsl_module);
     let source_lines = code.source_lines();
+
+    // Compute the union of type parameters across all entry points in this
+    // module. These become the module-level type parameters for the generated
+    // `Module::module_type_params` field.
+    let module_type_params: Vec<String> = collect_entry_point_type_params(&wgsl_module);
 
     let module_fragment = gen_wgsl_module(
         &wgsl_module.ident,
@@ -410,22 +587,32 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         &imports,
         &source_lines,
         &mono_result,
+        &module_type_params,
     );
 
     // Generate validation test for modules with imports (unless skip_validation is
     // set)
-    let validation_test = if !attrs.skip_validation && !imports.is_empty() {
-        gen_validation_test(&input_mod.ident)
-    } else {
-        quote! {}
-    };
+    let validation_test =
+        if !attrs.skip_validation && !imports.is_empty() && module_type_params.is_empty() {
+            gen_validation_test(&input_mod.ident)
+        } else {
+            quote! {}
+        };
 
-    // Generate linkage module when feature is enabled
+    // Generate linkage module when feature is enabled.
+    //
+    // Template modules (with module-level type parameters) skip linkage
+    // generation: the WGSL `shader_source()` is a template with unresolved
+    // placeholders, so a `wgpu::ShaderModule` can't be built from it
+    // directly. Users must instantiate the template first, then construct
+    // their own pipeline / bind groups manually for now.
     #[cfg(feature = "linkage-wgpu")]
-    let linkage_fragment = {
+    let linkage_fragment = if module_type_params.is_empty() {
         let linkage_info =
             linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
         linkage::generate_linkage_module(&linkage_info)
+    } else {
+        quote! {}
     };
 
     if let Some((_, content)) = input_mod.content.as_mut() {
@@ -438,9 +625,10 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
             content.push(test_item);
         }
 
-        // Add linkage if the feature is set
+        // Add linkage if the feature is set (skipped for template modules
+        // — see the linkage_fragment construction above).
         #[cfg(feature = "linkage-wgpu")]
-        {
+        if !linkage_fragment.is_empty() {
             let linkage_item: syn::Item = syn::parse2(linkage_fragment)?;
             content.push(linkage_item);
         }
@@ -454,7 +642,14 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         // via the auto-generated __validate_wgsl() test function.
         // Note: imports from `wgsl_rs::std` are filtered out by `imports()`, so modules
         // that only import from std will still be validated at compile-time.
+        //
+        // Template modules (with module-level type parameters) cannot be
+        // validated standalone either — they contain unresolved
+        // `__TP{name}__` placeholders. They must be `instantiate(...)`d
+        // first; users can validate the resulting source themselves.
+        let is_template = !module_type_params.is_empty();
         if imports.is_empty()
+            && !is_template
             && let Err(error) = validate_wgsl(&code, &source_lines)
         {
             return WgslValidateSnafu { input_mod, error }.fail();

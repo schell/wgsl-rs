@@ -35,6 +35,18 @@ fn validate_and_print_source(module: &wgsl_rs::Module) {
     let source = module.wgsl_source().join("\n");
     println!("raw source:\n\n{source}\n\n");
 
+    // Template modules can't be parsed/validated standalone — their WGSL
+    // contains unresolved `__TP{name}__` placeholders. Just print the raw
+    // template source.
+    if module.is_template() {
+        println!(
+            "(this is a template module with type parameters {:?}; call instantiate(...) to \
+             produce a concrete shader)",
+            module.module_type_params
+        );
+        return;
+    }
+
     // Parse the source into a Module.
     let module: naga::Module = naga::front::wgsl::parse_str(&source).unwrap();
 

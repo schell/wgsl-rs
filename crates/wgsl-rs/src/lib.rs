@@ -43,6 +43,21 @@ pub struct Module {
     /// the concrete type names to substitute for the type parameters. These
     /// are resolved at source-assembly time in `wgsl_source()`.
     pub instantiations: &'static [TemplateInstantiation],
+
+    /// Module-level type parameters.
+    ///
+    /// When the module contains generic shader entry points (e.g.
+    /// `pub fn frag_main<T: Convert<f32>>() -> Vec4f`) and/or generic
+    /// linkage declarations (e.g. `uniform!(group(0), binding(0), FRAME: T)`),
+    /// the entire module's WGSL source is a *template* with `__TP{name}__`
+    /// placeholders. The names listed here are the union of type parameters
+    /// declared on the module's entry points.
+    ///
+    /// When this slice is empty, the module is concrete and `wgsl_source()`
+    /// produces a directly usable WGSL source. When it is non-empty, the
+    /// caller must use `instantiate(...)` (passing valid WGSL type strings
+    /// for each parameter) to produce a concrete shader source.
+    pub module_type_params: &'static [&'static str],
 }
 
 /// A generic function template with placeholder type parameters.
@@ -94,18 +109,70 @@ pub struct TemplateInstantiation {
 }
 
 impl Module {
+    /// Returns whether this module is a template — i.e. has unresolved
+    /// module-level type parameters.
+    ///
+    /// Template modules cannot be used as shader sources directly; call
+    /// `instantiate(...)` to produce a concrete WGSL source.
+    pub fn is_template(&self) -> bool {
+        !self.module_type_params.is_empty()
+    }
+
     /// Returns the concatenated WGSL source of this module and all its imports,
     /// including any cross-module template instantiations.
     ///
     /// This recursively collects source lines from all imported modules first,
     /// then appends this module's source lines, then appends any instantiated
     /// template functions (including transitive dependencies).
+    ///
+    /// If this module is a template (`is_template()` returns `true`), the
+    /// resulting source will still contain `__TP{name}__` placeholders.
+    /// Use `instantiate(...)` to produce a concrete WGSL shader source.
     pub fn wgsl_source(&self) -> Vec<String> {
         let mut instantiated: ::std::collections::HashSet<(String, String, Vec<String>)> =
             ::std::collections::HashSet::new();
         let mut src = vec![];
         self.collect_wgsl_source(&mut src, &mut instantiated);
         src
+    }
+
+    /// Produce a concrete WGSL shader source for this module by substituting
+    /// each module-level type parameter with the corresponding WGSL type
+    /// string in `wgsl_type_args`.
+    ///
+    /// `wgsl_type_args` must be parallel to `module_type_params` (one entry
+    /// per parameter, in the same order) and each entry must be a valid
+    /// WGSL type expression (e.g. `"f32"`, `"vec4<f32>"`, `"array<f32, 4>"`).
+    ///
+    /// # Panics
+    /// Panics if the number of type arguments does not match the number of
+    /// module-level type parameters.
+    pub fn instantiate(&self, wgsl_type_args: &[&str]) -> Vec<String> {
+        assert_eq!(
+            wgsl_type_args.len(),
+            self.module_type_params.len(),
+            "module '{}' has {} type parameter(s) ({:?}), but {} argument(s) were given",
+            self.name,
+            self.module_type_params.len(),
+            self.module_type_params,
+            wgsl_type_args.len()
+        );
+
+        let raw = self.wgsl_source();
+        if self.module_type_params.is_empty() {
+            return raw;
+        }
+
+        raw.into_iter()
+            .map(|line| {
+                let mut out = line;
+                for (param, arg) in self.module_type_params.iter().zip(wgsl_type_args.iter()) {
+                    let placeholder = format!("__TP{param}__");
+                    out = out.replace(&placeholder, arg);
+                }
+                out
+            })
+            .collect()
     }
 
     fn collect_wgsl_source(
@@ -267,6 +334,13 @@ impl Module {
     /// my_shader::WGSL_MODULE.validate().expect("WGSL validation failed");
     /// ```
     pub fn validate(&self) -> Result<(), String> {
+        // Template modules contain unresolved `__TP{name}__` placeholders
+        // that aren't valid WGSL identifiers. They cannot be validated
+        // standalone — the user must call `instantiate(...)` first.
+        if self.is_template() {
+            return Ok(());
+        }
+
         let source = self.wgsl_source().join("\n");
 
         // Parse the WGSL source
@@ -505,12 +579,14 @@ mod test {
         static EMPTY_MODS: [&Module; 0] = [];
         static EMPTY_INSTS: [TemplateInstantiation; 0] = [];
         static EMPTY_LINES: [&str; 0] = [];
+        static EMPTY_TYPE_PARAMS: [&str; 0] = [];
         static MOD_A: Module = Module {
             name: "a",
             imports: &EMPTY_MODS,
             source: &EMPTY_LINES,
             templates: &A_TEMPLATES,
             instantiations: &EMPTY_INSTS,
+            module_type_params: &EMPTY_TYPE_PARAMS,
         };
         static MOD_B: Module = Module {
             name: "b",
@@ -518,6 +594,7 @@ mod test {
             source: &EMPTY_LINES,
             templates: &B_TEMPLATES,
             instantiations: &EMPTY_INSTS,
+            module_type_params: &EMPTY_TYPE_PARAMS,
         };
         static ROOT_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
             modules: &[&MOD_A, &MOD_B],
@@ -531,6 +608,7 @@ mod test {
             source: &EMPTY_LINES,
             templates: &[],
             instantiations: &ROOT_INSTS,
+            module_type_params: &EMPTY_TYPE_PARAMS,
         };
 
         let _ = ROOT.wgsl_source();
@@ -595,5 +673,161 @@ mod test {
             (result - 3.0).abs() < f32::EPSILON,
             "1.0 + 2.0 should be 3.0, got {result}"
         );
+    }
+
+    // --- Generic linkage / generic entry-point tests ---
+
+    #[wgsl(crate_path = crate, skip_validation)]
+    pub mod generic_shader {
+        use crate::std::*;
+
+        uniform!(group(0), binding(0), FRAME: T);
+
+        #[fragment]
+        pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
+            vec4f(1.0, sin(f32(get!(FRAME, T)) / 128.0), 0.0, 1.0)
+        }
+    }
+
+    #[test]
+    fn generic_module_is_template() {
+        let m = &generic_shader::WGSL_MODULE;
+        assert!(m.is_template());
+        assert_eq!(m.module_type_params, &["T"]);
+    }
+
+    #[test]
+    fn generic_module_template_source_has_placeholder() {
+        let src = generic_shader::WGSL_MODULE.wgsl_source().join("\n");
+        assert!(
+            src.contains("__TPT__"),
+            "expected `__TPT__` placeholder in template source, got:\n{src}"
+        );
+        // The uniform's type should be a placeholder
+        assert!(
+            src.contains("FRAME") && src.contains("__TPT__"),
+            "expected FRAME uniform with placeholder type, got:\n{src}"
+        );
+    }
+
+    #[test]
+    fn generic_module_instantiate_substitutes_placeholders() {
+        let src = generic_shader::WGSL_MODULE.instantiate(&["f32"]).join("\n");
+        assert!(
+            !src.contains("__TPT__"),
+            "expected no placeholders after instantiation, got:\n{src}"
+        );
+        assert!(
+            src.contains("FRAME") && src.contains("f32"),
+            "expected FRAME with f32 type, got:\n{src}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "module 'generic_shader'")]
+    fn generic_module_instantiate_arg_mismatch_panics() {
+        let _ = generic_shader::WGSL_MODULE.instantiate(&[]);
+    }
+
+    #[test]
+    fn generic_uniform_is_type_erased_static() {
+        // The Rust-side static should be `Uniform` (with default
+        // WgslTypeVariable), not `Uniform<T>`. Setting and getting via the
+        // typed accessors should round-trip.
+        generic_shader::FRAME.set_typed::<f32>(42.0f32);
+        let v = *generic_shader::FRAME.get_typed::<f32>();
+        assert_eq!(v, 42.0);
+
+        // A different concrete type can also be stored simultaneously.
+        generic_shader::FRAME.set_typed::<u32>(7u32);
+        let u = *generic_shader::FRAME.get_typed::<u32>();
+        assert_eq!(u, 7);
+        // The f32 value is unaffected.
+        let v2 = *generic_shader::FRAME.get_typed::<f32>();
+        assert_eq!(v2, 42.0);
+    }
+
+    #[test]
+    fn generic_module_validate_skips_template() {
+        // `validate()` should be a no-op for template modules — they have
+        // unresolved placeholders that aren't valid WGSL.
+        generic_shader::WGSL_MODULE
+            .validate()
+            .expect("template validation should be a no-op");
+    }
+
+    #[cfg(feature = "validation")]
+    #[test]
+    fn generic_module_instantiated_source_is_valid_wgsl() {
+        // Instantiate the template with `f32` and verify the resulting
+        // source actually parses + validates as WGSL.
+        let src = generic_shader::WGSL_MODULE.instantiate(&["f32"]).join("\n");
+        let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| {
+            panic!(
+                "parse failed:\n{}\n--- source ---\n{src}",
+                e.emit_to_string(&src)
+            )
+        });
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| {
+            panic!(
+                "validate failed:\n{}\n--- source ---\n{src}",
+                e.emit_to_string(&src)
+            )
+        });
+    }
+
+    // Generic compute shader exercising multiple type parameters and a
+    // generic storage variable.
+    #[wgsl(crate_path = crate, skip_validation)]
+    pub mod generic_compute {
+        use crate::std::*;
+
+        storage!(group(0), binding(0), read_write, INPUT: A);
+        storage!(group(0), binding(1), read_write, OUTPUT: B);
+
+        #[compute]
+        #[workgroup_size(1)]
+        pub fn cs_main<A: Wgsl + Convert<f32> + Clone, B: Wgsl + Convert<f32> + Clone>() {}
+    }
+
+    #[test]
+    fn generic_compute_has_two_type_params() {
+        let m = &generic_compute::WGSL_MODULE;
+        assert!(m.is_template());
+        assert_eq!(m.module_type_params, &["A", "B"]);
+    }
+
+    #[test]
+    fn generic_compute_storages_are_type_erased() {
+        // Both storages are declared with type parameters → both are
+        // type-erased on the Rust side.
+        generic_compute::INPUT.set_typed::<f32>(1.5f32);
+        generic_compute::OUTPUT.set_typed::<u32>(42u32);
+        let a = *generic_compute::INPUT.get_typed::<f32>();
+        let b = *generic_compute::OUTPUT.get_typed::<u32>();
+        assert_eq!(a, 1.5);
+        assert_eq!(b, 42);
+    }
+
+    #[test]
+    fn generic_compute_template_has_both_placeholders() {
+        let src = generic_compute::WGSL_MODULE.wgsl_source().join("\n");
+        assert!(src.contains("__TPA__"), "missing __TPA__ in:\n{src}");
+        assert!(src.contains("__TPB__"), "missing __TPB__ in:\n{src}");
+    }
+
+    #[test]
+    fn generic_compute_instantiate_substitutes_both() {
+        let src = generic_compute::WGSL_MODULE
+            .instantiate(&["f32", "u32"])
+            .join("\n");
+        assert!(!src.contains("__TPA__") && !src.contains("__TPB__"));
+        assert!(src.contains("INPUT") && src.contains("OUTPUT"));
+        assert!(src.contains("f32") && src.contains("u32"));
     }
 }

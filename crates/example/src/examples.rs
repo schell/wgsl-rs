@@ -38,6 +38,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &renderer_specialization_simple::WGSL_MODULE,
     &generic_structs::WGSL_MODULE,
     &shared_inter_stage::WGSL_MODULE,
+    &hello_triangle_generic::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -1804,35 +1805,35 @@ pub mod generic_structs {
     }
 }
 
-// #[wgsl]
-// pub mod hello_triangle_generic {
-//     //! This is a "hello world" shader that shows a triangle with changing
-//     //! color. It has been modified to be polymorphic.
-//     use wgsl_rs::std::*;
+#[wgsl]
+pub mod hello_triangle_generic {
+    //! This is a "hello world" shader that shows a triangle with changing
+    //! color. It has been modified to be polymorphic.
+    use wgsl_rs::std::*;
 
-//     // Define a uniform in both Rust and WGSL using the uniform! macro.
-//     //
-//     // This can use generics, and the types will be monomorphized later when
-//     // the shader is constructed.
-//     uniform!(group(0), binding(0), FRAME: T);
+    // Define a uniform in both Rust and WGSL using the uniform! macro.
+    //
+    // The type `T` is a type parameter of the `frag_main` entry point —
+    // when the entry point is instantiated with a concrete type, this
+    // uniform is instantiated with the same type.
+    uniform!(group(0), binding(0), FRAME: T);
 
-//     #[vertex]
-//     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
-//         const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5),
-// vec2f(0.5, -0.5)];
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
 
-//         let position = POS[vertex_index as usize];
-//         vec4f(position.x, position.y, 0.0, 1.0)
-//     }
+        let position = POS[vertex_index as usize];
+        vec4f(position.x, position.y, 0.0, 1.0)
+    }
 
-//     /// Here we define a polymorphic fragment stage that uses our generic
-//     /// uniform.
-//     ///
-//     /// The `T` can be any type that can be converted into an `f32` using the
-//     /// `Convert<f32>` trait.
-//     #[fragment]
-//     pub fn frag_main<T: Convert<f32>>() -> Vec4f {
-//         let t: &T = get!(FRAME);
-//         vec4f(1.0, sin(f32(t) / 128.0), 0.0, 1.0)
-//     }
-// }
+    /// Here we define a polymorphic fragment stage that uses our generic
+    /// uniform.
+    ///
+    /// The `T` can be any type that can be converted into an `f32` using the
+    /// `Convert<f32>` trait.
+    #[fragment]
+    pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
+        let frame_t = get!(FRAME, T);
+        vec4f(1.0, sin(f32(frame_t) / 128.0), 0.0, 1.0)
+    }
+}

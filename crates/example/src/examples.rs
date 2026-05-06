@@ -47,6 +47,7 @@ pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
         .map(|v| v as _)
 }
 
+
 #[wgsl]
 pub mod hello_triangle {
     //! This is a "hello world" shader that shows a triangle with changing
@@ -103,6 +104,43 @@ pub mod structs {
     #[fragment]
     pub fn frag_shader(in1: MyInputs) -> MyOutputs {
         MyOutputs { x: 0.0, y: in1.x }
+    }
+}
+
+/// Demonstrates the standard WGSL pattern of using a single struct as both
+/// the vertex shader output and the fragment shader input.
+///
+/// In `wgsl-rs`, IO attributes (`#[builtin]`, `#[location]`, `#[interpolate]`)
+/// go directly on struct fields. The `#[wgsl]` macro automatically strips
+/// these attributes from the emitted Rust output, so no wrapper attribute is
+/// needed on the struct itself. The same struct can be referenced from both
+/// the vertex stage (as a return type) and the fragment stage (as a
+/// parameter), exactly mirroring the WGSL pattern.
+#[wgsl]
+pub mod shared_inter_stage {
+    use wgsl_rs::std::*;
+
+    /// Vertex output / fragment input — a single struct shared across stages.
+    pub struct VertexOutput {
+        #[builtin(position)]
+        pub clip_position: Vec4f,
+        #[location(0)]
+        pub color: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vs_main(#[builtin(vertex_index)] vertex_index: u32) -> VertexOutput {
+        const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
+        let position = POS[vertex_index as usize];
+        VertexOutput {
+            clip_position: vec4f(position.x, position.y, 0.0, 1.0),
+            color: vec4f(1.0, 0.0, 0.0, 1.0),
+        }
+    }
+
+    #[fragment]
+    pub fn fs_main(input: VertexOutput) -> Vec4f {
+        input.color
     }
 }
 
@@ -1763,42 +1801,5 @@ pub mod generic_structs {
     pub fn use_pair_i32() -> i32 {
         let p: Pair<i32> = Pair::<i32> { a: 10, b: 20 };
         Pair::<i32>::first(p)
-    }
-}
-
-/// Demonstrates the standard WGSL pattern of using a single struct as both
-/// the vertex shader output and the fragment shader input.
-///
-/// In `wgsl-rs`, IO attributes (`#[builtin]`, `#[location]`, `#[interpolate]`)
-/// go directly on struct fields. The `#[wgsl]` macro automatically strips
-/// these attributes from the emitted Rust output, so no wrapper attribute is
-/// needed on the struct itself. The same struct can be referenced from both
-/// the vertex stage (as a return type) and the fragment stage (as a
-/// parameter), exactly mirroring the WGSL pattern.
-#[wgsl]
-pub mod shared_inter_stage {
-    use wgsl_rs::std::*;
-
-    /// Vertex output / fragment input — a single struct shared across stages.
-    pub struct VertexOutput {
-        #[builtin(position)]
-        pub clip_position: Vec4f,
-        #[location(0)]
-        pub color: Vec4f,
-    }
-
-    #[vertex]
-    pub fn vs_main(#[builtin(vertex_index)] vertex_index: u32) -> VertexOutput {
-        const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
-        let position = POS[vertex_index as usize];
-        VertexOutput {
-            clip_position: vec4f(position.x, position.y, 0.0, 1.0),
-            color: vec4f(1.0, 0.0, 0.0, 1.0),
-        }
-    }
-
-    #[fragment]
-    pub fn fs_main(input: VertexOutput) -> Vec4f {
-        input.color
     }
 }

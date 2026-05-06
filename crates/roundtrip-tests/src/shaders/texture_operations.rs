@@ -15,7 +15,6 @@ pub mod texture_load_2d {
 
     texture!(group(0), binding(0), TEX: Texture2D<f32>);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -42,7 +41,6 @@ pub mod texture_sample_2d {
     texture!(group(0), binding(0), TEX: Texture2D<f32>);
     sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,

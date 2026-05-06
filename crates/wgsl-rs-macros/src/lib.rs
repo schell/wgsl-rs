@@ -52,6 +52,25 @@ fn strip_wgsl_allow_attrs(expr: &mut syn::Expr) {
     attrs.retain(|attr| !attr.path().is_ident("wgsl_allow"));
 }
 
+/// Visitor that strips inter-stage IO attributes (`#[builtin(...)]`,
+/// `#[location(N)]`, `#[interpolate(...)]`, `#[blend_src(N)]`, `#[invariant]`)
+/// from struct fields.
+///
+/// These attributes are read during WGSL parsing (in `Field::parse_with_ctx`),
+/// but they aren't valid Rust attributes on struct fields. The `#[wgsl]` macro
+/// strips them from the emitted Rust code so the struct compiles as plain
+/// Rust, while the IO information has already been captured for WGSL output.
+struct StripIoAttrs;
+
+impl VisitMut for StripIoAttrs {
+    fn visit_field_mut(&mut self, field: &mut syn::Field) {
+        field
+            .attrs
+            .retain(|attr| InterStageIo::try_from(attr).is_err());
+        visit_mut::visit_field_mut(self, field);
+    }
+}
+
 #[derive(Default)]
 struct Attrs {
     /// Present if the `wgsl` macro is of the form:
@@ -448,6 +467,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // feature.
     StripWgslAllowAttrs.visit_item_mod_mut(&mut input_mod);
 
+    // Strip inter-stage IO attributes (#[builtin], #[location], etc.) from
+    // struct fields. These aren't valid Rust attributes on fields, but they
+    // are read during WGSL parsing.
+    StripIoAttrs.visit_item_mod_mut(&mut input_mod);
+
     Ok(input_mod.into_token_stream().into())
 }
 
@@ -560,13 +584,13 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 ///
 /// # IO Structs
 ///
-/// Use `#[input]` and `#[output]` on structs to group inter-stage IO
-/// fields. These attributes strip the IO annotations from the Rust output
-/// (so the struct compiles as plain Rust) while preserving them in the
-/// WGSL output.
+/// Inside a `#[wgsl]` module, place IO annotations directly on struct
+/// fields. The `#[wgsl]` macro automatically strips these annotations from
+/// the emitted Rust code so the struct compiles as plain Rust, while
+/// preserving them in the WGSL output. The same struct can be used as
+/// both a vertex shader output and a fragment shader input.
 ///
 /// ```ignore
-/// #[output]
 /// pub struct VertexOutput {
 ///     #[builtin(position)]
 ///     pub pos: Vec4f,
@@ -748,7 +772,6 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 ///
 ///     uniform!(group(0), binding(0), UNIFORMS: Uniforms);
 ///
-///     #[output]
 ///     pub struct VertexOutput {
 ///         #[builtin(position)]
 ///         pub clip_position: Vec4f,
@@ -1215,67 +1238,4 @@ pub fn workgroup(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn ptr(input: TokenStream) -> TokenStream {
     ptr::ptr(input)
-}
-
-/// Marks a struct as a shader input, preserving IO attributes in WGSL.
-///
-/// Fields may carry `#[builtin(...)]`, `#[location(N)]`, and
-/// `#[interpolate(...)]` attributes. These are emitted in the WGSL output
-/// and stripped from the Rust output so the struct compiles normally.
-///
-/// See [`wgsl`] for the full annotation reference.
-#[proc_macro_attribute]
-pub fn input(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
-    let mut rust_struct: syn::ItemStruct = syn::parse_macro_input!(token_stream);
-    if let syn::Fields::Named(syn::FieldsNamed {
-        brace_token: _,
-        named,
-    }) = &mut rust_struct.fields
-    {
-        for syn::Field { attrs, .. } in named.iter_mut() {
-            // Only keep the attributes that aren't from wgsl-rs
-            let mut output_attrs = vec![];
-            for attr in std::mem::take(attrs).into_iter() {
-                if let Ok(_inter_stage_io) = InterStageIo::try_from(&attr) {
-                    // Generate some linkage for this struct
-                } else {
-                    output_attrs.push(attr);
-                }
-            }
-            *attrs = output_attrs;
-        }
-    }
-    rust_struct.into_token_stream().into()
-}
-
-/// Marks a struct as a shader output, preserving IO attributes in WGSL.
-///
-/// Fields may carry `#[builtin(...)]`, `#[location(N)]`,
-/// `#[interpolate(...)]`, `#[blend_src(N)]`, and `#[invariant]`
-/// attributes. These are emitted in the WGSL output and stripped from
-/// the Rust output so the struct compiles normally.
-///
-/// See [`wgsl`] for the full annotation reference.
-#[proc_macro_attribute]
-pub fn output(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
-    let mut rust_struct: syn::ItemStruct = syn::parse_macro_input!(token_stream);
-    if let syn::Fields::Named(syn::FieldsNamed {
-        brace_token: _,
-        named,
-    }) = &mut rust_struct.fields
-    {
-        for syn::Field { attrs, .. } in named.iter_mut() {
-            // Only keep the attributes that aren't from wgsl-rs
-            let mut output_attrs = vec![];
-            for attr in std::mem::take(attrs).into_iter() {
-                if let Ok(_inter_stage_io) = InterStageIo::try_from(&attr) {
-                    // Generate some linkage for this struct
-                } else {
-                    output_attrs.push(attr);
-                }
-            }
-            *attrs = output_attrs;
-        }
-    }
-    rust_struct.into_token_stream().into()
 }

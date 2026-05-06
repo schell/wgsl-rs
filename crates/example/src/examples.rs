@@ -37,6 +37,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
     &renderer_specialization::WGSL_MODULE,
     &renderer_specialization_simple::WGSL_MODULE,
     &generic_structs::WGSL_MODULE,
+    &shared_inter_stage::WGSL_MODULE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
@@ -76,7 +77,6 @@ pub mod structs {
     use wgsl_rs::std::*;
 
     // Mixed builtins and user-defined inputs.
-    #[input]
     pub struct MyInputs {
         #[location(0)]
         pub x: Vec4<f32>,
@@ -92,7 +92,6 @@ pub mod structs {
         pub other: f32,
     }
 
-    #[output]
     pub struct MyOutputs {
         #[location(0)]
         pub x: f32,
@@ -1057,14 +1056,12 @@ pub mod texture_example {
     sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
 
     // Fragment input with texture coordinates
-    #[input]
     pub struct FragmentInput {
         #[location(0)]
         pub uv: Vec2f,
     }
 
     // Output struct
-    #[output]
     pub struct FragmentOutput {
         #[location(0)]
         pub color: Vec4f,
@@ -1384,13 +1381,11 @@ pub mod derivative_example {
 
     use wgsl_rs::std::*;
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
     }
 
-    #[output]
     pub struct DerivativeOutputs {
         #[location(0)]
         pub dx: Vec4f,
@@ -1441,7 +1436,6 @@ pub mod discard_example {
         }
     }
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -1769,5 +1763,42 @@ pub mod generic_structs {
     pub fn use_pair_i32() -> i32 {
         let p: Pair<i32> = Pair::<i32> { a: 10, b: 20 };
         Pair::<i32>::first(p)
+    }
+}
+
+/// Demonstrates the standard WGSL pattern of using a single struct as both
+/// the vertex shader output and the fragment shader input.
+///
+/// In `wgsl-rs`, IO attributes (`#[builtin]`, `#[location]`, `#[interpolate]`)
+/// go directly on struct fields. The `#[wgsl]` macro automatically strips
+/// these attributes from the emitted Rust output, so no wrapper attribute is
+/// needed on the struct itself. The same struct can be referenced from both
+/// the vertex stage (as a return type) and the fragment stage (as a
+/// parameter), exactly mirroring the WGSL pattern.
+#[wgsl]
+pub mod shared_inter_stage {
+    use wgsl_rs::std::*;
+
+    /// Vertex output / fragment input — a single struct shared across stages.
+    pub struct VertexOutput {
+        #[builtin(position)]
+        pub clip_position: Vec4f,
+        #[location(0)]
+        pub color: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vs_main(#[builtin(vertex_index)] vertex_index: u32) -> VertexOutput {
+        const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
+        let position = POS[vertex_index as usize];
+        VertexOutput {
+            clip_position: vec4f(position.x, position.y, 0.0, 1.0),
+            color: vec4f(1.0, 0.0, 0.0, 1.0),
+        }
+    }
+
+    #[fragment]
+    pub fn fs_main(input: VertexOutput) -> Vec4f {
+        input.color
     }
 }

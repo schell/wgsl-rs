@@ -314,3 +314,14 @@ construction `Pair::<f32> { a: 1.0, b: 2.0 }` becomes `Pair_f32(1.0, 2.0)` in WG
 Cross-module generic structs are supported via the same template infrastructure
 used for generic functions — the struct definition and all its impl methods are
 combined into a single template with `__TP__` placeholders.
+
+### 2026-04-17: Removed `#[input]`/`#[output]` attributes
+
+Inter-stage IO structs no longer need `#[input]` or `#[output]` wrapper
+attributes. The `#[wgsl]` macro now strips IO field attributes (`#[builtin]`,
+`#[location]`, `#[interpolate]`, `#[blend_src]`, `#[invariant]`) directly from
+the emitted Rust output via a new `StripIoAttrs` visitor, following the same
+pattern as the existing `StripWgslAllowAttrs` visitor. The two attributes were
+semantically identical and only existed to clean up field attributes for Rust
+compilation. Removing them enables the natural pattern of using a single struct
+as both vertex output and fragment input, mirroring standard WGSL.

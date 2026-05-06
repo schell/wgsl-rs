@@ -701,13 +701,11 @@ mod test {
 
             uniform!(group(0), binding(0), UNIFORMS: Uniforms);
 
-            #[input]
             pub struct VertexInput {
                 #[location(0)]
                 pub position: Vec3f,
             }
 
-            #[output]
             pub struct VertexOutput {
                 #[builtin(position)]
                 pub clip_position: Vec4f,

@@ -26,6 +26,8 @@ mod render;
 mod substitute;
 mod types;
 
-pub use render::{render_items, render_module};
+pub use render::{
+    render_block, render_expr, render_item, render_items, render_module, render_stmt, render_type,
+};
 pub use substitute::{rename_items, substitute_items, substitute_types, type_to_ident};
 pub use types::*;

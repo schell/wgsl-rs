@@ -43,6 +43,66 @@ pub fn render_items(items: &[Item]) -> String {
     w.finish()
 }
 
+/// Render a single [`Item`] to a WGSL source string.
+pub fn render_item(item: &Item) -> String {
+    let mut w = Writer::new();
+    write_item(&mut w, item);
+    w.finish()
+}
+
+/// Render a single [`Type`] to its WGSL source form (e.g. `f32`,
+/// `vec4f`, `array<u32, 4>`). Does not include any indentation or
+/// trailing newline.
+pub fn render_type(ty: &Type) -> String {
+    let mut w = Writer::new();
+    write_type(&mut w, ty);
+    let mut out = std::mem::take(&mut w.cur);
+    if !w.lines.is_empty() {
+        // Shouldn't happen for a Type, but fall back to joining anyway.
+        let mut joined = w.lines.join("\n");
+        if !out.is_empty() {
+            joined.push('\n');
+            joined.push_str(&out);
+        }
+        out = joined;
+    }
+    out
+}
+
+/// Render a single [`Expr`] to its WGSL source form. Does not include
+/// any indentation or trailing newline.
+pub fn render_expr(expr: &Expr) -> String {
+    let mut w = Writer::new();
+    write_expr(&mut w, expr);
+    let mut out = std::mem::take(&mut w.cur);
+    if !w.lines.is_empty() {
+        let mut joined = w.lines.join("\n");
+        if !out.is_empty() {
+            joined.push('\n');
+            joined.push_str(&out);
+        }
+        out = joined;
+    }
+    out
+}
+
+/// Render a single [`Stmt`] to its WGSL source form, including a
+/// trailing newline (and any nested block content). Indentation starts
+/// at zero.
+pub fn render_stmt(stmt: &Stmt) -> String {
+    let mut w = Writer::new();
+    write_stmt(&mut w, stmt);
+    w.finish()
+}
+
+/// Render a single [`Block`] to its WGSL source form, including the
+/// surrounding braces.
+pub fn render_block(block: &Block) -> String {
+    let mut w = Writer::new();
+    write_block(&mut w, block);
+    w.finish()
+}
+
 // ===== Writer =====
 
 struct Writer {

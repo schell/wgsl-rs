@@ -359,3 +359,20 @@ Compile-time WGSL validation has been dropped; runtime validation via
 the same ground. The legacy `code_gen::formatter` is kept around for
 internal `monomorphize.rs` tests but no longer drives production
 output.
+
+### 2026-05-08: Removed legacy `code_gen::formatter`
+
+Migrated the last consumers of the legacy direct-to-WGSL formatter to
+the IR pipeline and deleted `code_gen.rs` and `code_gen/formatter.rs`
+(~2,165 lines). The `mono_wgsl` helper in `monomorphize.rs` tests now
+runs `ir_convert::items_from_parse` + `wgsl_rs_ir::render_items`. The
+~100 `to_wgsl()` test call sites in `parse.rs` are unchanged — a
+test-only `ToWgsl` trait now provides the same method via the IR
+pipeline. The IR crate exposes new public helpers `render_type`,
+`render_expr`, `render_stmt`, `render_block`, and `render_item` for
+rendering individual nodes. Test expected strings were updated where
+the IR renderer's format differs from the old formatter (binary ops
+gain spaces; `Vec4<f32>` renders as the WGSL shorthand `vec4f`).
+Several dead helpers in `monomorphize.rs` (the
+`flatten_struct_placeholder*` family and `type_to_wgsl`) were also
+deleted.

@@ -10,11 +10,12 @@
 // [subsection](https://gpuweb.github.io/gpuweb/wgsl/#grammar-recursive-descent)
 // on grammar for help implementing this module.
 //
-// Many fields below carry `syn::Token![...]` values purely for span
-// preservation in the legacy `code_gen::formatter` module. The IR-based
-// production path doesn't read them, but they're kept in place so the
-// legacy formatter (used by `monomorphize.rs` tests) still works.
+// Many fields below carry `syn::Token![...]` values for span preservation
+// (used in error reporting). The IR-based production path reads only the
+// semantic content; the tokens are retained so future error-reporting
+// work can re-attach span info without re-parsing.
 #![allow(dead_code)]
+
 use std::collections::HashSet;
 
 use proc_macro2::Span;
@@ -5711,7 +5712,140 @@ impl TryFrom<&syn::Item> for Item {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::code_gen::GenerateCode;
+    use crate::ir_convert;
+
+    /// Test-only helper: convert a parse-side AST node to its WGSL
+    /// rendering by routing it through the IR pipeline. Provides a
+    /// `to_wgsl()` method on the parse types that returns the same
+    /// rendering used by production code.
+    trait ToWgsl {
+        fn to_wgsl(&self) -> String;
+    }
+
+    impl ToWgsl for Type {
+        fn to_wgsl(&self) -> String {
+            let ir_ty = ir_convert::ty_from_parse(self).expect("ty_from_parse");
+            wgsl_rs_ir::render_type(&ir_ty)
+        }
+    }
+
+    impl ToWgsl for Expr {
+        fn to_wgsl(&self) -> String {
+            let ir_expr = ir_convert::expr_from_parse(self).expect("expr_from_parse");
+            wgsl_rs_ir::render_expr(&ir_expr)
+        }
+    }
+
+    impl ToWgsl for Block {
+        fn to_wgsl(&self) -> String {
+            let ir_block = ir_convert::block_from_parse(self).expect("block_from_parse");
+            wgsl_rs_ir::render_block(&ir_block)
+        }
+    }
+
+    impl ToWgsl for Stmt {
+        fn to_wgsl(&self) -> String {
+            // Wrap the stmt in a synthetic single-statement block and
+            // strip the surrounding braces so the rendered text is the
+            // statement only.
+            let block = Block {
+                brace_token: syn::token::Brace::default(),
+                stmt: vec![self.clone()],
+            };
+            let ir_block = ir_convert::block_from_parse(&block).expect("block_from_parse");
+            let rendered = wgsl_rs_ir::render_block(&ir_block);
+            // Strip leading "{\n", trailing "}\n", and the per-line
+            // indent the block renderer added.
+            let mut lines: Vec<&str> = rendered.lines().collect();
+            if lines.first().is_some_and(|l| l.trim() == "{") {
+                lines.remove(0);
+            }
+            if lines.last().is_some_and(|l| l.trim() == "}") {
+                lines.pop();
+            }
+            lines
+                .into_iter()
+                .map(|l| l.strip_prefix("    ").unwrap_or(l))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    impl ToWgsl for ItemMod {
+        fn to_wgsl(&self) -> String {
+            module_to_wgsl(self)
+        }
+    }
+
+    impl ToWgsl for Item {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(self)
+        }
+    }
+
+    /// Render a single parse `Item` via the IR pipeline.
+    fn item_to_wgsl(item: &Item) -> String {
+        let ir_items =
+            ir_convert::items_from_parse(std::slice::from_ref(item)).expect("items_from_parse");
+        wgsl_rs_ir::render_items(&ir_items)
+    }
+
+    /// Render a full module's content list via the IR pipeline.
+    fn module_to_wgsl(module: &ItemMod) -> String {
+        let ir_items = ir_convert::items_from_parse(&module.content).expect("items_from_parse");
+        wgsl_rs_ir::render_items(&ir_items)
+    }
+
+    impl ToWgsl for ItemUniform {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Uniform(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemStorage {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Storage(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemSampler {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Sampler(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemTexture {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Texture(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemWorkgroup {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Workgroup(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemFn {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Fn(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemConst {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Const(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemStruct {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Struct(self.clone()))
+        }
+    }
+    impl ToWgsl for ItemImpl {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Impl(self.clone()))
+        }
+    }
+    impl ToWgsl for ItemEnum {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Enum(self.clone()))
+        }
+    }
 
     #[test]
     fn parse_lit_bool() {
@@ -5738,14 +5872,14 @@ mod test {
     fn parse_expr_binary() {
         let expr: syn::Expr = syn::parse_str("333 +  333").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333+333", &expr.to_wgsl());
+        assert_eq!("333 + 333", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ident() {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333+TIMES", &expr.to_wgsl());
+        assert_eq!("333 + TIMES", &expr.to_wgsl());
     }
 
     // Remainder operator
@@ -5753,7 +5887,7 @@ mod test {
     fn parse_expr_binary_rem() {
         let expr: syn::Expr = syn::parse_str("10 % 3").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("10%3", &expr.to_wgsl());
+        assert_eq!("10 % 3", &expr.to_wgsl());
     }
 
     // Comparison operators
@@ -5761,42 +5895,42 @@ mod test {
     fn parse_expr_binary_eq() {
         let expr: syn::Expr = syn::parse_str("a == b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a==b", &expr.to_wgsl());
+        assert_eq!("a == b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ne() {
         let expr: syn::Expr = syn::parse_str("a != b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a!=b", &expr.to_wgsl());
+        assert_eq!("a != b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_lt() {
         let expr: syn::Expr = syn::parse_str("a < b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a<b", &expr.to_wgsl());
+        assert_eq!("a < b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_le() {
         let expr: syn::Expr = syn::parse_str("a <= b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a<=b", &expr.to_wgsl());
+        assert_eq!("a <= b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_gt() {
         let expr: syn::Expr = syn::parse_str("a > b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a>b", &expr.to_wgsl());
+        assert_eq!("a > b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ge() {
         let expr: syn::Expr = syn::parse_str("a >= b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a>=b", &expr.to_wgsl());
+        assert_eq!("a >= b", &expr.to_wgsl());
     }
 
     // Logical operators
@@ -5804,14 +5938,14 @@ mod test {
     fn parse_expr_binary_and() {
         let expr: syn::Expr = syn::parse_str("a && b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a&&b", &expr.to_wgsl());
+        assert_eq!("a && b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_or() {
         let expr: syn::Expr = syn::parse_str("a || b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a||b", &expr.to_wgsl());
+        assert_eq!("a || b", &expr.to_wgsl());
     }
 
     // Bitwise operators
@@ -5819,42 +5953,45 @@ mod test {
     fn parse_expr_binary_bitand() {
         let expr: syn::Expr = syn::parse_str("a & b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a&b", &expr.to_wgsl());
+        assert_eq!("a & b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_bitor() {
         let expr: syn::Expr = syn::parse_str("a | b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a|b", &expr.to_wgsl());
+        assert_eq!("a | b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_bitxor() {
         let expr: syn::Expr = syn::parse_str("a ^ b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a^b", &expr.to_wgsl());
+        assert_eq!("a ^ b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_shl() {
         let expr: syn::Expr = syn::parse_str("a << b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a<<b", &expr.to_wgsl());
+        assert_eq!("a << b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_shr() {
         let expr: syn::Expr = syn::parse_str("a >> b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a>>b", &expr.to_wgsl());
+        assert_eq!("a >> b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_vec4_f32_type() {
+        // The IR renderer uses the WGSL shorthand `vec4f` whenever a
+        // scalar element type is known, regardless of whether the
+        // source used `Vec4<f32>` or `Vec4f`.
         let ty: syn::Type = syn::parse_str("Vec4<f32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("vec4<f32>", &ty.to_wgsl());
+        assert_eq!("vec4f", &ty.to_wgsl());
     }
 
     #[test]

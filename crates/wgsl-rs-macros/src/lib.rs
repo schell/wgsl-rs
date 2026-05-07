@@ -8,7 +8,6 @@ use syn::visit_mut::{self, VisitMut};
 use crate::parse::InterStageIo;
 
 mod builtins;
-mod code_gen;
 mod ir_convert;
 mod ir_emit;
 #[cfg(feature = "linkage-wgpu")]

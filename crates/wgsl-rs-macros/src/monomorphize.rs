@@ -44,7 +44,6 @@ pub struct CrossModuleInstantiation {
 }
 
 /// Result of the monomorphization pass.
-#[allow(dead_code)]
 pub struct MonoResult {
     /// Cross-module template instantiations that need macro invocations in
     /// the consuming module's `WGSL_MODULE.source`.
@@ -1431,223 +1430,6 @@ fn rewrite_calls_in_expr(expr: &mut Expr, templates: &BTreeMap<String, ItemFn>) 
     }
 }
 
-// ===== Template struct placeholder rewriting =====
-//
-// When generating WGSL for a struct template's impl methods, references to the
-// struct type (e.g., `Pair<__TPT__>`) need to be flattened to the
-// placeholder-mangled name (e.g., `Pair___TPT__`). This must happen before code
-// generation, which asserts that `type_args` is empty on all struct types.
-
-/// Rewrite references to a generic struct within a method to use the
-/// placeholder-mangled struct name. Converts `Type::Struct { ident:
-/// orig_name, type_args: [...] }` to `Type::Struct { ident: mangled_name,
-/// type_args: [] }`.
-#[allow(dead_code)]
-fn rewrite_struct_type_placeholders(f: &mut ItemFn, orig_name: &str, mangled_name: &str) {
-    for pair in f.inputs.iter_mut() {
-        flatten_struct_placeholder(&mut pair.ty, orig_name, mangled_name);
-    }
-    if let ReturnType::Type { ty, .. } = &mut f.return_type {
-        flatten_struct_placeholder(ty, orig_name, mangled_name);
-    }
-    flatten_struct_placeholder_block(&mut f.block, orig_name, mangled_name);
-}
-
-fn flatten_struct_placeholder(ty: &mut Type, orig_name: &str, mangled_name: &str) {
-    match ty {
-        Type::Struct { ident, type_args } if ident == orig_name && !type_args.is_empty() => {
-            *ident = Ident::new(mangled_name, ident.span());
-            type_args.clear();
-        }
-        Type::Struct { type_args, .. } => {
-            for ta in type_args.iter_mut() {
-                flatten_struct_placeholder(ta, orig_name, mangled_name);
-            }
-        }
-        Type::Array { elem, .. } => flatten_struct_placeholder(elem, orig_name, mangled_name),
-        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
-            flatten_struct_placeholder(elem, orig_name, mangled_name);
-        }
-        _ => {}
-    }
-}
-
-fn flatten_struct_placeholder_block(block: &mut Block, orig_name: &str, mangled_name: &str) {
-    for stmt in &mut block.stmt {
-        flatten_struct_placeholder_stmt(stmt, orig_name, mangled_name);
-    }
-}
-
-fn flatten_struct_placeholder_stmt(stmt: &mut Stmt, orig_name: &str, mangled_name: &str) {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some((_, ty)) = &mut local.ty {
-                flatten_struct_placeholder(ty, orig_name, mangled_name);
-            }
-            if let Some(init) = &mut local.init {
-                flatten_struct_placeholder_expr(&mut init.expr, orig_name, mangled_name);
-            }
-        }
-        Stmt::Const(c) => {
-            flatten_struct_placeholder(&mut c.ty, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(&mut c.expr, orig_name, mangled_name);
-        }
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(rhs, orig_name, mangled_name);
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            flatten_struct_placeholder_expr(condition, orig_name, mangled_name);
-            flatten_struct_placeholder_block(body, orig_name, mangled_name);
-        }
-        Stmt::Loop { body, .. } => flatten_struct_placeholder_block(body, orig_name, mangled_name),
-        Stmt::Expr { expr, .. } => {
-            flatten_struct_placeholder_expr(expr, orig_name, mangled_name);
-        }
-        Stmt::If(if_stmt) => {
-            flatten_struct_placeholder_expr(&mut if_stmt.condition, orig_name, mangled_name);
-            flatten_struct_placeholder_block(&mut if_stmt.then_block, orig_name, mangled_name);
-            if let Some(else_branch) = &mut if_stmt.else_branch {
-                match &mut else_branch.body {
-                    ElseBody::Block(block) => {
-                        flatten_struct_placeholder_block(block, orig_name, mangled_name)
-                    }
-                    ElseBody::If(nested_if) => {
-                        flatten_struct_placeholder_expr(
-                            &mut nested_if.condition,
-                            orig_name,
-                            mangled_name,
-                        );
-                        flatten_struct_placeholder_block(
-                            &mut nested_if.then_block,
-                            orig_name,
-                            mangled_name,
-                        );
-                    }
-                }
-            }
-        }
-        Stmt::For(for_loop) => {
-            if let Some((_, ty)) = &mut for_loop.ty {
-                flatten_struct_placeholder(ty, orig_name, mangled_name);
-            }
-            flatten_struct_placeholder_expr(&mut for_loop.from, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(&mut for_loop.to, orig_name, mangled_name);
-            flatten_struct_placeholder_block(&mut for_loop.body, orig_name, mangled_name);
-        }
-        Stmt::Switch(switch) => {
-            flatten_struct_placeholder_expr(&mut switch.selector, orig_name, mangled_name);
-            for arm in &mut switch.arms {
-                flatten_struct_placeholder_block(&mut arm.body, orig_name, mangled_name);
-            }
-        }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                flatten_struct_placeholder_expr(e, orig_name, mangled_name);
-            }
-        }
-        Stmt::Block(block) => flatten_struct_placeholder_block(block, orig_name, mangled_name),
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            flatten_struct_placeholder_expr(slab, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(offset, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(dest, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(size, orig_name, mangled_name);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            flatten_struct_placeholder_expr(slab, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(offset, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(src, orig_name, mangled_name);
-            if let Some(s) = size {
-                flatten_struct_placeholder_expr(s, orig_name, mangled_name);
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-    }
-}
-
-fn flatten_struct_placeholder_expr(expr: &mut Expr, orig_name: &str, mangled_name: &str) {
-    match expr {
-        Expr::FnCall {
-            type_args, params, ..
-        } => {
-            for ta in type_args.iter_mut() {
-                flatten_struct_placeholder(ta, orig_name, mangled_name);
-            }
-            for param in params.iter_mut() {
-                flatten_struct_placeholder_expr(param, orig_name, mangled_name);
-            }
-        }
-        Expr::Struct {
-            ident,
-            type_args,
-            fields,
-            ..
-        } => {
-            if ident == orig_name && !type_args.is_empty() {
-                *ident = Ident::new(mangled_name, ident.span());
-                type_args.clear();
-            }
-            for field in fields.iter_mut() {
-                flatten_struct_placeholder_expr(&mut field.expr, orig_name, mangled_name);
-            }
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(rhs, orig_name, mangled_name);
-        }
-        Expr::Unary { expr, .. } => flatten_struct_placeholder_expr(expr, orig_name, mangled_name),
-        Expr::Paren { inner, .. } => {
-            flatten_struct_placeholder_expr(inner, orig_name, mangled_name)
-        }
-        Expr::Array { elems, .. } => {
-            for elem in elems.iter_mut() {
-                flatten_struct_placeholder_expr(elem, orig_name, mangled_name);
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(index, orig_name, mangled_name);
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
-            if let Some(ps) = params {
-                for p in ps.iter_mut() {
-                    flatten_struct_placeholder_expr(p, orig_name, mangled_name);
-                }
-            }
-        }
-        Expr::Cast { lhs, ty } => {
-            flatten_struct_placeholder_expr(lhs, orig_name, mangled_name);
-            flatten_struct_placeholder(ty, orig_name, mangled_name);
-        }
-        Expr::FieldAccess { base, .. } => {
-            flatten_struct_placeholder_expr(base, orig_name, mangled_name)
-        }
-        Expr::Reference { expr, .. } => {
-            flatten_struct_placeholder_expr(expr, orig_name, mangled_name)
-        }
-        Expr::ZeroValueArray { elem_type, len, .. } => {
-            flatten_struct_placeholder(elem_type, orig_name, mangled_name);
-            flatten_struct_placeholder_expr(len, orig_name, mangled_name);
-        }
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
-    }
-}
-
 // ===== Struct type rewriting =====
 
 /// Rewrite generic struct types in an item to use mangled names.
@@ -2940,80 +2722,6 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
     })
 }
 
-/// Convert a concrete `Type` to a valid WGSL type syntax string.
-///
-/// Unlike [`mangle_type`] (which produces identifier-safe fragments for
-/// function name mangling), this function produces the actual WGSL type
-/// syntax used in generated shader code. For example:
-///
-/// | Type                    | `mangle_type`       | `type_to_wgsl`           |
-/// |------------------------|---------------------|--------------------------|
-/// | `f32`                  | `"f32"`             | `"f32"`                  |
-/// | `array<f32, 4>`        | `"array_f32_4"`     | `"array<f32, 4>"`        |
-/// | `atomic<i32>`          | `"atomic_i32"`      | `"atomic<i32>"`          |
-/// | `ptr<function, f32>`   | `"ptr_function_f32"`| `"ptr<function, f32>"`   |
-///
-/// Scalars and vectors happen to produce identical output from both functions,
-/// but composite types diverge.
-#[allow(dead_code)]
-fn type_to_wgsl(ty: &Type) -> Result<String, crate::parse::Error> {
-    Ok(match ty {
-        Type::Scalar { ty: scalar, .. } => scalar.wgsl_name().to_string(),
-        Type::Vector {
-            elements,
-            scalar_ty,
-            ..
-        } => format!("vec{}{}", elements, scalar_ty.short_name()),
-        Type::Matrix { size, .. } => format!("mat{}x{}f", size, size),
-        Type::Struct { ident, type_args } => {
-            if type_args.is_empty() {
-                ident.to_string()
-            } else {
-                let wgsl_args: Vec<String> = type_args
-                    .iter()
-                    .map(type_to_wgsl)
-                    .collect::<Result<_, _>>()?;
-                // Generic struct types in WGSL are monomorphized, so use the
-                // mangled name.
-                let mangled_args: Vec<String> = type_args
-                    .iter()
-                    .map(mangle_type)
-                    .collect::<Result<_, _>>()?;
-                let _ = wgsl_args; // future: may use for template placeholders
-                format!("{}_{}", ident, mangled_args.join("_"))
-            }
-        }
-        Type::Array { elem, len, .. } => {
-            format!("array<{}, {}>", type_to_wgsl(elem)?, len_to_string(len))
-        }
-        Type::RuntimeArray { elem, .. } => format!("array<{}>", type_to_wgsl(elem)?),
-        Type::Atomic { elem, .. } => format!("atomic<{}>", type_to_wgsl(elem)?),
-        Type::Sampler { .. } => "sampler".to_string(),
-        Type::SamplerComparison { .. } => "sampler_comparison".to_string(),
-        Type::Texture {
-            kind, sampled_type, ..
-        } => format!("{}<{}>", kind.wgsl_name(), sampled_type.wgsl_name()),
-        Type::TextureDepth { kind, .. } => kind.wgsl_name().to_string(),
-        Type::Ptr {
-            address_space,
-            elem,
-            ..
-        } => {
-            let space = match address_space {
-                crate::parse::AddressSpace::Function => "function",
-                crate::parse::AddressSpace::Private => "private",
-                crate::parse::AddressSpace::Workgroup => "workgroup",
-            };
-            format!("ptr<{}, {}>", space, type_to_wgsl(elem)?)
-        }
-        Type::TypeParam { ident } => {
-            return Err(crate::parse::Error::unsupported(
-                ident.span(),
-                format!("cannot produce WGSL type string for unresolved type parameter '{ident}'"),
-            ));
-        }
-    })
-}
 
 /// Convert an array length expression to a string for name mangling.
 fn len_to_string(expr: &Expr) -> String {
@@ -3091,16 +2799,18 @@ fn contains_type_param(ty: &Type) -> bool {
 #[cfg(test)]
 mod test {
     use crate::{
-        code_gen,
+        ir_convert,
         parse::{Item, ItemMod},
     };
 
-    /// Helper: parse a module, run monomorphization, return the WGSL string.
+    /// Helper: parse a module, run monomorphization, return the WGSL
+    /// string produced by the IR pipeline.
     fn mono_wgsl(input: syn::ItemMod) -> String {
         let mut wgsl_module = ItemMod::try_from(&input).unwrap();
         super::run(&mut wgsl_module).unwrap();
-        let code = code_gen::generate_wgsl(&wgsl_module);
-        code.source_lines().join("\n")
+        let ir_items = ir_convert::items_from_parse(&wgsl_module.content)
+            .expect("parse -> IR conversion should succeed for monomorphized output");
+        wgsl_rs_ir::render_items(&ir_items)
     }
 
     /// Helper: parse a module, run monomorphization, expect an error.

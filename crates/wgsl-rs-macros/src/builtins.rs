@@ -162,6 +162,11 @@ pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
 ///
 /// Returns `Some(wgsl_name)` if translation is needed, `None` if the name
 /// should be used as-is.
+///
+/// Note: production WGSL rendering goes through `wgsl_rs_ir`, which keeps
+/// its own copy of the table. This function is retained for parity and
+/// for the in-crate tests that pin the table contents.
+#[allow(dead_code)]
 pub fn lookup_wgsl_name(rust_name: &str) -> Option<&'static str> {
     BUILTIN_CASE_NAME_MAP
         .iter()

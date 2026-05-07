@@ -1,6 +1,7 @@
 //! WGSL abstract syntax tree-ish.
 //!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
+//
 // HEY!
 //
 // This module is incomplete at best.
@@ -8,6 +9,12 @@
 // See the WGSL spec
 // [subsection](https://gpuweb.github.io/gpuweb/wgsl/#grammar-recursive-descent)
 // on grammar for help implementing this module.
+//
+// Many fields below carry `syn::Token![...]` values purely for span
+// preservation in the legacy `code_gen::formatter` module. The IR-based
+// production path doesn't read them, but they're kept in place so the
+// legacy formatter (used by `monomorphize.rs` tests) still works.
+#![allow(dead_code)]
 use std::collections::HashSet;
 
 use proc_macro2::Span;

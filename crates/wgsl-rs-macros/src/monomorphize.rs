@@ -19,17 +19,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use proc_macro2::Span;
 use syn::Ident;
 
-use crate::{
-    code_gen::{self, GenerateCode},
-    parse::{
-        Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct,
-        ReturnType, Stmt, Type,
-    },
+use crate::parse::{
+    Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct,
+    ReturnType, Stmt, Type,
 };
 
 /// A cross-module template instantiation that needs to be included in the
-/// consuming module's `WGSL_MODULE.source` as a macro invocation.
-#[derive(Debug, Clone)]
+/// consuming module's `WGSL_MODULE`.
+#[derive(Clone)]
 pub struct CrossModuleInstantiation {
     /// Candidate imported modules that may contain the template.
     pub import_paths: Vec<syn::Path>,
@@ -38,19 +35,16 @@ pub struct CrossModuleInstantiation {
     /// Identifier-safe mangled type argument names, used for function name
     /// mangling and deduplication keys (e.g. `"array_f32_4"`,
     /// `"ptr_function_f32"`).
-    ///
-    /// These are NOT valid WGSL syntax — see `wgsl_type_args` for that.
     pub mangled_type_args: Vec<String>,
-    /// Valid WGSL type syntax strings for each type argument (e.g.
-    /// `"array<f32, 4>"`, `"ptr<function, f32>"`).
-    ///
-    /// These are used at runtime for placeholder substitution in template WGSL
-    /// source (`__TPT__` -> `array<f32, 4>`).
-    pub wgsl_type_args: Vec<String>,
+    /// The original parse-side type arguments. These are converted to IR
+    /// at emission time and shipped as a `fn() -> Vec<ir::Type>`
+    /// constructor on the [`crate::Module`] so runtime substitution can
+    /// produce a concrete shader source.
+    pub type_args: Vec<Type>,
 }
 
 /// Result of the monomorphization pass.
-#[derive(Debug)]
+#[allow(dead_code)]
 pub struct MonoResult {
     /// Cross-module template instantiations that need macro invocations in
     /// the consuming module's `WGSL_MODULE.source`.
@@ -60,22 +54,26 @@ pub struct MonoResult {
     pub template_macros: Vec<TemplateMacro>,
 }
 
-/// Information needed to generate a `#[macro_export] macro_rules!` for a
-/// generic function template.
-#[derive(Debug)]
+/// Information needed to emit a generic template's IR constructor.
+///
+/// The `items` carry parse-side AST with [`Type::TypeParam`] still
+/// present — substitution happens at runtime via
+/// `wgsl_rs_ir::substitute_items` after parse → IR conversion.
 pub struct TemplateMacro {
-    /// The generic function name.
+    /// The generic function or struct name.
     pub fn_name: String,
     /// Type parameter names (e.g., `["M", "L", "N"]`).
     pub type_param_names: Vec<String>,
-    /// The template WGSL source with `__TP{name}__` placeholders.
-    pub template_wgsl: String,
+    /// The template's items, with `Type::TypeParam` nodes still in place.
+    /// Converted to IR at emission time. For function templates this is
+    /// a single `Item::Fn`; for struct templates it's a `Item::Struct`
+    /// followed by all the rewritten impl methods/consts.
+    pub items: Vec<Item>,
     /// Transitive calls to other generic functions within this template.
     pub dependencies: Vec<TemplateDep>,
 }
 
 /// A dependency from one template to another generic function.
-#[derive(Debug)]
 pub struct TemplateDep {
     /// Name of the callee generic function.
     pub callee: String,
@@ -297,171 +295,69 @@ impl MonoCtx {
 
         // --- Generic struct templates ---
         for template in self.struct_templates.values() {
-            let placeholder_subst: BTreeMap<String, Type> = template
-                .type_params
-                .iter()
-                .map(|id| {
-                    let name = id.to_string();
-                    let placeholder = format!("__TP{name}__");
-                    (
-                        name,
-                        Type::Struct {
-                            ident: Ident::new(&placeholder, id.span()),
-                            type_args: vec![],
-                        },
-                    )
-                })
-                .collect();
+            // Clone the struct template; clear `type_params` so it parses
+            // as a concrete struct definition. The `Type::TypeParam`
+            // nodes inside field types remain in place — runtime
+            // substitution will replace them.
+            let mut struct_clone = template.clone();
+            struct_clone.type_params.clear();
 
-            // Build the mangled struct name with placeholders
-            let param_placeholders: Vec<String> = template
-                .type_params
-                .iter()
-                .map(|id| format!("__TP{}__", id))
-                .collect();
-            let mangled_struct_name = std::iter::once(template.ident.to_string())
-                .chain(param_placeholders)
-                .collect::<Vec<_>>()
-                .join("_");
+            let mut items: Vec<Item> = vec![Item::Struct(struct_clone)];
 
-            // Clone and substitute the struct definition
-            let mut mono_struct = template.clone();
-            mono_struct.type_params.clear();
-            mono_struct.ident = Ident::new(&mangled_struct_name, template.ident.span());
-            for pair in mono_struct.fields.named.iter_mut() {
-                substitute_type(&mut pair.ty, &placeholder_subst);
-            }
-
-            // Generate WGSL for the struct definition
-            let mut code = code_gen::GeneratedWgslCode::default();
-            mono_struct.write_code(&mut code);
-
-            // Also generate WGSL for all associated impl block methods
+            // Add all impl-block items, with un-mangled method names.
+            // Runtime renaming will produce e.g. `Pair_f32_sum` from
+            // `Pair_sum`.
             let original_name = template.ident.to_string();
             if let Some(impl_blocks) = self.impl_templates.get(&original_name) {
                 for impl_block in impl_blocks {
-                    for ii in &impl_block.items {
-                        match ii {
-                            crate::parse::ImplItem::Fn(f) => {
-                                let method_name = format!("{}_{}", mangled_struct_name, f.ident);
-                                let mut mono_fn = f.clone();
-                                mono_fn.ident = Ident::new(&method_name, f.ident.span());
-                                for pair in mono_fn.inputs.iter_mut() {
-                                    substitute_type(&mut pair.ty, &placeholder_subst);
-                                }
-                                if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
-                                    substitute_type(ty, &placeholder_subst);
-                                }
-                                substitute_block(&mut mono_fn.block, &placeholder_subst);
-                                // Rewrite struct type refs within the method body
-                                rewrite_struct_type_placeholders(
-                                    &mut mono_fn,
-                                    &template.ident.to_string(),
-                                    &mangled_struct_name,
-                                );
-                                mono_fn.write_code(&mut code);
-                            }
-                            crate::parse::ImplItem::Const(c) => {
-                                let const_name = format!("{}_{}", mangled_struct_name, c.ident);
-                                let mut mono_const = c.clone();
-                                mono_const.ident = Ident::new(&const_name, c.ident.span());
-                                substitute_type(&mut mono_const.ty, &placeholder_subst);
-                                substitute_expr(&mut mono_const.expr, &placeholder_subst);
-                                mono_const.write_code(&mut code);
-                            }
-                        }
-                    }
+                    let mut impl_clone = impl_block.clone();
+                    impl_clone.type_params.clear();
+                    items.push(Item::Impl(impl_clone));
                 }
             }
 
-            let template_wgsl = code.source_lines().join("\n");
             let type_param_names: Vec<String> = template
                 .type_params
                 .iter()
                 .map(|id| id.to_string())
                 .collect();
 
-            // TODO: compute dependencies for struct templates (nested generic
-            // struct or function references). For now, empty.
+            // TODO: compute dependencies for struct templates (nested
+            // generic struct or function references). For now, empty.
             let dependencies = vec![];
 
             macros.push(TemplateMacro {
-                fn_name: template.ident.to_string(),
+                fn_name: original_name,
                 type_param_names,
-                template_wgsl,
+                items,
                 dependencies,
             });
         }
 
         // --- Generic function templates ---
         for template in self.templates.values() {
-            // Build a substitution map that replaces type params with
-            // placeholder Type::Struct identifiers (e.g., M → __TPM__).
-            // This ensures both Type::TypeParam and FnPath::TypeMethod.ty
-            // get replaced with placeholders in the generated WGSL.
-            let placeholder_subst: BTreeMap<String, Type> = template
-                .type_params
-                .iter()
-                .map(|id| {
-                    let name = id.to_string();
-                    let placeholder = format!("__TP{name}__");
-                    (
-                        name,
-                        Type::Struct {
-                            ident: Ident::new(&placeholder, id.span()),
-                            type_args: vec![],
-                        },
-                    )
-                })
-                .collect();
+            // Clone and clear `type_params` so the IR conversion sees a
+            // concrete-looking function. `Type::TypeParam` nodes stay in
+            // place; runtime substitution + renaming handle the rest.
+            let mut fn_clone = template.clone();
+            fn_clone.type_params.clear();
 
-            // Clone the template and substitute placeholders
-            let mut tmpl_fn = template.clone();
-            tmpl_fn.type_params.clear();
-
-            // Mangle the function name with placeholders
-            let param_placeholders: Vec<String> = template
-                .type_params
-                .iter()
-                .map(|id| format!("__TP{}__", id))
-                .collect();
-            let mangled_name = std::iter::once(template.ident.to_string())
-                .chain(param_placeholders)
-                .collect::<Vec<_>>()
-                .join("_");
-            tmpl_fn.ident = Ident::new(&mangled_name, template.ident.span());
-
-            // Substitute types in inputs
-            for pair in tmpl_fn.inputs.iter_mut() {
-                substitute_type(&mut pair.ty, &placeholder_subst);
-            }
-            // Substitute in return type
-            if let ReturnType::Type { ty, .. } = &mut tmpl_fn.return_type {
-                substitute_type(ty, &placeholder_subst);
-            }
-            // Substitute in block
-            substitute_block(&mut tmpl_fn.block, &placeholder_subst);
-
-            // Generate WGSL
-            let mut code = code_gen::GeneratedWgslCode::default();
-            tmpl_fn.write_code(&mut code);
-            let template_wgsl = code.source_lines().join("\n");
-
-            // Compute transitive dependencies by scanning the original
-            // (pre-substitution) template body for turbofish calls to other
-            // generic functions.
             let type_param_names: Vec<String> = template
                 .type_params
                 .iter()
                 .map(|id| id.to_string())
                 .collect();
+
+            // Compute transitive dependencies by scanning the original
+            // (pre-substitution) template body for turbofish calls to
+            // other generic functions.
             let dependencies =
                 collect_template_dependencies(&template.block, &self.templates, &type_param_names)?;
 
             macros.push(TemplateMacro {
                 fn_name: template.ident.to_string(),
                 type_param_names,
-                template_wgsl,
+                items: vec![Item::Fn(Box::new(fn_clone))],
                 dependencies,
             });
         }
@@ -1546,6 +1442,7 @@ fn rewrite_calls_in_expr(expr: &mut Expr, templates: &BTreeMap<String, ItemFn>) 
 /// placeholder-mangled struct name. Converts `Type::Struct { ident:
 /// orig_name, type_args: [...] }` to `Type::Struct { ident: mangled_name,
 /// type_args: [] }`.
+#[allow(dead_code)]
 fn rewrite_struct_type_placeholders(f: &mut ItemFn, orig_name: &str, mangled_name: &str) {
     for pair in f.inputs.iter_mut() {
         flatten_struct_placeholder(&mut pair.ty, orig_name, mangled_name);
@@ -2352,27 +2249,24 @@ fn collect_cross_module_from_type(
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
-                let wgsl_type_args: Vec<String> = type_args
-                    .iter()
-                    .map(type_to_wgsl)
-                    .collect::<Result<_, _>>()?;
                 let mangled_name = mangle_name(&struct_name, type_args)?;
+                // Save the parse-side type args before we clear them on
+                // the call site so we can ship them as IR constructors
+                // for runtime substitution.
+                let parse_type_args: Vec<Type> = type_args.clone();
 
                 // Rewrite the type to use the mangled name
                 *ident = Ident::new(&mangled_name, ident.span());
-                let cleared_args = std::mem::take(type_args);
+                let _cleared_args = std::mem::take(type_args);
 
                 if seen.insert(mangled_name) {
                     out.push(CrossModuleInstantiation {
                         import_paths: import_paths.to_vec(),
                         fn_name: struct_name,
                         mangled_type_args,
-                        wgsl_type_args,
+                        type_args: parse_type_args,
                     });
                 }
-
-                // Recurse into the (now-cleared) original type args
-                let _ = cleared_args;
             } else {
                 // Local struct — recurse into type_args
                 for ta in type_args.iter_mut() {
@@ -2572,10 +2466,7 @@ fn collect_cross_module_from_expr(
                             .iter()
                             .map(mangle_type)
                             .collect::<Result<_, _>>()?;
-                        let wgsl_type_args: Vec<String> = type_args
-                            .iter()
-                            .map(type_to_wgsl)
-                            .collect::<Result<_, _>>()?;
+                        let parse_type_args: Vec<Type> = type_args.clone();
                         let mangled_struct = mangle_name(&ty_name, type_args)?;
                         let mangled_fn = format!("{}_{}", mangled_struct, method);
                         let span = ty.span();
@@ -2588,7 +2479,7 @@ fn collect_cross_module_from_expr(
                                 import_paths: ip.to_vec(),
                                 fn_name: ty_name,
                                 mangled_type_args,
-                                wgsl_type_args,
+                                type_args: parse_type_args,
                             });
                         }
                     }
@@ -2624,10 +2515,7 @@ fn collect_cross_module_from_expr(
                             .iter()
                             .map(mangle_type)
                             .collect::<Result<Vec<_>, _>>()?;
-                        let wgsl_type_args: Vec<String> = type_args
-                            .iter()
-                            .map(type_to_wgsl)
-                            .collect::<Result<Vec<_>, _>>()?;
+                        let parse_type_args: Vec<Type> = type_args.clone();
                         let mangled_name = mangle_name(&fn_name, type_args)?;
 
                         let span = match &*path {
@@ -2642,7 +2530,7 @@ fn collect_cross_module_from_expr(
                                 import_paths: ip.to_vec(),
                                 fn_name,
                                 mangled_type_args,
-                                wgsl_type_args,
+                                type_args: parse_type_args,
                             });
                         }
                     }
@@ -2698,10 +2586,7 @@ fn collect_cross_module_from_expr(
                         .iter()
                         .map(mangle_type)
                         .collect::<Result<_, _>>()?;
-                    let wgsl_type_args: Vec<String> = type_args
-                        .iter()
-                        .map(type_to_wgsl)
-                        .collect::<Result<_, _>>()?;
+                    let parse_type_args: Vec<Type> = type_args.clone();
                     let mangled_name = mangle_name(&struct_name, type_args)?;
 
                     *ident = Ident::new(&mangled_name, ident.span());
@@ -2712,7 +2597,7 @@ fn collect_cross_module_from_expr(
                             import_paths: ip.to_vec(),
                             fn_name: struct_name,
                             mangled_type_args,
-                            wgsl_type_args,
+                            type_args: parse_type_args,
                         });
                     }
                 }
@@ -3070,6 +2955,7 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
 ///
 /// Scalars and vectors happen to produce identical output from both functions,
 /// but composite types diverge.
+#[allow(dead_code)]
 fn type_to_wgsl(ty: &Type) -> Result<String, crate::parse::Error> {
     Ok(match ty {
         Type::Scalar { ty: scalar, .. } => scalar.wgsl_name().to_string(),
@@ -3220,8 +3106,10 @@ mod test {
     /// Helper: parse a module, run monomorphization, expect an error.
     fn mono_err(input: syn::ItemMod) -> String {
         let mut wgsl_module = ItemMod::try_from(&input).unwrap();
-        let err = super::run(&mut wgsl_module).unwrap_err();
-        format!("{err}")
+        match super::run(&mut wgsl_module) {
+            Ok(_) => panic!("expected an error from monomorphization, got Ok"),
+            Err(e) => format!("{e}"),
+        }
     }
 
     #[test]
@@ -3533,15 +3421,27 @@ mod test {
         let tmpl = &result.template_macros[0];
         assert_eq!(tmpl.fn_name, "identity");
         assert_eq!(tmpl.type_param_names, vec!["T"]);
-        assert!(
-            tmpl.template_wgsl.contains("__TPT__"),
-            "Template WGSL should contain __TPT__ placeholder, got: {}",
-            tmpl.template_wgsl
-        );
+        // The template's items should contain a single function whose
+        // body still references the type parameter `T` directly via
+        // Type::TypeParam (no string placeholders).
+        assert_eq!(tmpl.items.len(), 1);
+        let Item::Fn(f) = &tmpl.items[0] else {
+            panic!(
+                "expected Item::Fn for identity template, got: {:?}",
+                tmpl.items.len()
+            );
+        };
+        assert_eq!(f.ident.to_string(), "identity");
+        // The argument type should be `Type::TypeParam { ident: "T" }`.
+        let arg = f.inputs.first().expect("identity has 1 arg");
+        assert!(matches!(
+            &arg.ty,
+            crate::parse::Type::TypeParam { ident } if ident == "T"
+        ));
     }
 
     #[test]
-    fn template_wgsl_mangles_turbofish_calls() {
+    fn template_records_turbofish_dependency() {
         let input: syn::ItemMod = syn::parse_quote! {
             mod test_mod {
                 pub fn inner<T>(x: T) -> T {
@@ -3560,19 +3460,19 @@ mod test {
         let mut wgsl_module = ItemMod::try_from(&input).unwrap();
         let result = super::run(&mut wgsl_module).unwrap();
 
-        // Find the template for `outer`
+        // Find the template for `outer`.
         let outer_tmpl = result
             .template_macros
             .iter()
             .find(|t| t.fn_name == "outer")
             .expect("Expected template for 'outer'");
 
-        // The template WGSL should contain inner___TPT__ (mangled turbofish call)
-        assert!(
-            outer_tmpl.template_wgsl.contains("inner___TPT__"),
-            "Template WGSL for outer should contain mangled call 'inner___TPT__', got:\n{}",
-            outer_tmpl.template_wgsl
-        );
+        // The template should record the turbofish call via the
+        // `dependencies` list (a single dependency `inner` mapped from
+        // outer's 0th type param).
+        assert_eq!(outer_tmpl.dependencies.len(), 1);
+        assert_eq!(outer_tmpl.dependencies[0].callee, "inner");
+        assert_eq!(outer_tmpl.dependencies[0].type_param_mapping, vec![0]);
     }
 
     #[test]

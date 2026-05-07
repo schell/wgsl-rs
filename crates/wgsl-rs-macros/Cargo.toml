@@ -19,3 +19,4 @@ proc-macro2.workspace = true
 snafu.workspace = true
 syn.workspace = true
 quote.workspace = true
+wgsl-rs-ir = { path = "../wgsl-rs-ir" }

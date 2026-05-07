@@ -3753,8 +3753,13 @@ dependencies = [
  "snafu",
  "trybuild",
  "wgpu",
+ "wgsl-rs-ir",
  "wgsl-rs-macros",
 ]
+
+[[package]]
+name = "wgsl-rs-ir"
+version = "0.1.0"
 
 [[package]]
 name = "wgsl-rs-macros"
@@ -3766,6 +3771,7 @@ dependencies = [
  "quote",
  "snafu",
  "syn",
+ "wgsl-rs-ir",
 ]
 
 [[package]]

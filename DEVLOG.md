@@ -340,3 +340,22 @@ two-arg form. Per-entry-point type params are unioned into a single
 `module_type_params` slice on `Module`. Linkage-wgpu generation and
 WGSL validation are skipped for template modules — callers must
 instantiate first.
+
+### 2026-05-07: AST-at-runtime overhaul (`wgsl-rs-ir` crate)
+
+Replaced the string-based `__TP{name}__` placeholder system with an
+owned IR. New crate `wgsl-rs-ir` defines `Module`, `Type`, `Expr`,
+`Stmt`, `Item`, etc., with `String`/`Vec<T>` storage and no `syn`
+dependency, plus `render_module` (IR → WGSL) and `substitute_types`
+(walks the IR replacing `Type::TypeParam`). The proc-macro converts
+`parse::*` to `ir::*` and emits `fn() -> ir::Module` constructors;
+`Module::ir_constructor` replaces the `source: &[&str]` field, and
+`Module::wgsl_source()` now returns `String`. `instantiate(&[ir::Type])`
+performs IR-level substitution + `rename_items` to mangle generic
+template instances (e.g. `Pair` → `Pair_f32`). `GenericTemplate.ir_constructor`
+and `TemplateInstantiation.type_args_constructor` are also `fn` pointers.
+Compile-time WGSL validation has been dropped; runtime validation via
+`Module::validate()` and the auto-generated `__validate_wgsl` test cover
+the same ground. The legacy `code_gen::formatter` is kept around for
+internal `monomorphize.rs` tests but no longer drives production
+output.

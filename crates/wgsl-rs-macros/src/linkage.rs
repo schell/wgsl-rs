@@ -266,7 +266,7 @@ pub fn generate_linkage_module(info: &LinkageInfo) -> TokenStream {
             pub fn shader_source() -> &'static str {
                 static SOURCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
                 SOURCE.get_or_init(|| {
-                    super::WGSL_MODULE.wgsl_source().join("\n")
+                    super::WGSL_MODULE.wgsl_source()
                 })
             }
 

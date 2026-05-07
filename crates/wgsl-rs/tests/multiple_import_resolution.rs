@@ -31,7 +31,7 @@ mod consumer {
 #[test]
 fn resolves_template_instantiation_from_correct_import() {
     let _ = consumer::apply();
-    let full_src = consumer::WGSL_MODULE.wgsl_source().join("\n");
+    let full_src = consumer::WGSL_MODULE.wgsl_source();
     assert!(
         full_src.contains("fn external_identity_f32("),
         "Expected instantiated external_identity_f32 in output, got:\n{full_src}"

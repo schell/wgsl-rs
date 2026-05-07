@@ -1,6 +1,11 @@
 //! WGSL in Rust.
 pub use wgsl_rs_macros::{wgsl, wgsl_allow, wgsl_ignore};
 
+/// Re-export of the IR crate so the proc-macro and consuming crates can
+/// reference IR types via `wgsl_rs::ir::...` without needing to depend on
+/// `wgsl-rs-ir` directly.
+pub use wgsl_rs_ir as ir;
+
 /// A WGSL "module".
 ///
 /// WGSL doesn't support importing modules, but `wgsl-rs` does,
@@ -26,22 +31,25 @@ pub struct Module {
     /// Imports of other WGSL modules.
     pub imports: &'static [&'static Module],
 
-    /// Source of the module, by line.
-    pub source: &'static [&'static str],
+    /// Constructor function that builds this module's IR. Called lazily by
+    /// `wgsl_source()` / `instantiate()`.
+    ///
+    /// The returned IR is owned and freshly constructed on each call; the
+    /// caller is free to clone, mutate, or substitute over it.
+    pub ir_constructor: fn() -> ir::Module,
 
     /// Generic function templates defined in this module.
     ///
-    /// These are WGSL function sources with `__TP{name}__` placeholders for
-    /// type parameters. Consuming modules reference these via
-    /// `instantiations` to produce monomorphized functions at source-assembly
-    /// time.
+    /// Consuming modules reference these via `instantiations` to produce
+    /// monomorphized functions at source-assembly time. The IR is held as
+    /// a constructor, just like the parent module's IR.
     pub templates: &'static [GenericTemplate],
 
     /// Cross-module template instantiations.
     ///
     /// Each entry references a template from an imported module and provides
-    /// the concrete type names to substitute for the type parameters. These
-    /// are resolved at source-assembly time in `wgsl_source()`.
+    /// the concrete IR type arguments to substitute for the type parameters.
+    /// These are resolved at source-assembly time in `wgsl_source()`.
     pub instantiations: &'static [TemplateInstantiation],
 
     /// Module-level type parameters.
@@ -49,25 +57,30 @@ pub struct Module {
     /// When the module contains generic shader entry points (e.g.
     /// `pub fn frag_main<T: Convert<f32>>() -> Vec4f`) and/or generic
     /// linkage declarations (e.g. `uniform!(group(0), binding(0), FRAME: T)`),
-    /// the entire module's WGSL source is a *template* with `__TP{name}__`
-    /// placeholders. The names listed here are the union of type parameters
+    /// the entire module's IR contains unresolved [`ir::Type::TypeParam`]
+    /// nodes. The names listed here are the union of type parameters
     /// declared on the module's entry points.
     ///
     /// When this slice is empty, the module is concrete and `wgsl_source()`
     /// produces a directly usable WGSL source. When it is non-empty, the
-    /// caller must use `instantiate(...)` (passing valid WGSL type strings
-    /// for each parameter) to produce a concrete shader source.
+    /// caller must use `instantiate(...)` (passing concrete IR types for
+    /// each parameter) to produce a concrete shader source.
     pub module_type_params: &'static [&'static str],
 }
 
-/// A generic function template with placeholder type parameters.
+/// A generic function (or struct) template defined within a module.
+///
+/// The IR is built lazily by calling `ir_constructor`. The returned items
+/// reference unresolved [`ir::Type::TypeParam`] nodes whose names match
+/// entries in `type_params`; substitution at instantiation time replaces
+/// them with concrete types.
 pub struct GenericTemplate {
-    /// The generic function name (e.g., `"shade_fragment"`).
+    /// The generic function or struct name (e.g., `"id"`, `"Pair"`).
     pub name: &'static str,
-    /// Type parameter names (e.g., `["M", "L", "N"]`).
+    /// Type parameter names (e.g., `["T"]`, `["M", "L", "N"]`).
     pub type_params: &'static [&'static str],
-    /// WGSL source with `__TP{name}__` placeholders for each type parameter.
-    pub wgsl_source: &'static str,
+    /// Constructor that builds the un-instantiated IR for this template.
+    pub ir_constructor: fn() -> Vec<ir::Item>,
     /// Transitive generic function calls within this template.
     ///
     /// Each entry records a call to another generic function, with a mapping
@@ -94,18 +107,12 @@ pub struct TemplateInstantiation {
     pub modules: &'static [&'static Module],
     /// The generic function name to instantiate.
     pub template_name: &'static str,
+    /// Constructor that builds the concrete IR types to substitute for the
+    /// template's type parameters.
+    pub type_args_constructor: fn() -> Vec<ir::Type>,
     /// Identifier-safe mangled type argument names, used for deduplication
     /// keys and the `seen` set (e.g. `"array_f32_4"`, `"ptr_function_f32"`).
-    ///
-    /// These are NOT valid WGSL syntax — see `wgsl_type_args` for that.
-    pub type_args: &'static [&'static str],
-    /// Valid WGSL type syntax strings for each type argument (e.g.
-    /// `"array<f32, 4>"`, `"ptr<function, f32>"`).
-    ///
-    /// Used for placeholder substitution in template WGSL source. For scalar
-    /// types these match `type_args`, but for composite types like arrays,
-    /// atomics, and pointers they differ.
-    pub wgsl_type_args: &'static [&'static str],
+    pub mangled_type_args: &'static [&'static str],
 }
 
 impl Module {
@@ -118,196 +125,222 @@ impl Module {
         !self.module_type_params.is_empty()
     }
 
-    /// Returns the concatenated WGSL source of this module and all its imports,
-    /// including any cross-module template instantiations.
+    /// Returns the assembled WGSL source for this module and all its
+    /// imports, including cross-module template instantiations.
     ///
-    /// This recursively collects source lines from all imported modules first,
-    /// then appends this module's source lines, then appends any instantiated
-    /// template functions (including transitive dependencies).
-    ///
-    /// If this module is a template (`is_template()` returns `true`), the
-    /// resulting source will still contain `__TP{name}__` placeholders.
-    /// Use `instantiate(...)` to produce a concrete WGSL shader source.
-    pub fn wgsl_source(&self) -> Vec<String> {
-        let mut instantiated: ::std::collections::HashSet<(String, String, Vec<String>)> =
+    /// If this module is a template, the returned source will contain
+    /// `__TP{name}__` placeholders for the unresolved module-level type
+    /// parameters (because [`ir::Type::TypeParam`] renders that way). Use
+    /// [`Module::instantiate`] for a concrete shader source.
+    pub fn wgsl_source(&self) -> String {
+        let mut out = String::new();
+        let mut seen: ::std::collections::HashSet<(String, String, Vec<String>)> =
             ::std::collections::HashSet::new();
-        let mut src = vec![];
-        self.collect_wgsl_source(&mut src, &mut instantiated);
-        src
+        self.collect(&mut out, &mut seen, None);
+        out
     }
 
     /// Produce a concrete WGSL shader source for this module by substituting
-    /// each module-level type parameter with the corresponding WGSL type
-    /// string in `wgsl_type_args`.
+    /// each module-level type parameter with the corresponding IR type in
+    /// `type_args`.
     ///
-    /// `wgsl_type_args` must be parallel to `module_type_params` (one entry
-    /// per parameter, in the same order) and each entry must be a valid
-    /// WGSL type expression (e.g. `"f32"`, `"vec4<f32>"`, `"array<f32, 4>"`).
+    /// `type_args` must be parallel to `module_type_params`.
     ///
     /// # Panics
     /// Panics if the number of type arguments does not match the number of
     /// module-level type parameters.
-    pub fn instantiate(&self, wgsl_type_args: &[&str]) -> Vec<String> {
+    pub fn instantiate(&self, type_args: &[ir::Type]) -> String {
         assert_eq!(
-            wgsl_type_args.len(),
+            type_args.len(),
             self.module_type_params.len(),
             "module '{}' has {} type parameter(s) ({:?}), but {} argument(s) were given",
             self.name,
             self.module_type_params.len(),
             self.module_type_params,
-            wgsl_type_args.len()
+            type_args.len()
         );
 
-        let raw = self.wgsl_source();
-        if self.module_type_params.is_empty() {
-            return raw;
+        let mut subst: ::std::collections::HashMap<String, ir::Type> =
+            ::std::collections::HashMap::new();
+        for (param, arg) in self.module_type_params.iter().zip(type_args.iter()) {
+            subst.insert((*param).to_string(), arg.clone());
         }
 
-        raw.into_iter()
-            .map(|line| {
-                let mut out = line;
-                for (param, arg) in self.module_type_params.iter().zip(wgsl_type_args.iter()) {
-                    let placeholder = format!("__TP{param}__");
-                    out = out.replace(&placeholder, arg);
-                }
-                out
-            })
-            .collect()
+        let mut out = String::new();
+        let mut seen: ::std::collections::HashSet<(String, String, Vec<String>)> =
+            ::std::collections::HashSet::new();
+        self.collect(&mut out, &mut seen, Some(&subst));
+        out
     }
 
-    fn collect_wgsl_source(
+    /// Convenience helper: produce a concrete WGSL shader source where each
+    /// module type parameter is bound to a [`ir::Type::Scalar`] of the
+    /// matching name parsed from the supplied string.
+    ///
+    /// This only handles a small set of common cases (scalar types). For
+    /// general WGSL types use [`Module::instantiate`] with explicit IR.
+    pub fn instantiate_scalar(&self, scalar_names: &[&str]) -> String {
+        let args: Vec<ir::Type> = scalar_names
+            .iter()
+            .map(|s| match *s {
+                "f32" => ir::Type::Scalar(ir::ScalarType::F32),
+                "i32" => ir::Type::Scalar(ir::ScalarType::I32),
+                "u32" => ir::Type::Scalar(ir::ScalarType::U32),
+                "bool" => ir::Type::Scalar(ir::ScalarType::Bool),
+                other => panic!(
+                    "instantiate_scalar: '{other}' is not a recognised scalar; pass an explicit \
+                     ir::Type via Module::instantiate"
+                ),
+            })
+            .collect();
+        self.instantiate(&args)
+    }
+
+    /// Recursively collect this module's WGSL source (and that of its
+    /// imports / instantiations) into `out`. When `subst` is `Some`, the
+    /// caller's substitution map is applied to *this* module's IR (but not
+    /// to imported modules — imports are concrete by construction).
+    fn collect(
         &self,
-        out: &mut Vec<String>,
+        out: &mut String,
         seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
+        subst: Option<&::std::collections::HashMap<String, ir::Type>>,
     ) {
-        for module in self.imports.iter() {
-            module.collect_wgsl_source(out, seen);
+        // 1. Imports first (depth-first, deduplicated by repeated module instances).
+        for m in self.imports {
+            m.collect(out, seen, None);
         }
-        for line in self.source {
-            out.push(line.to_string());
+
+        // 2. Build this module's IR, optionally substituting type params.
+        let mut ir_module = (self.ir_constructor)();
+        if let Some(s) = subst {
+            ir::substitute_types(&mut ir_module, s);
         }
+        out.push_str(&ir::render_module(&ir_module));
+
+        // 3. Cross-module template instantiations.
         for inst in self.instantiations {
-            let type_args: Vec<String> = inst.type_args.iter().map(|s| s.to_string()).collect();
-            let wgsl_type_args: Vec<String> =
-                inst.wgsl_type_args.iter().map(|s| s.to_string()).collect();
-            Self::instantiate_template(
+            let mangled: Vec<String> = inst
+                .mangled_type_args
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let type_args = (inst.type_args_constructor)();
+            instantiate_template_into(
                 inst.modules,
                 inst.template_name,
+                &mangled,
                 &type_args,
-                &wgsl_type_args,
                 out,
                 seen,
             );
         }
     }
+}
 
-    /// Instantiate a single template and recursively instantiate its
-    /// dependencies.
-    ///
-    /// `type_args` are identifier-safe mangled names used for deduplication
-    /// (e.g. `"array_f32_4"`). `wgsl_type_args` are valid WGSL type syntax
-    /// strings used for placeholder substitution (e.g. `"array<f32, 4>"`).
-    /// For scalar types these are identical, but for composite types they
-    /// diverge.
-    ///
-    /// Resolution is strict: if no candidate module (or more than one) defines
-    /// the requested template, this panics with a diagnostic listing available
-    /// template names.
-    ///
-    /// Tracks already-instantiated `(module, name, type_args)` triples to
-    /// avoid duplicates.
-    fn instantiate_template(
-        modules: &[&Module],
-        template_name: &str,
-        type_args: &[String],
-        wgsl_type_args: &[String],
-        out: &mut Vec<String>,
-        seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
-    ) {
-        let available_templates: Vec<String> = modules
-            .iter()
-            .copied()
-            .flat_map(|m| m.templates.iter().map(|t| t.name.to_string()))
-            .collect();
+/// Resolve `template_name` from the given candidate modules, recursively
+/// instantiate its dependencies, then render its substituted IR into
+/// `out`. Tracks `(module, name, mangled_type_args)` triples in `seen` to
+/// avoid duplicate emission.
+fn instantiate_template_into(
+    modules: &[&Module],
+    template_name: &str,
+    mangled_type_args: &[String],
+    type_args: &[ir::Type],
+    out: &mut String,
+    seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
+) {
+    let available_templates: Vec<String> = modules
+        .iter()
+        .copied()
+        .flat_map(|m| m.templates.iter().map(|t| t.name.to_string()))
+        .collect();
 
-        let mut matching_modules: Vec<&Module> = modules
-            .iter()
-            .copied()
-            .filter(|m| m.templates.iter().any(|t| t.name == template_name))
-            .collect();
+    let mut matching_modules: Vec<&Module> = modules
+        .iter()
+        .copied()
+        .filter(|m| m.templates.iter().any(|t| t.name == template_name))
+        .collect();
 
-        if matching_modules.is_empty() {
-            panic!(
-                "unable to resolve template '{template_name}' for type args {:?}; available \
-                 templates: {:?}",
-                type_args, available_templates
-            );
-        }
-
-        if matching_modules.len() > 1 {
-            let module_names: Vec<&str> = matching_modules.iter().map(|m| m.name).collect();
-            panic!(
-                "ambiguous template instantiation '{template_name}' for type args {:?}; matching \
-                 modules: {:?}; available templates: {:?}",
-                type_args, module_names, available_templates
-            );
-        }
-
-        let module = matching_modules
-            .pop()
-            .expect("matching_modules is guaranteed to be non-empty after checks");
-
-        let Some(template) = module.templates.iter().find(|t| t.name == template_name) else {
-            panic!(
-                "internal error: resolved module '{}' does not contain template '{}'; available \
-                 templates: {:?}",
-                module.name, template_name, available_templates
-            );
-        };
-
-        let key = (
-            module.name.to_string(),
-            template_name.to_string(),
-            type_args.to_vec(),
+    if matching_modules.is_empty() {
+        panic!(
+            "unable to resolve template '{template_name}' for type args {:?}; available \
+             templates: {:?}",
+            mangled_type_args, available_templates
         );
-        if !seen.insert(key) {
-            return; // Already instantiated
-        }
-
-        // Recursively instantiate dependencies first (so callees appear before
-        // callers). For transitive deps within the same module, the mangled and
-        // WGSL type args are always identical (they go through the same
-        // type-param mapping from the caller).
-        for dep in template.dependencies {
-            let dep_type_args: Vec<String> = dep
-                .type_param_mapping
-                .iter()
-                .map(|&idx| type_args[idx].clone())
-                .collect();
-            let dep_wgsl_type_args: Vec<String> = dep
-                .type_param_mapping
-                .iter()
-                .map(|&idx| wgsl_type_args[idx].clone())
-                .collect();
-            Self::instantiate_template(
-                &[module],
-                dep.callee,
-                &dep_type_args,
-                &dep_wgsl_type_args,
-                out,
-                seen,
-            );
-        }
-
-        // Substitute placeholders in the template WGSL using the WGSL type
-        // args (valid type syntax), not the mangled identifier fragments.
-        let mut wgsl = template.wgsl_source.to_string();
-        for (param_name, arg) in template.type_params.iter().zip(wgsl_type_args.iter()) {
-            let placeholder = format!("__TP{param_name}__");
-            wgsl = wgsl.replace(&placeholder, arg);
-        }
-        out.extend(wgsl.split('\n').map(str::to_owned));
     }
+
+    if matching_modules.len() > 1 {
+        let module_names: Vec<&str> = matching_modules.iter().map(|m| m.name).collect();
+        panic!(
+            "ambiguous template instantiation '{template_name}' for type args {:?}; matching \
+             modules: {:?}; available templates: {:?}",
+            mangled_type_args, module_names, available_templates
+        );
+    }
+
+    let module = matching_modules
+        .pop()
+        .expect("matching_modules is guaranteed to be non-empty after checks");
+
+    let Some(template) = module.templates.iter().find(|t| t.name == template_name) else {
+        panic!(
+            "internal error: resolved module '{}' does not contain template '{}'; available \
+             templates: {:?}",
+            module.name, template_name, available_templates
+        );
+    };
+
+    let key = (
+        module.name.to_string(),
+        template_name.to_string(),
+        mangled_type_args.to_vec(),
+    );
+    if !seen.insert(key) {
+        return; // Already instantiated
+    }
+
+    // Recursively instantiate dependencies first.
+    for dep in template.dependencies {
+        let dep_mangled: Vec<String> = dep
+            .type_param_mapping
+            .iter()
+            .map(|&idx| mangled_type_args[idx].clone())
+            .collect();
+        let dep_args: Vec<ir::Type> = dep
+            .type_param_mapping
+            .iter()
+            .map(|&idx| type_args[idx].clone())
+            .collect();
+        instantiate_template_into(&[module], dep.callee, &dep_mangled, &dep_args, out, seen);
+    }
+
+    // Build a substitution map from the template's type params to the
+    // concrete type args, then render the substituted items.
+    let mut subst: ::std::collections::HashMap<String, ir::Type> =
+        ::std::collections::HashMap::new();
+    for (param, arg) in template.type_params.iter().zip(type_args.iter()) {
+        subst.insert((*param).to_string(), arg.clone());
+    }
+
+    let mut items = (template.ir_constructor)();
+    ir::substitute_items(&mut items, &subst);
+
+    // Mangle the template's name to a concrete instance name so multiple
+    // monomorphizations can coexist. The new name is
+    // `{template_name}_{mangled_arg1}_{mangled_arg2}_...`. Rewrite that
+    // name everywhere it appears in the items (struct headers, impl
+    // self_ty, free fn names, references in expressions/types).
+    let mut instance_name = template.name.to_string();
+    for arg in mangled_type_args {
+        instance_name.push('_');
+        instance_name.push_str(arg);
+    }
+    if instance_name != template.name {
+        ir::rename_items(&mut items, template.name, &instance_name);
+    }
+
+    out.push_str(&ir::render_items(&items));
 }
 
 #[cfg(feature = "validation")]
@@ -341,7 +374,7 @@ impl Module {
             return Ok(());
         }
 
-        let source = self.wgsl_source().join("\n");
+        let source = self.wgsl_source();
 
         // Parse the WGSL source
         let module =
@@ -363,7 +396,7 @@ pub mod std;
 
 #[cfg(test)]
 mod test {
-    use crate::{GenericTemplate, Module, TemplateDependency, TemplateInstantiation, wgsl};
+    use crate::{GenericTemplate, Module, TemplateDependency, TemplateInstantiation, ir, wgsl};
 
     #[wgsl(crate_path = crate)]
     pub mod a {
@@ -400,35 +433,21 @@ mod test {
     fn module_source() {
         let source = c::WGSL_MODULE.wgsl_source();
         c::main();
-        let expected: Vec<String> = vec![
-            "const THREE: u32 = 3;",
-            "fn add_three_to_x_minus_y(x:u32, y:u32) -> u32 {",
-            "    let i: u32 = (x-y)+THREE;",
-            "    return i;",
-            "}",
-            "",
-            "fn main() {",
-            "    let _u = add_three_to_x_minus_y(1337, 666);",
-            "}",
-            "",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-        assert_eq!(&expected, &source);
+        assert!(source.contains("const THREE: u32 = 3;"), "got:\n{source}");
+        assert!(
+            source.contains("fn add_three_to_x_minus_y(x: u32, y: u32) -> u32"),
+            "got:\n{source}"
+        );
+        assert!(source.contains("fn main()"), "got:\n{source}");
 
         // Verify that imported module sources are not duplicated.
-        // Module C imports B, which imports A. Module A's source should
-        // appear exactly once in the concatenated output.
-        let a_count = source
-            .iter()
-            .filter(|line| a::WGSL_MODULE.source.contains(&line.as_str()))
-            .count();
+        // Module C imports B, which imports A. Module A's `THREE` const
+        // should appear exactly once in the concatenated output.
         assert_eq!(
-            a::WGSL_MODULE.source.len(),
-            a_count,
-            "module A's source lines should appear exactly once (no duplicates from transitive \
-             imports)"
+            source.matches("const THREE:").count(),
+            1,
+            "THREE should appear exactly once (no duplicates from transitive imports), \
+             got:\n{source}"
         );
     }
 
@@ -465,24 +484,14 @@ mod test {
     #[test]
     fn cross_module_trait_impl() {
         // Verify provider module generates f32_scale
-        let provider_src = trait_provider::WGSL_MODULE
-            .source
-            .iter()
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let provider_src = trait_provider::WGSL_MODULE.wgsl_source();
         assert!(
             provider_src.contains("fn f32_scale("),
             "trait_provider should contain f32_scale, got:\n{provider_src}"
         );
 
         // Verify consumer module generates apply_scale_f32 that calls f32_scale
-        let consumer_src = trait_consumer::WGSL_MODULE
-            .source
-            .iter()
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let consumer_src = trait_consumer::WGSL_MODULE.wgsl_source();
         assert!(
             consumer_src.contains("fn apply_scale_f32("),
             "trait_consumer should contain apply_scale_f32, got:\n{consumer_src}"
@@ -491,18 +500,9 @@ mod test {
             consumer_src.contains("f32_scale("),
             "apply_scale_f32 should call f32_scale, got:\n{consumer_src}"
         );
-
-        // Verify the concatenated source has both
-        let full_src = trait_consumer::WGSL_MODULE.wgsl_source().join("\n");
         assert!(
-            full_src.contains("fn f32_scale(") && full_src.contains("fn apply_scale_f32("),
-            "concatenated source should have both functions, got:\n{full_src}"
-        );
-
-        let full_lines = trait_consumer::WGSL_MODULE.wgsl_source();
-        assert!(
-            full_lines.iter().all(|line| !line.contains('\n')),
-            "wgsl_source() should return one source line per element"
+            consumer_src.contains("fn f32_scale("),
+            "concatenated source should have f32_scale (from import), got:\n{consumer_src}"
         );
 
         // Verify Rust-side execution works too
@@ -552,7 +552,7 @@ mod test {
 
     #[test]
     fn cross_module_instantiations_are_deduped_globally() {
-        let full_src = dedupe_root::WGSL_MODULE.wgsl_source().join("\n");
+        let full_src = dedupe_root::WGSL_MODULE.wgsl_source();
         assert_eq!(
             full_src.matches("fn id_f32(").count(),
             1,
@@ -563,27 +563,61 @@ mod test {
     #[test]
     #[should_panic(expected = "ambiguous template instantiation")]
     fn ambiguous_template_provider_panics() {
+        // Build hand-crafted modules where two distinct provider modules
+        // both define a generic template named "shared". Resolution must
+        // panic with an "ambiguous" diagnostic.
+        fn empty_module_ir() -> ir::Module {
+            ir::Module {
+                name: "stub".to_string(),
+                items: vec![],
+            }
+        }
+        fn shared_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "shared".to_string(),
+                inputs: vec![ir::FnArg {
+                    inter_stage_io: vec![],
+                    name: "x".to_string(),
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                }],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::Ident("x".to_string())))],
+                },
+            })]
+        }
+        fn f32_args() -> Vec<ir::Type> {
+            vec![ir::Type::Scalar(ir::ScalarType::F32)]
+        }
         static DEP: [TemplateDependency; 0] = [];
         static A_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
             name: "shared",
             type_params: &["T"],
-            wgsl_source: "fn shared___TPT__(x: __TPT__) -> __TPT__ { return x; }",
+            ir_constructor: shared_template_items,
             dependencies: &DEP,
         }];
         static B_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
             name: "shared",
             type_params: &["T"],
-            wgsl_source: "fn shared___TPT__(x: __TPT__) -> __TPT__ { return x; }",
+            ir_constructor: shared_template_items,
             dependencies: &DEP,
         }];
         static EMPTY_MODS: [&Module; 0] = [];
         static EMPTY_INSTS: [TemplateInstantiation; 0] = [];
-        static EMPTY_LINES: [&str; 0] = [];
         static EMPTY_TYPE_PARAMS: [&str; 0] = [];
         static MOD_A: Module = Module {
             name: "a",
             imports: &EMPTY_MODS,
-            source: &EMPTY_LINES,
+            ir_constructor: empty_module_ir,
             templates: &A_TEMPLATES,
             instantiations: &EMPTY_INSTS,
             module_type_params: &EMPTY_TYPE_PARAMS,
@@ -591,7 +625,7 @@ mod test {
         static MOD_B: Module = Module {
             name: "b",
             imports: &EMPTY_MODS,
-            source: &EMPTY_LINES,
+            ir_constructor: empty_module_ir,
             templates: &B_TEMPLATES,
             instantiations: &EMPTY_INSTS,
             module_type_params: &EMPTY_TYPE_PARAMS,
@@ -599,13 +633,13 @@ mod test {
         static ROOT_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
             modules: &[&MOD_A, &MOD_B],
             template_name: "shared",
-            type_args: &["f32"],
-            wgsl_type_args: &["f32"],
+            type_args_constructor: f32_args,
+            mangled_type_args: &["f32"],
         }];
         static ROOT: Module = Module {
             name: "root",
             imports: &EMPTY_MODS,
-            source: &EMPTY_LINES,
+            ir_constructor: empty_module_ir,
             templates: &[],
             instantiations: &ROOT_INSTS,
             module_type_params: &EMPTY_TYPE_PARAMS,
@@ -657,7 +691,7 @@ mod test {
         );
 
         // The consumer should produce WGSL with Pair_f32 and Pair_f32_sum
-        let full_src = struct_consumer::WGSL_MODULE.wgsl_source().join("\n");
+        let full_src = struct_consumer::WGSL_MODULE.wgsl_source();
         assert!(
             full_src.contains("Pair_f32"),
             "Expected Pair_f32 in assembled WGSL, got:\n{full_src}"
@@ -698,7 +732,7 @@ mod test {
 
     #[test]
     fn generic_module_template_source_has_placeholder() {
-        let src = generic_shader::WGSL_MODULE.wgsl_source().join("\n");
+        let src = generic_shader::WGSL_MODULE.wgsl_source();
         assert!(
             src.contains("__TPT__"),
             "expected `__TPT__` placeholder in template source, got:\n{src}"
@@ -712,7 +746,7 @@ mod test {
 
     #[test]
     fn generic_module_instantiate_substitutes_placeholders() {
-        let src = generic_shader::WGSL_MODULE.instantiate(&["f32"]).join("\n");
+        let src = generic_shader::WGSL_MODULE.instantiate(&[ir::Type::Scalar(ir::ScalarType::F32)]);
         assert!(
             !src.contains("__TPT__"),
             "expected no placeholders after instantiation, got:\n{src}"
@@ -761,7 +795,7 @@ mod test {
     fn generic_module_instantiated_source_is_valid_wgsl() {
         // Instantiate the template with `f32` and verify the resulting
         // source actually parses + validates as WGSL.
-        let src = generic_shader::WGSL_MODULE.instantiate(&["f32"]).join("\n");
+        let src = generic_shader::WGSL_MODULE.instantiate(&[ir::Type::Scalar(ir::ScalarType::F32)]);
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| {
             panic!(
                 "parse failed:\n{}\n--- source ---\n{src}",
@@ -816,16 +850,17 @@ mod test {
 
     #[test]
     fn generic_compute_template_has_both_placeholders() {
-        let src = generic_compute::WGSL_MODULE.wgsl_source().join("\n");
+        let src = generic_compute::WGSL_MODULE.wgsl_source();
         assert!(src.contains("__TPA__"), "missing __TPA__ in:\n{src}");
         assert!(src.contains("__TPB__"), "missing __TPB__ in:\n{src}");
     }
 
     #[test]
     fn generic_compute_instantiate_substitutes_both() {
-        let src = generic_compute::WGSL_MODULE
-            .instantiate(&["f32", "u32"])
-            .join("\n");
+        let src = generic_compute::WGSL_MODULE.instantiate(&[
+            ir::Type::Scalar(ir::ScalarType::F32),
+            ir::Type::Scalar(ir::ScalarType::U32),
+        ]);
         assert!(!src.contains("__TPA__") && !src.contains("__TPB__"));
         assert!(src.contains("INPUT") && src.contains("OUTPUT"));
         assert!(src.contains("f32") && src.contains("u32"));

@@ -32,7 +32,7 @@ fn print_available_modules() {
 fn validate_and_print_source(module: &wgsl_rs::Module) {
     println!("## {}", module.name);
 
-    let source = module.wgsl_source().join("\n");
+    let source = module.wgsl_source();
     println!("raw source:\n\n{source}\n\n");
 
     // Template modules can't be parsed/validated standalone — their WGSL

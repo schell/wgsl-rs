@@ -332,14 +332,16 @@ Shader entry points (`#[vertex]`, `#[fragment]`, `#[compute]`) and module
 linkages (`uniform!`, `storage!`, `workgroup!`) can now declare type
 parameters. A module containing such generics produces a *template* WGSL
 source with `__TP{name}__` placeholders; `Module::instantiate(&["f32"])`
-substitutes them at runtime to produce a concrete shader. Rust-side
-linkage statics use `Uniform`/`Storage`/`Workgroup` with a default
-`WgslTypeVariable` type parameter, backed by a `TypeId`-keyed map inside
-`ModuleVar`; access is via the new `get!(VAR, T)` / `get_mut!(VAR, T)`
-two-arg form. Per-entry-point type params are unioned into a single
-`module_type_params` slice on `Module`. Linkage-wgpu generation and
-WGSL validation are skipped for template modules — callers must
-instantiate first.
+substitutes them at runtime to produce a concrete shader.
+*(The string-based `instantiate(&[&str])` API was superseded by
+`instantiate(&[ir::Type])` the next day — see the 2026-05-07 entry.)*
+Rust-side linkage statics use `Uniform`/`Storage`/`Workgroup` with a
+default `WgslTypeVariable` type parameter, backed by a `TypeId`-keyed
+map inside `ModuleVar`; access is via the new `get!(VAR, T)` /
+`get_mut!(VAR, T)` two-arg form. Per-entry-point type params are unioned
+into a single `module_type_params` slice on `Module`. Linkage-wgpu
+generation and WGSL validation are skipped for template modules —
+callers must instantiate first.
 
 ### 2026-05-07: AST-at-runtime overhaul (`wgsl-rs-ir` crate)
 
@@ -358,7 +360,8 @@ Compile-time WGSL validation has been dropped; runtime validation via
 `Module::validate()` and the auto-generated `__validate_wgsl` test cover
 the same ground. The legacy `code_gen::formatter` is kept around for
 internal `monomorphize.rs` tests but no longer drives production
-output.
+output. *(The formatter was removed entirely the next day — see the
+2026-05-08 entry below.)*
 
 ### 2026-05-08: Removed legacy `code_gen::formatter`
 

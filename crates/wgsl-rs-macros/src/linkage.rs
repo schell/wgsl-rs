@@ -241,7 +241,7 @@ impl LinkageInfo {
 ///
 /// The generated `shader_source()` function uses `OnceLock` to lazily compute
 /// and cache the full WGSL source (including imports) from the parent module's
-/// `WGSL_MODULE` constant.
+/// `WGSL_MODULE` static.
 pub fn generate_linkage_module(info: &LinkageInfo) -> TokenStream {
     let module_name_str = info.module_name.to_string();
 

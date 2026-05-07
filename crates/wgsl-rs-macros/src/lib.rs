@@ -79,7 +79,7 @@ struct Attrs {
     /// Otherwise this is `None`.
     crate_path: Option<syn::Path>,
 
-    /// If true, skip all validation (compile-time and test-time).
+    /// If true, skip the auto-generated `__validate_wgsl` test.
     ///
     /// Set via `#[wgsl(skip_validation)]`.
     skip_validation: bool,
@@ -524,13 +524,21 @@ fn gen_wgsl_module(
     })
 }
 
-/// Generates a `#[test]` function that validates the concatenated WGSL source.
+/// Generates a `#[test]` function that validates the assembled WGSL source.
 ///
-/// This is used for modules that have imports, which cannot be validated at
-/// compile-time because the imported symbols aren't available during macro
-/// expansion. The `validate()` method is available on `Module` when the
-/// `wgsl-rs` crate has the `validation` feature enabled (the default). We
-/// gate on `#[cfg(test)]` only — not `feature = "validation"` — because the
+/// Emitted for `#[wgsl]` modules that import from other `#[wgsl]` modules
+/// (and aren't templates). The full WGSL source for such a module — including
+/// the imported code — is only knowable at runtime, so validation is deferred
+/// to a `cargo test`-time test that calls `WGSL_MODULE.validate()`.
+///
+/// Standalone modules (no imports) and template modules don't get the
+/// auto-generated test; the former because the user can validate them
+/// directly, the latter because their placeholders aren't valid WGSL until
+/// instantiated.
+///
+/// The `validate()` method is available on `Module` when the `wgsl-rs` crate
+/// has the `validation` feature enabled (the default). We gate the generated
+/// test on `#[cfg(test)]` only — not `feature = "validation"` — because the
 /// feature belongs to `wgsl-rs`, not the consuming crate, and checking it
 /// here would produce an "unexpected cfg" warning in downstream crates.
 fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
@@ -653,17 +661,18 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 
 /// Transpiles a Rust module to WGSL.
 ///
-/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_MODULE` constant
-/// containing the transpiled WGSL source. The Rust code inside the module
-/// remains fully functional and can be executed on the CPU, while the
-/// generated WGSL runs on the GPU.
+/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_MODULE` static
+/// containing the module's IR constructor and metadata. The Rust code
+/// inside the module remains fully functional and can be executed on the
+/// CPU, while the WGSL produced by `WGSL_MODULE.wgsl_source()` (or
+/// `WGSL_MODULE.instantiate(...)` for generic modules) runs on the GPU.
 ///
 /// # Module Options
 ///
 /// | Syntax | Description |
 /// |--------|-------------|
 /// | `#[wgsl]` | Transpile the module with default settings. |
-/// | `#[wgsl(skip_validation)]` | Skip compile-time and test-time WGSL validation. |
+/// | `#[wgsl(skip_validation)]` | Skip the auto-generated `__validate_wgsl` test. |
 /// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
 ///
 /// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs,
@@ -1098,7 +1107,8 @@ pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 /// Suppresses specific wgsl-rs warnings/errors on annotated statements.
 ///
 /// Use this attribute to acknowledge cases where the transpiler cannot
-/// guarantee correctness at compile time, but you know the code is valid.
+/// guarantee correctness during macro expansion, but you know the code
+/// is valid.
 ///
 /// # Available Warnings
 ///

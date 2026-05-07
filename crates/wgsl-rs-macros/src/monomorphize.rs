@@ -285,8 +285,10 @@ impl MonoCtx {
     /// this module.
     ///
     /// For each generic function or struct, produces a `TemplateMacro`
-    /// containing WGSL source with `__TP{name}__` placeholders that can be
-    /// used for cross-module instantiation via string substitution.
+    /// holding the parse-side AST items with `Type::TypeParam` nodes still
+    /// in place. At cross-module instantiation time these items are
+    /// converted to IR and the type params are replaced with concrete types
+    /// via `wgsl_rs_ir::substitute_items`.
     fn generate_template_macros(
         &self,
         _module: &ItemMod,
@@ -603,8 +605,8 @@ impl MonoCtx {
     fn apply(&self, module: &mut ItemMod) -> Result<(), crate::parse::Error> {
         // Remove generic template functions, structs, and impl blocks.
         // Generic entry points are kept (they aren't templates — they remain
-        // in the module's WGSL source with `__TP{name}__` placeholders for
-        // module-level instantiation).
+        // in the module's IR with `Type::TypeParam` nodes for module-level
+        // instantiation).
         module.content.retain(|item| match item {
             Item::Fn(f) => {
                 let is_generic_entry_point =

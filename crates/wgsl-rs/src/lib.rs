@@ -1,4 +1,6 @@
 //! WGSL in Rust.
+use ::std::collections::{HashMap, HashSet};
+
 pub use wgsl_rs_macros::{wgsl, wgsl_allow, wgsl_ignore};
 
 /// Re-export of the IR crate so the proc-macro and consuming crates can
@@ -134,8 +136,7 @@ impl Module {
     /// [`Module::instantiate`] for a concrete shader source.
     pub fn wgsl_source(&self) -> String {
         let mut out = String::new();
-        let mut seen: ::std::collections::HashSet<(String, String, Vec<String>)> =
-            ::std::collections::HashSet::new();
+        let mut seen: HashSet<(String, String, Vec<String>)> = HashSet::new();
         self.collect(&mut out, &mut seen, None);
         out
     }
@@ -160,15 +161,13 @@ impl Module {
             type_args.len()
         );
 
-        let mut subst: ::std::collections::HashMap<String, ir::Type> =
-            ::std::collections::HashMap::new();
+        let mut subst: HashMap<String, ir::Type> = HashMap::new();
         for (param, arg) in self.module_type_params.iter().zip(type_args.iter()) {
             subst.insert((*param).to_string(), arg.clone());
         }
 
         let mut out = String::new();
-        let mut seen: ::std::collections::HashSet<(String, String, Vec<String>)> =
-            ::std::collections::HashSet::new();
+        let mut seen: HashSet<(String, String, Vec<String>)> = HashSet::new();
         self.collect(&mut out, &mut seen, Some(&subst));
         out
     }
@@ -203,8 +202,8 @@ impl Module {
     fn collect(
         &self,
         out: &mut String,
-        seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
-        subst: Option<&::std::collections::HashMap<String, ir::Type>>,
+        seen: &mut HashSet<(String, String, Vec<String>)>,
+        subst: Option<&HashMap<String, ir::Type>>,
     ) {
         // 1. Imports first (depth-first, deduplicated by repeated module instances).
         for m in self.imports {
@@ -248,7 +247,7 @@ fn instantiate_template_into(
     mangled_type_args: &[String],
     type_args: &[ir::Type],
     out: &mut String,
-    seen: &mut ::std::collections::HashSet<(String, String, Vec<String>)>,
+    seen: &mut HashSet<(String, String, Vec<String>)>,
 ) {
     let available_templates: Vec<String> = modules
         .iter()
@@ -317,8 +316,7 @@ fn instantiate_template_into(
 
     // Build a substitution map from the template's type params to the
     // concrete type args, then render the substituted items.
-    let mut subst: ::std::collections::HashMap<String, ir::Type> =
-        ::std::collections::HashMap::new();
+    let mut subst: HashMap<String, ir::Type> = HashMap::new();
     for (param, arg) in template.type_params.iter().zip(type_args.iter()) {
         subst.insert((*param).to_string(), arg.clone());
     }
@@ -538,6 +536,7 @@ mod test {
         }
     }
 
+    #[expect(dead_code)]
     #[wgsl(crate_path = crate)]
     mod dedupe_root {
         #[rustfmt::skip]
@@ -659,7 +658,7 @@ mod test {
 
         impl<T: Copy + std::ops::Add<Output = T>> Pair<T> {
             pub fn sum(p: Pair<T>) -> T {
-                return p.a + p.b;
+                p.a + p.b
             }
         }
     }
@@ -670,7 +669,7 @@ mod test {
 
         pub fn use_pair() -> f32 {
             let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
-            return Pair::<f32>::sum(p);
+            Pair::<f32>::sum(p)
         }
     }
 
@@ -711,7 +710,7 @@ mod test {
 
     // --- Generic linkage / generic entry-point tests ---
 
-    #[wgsl(crate_path = crate, skip_validation)]
+    #[wgsl(crate_path = crate)]
     pub mod generic_shader {
         use crate::std::*;
 

@@ -41,33 +41,38 @@ Yes! See the [example](crates/example/src/main.rs), which transpiles the shader 
 
 ## Validation
 
-`wgsl-rs` validates your WGSL at compile-time using [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga).
-Validation errors are mapped back to Rust source spans, so they show up in your IDE via rust-analyzer.
+`wgsl-rs` validates WGSL using [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga).
+The `#[wgsl]` macro auto-generates a `#[test] fn __validate_wgsl()` for modules that
+have imports from other `#[wgsl]` modules — running `cargo test` will surface any
+validation failures.
 
 ### Validation Strategy
 
-| Module Type | Validation |
-|-------------|------------|
-| Standalone (no imports) | Compile-time via naga |
-| With imports from other `#[wgsl]` modules | Test-time via auto-generated `#[test]` function |
-| `#[wgsl(skip_validation)]` | No validation |
+| Module Type | Auto-generated `__validate_wgsl` test? |
+|-------------|----------------------------------------|
+| Standalone module (no imports) | No — call `WGSL_MODULE.validate()` yourself |
+| Module with imports | Yes |
+| Template module (with type parameters) | No — instantiate first, then validate |
+| `#[wgsl(skip_validation)]` | No |
 
-**Why test-time for modules with imports?**
-
-Modules that import from other `#[wgsl]` modules cannot be validated at compile-time because
-the imported symbols aren't available during macro expansion. Instead, `wgsl-rs` generates a
-`#[test] fn __validate_wgsl()` that validates the concatenated WGSL source at test-time.
+The auto-generated test is gated for modules with imports because their full
+WGSL source (including the imports) can't be assembled until runtime. Standalone
+modules can be validated explicitly via `WGSL_MODULE.validate()` (see below);
+template modules contain unresolved placeholders and must be instantiated before
+they're valid WGSL.
 
 ### Example
 
 ```rust
-// Standalone module - validated at compile-time
+// Standalone module - no auto-generated validation test.
+// Use `constants::WGSL_MODULE.validate()` if you want to validate it.
 #[wgsl]
 pub mod constants {
     pub const PI: f32 = 3.14159;
 }
 
-// Module with imports - validated at test-time
+// Module with imports - validated at test-time via an auto-generated
+// `#[test] fn __validate_wgsl()` that runs under `cargo test`.
 #[wgsl]
 pub mod shader {
     use super::constants::*;

@@ -1,9 +1,8 @@
 //! Render IR to WGSL source text.
 //!
-//! This module is the IR-side counterpart of the proc-macro's
-//! `code_gen/formatter.rs`. It walks an [`crate::Module`] (or any
-//! sub-tree) and produces a pretty-printed WGSL string with 4-space
-//! indentation.
+//! This module walks an [`crate::Module`] (or any sub-tree) and
+//! produces a pretty-printed WGSL string with 4-space indentation.
+//! It is the canonical (and only) WGSL emitter in the project.
 //!
 //! The renderer is responsible for all WGSL-specific lowering that the IR
 //! intentionally leaves un-baked:

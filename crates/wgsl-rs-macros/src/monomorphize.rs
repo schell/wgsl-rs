@@ -19,9 +19,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use proc_macro2::Span;
 use syn::Ident;
 
-use crate::parse::{
-    Block, CaseSelector, ElseBody, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct,
-    ReturnType, Stmt, Type,
+use crate::{
+    parse::{Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, ReturnType, Type},
+    parse_visitor::{self, ParseVisitorMut},
 };
 
 /// A cross-module template instantiation that needs to be included in the
@@ -106,8 +106,9 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
         collect_cross_module_instantiations(module, &ctx.templates, &ctx.struct_templates)?;
 
     // Check for any remaining unresolved turbofish calls (missing turbofish
-    // on calls to local generic functions)
-    for item in &module.content {
+    // on calls to local generic functions). The visitor takes `&mut` for
+    // uniformity but doesn't actually mutate anything.
+    for item in &mut module.content {
         check_unresolved_generic_calls(item, &ctx.templates)?;
     }
 
@@ -364,412 +365,29 @@ impl MonoCtx {
         Ok(macros)
     }
 
-    /// Walk all concrete items to find turbofish call sites and generic struct
-    /// usages.
-    fn discover_instantiations(&mut self, module: &ItemMod) -> Result<(), crate::parse::Error> {
-        for item in &module.content {
-            match item {
-                Item::Fn(f) if f.type_params.is_empty() => {
-                    self.collect_from_fn(f)?;
-                }
-                Item::Impl(impl_item) if impl_item.type_params.is_empty() => {
-                    for ii in &impl_item.items {
-                        if let crate::parse::ImplItem::Fn(f) = ii {
-                            self.collect_from_fn(f)?;
-                        }
-                    }
-                }
-                Item::Struct(s) if s.type_params.is_empty() => {
-                    // Walk field types in concrete structs to find generic
-                    // struct type arguments (e.g., `field: Pair<f32>`).
-                    for pair in s.fields.named.iter() {
-                        self.collect_struct_insts_from_type(&pair.ty, pair.ident.span())?;
-                    }
-                }
-                _ => {}
+    /// Walk all concrete items to find turbofish call sites and generic
+    /// struct usages. The implementation drives [`ParseVisitorMut`] over
+    /// the items that aren't themselves generic templates.
+    ///
+    /// `MonoCtx` itself implements `ParseVisitorMut` — `visit_expr` and
+    /// `visit_type` enqueue any concrete generic instantiations they
+    /// encounter; the structural recursion is handled by the default
+    /// `walk_*` methods.
+    fn discover_instantiations(&mut self, module: &mut ItemMod) -> Result<(), crate::parse::Error> {
+        for item in &mut module.content {
+            // Skip items that are themselves generic templates — those
+            // get walked transitively when each instantiation is
+            // monomorphized in `process_queue()`.
+            let is_template = match item {
+                Item::Fn(f) => !f.type_params.is_empty(),
+                Item::Impl(i) => !i.type_params.is_empty(),
+                Item::Struct(s) => !s.type_params.is_empty(),
+                _ => false,
+            };
+            if is_template {
+                continue;
             }
-        }
-        Ok(())
-    }
-
-    fn collect_from_fn(&mut self, f: &ItemFn) -> Result<(), crate::parse::Error> {
-        // Walk function signature types for generic struct usages
-        for pair in f.inputs.iter() {
-            self.collect_struct_insts_from_type(&pair.ty, pair.ident.span())?;
-        }
-        if let ReturnType::Type { ty, .. } = &f.return_type {
-            self.collect_struct_insts_from_type(ty, f.ident.span())?;
-        }
-        self.collect_from_block(&f.block)
-    }
-
-    /// Recursively walk a type to find generic struct instantiations
-    /// (e.g., `Pair<f32>`) and enqueue them for monomorphization.
-    fn collect_struct_insts_from_type(
-        &mut self,
-        ty: &Type,
-        span: Span,
-    ) -> Result<(), crate::parse::Error> {
-        match ty {
-            Type::Struct { ident, type_args } if !type_args.is_empty() => {
-                let struct_name = ident.to_string();
-
-                if let Some(template) = self.struct_templates.get(&struct_name) {
-                    if type_args.len() != template.type_params.len() {
-                        return Err(crate::parse::Error::unsupported(
-                            span,
-                            format!(
-                                "'{}' expects {} type argument(s), but {} were provided",
-                                struct_name,
-                                template.type_params.len(),
-                                type_args.len()
-                            ),
-                        ));
-                    }
-
-                    // Only enqueue if all type args are concrete
-                    if type_args.iter().all(|ta| !contains_type_param(ta)) {
-                        let key = InstKey {
-                            fn_name: struct_name.clone(),
-                            type_args: type_args
-                                .iter()
-                                .map(type_to_key)
-                                .collect::<Result<Vec<_>, _>>()?,
-                        };
-                        if !self.struct_seen.contains(&key) {
-                            self.struct_seen.insert(key.clone());
-                            self.struct_queue.push_back(StructInstRequest {
-                                key,
-                                span,
-                                concrete_types: type_args.clone(),
-                            });
-                        }
-                    }
-                }
-
-                // Also recurse into the type args themselves
-                for ta in type_args {
-                    self.collect_struct_insts_from_type(ta, span)?;
-                }
-            }
-            Type::Array { elem, .. } => {
-                self.collect_struct_insts_from_type(elem, span)?;
-            }
-            Type::RuntimeArray { elem, .. }
-            | Type::Atomic { elem, .. }
-            | Type::Ptr { elem, .. } => {
-                self.collect_struct_insts_from_type(elem, span)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn collect_from_block(&mut self, block: &Block) -> Result<(), crate::parse::Error> {
-        for stmt in &block.stmt {
-            self.collect_from_stmt(stmt)?;
-        }
-        Ok(())
-    }
-
-    fn collect_from_stmt(&mut self, stmt: &Stmt) -> Result<(), crate::parse::Error> {
-        match stmt {
-            Stmt::Local(local) => {
-                // Check the type annotation for generic struct usages
-                if let Some((_, ty)) = &local.ty {
-                    self.collect_struct_insts_from_type(ty, local.ident.span())?;
-                }
-                if let Some(init) = &local.init {
-                    self.collect_from_expr(&init.expr)?;
-                }
-            }
-            Stmt::Const(c) => {
-                self.collect_struct_insts_from_type(&c.ty, c.ident.span())?;
-                self.collect_from_expr(&c.expr)?;
-            }
-            Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-                self.collect_from_expr(lhs)?;
-                self.collect_from_expr(rhs)?;
-            }
-            Stmt::While {
-                condition, body, ..
-            } => {
-                self.collect_from_expr(condition)?;
-                self.collect_from_block(body)?;
-            }
-            Stmt::Loop { body, .. } => {
-                self.collect_from_block(body)?;
-            }
-            Stmt::Expr { expr, .. } => {
-                self.collect_from_expr(expr)?;
-            }
-            Stmt::If(if_stmt) => {
-                self.collect_from_if(if_stmt)?;
-            }
-            Stmt::For(for_loop) => {
-                self.collect_from_expr(&for_loop.from)?;
-                self.collect_from_expr(&for_loop.to)?;
-                self.collect_from_block(&for_loop.body)?;
-            }
-            Stmt::Switch(switch) => {
-                self.collect_from_expr(&switch.selector)?;
-                for arm in &switch.arms {
-                    self.collect_from_block(&arm.body)?;
-                }
-            }
-            Stmt::Return { expr, .. } => {
-                if let Some(e) = expr {
-                    self.collect_from_expr(e)?;
-                }
-            }
-            Stmt::Block(block) => {
-                self.collect_from_block(block)?;
-            }
-            Stmt::SlabRead {
-                slab,
-                offset,
-                dest,
-                size,
-                ..
-            } => {
-                self.collect_from_expr(slab)?;
-                self.collect_from_expr(offset)?;
-                self.collect_from_expr(dest)?;
-                self.collect_from_expr(size)?;
-            }
-            Stmt::SlabWrite {
-                slab,
-                offset,
-                src,
-                size,
-                ..
-            } => {
-                self.collect_from_expr(slab)?;
-                self.collect_from_expr(offset)?;
-                self.collect_from_expr(src)?;
-                if let Some(s) = size {
-                    self.collect_from_expr(s)?;
-                }
-            }
-            Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-        }
-        Ok(())
-    }
-
-    fn collect_from_if(
-        &mut self,
-        if_stmt: &crate::parse::StmtIf,
-    ) -> Result<(), crate::parse::Error> {
-        self.collect_from_expr(&if_stmt.condition)?;
-        self.collect_from_block(&if_stmt.then_block)?;
-        if let Some(else_branch) = &if_stmt.else_branch {
-            match &else_branch.body {
-                ElseBody::Block(block) => self.collect_from_block(block)?,
-                ElseBody::If(nested_if) => self.collect_from_if(nested_if)?,
-            }
-        }
-        Ok(())
-    }
-
-    fn collect_from_expr(&mut self, expr: &Expr) -> Result<(), crate::parse::Error> {
-        match expr {
-            Expr::FnCall {
-                path,
-                type_args,
-                params,
-                ..
-            } => {
-                if !type_args.is_empty() {
-                    let fn_name = match path {
-                        FnPath::Ident(id) => id.to_string(),
-                        FnPath::TypeMethod { ty, method, .. } => {
-                            format!("{}_{}", ty, method)
-                        }
-                    };
-                    let span = match path {
-                        FnPath::Ident(id) => id.span(),
-                        FnPath::TypeMethod { ty, .. } => ty.span(),
-                    };
-
-                    // Check if this is a generic struct method call
-                    // (Pair::<f32>::first). The type_args are struct type args.
-                    if let FnPath::TypeMethod { ty, .. } = path {
-                        let ty_name = ty.to_string();
-                        if let Some(struct_tmpl) = self.struct_templates.get(&ty_name) {
-                            if type_args.len() != struct_tmpl.type_params.len() {
-                                return Err(crate::parse::Error::unsupported(
-                                    span,
-                                    format!(
-                                        "'{}' expects {} type argument(s), but {} were provided",
-                                        ty_name,
-                                        struct_tmpl.type_params.len(),
-                                        type_args.len()
-                                    ),
-                                ));
-                            }
-                            // Enqueue the struct instantiation
-                            if type_args.iter().all(|ta| !contains_type_param(ta)) {
-                                let key = InstKey {
-                                    fn_name: ty_name.clone(),
-                                    type_args: type_args.iter().map(type_to_key).collect::<Result<
-                                        Vec<_>,
-                                        _,
-                                    >>(
-                                    )?,
-                                };
-                                if !self.struct_seen.contains(&key) {
-                                    self.struct_seen.insert(key.clone());
-                                    self.struct_queue.push_back(StructInstRequest {
-                                        key,
-                                        span,
-                                        concrete_types: type_args.clone(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(template) = self.templates.get(&fn_name) {
-                        if type_args.len() != template.type_params.len() {
-                            return Err(crate::parse::Error::unsupported(
-                                span,
-                                format!(
-                                    "'{fn_name}' expects {} type argument(s), but {} were provided",
-                                    template.type_params.len(),
-                                    type_args.len()
-                                ),
-                            ));
-                        }
-
-                        // Only enqueue if all type args are concrete (no TypeParam)
-                        if type_args.iter().all(|ta| !contains_type_param(ta)) {
-                            let key = InstKey {
-                                fn_name: fn_name.clone(),
-                                type_args: type_args
-                                    .iter()
-                                    .map(type_to_key)
-                                    .collect::<Result<Vec<_>, _>>()?,
-                            };
-                            if !self.seen.contains(&key) {
-                                self.seen.insert(key.clone());
-                                self.queue.push_back(InstRequest {
-                                    key,
-                                    span,
-                                    concrete_types: type_args.clone(),
-                                });
-                            }
-                        }
-                        // If type_args contain TypeParam, this call is inside a
-                        // generic function body. It will be
-                        // resolved transitively when that
-                        // template is instantiated.
-                    } else if self.reserved_names.contains(&fn_name) {
-                        // A known local non-generic function called with turbofish.
-                        return Err(crate::parse::Error::unsupported(
-                            span,
-                            format!(
-                                "'{fn_name}' is not a generic function, but was called with type \
-                                 arguments"
-                            ),
-                        ));
-                    }
-                    // Otherwise, this may be a cross-module generic call.
-                    // Defer validation/rewriting to the cross-module pass.
-                }
-
-                // Also recurse into params
-                for param in params.iter() {
-                    self.collect_from_expr(param)?;
-                }
-            }
-            Expr::Binary { lhs, rhs, .. } => {
-                self.collect_from_expr(lhs)?;
-                self.collect_from_expr(rhs)?;
-            }
-            Expr::Unary { expr, .. } => {
-                self.collect_from_expr(expr)?;
-            }
-            Expr::Paren { inner, .. } => {
-                self.collect_from_expr(inner)?;
-            }
-            Expr::Array { elems, .. } => {
-                for elem in elems.iter() {
-                    self.collect_from_expr(elem)?;
-                }
-            }
-            Expr::ArrayIndexing { lhs, index, .. } => {
-                self.collect_from_expr(lhs)?;
-                self.collect_from_expr(index)?;
-            }
-            Expr::Swizzle { lhs, params, .. } => {
-                self.collect_from_expr(lhs)?;
-                if let Some(ps) = params {
-                    for p in ps.iter() {
-                        self.collect_from_expr(p)?;
-                    }
-                }
-            }
-            Expr::Cast { lhs, ty } => {
-                self.collect_from_expr(lhs)?;
-                self.collect_struct_insts_from_type(ty, lhs.span())?;
-            }
-            Expr::Struct {
-                ident,
-                type_args,
-                fields,
-                ..
-            } => {
-                // If this is a generic struct construction, enqueue it
-                if !type_args.is_empty() {
-                    let struct_name = ident.to_string();
-                    let span = ident.span();
-
-                    if let Some(template) = self.struct_templates.get(&struct_name) {
-                        if type_args.len() != template.type_params.len() {
-                            return Err(crate::parse::Error::unsupported(
-                                span,
-                                format!(
-                                    "'{}' expects {} type argument(s), but {} were provided",
-                                    struct_name,
-                                    template.type_params.len(),
-                                    type_args.len()
-                                ),
-                            ));
-                        }
-
-                        if type_args.iter().all(|ta| !contains_type_param(ta)) {
-                            let key = InstKey {
-                                fn_name: struct_name.clone(),
-                                type_args: type_args
-                                    .iter()
-                                    .map(type_to_key)
-                                    .collect::<Result<Vec<_>, _>>()?,
-                            };
-                            if !self.struct_seen.contains(&key) {
-                                self.struct_seen.insert(key.clone());
-                                self.struct_queue.push_back(StructInstRequest {
-                                    key,
-                                    span,
-                                    concrete_types: type_args.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                for field in fields.iter() {
-                    self.collect_from_expr(&field.expr)?;
-                }
-            }
-            Expr::FieldAccess { base, .. } => {
-                self.collect_from_expr(base)?;
-            }
-            Expr::Reference { expr, .. } => {
-                self.collect_from_expr(expr)?;
-            }
-            Expr::ZeroValueArray { len, .. } => {
-                self.collect_from_expr(len)?;
-            }
-            Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+            self.visit_item(item)?;
         }
         Ok(())
     }
@@ -862,8 +480,8 @@ impl MonoCtx {
         // Substitute in block (types and call sites)
         substitute_block(&mut mono_fn.block, &subst);
 
-        // Discover any new instantiations from the monomorphized body
-        self.collect_from_fn(&mono_fn)?;
+        // Discover any new instantiations from the monomorphized body.
+        self.visit_fn(&mut mono_fn)?;
 
         self.generated.push(Item::Fn(Box::new(mono_fn)));
         Ok(())
@@ -907,9 +525,9 @@ impl MonoCtx {
             substitute_type(&mut pair.ty, &subst);
         }
 
-        // Discover any new struct instantiations from monomorphized fields
-        for pair in mono_struct.fields.named.iter() {
-            self.collect_struct_insts_from_type(&pair.ty, pair.ident.span())?;
+        // Discover any new struct instantiations from monomorphized fields.
+        for pair in mono_struct.fields.named.iter_mut() {
+            self.visit_type(&mut pair.ty)?;
         }
 
         self.generated.push(Item::Struct(mono_struct));
@@ -957,8 +575,8 @@ impl MonoCtx {
                             // Substitute in block
                             substitute_block(&mut mono_fn.block, &impl_subst);
 
-                            // Discover any new instantiations from monomorphized body
-                            self.collect_from_fn(&mono_fn)?;
+                            // Discover any new instantiations from monomorphized body.
+                            self.visit_fn(&mut mono_fn)?;
 
                             self.generated.push(Item::Fn(Box::new(mono_fn)));
                         }
@@ -1003,370 +621,328 @@ impl MonoCtx {
 
         // Rewrite all call sites and struct types in all items
         for item in &mut module.content {
-            rewrite_calls_in_item(item, &self.templates);
-            rewrite_struct_types_in_item(item, &self.struct_templates);
+            rewrite_names_in_item(item, &self.templates, &self.struct_templates);
         }
 
         Ok(())
     }
 }
 
-// ===== Substitution helpers =====
+// ===== Instantiation discovery (MonoCtx as visitor) =====
+//
+// `MonoCtx` implements [`ParseVisitorMut`] so the structural recursion
+// is handled by the default `walk_*` methods. The two overrides below
+// pick out concrete generic instantiations (turbofish calls, generic
+// struct usages, struct method calls, struct constructors) and enqueue
+// them onto `self.queue` / `self.struct_queue`.
 
-fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>) {
-    match ty {
-        Type::TypeParam { ident } => {
-            if let Some(concrete) = subst.get(&ident.to_string()) {
-                *ty = concrete.clone();
-            }
-        }
-        Type::Array { elem, len, .. } => {
-            substitute_type(elem, subst);
-            substitute_expr(len, subst);
-        }
-        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
-            substitute_type(elem, subst);
-        }
-        Type::Struct { type_args, .. } => {
-            // Substitute type params inside generic struct type arguments
-            // (e.g., Pair<T> where T is in the substitution map).
-            for ta in type_args.iter_mut() {
-                substitute_type(ta, subst);
-            }
-        }
-        Type::Scalar { .. }
-        | Type::Vector { .. }
-        | Type::Matrix { .. }
-        | Type::Sampler { .. }
-        | Type::SamplerComparison { .. }
-        | Type::Texture { .. }
-        | Type::TextureDepth { .. } => {}
-    }
-}
-
-fn substitute_block(block: &mut Block, subst: &BTreeMap<String, Type>) {
-    for stmt in &mut block.stmt {
-        substitute_stmt(stmt, subst);
-    }
-}
-
-fn substitute_stmt(stmt: &mut Stmt, subst: &BTreeMap<String, Type>) {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some((_, ty)) = &mut local.ty {
-                substitute_type(ty, subst);
-            }
-            if let Some(init) = &mut local.init {
-                substitute_expr(&mut init.expr, subst);
-            }
-        }
-        Stmt::Const(c) => {
-            substitute_type(&mut c.ty, subst);
-            substitute_expr(&mut c.expr, subst);
-        }
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            substitute_expr(lhs, subst);
-            substitute_expr(rhs, subst);
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            substitute_expr(condition, subst);
-            substitute_block(body, subst);
-        }
-        Stmt::Loop { body, .. } => {
-            substitute_block(body, subst);
-        }
-        Stmt::Expr { expr, .. } => {
-            substitute_expr(expr, subst);
-        }
-        Stmt::If(if_stmt) => {
-            substitute_if(if_stmt, subst);
-        }
-        Stmt::For(for_loop) => {
-            if let Some((_, ty)) = &mut for_loop.ty {
-                substitute_type(ty, subst);
-            }
-            substitute_expr(&mut for_loop.from, subst);
-            substitute_expr(&mut for_loop.to, subst);
-            substitute_block(&mut for_loop.body, subst);
-        }
-        Stmt::Switch(switch) => {
-            substitute_expr(&mut switch.selector, subst);
-            for arm in &mut switch.arms {
-                for sel in &mut arm.selectors {
-                    if let CaseSelector::Expr(e) = sel {
-                        substitute_expr(e, subst);
+impl ParseVisitorMut for MonoCtx {
+    fn visit_type(&mut self, ty: &mut Type) -> Result<(), crate::parse::Error> {
+        if let Type::Struct { ident, type_args } = ty
+            && !type_args.is_empty()
+        {
+            let struct_name = ident.to_string();
+            // We use the ident's span as the diagnostic site — the
+            // original implementation passed the surrounding `pair.ident`
+            // / `f.ident` / `local.ident` span instead. The struct
+            // ident's span is sharper for the user, since it points at
+            // the actual `Pair<f32>` text.
+            let span = ident.span();
+            if let Some(template) = self.struct_templates.get(&struct_name) {
+                if type_args.len() != template.type_params.len() {
+                    return Err(crate::parse::Error::unsupported(
+                        span,
+                        format!(
+                            "'{}' expects {} type argument(s), but {} were provided",
+                            struct_name,
+                            template.type_params.len(),
+                            type_args.len()
+                        ),
+                    ));
+                }
+                if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                    let key = InstKey {
+                        fn_name: struct_name.clone(),
+                        type_args: type_args
+                            .iter()
+                            .map(type_to_key)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    };
+                    if !self.struct_seen.contains(&key) {
+                        self.struct_seen.insert(key.clone());
+                        self.struct_queue.push_back(StructInstRequest {
+                            key,
+                            span,
+                            concrete_types: type_args.clone(),
+                        });
                     }
                 }
-                substitute_block(&mut arm.body, subst);
             }
         }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                substitute_expr(e, subst);
-            }
-        }
-        Stmt::Block(block) => {
-            substitute_block(block, subst);
-        }
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            substitute_expr(slab, subst);
-            substitute_expr(offset, subst);
-            substitute_expr(dest, subst);
-            substitute_expr(size, subst);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            substitute_expr(slab, subst);
-            substitute_expr(offset, subst);
-            substitute_expr(src, subst);
-            if let Some(s) = size {
-                substitute_expr(s, subst);
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
+        parse_visitor::walk_type(self, ty)
     }
-}
 
-fn substitute_if(if_stmt: &mut crate::parse::StmtIf, subst: &BTreeMap<String, Type>) {
-    substitute_expr(&mut if_stmt.condition, subst);
-    substitute_block(&mut if_stmt.then_block, subst);
-    if let Some(else_branch) = &mut if_stmt.else_branch {
-        match &mut else_branch.body {
-            ElseBody::Block(block) => substitute_block(block, subst),
-            ElseBody::If(nested_if) => substitute_if(nested_if, subst),
-        }
-    }
-}
-
-fn substitute_expr(expr: &mut Expr, subst: &BTreeMap<String, Type>) {
-    match expr {
-        Expr::FnCall {
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        if let Expr::FnCall {
             path,
             type_args,
             params,
             ..
-        } => {
-            // Substitute type params in TypeMethod paths (e.g., T::method -> f32::method)
-            if let FnPath::TypeMethod { ty, .. } = path
-                && let Some(concrete) = subst.get(&ty.to_string())
-            {
-                *ty = type_to_ident(concrete, ty.span());
-            }
-            for ta in type_args.iter_mut() {
-                substitute_type(ta, subst);
-            }
-            for param in params.iter_mut() {
-                substitute_expr(param, subst);
-            }
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            substitute_expr(lhs, subst);
-            substitute_expr(rhs, subst);
-        }
-        Expr::Unary { expr, .. } => {
-            substitute_expr(expr, subst);
-        }
-        Expr::Paren { inner, .. } => {
-            substitute_expr(inner, subst);
-        }
-        Expr::Array { elems, .. } => {
-            for elem in elems.iter_mut() {
-                substitute_expr(elem, subst);
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            substitute_expr(lhs, subst);
-            substitute_expr(index, subst);
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            substitute_expr(lhs, subst);
-            if let Some(ps) = params {
-                for p in ps.iter_mut() {
-                    substitute_expr(p, subst);
+        } = expr
+            && !type_args.is_empty()
+        {
+            let fn_name = match path {
+                FnPath::Ident(id) => id.to_string(),
+                FnPath::TypeMethod { ty, method, .. } => format!("{}_{}", ty, method),
+            };
+            let span = match path {
+                FnPath::Ident(id) => id.span(),
+                FnPath::TypeMethod { ty, .. } => ty.span(),
+            };
+
+            // `Pair::<f32>::first(p)` — enqueue the struct instantiation
+            // (the impl-method instantiation falls out of struct
+            // monomorphization).
+            if let FnPath::TypeMethod { ty, .. } = path {
+                let ty_name = ty.to_string();
+                if let Some(struct_tmpl) = self.struct_templates.get(&ty_name) {
+                    if type_args.len() != struct_tmpl.type_params.len() {
+                        return Err(crate::parse::Error::unsupported(
+                            span,
+                            format!(
+                                "'{}' expects {} type argument(s), but {} were provided",
+                                ty_name,
+                                struct_tmpl.type_params.len(),
+                                type_args.len()
+                            ),
+                        ));
+                    }
+                    if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                        let key = InstKey {
+                            fn_name: ty_name.clone(),
+                            type_args: type_args
+                                .iter()
+                                .map(type_to_key)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        };
+                        if !self.struct_seen.contains(&key) {
+                            self.struct_seen.insert(key.clone());
+                            self.struct_queue.push_back(StructInstRequest {
+                                key,
+                                span,
+                                concrete_types: type_args.clone(),
+                            });
+                        }
+                    }
                 }
             }
+
+            if let Some(template) = self.templates.get(&fn_name) {
+                if type_args.len() != template.type_params.len() {
+                    return Err(crate::parse::Error::unsupported(
+                        span,
+                        format!(
+                            "'{fn_name}' expects {} type argument(s), but {} were provided",
+                            template.type_params.len(),
+                            type_args.len()
+                        ),
+                    ));
+                }
+                if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                    let key = InstKey {
+                        fn_name: fn_name.clone(),
+                        type_args: type_args
+                            .iter()
+                            .map(type_to_key)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    };
+                    if !self.seen.contains(&key) {
+                        self.seen.insert(key.clone());
+                        self.queue.push_back(InstRequest {
+                            key,
+                            span,
+                            concrete_types: type_args.clone(),
+                        });
+                    }
+                }
+                // If type_args contain a TypeParam, this call is inside a
+                // generic function body. It will be resolved transitively
+                // when that template itself is instantiated.
+            } else if self.reserved_names.contains(&fn_name) {
+                return Err(crate::parse::Error::unsupported(
+                    span,
+                    format!(
+                        "'{fn_name}' is not a generic function, but was called with type arguments"
+                    ),
+                ));
+            }
+            // Otherwise, this may be a cross-module generic call — defer
+            // validation/rewriting to the cross-module pass.
+
+            // Recurse into params (the default walk would do this too,
+            // but we've consumed the early-return path above).
+            for param in params.iter_mut() {
+                self.visit_expr(param)?;
+            }
+            return Ok(());
         }
-        Expr::Cast { lhs, ty } => {
-            substitute_expr(lhs, subst);
-            substitute_type(ty, subst);
-        }
-        Expr::Struct {
+
+        if let Expr::Struct {
             ident,
             type_args,
             fields,
             ..
-        } => {
-            // Substitute TypeMethod-style ident if it's a type param
-            if let Some(concrete) = subst.get(&ident.to_string()) {
-                *ident = type_to_ident(concrete, ident.span());
-            }
-            for ta in type_args.iter_mut() {
-                substitute_type(ta, subst);
-            }
-            for field in fields.iter_mut() {
-                substitute_expr(&mut field.expr, subst);
-            }
-        }
-        Expr::FieldAccess { base, .. } => {
-            substitute_expr(base, subst);
-        }
-        Expr::Reference { expr, .. } => {
-            substitute_expr(expr, subst);
-        }
-        Expr::ZeroValueArray { elem_type, len, .. } => {
-            substitute_type(elem_type, subst);
-            substitute_expr(len, subst);
-        }
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
-    }
-}
-
-// ===== Call site rewriting =====
-
-fn rewrite_calls_in_item(item: &mut Item, templates: &BTreeMap<String, ItemFn>) {
-    match item {
-        Item::Fn(f) => rewrite_calls_in_fn(f, templates),
-        Item::Impl(impl_item) => {
-            for ii in &mut impl_item.items {
-                if let crate::parse::ImplItem::Fn(f) = ii {
-                    rewrite_calls_in_fn(f, templates);
+        } = expr
+            && !type_args.is_empty()
+        {
+            let struct_name = ident.to_string();
+            let span = ident.span();
+            if let Some(template) = self.struct_templates.get(&struct_name) {
+                if type_args.len() != template.type_params.len() {
+                    return Err(crate::parse::Error::unsupported(
+                        span,
+                        format!(
+                            "'{}' expects {} type argument(s), but {} were provided",
+                            struct_name,
+                            template.type_params.len(),
+                            type_args.len()
+                        ),
+                    ));
+                }
+                if type_args.iter().all(|ta| !contains_type_param(ta)) {
+                    let key = InstKey {
+                        fn_name: struct_name.clone(),
+                        type_args: type_args
+                            .iter()
+                            .map(type_to_key)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    };
+                    if !self.struct_seen.contains(&key) {
+                        self.struct_seen.insert(key.clone());
+                        self.struct_queue.push_back(StructInstRequest {
+                            key,
+                            span,
+                            concrete_types: type_args.clone(),
+                        });
+                    }
                 }
             }
+            for field in fields.iter_mut() {
+                self.visit_expr(&mut field.expr)?;
+            }
+            return Ok(());
         }
-        _ => {}
+
+        parse_visitor::walk_expr(self, expr)
     }
 }
 
-fn rewrite_calls_in_fn(f: &mut ItemFn, templates: &BTreeMap<String, ItemFn>) {
-    rewrite_calls_in_block(&mut f.block, templates);
+// ===== Substitution helpers =====
+//
+// Replaces every `Type::TypeParam` (and the equivalent ident references in
+// `FnPath::TypeMethod` and `Expr::Struct`) with its concrete type from a
+// caller-supplied substitution map. Implemented as a [`ParseVisitorMut`].
+
+struct SubstituteVisitor<'a> {
+    subst: &'a BTreeMap<String, Type>,
 }
 
-fn rewrite_calls_in_block(block: &mut Block, templates: &BTreeMap<String, ItemFn>) {
-    for stmt in &mut block.stmt {
-        rewrite_calls_in_stmt(stmt, templates);
+impl ParseVisitorMut for SubstituteVisitor<'_> {
+    fn visit_type(&mut self, ty: &mut Type) -> Result<(), crate::parse::Error> {
+        if let Type::TypeParam { ident } = ty
+            && let Some(concrete) = self.subst.get(&ident.to_string())
+        {
+            *ty = concrete.clone();
+            return Ok(());
+        }
+        parse_visitor::walk_type(self, ty)
+    }
+
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        // Two extra rewrites that the default walker doesn't perform:
+        //
+        // * `T::method(...)` becomes `f32::method(...)` when `T` is in the substitution
+        //   map. The default `walk_expr` only descends into `type_args` and `params`;
+        //   the path itself is invisible to it.
+        //
+        // * `T { fields }` becomes `f32 { fields }` for the same reason (the struct
+        //   ident is just an `Ident`, not a `Type`).
+        match expr {
+            Expr::FnCall { path, .. } => {
+                if let FnPath::TypeMethod { ty, .. } = path
+                    && let Some(concrete) = self.subst.get(&ty.to_string())
+                {
+                    *ty = type_to_ident(concrete, ty.span());
+                }
+            }
+            Expr::Struct { ident, .. } => {
+                if let Some(concrete) = self.subst.get(&ident.to_string()) {
+                    *ident = type_to_ident(concrete, ident.span());
+                }
+            }
+            _ => {}
+        }
+        parse_visitor::walk_expr(self, expr)
     }
 }
 
-fn rewrite_calls_in_stmt(stmt: &mut Stmt, templates: &BTreeMap<String, ItemFn>) {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some(init) = &mut local.init {
-                rewrite_calls_in_expr(&mut init.expr, templates);
-            }
-        }
-        Stmt::Const(c) => {
-            rewrite_calls_in_expr(&mut c.expr, templates);
-        }
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            rewrite_calls_in_expr(lhs, templates);
-            rewrite_calls_in_expr(rhs, templates);
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            rewrite_calls_in_expr(condition, templates);
-            rewrite_calls_in_block(body, templates);
-        }
-        Stmt::Loop { body, .. } => {
-            rewrite_calls_in_block(body, templates);
-        }
-        Stmt::Expr { expr, .. } => {
-            rewrite_calls_in_expr(expr, templates);
-        }
-        Stmt::If(if_stmt) => {
-            rewrite_calls_in_if(if_stmt, templates);
-        }
-        Stmt::For(for_loop) => {
-            rewrite_calls_in_expr(&mut for_loop.from, templates);
-            rewrite_calls_in_expr(&mut for_loop.to, templates);
-            rewrite_calls_in_block(&mut for_loop.body, templates);
-        }
-        Stmt::Switch(switch) => {
-            rewrite_calls_in_expr(&mut switch.selector, templates);
-            for arm in &mut switch.arms {
-                rewrite_calls_in_block(&mut arm.body, templates);
-            }
-        }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                rewrite_calls_in_expr(e, templates);
-            }
-        }
-        Stmt::Block(block) => {
-            rewrite_calls_in_block(block, templates);
-        }
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            rewrite_calls_in_expr(slab, templates);
-            rewrite_calls_in_expr(offset, templates);
-            rewrite_calls_in_expr(dest, templates);
-            rewrite_calls_in_expr(size, templates);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            rewrite_calls_in_expr(slab, templates);
-            rewrite_calls_in_expr(offset, templates);
-            rewrite_calls_in_expr(src, templates);
-            if let Some(s) = size {
-                rewrite_calls_in_expr(s, templates);
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-    }
+fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>) {
+    let mut v = SubstituteVisitor { subst };
+    let _ = v.visit_type(ty);
 }
 
-fn rewrite_calls_in_if(if_stmt: &mut crate::parse::StmtIf, templates: &BTreeMap<String, ItemFn>) {
-    rewrite_calls_in_expr(&mut if_stmt.condition, templates);
-    rewrite_calls_in_block(&mut if_stmt.then_block, templates);
-    if let Some(else_branch) = &mut if_stmt.else_branch {
-        match &mut else_branch.body {
-            ElseBody::Block(block) => rewrite_calls_in_block(block, templates),
-            ElseBody::If(nested_if) => rewrite_calls_in_if(nested_if, templates),
-        }
-    }
+fn substitute_block(block: &mut Block, subst: &BTreeMap<String, Type>) {
+    let mut v = SubstituteVisitor { subst };
+    let _ = v.visit_block(block);
 }
 
-fn rewrite_calls_in_expr(expr: &mut Expr, templates: &BTreeMap<String, ItemFn>) {
-    match expr {
-        Expr::FnCall {
-            path,
-            type_args,
-            params,
-            ..
-        } => {
-            if !type_args.is_empty() {
+fn substitute_expr(expr: &mut Expr, subst: &BTreeMap<String, Type>) {
+    let mut v = SubstituteVisitor { subst };
+    let _ = v.visit_expr(expr);
+}
+
+// ===== Name rewriting (calls + struct types) =====
+//
+// After monomorphization, every concrete instantiation of a generic
+// function or struct gets a mangled name (e.g. `id<f32>` -> `id_f32`,
+// `Pair<f32>` -> `Pair_f32`). This visitor walks all items and
+// rewrites every reference (call sites, type references, struct
+// constructors, impl methods on generic structs) to use the mangled
+// names. Both fn-template and struct-template rewrites happen in a
+// single pass.
+
+struct RewriteNamesVisitor<'a> {
+    fn_templates: &'a BTreeMap<String, ItemFn>,
+    struct_templates: &'a BTreeMap<String, ItemStruct>,
+}
+
+impl ParseVisitorMut for RewriteNamesVisitor<'_> {
+    fn visit_type(&mut self, ty: &mut Type) -> Result<(), crate::parse::Error> {
+        if let Type::Struct { ident, type_args } = ty
+            && !type_args.is_empty()
+            && self.struct_templates.contains_key(&ident.to_string())
+        {
+            let mangled = mangle_name(&ident.to_string(), type_args)
+                .expect("mangle_name should not fail for concrete types");
+            *ident = Ident::new(&mangled, ident.span());
+            type_args.clear();
+        }
+        parse_visitor::walk_type(self, ty)
+    }
+
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        match expr {
+            Expr::FnCall {
+                path, type_args, ..
+            } if !type_args.is_empty() => {
+                // First try fn-template name mangling (covers both
+                // free generic functions and `Type::method` calls
+                // where `Type::method` is a known template fn).
                 let fn_name = match &*path {
                     FnPath::Ident(id) => id.to_string(),
-                    FnPath::TypeMethod { ty, method, .. } => {
-                        format!("{}_{}", ty, method)
-                    }
+                    FnPath::TypeMethod { ty, method, .. } => format!("{}_{}", ty, method),
                 };
-
-                if templates.contains_key(&fn_name) {
-                    // Mangle the name and clear type_args
+                if self.fn_templates.contains_key(&fn_name) {
                     let mangled = mangle_name(&fn_name, type_args)
                         .expect("mangle_name should not fail for concrete types");
                     let span = match &*path {
@@ -1375,333 +951,84 @@ fn rewrite_calls_in_expr(expr: &mut Expr, templates: &BTreeMap<String, ItemFn>) 
                     };
                     *path = FnPath::Ident(Ident::new(&mangled, span));
                     type_args.clear();
-                }
-            }
-
-            for param in params.iter_mut() {
-                rewrite_calls_in_expr(param, templates);
-            }
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            rewrite_calls_in_expr(lhs, templates);
-            rewrite_calls_in_expr(rhs, templates);
-        }
-        Expr::Unary { expr, .. } => {
-            rewrite_calls_in_expr(expr, templates);
-        }
-        Expr::Paren { inner, .. } => {
-            rewrite_calls_in_expr(inner, templates);
-        }
-        Expr::Array { elems, .. } => {
-            for elem in elems.iter_mut() {
-                rewrite_calls_in_expr(elem, templates);
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            rewrite_calls_in_expr(lhs, templates);
-            rewrite_calls_in_expr(index, templates);
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            rewrite_calls_in_expr(lhs, templates);
-            if let Some(ps) = params {
-                for p in ps.iter_mut() {
-                    rewrite_calls_in_expr(p, templates);
-                }
-            }
-        }
-        Expr::Cast { lhs, .. } => {
-            rewrite_calls_in_expr(lhs, templates);
-        }
-        Expr::Struct { fields, .. } => {
-            for field in fields.iter_mut() {
-                rewrite_calls_in_expr(&mut field.expr, templates);
-            }
-        }
-        Expr::FieldAccess { base, .. } => {
-            rewrite_calls_in_expr(base, templates);
-        }
-        Expr::Reference { expr, .. } => {
-            rewrite_calls_in_expr(expr, templates);
-        }
-        Expr::ZeroValueArray { len, .. } => {
-            rewrite_calls_in_expr(len, templates);
-        }
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
-    }
-}
-
-// ===== Struct type rewriting =====
-
-/// Rewrite generic struct types in an item to use mangled names.
-///
-/// After monomorphization, `Type::Struct { ident: "Pair", type_args: [f32] }`
-/// becomes `Type::Struct { ident: "Pair_f32", type_args: [] }`.
-fn rewrite_struct_types_in_item(item: &mut Item, struct_templates: &BTreeMap<String, ItemStruct>) {
-    match item {
-        Item::Fn(f) => rewrite_struct_types_in_fn(f, struct_templates),
-        Item::Impl(impl_item) => {
-            for ii in &mut impl_item.items {
-                match ii {
-                    crate::parse::ImplItem::Fn(f) => {
-                        rewrite_struct_types_in_fn(f, struct_templates);
-                    }
-                    crate::parse::ImplItem::Const(c) => {
-                        rewrite_struct_type(&mut c.ty, struct_templates);
-                        rewrite_struct_types_in_expr(&mut c.expr, struct_templates);
+                } else if let FnPath::TypeMethod { ty, method, .. } = path {
+                    // Then check for `StructTemplate::method(...)` calls
+                    // where `StructTemplate` is a known generic struct.
+                    let ty_name = ty.to_string();
+                    if self.struct_templates.contains_key(&ty_name) && !type_args.is_empty() {
+                        let mangled_struct = mangle_name(&ty_name, type_args)
+                            .expect("mangle_name should not fail for concrete types");
+                        let mangled_fn = format!("{}_{}", mangled_struct, method);
+                        let span = ty.span();
+                        *path = FnPath::Ident(Ident::new(&mangled_fn, span));
+                        type_args.clear();
                     }
                 }
             }
-        }
-        Item::Struct(s) => {
-            for pair in s.fields.named.iter_mut() {
-                rewrite_struct_type(&mut pair.ty, struct_templates);
-            }
-        }
-        Item::Const(c) => {
-            rewrite_struct_type(&mut c.ty, struct_templates);
-            rewrite_struct_types_in_expr(&mut c.expr, struct_templates);
-        }
-        _ => {}
-    }
-}
-
-fn rewrite_struct_types_in_fn(f: &mut ItemFn, struct_templates: &BTreeMap<String, ItemStruct>) {
-    for pair in f.inputs.iter_mut() {
-        rewrite_struct_type(&mut pair.ty, struct_templates);
-    }
-    if let ReturnType::Type { ty, .. } = &mut f.return_type {
-        rewrite_struct_type(ty, struct_templates);
-    }
-    rewrite_struct_types_in_block(&mut f.block, struct_templates);
-}
-
-fn rewrite_struct_type(ty: &mut Type, struct_templates: &BTreeMap<String, ItemStruct>) {
-    match ty {
-        Type::Struct { ident, type_args }
-            if !type_args.is_empty() && struct_templates.contains_key(&ident.to_string()) =>
-        {
-            // Mangle the name and clear type_args
-            let mangled = mangle_name(&ident.to_string(), type_args)
-                .expect("mangle_name should not fail for concrete types");
-            *ident = Ident::new(&mangled, ident.span());
-            type_args.clear();
-        }
-        Type::Array { elem, .. } => {
-            rewrite_struct_type(elem, struct_templates);
-        }
-        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
-            rewrite_struct_type(elem, struct_templates);
-        }
-        Type::Struct { type_args, .. } => {
-            // Non-generic struct or struct with type_args already cleared
-            for ta in type_args.iter_mut() {
-                rewrite_struct_type(ta, struct_templates);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn rewrite_struct_types_in_block(
-    block: &mut Block,
-    struct_templates: &BTreeMap<String, ItemStruct>,
-) {
-    for stmt in &mut block.stmt {
-        rewrite_struct_types_in_stmt(stmt, struct_templates);
-    }
-}
-
-fn rewrite_struct_types_in_stmt(stmt: &mut Stmt, struct_templates: &BTreeMap<String, ItemStruct>) {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some((_, ty)) = &mut local.ty {
-                rewrite_struct_type(ty, struct_templates);
-            }
-            if let Some(init) = &mut local.init {
-                rewrite_struct_types_in_expr(&mut init.expr, struct_templates);
-            }
-        }
-        Stmt::Const(c) => {
-            rewrite_struct_type(&mut c.ty, struct_templates);
-            rewrite_struct_types_in_expr(&mut c.expr, struct_templates);
-        }
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            rewrite_struct_types_in_expr(lhs, struct_templates);
-            rewrite_struct_types_in_expr(rhs, struct_templates);
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            rewrite_struct_types_in_expr(condition, struct_templates);
-            rewrite_struct_types_in_block(body, struct_templates);
-        }
-        Stmt::Loop { body, .. } => {
-            rewrite_struct_types_in_block(body, struct_templates);
-        }
-        Stmt::Expr { expr, .. } => {
-            rewrite_struct_types_in_expr(expr, struct_templates);
-        }
-        Stmt::If(if_stmt) => {
-            rewrite_struct_types_in_if(if_stmt, struct_templates);
-        }
-        Stmt::For(for_loop) => {
-            if let Some((_, ty)) = &mut for_loop.ty {
-                rewrite_struct_type(ty, struct_templates);
-            }
-            rewrite_struct_types_in_expr(&mut for_loop.from, struct_templates);
-            rewrite_struct_types_in_expr(&mut for_loop.to, struct_templates);
-            rewrite_struct_types_in_block(&mut for_loop.body, struct_templates);
-        }
-        Stmt::Switch(switch) => {
-            rewrite_struct_types_in_expr(&mut switch.selector, struct_templates);
-            for arm in &mut switch.arms {
-                rewrite_struct_types_in_block(&mut arm.body, struct_templates);
-            }
-        }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                rewrite_struct_types_in_expr(e, struct_templates);
-            }
-        }
-        Stmt::Block(block) => {
-            rewrite_struct_types_in_block(block, struct_templates);
-        }
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            rewrite_struct_types_in_expr(slab, struct_templates);
-            rewrite_struct_types_in_expr(offset, struct_templates);
-            rewrite_struct_types_in_expr(dest, struct_templates);
-            rewrite_struct_types_in_expr(size, struct_templates);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            rewrite_struct_types_in_expr(slab, struct_templates);
-            rewrite_struct_types_in_expr(offset, struct_templates);
-            rewrite_struct_types_in_expr(src, struct_templates);
-            if let Some(s) = size {
-                rewrite_struct_types_in_expr(s, struct_templates);
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-    }
-}
-
-fn rewrite_struct_types_in_if(
-    if_stmt: &mut crate::parse::StmtIf,
-    struct_templates: &BTreeMap<String, ItemStruct>,
-) {
-    rewrite_struct_types_in_expr(&mut if_stmt.condition, struct_templates);
-    rewrite_struct_types_in_block(&mut if_stmt.then_block, struct_templates);
-    if let Some(else_branch) = &mut if_stmt.else_branch {
-        match &mut else_branch.body {
-            ElseBody::Block(block) => rewrite_struct_types_in_block(block, struct_templates),
-            ElseBody::If(nested_if) => rewrite_struct_types_in_if(nested_if, struct_templates),
-        }
-    }
-}
-
-fn rewrite_struct_types_in_expr(expr: &mut Expr, struct_templates: &BTreeMap<String, ItemStruct>) {
-    match expr {
-        Expr::FnCall {
-            path,
-            type_args,
-            params,
-            ..
-        } => {
-            // Rewrite TypeMethod paths for generic struct methods.
-            // For `Pair::<f32>::first(p)`, the type_args hold [f32] and the
-            // path is TypeMethod { ty: "Pair", method: "first" }.
-            // We mangle this to a simple Ident: "Pair_f32_first".
-            if let FnPath::TypeMethod { ty, method, .. } = path {
-                let ty_name = ty.to_string();
-                if struct_templates.contains_key(&ty_name) && !type_args.is_empty() {
-                    let mangled_struct = mangle_name(&ty_name, type_args)
-                        .expect("mangle_name should not fail for concrete types");
-                    let mangled_fn = format!("{}_{}", mangled_struct, method);
-                    let span = ty.span();
-                    *path = FnPath::Ident(Ident::new(&mangled_fn, span));
-                    type_args.clear();
-                }
-            }
-            for ta in type_args.iter_mut() {
-                rewrite_struct_type(ta, struct_templates);
-            }
-            for param in params.iter_mut() {
-                rewrite_struct_types_in_expr(param, struct_templates);
-            }
-        }
-        Expr::Struct {
-            ident,
-            type_args,
-            fields,
-            ..
-        } => {
-            if !type_args.is_empty() && struct_templates.contains_key(&ident.to_string()) {
+            Expr::Struct {
+                ident, type_args, ..
+            } if !type_args.is_empty()
+                && self.struct_templates.contains_key(&ident.to_string()) =>
+            {
                 let mangled = mangle_name(&ident.to_string(), type_args)
                     .expect("mangle_name should not fail for concrete types");
                 *ident = Ident::new(&mangled, ident.span());
                 type_args.clear();
             }
-            for field in fields.iter_mut() {
-                rewrite_struct_types_in_expr(&mut field.expr, struct_templates);
-            }
+            _ => {}
         }
-        Expr::Binary { lhs, rhs, .. } => {
-            rewrite_struct_types_in_expr(lhs, struct_templates);
-            rewrite_struct_types_in_expr(rhs, struct_templates);
-        }
-        Expr::Unary { expr, .. } => {
-            rewrite_struct_types_in_expr(expr, struct_templates);
-        }
-        Expr::Paren { inner, .. } => {
-            rewrite_struct_types_in_expr(inner, struct_templates);
-        }
-        Expr::Array { elems, .. } => {
-            for elem in elems.iter_mut() {
-                rewrite_struct_types_in_expr(elem, struct_templates);
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            rewrite_struct_types_in_expr(lhs, struct_templates);
-            rewrite_struct_types_in_expr(index, struct_templates);
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            rewrite_struct_types_in_expr(lhs, struct_templates);
-            if let Some(ps) = params {
-                for p in ps.iter_mut() {
-                    rewrite_struct_types_in_expr(p, struct_templates);
-                }
-            }
-        }
-        Expr::Cast { lhs, ty } => {
-            rewrite_struct_types_in_expr(lhs, struct_templates);
-            rewrite_struct_type(ty, struct_templates);
-        }
-        Expr::FieldAccess { base, .. } => {
-            rewrite_struct_types_in_expr(base, struct_templates);
-        }
-        Expr::Reference { expr, .. } => {
-            rewrite_struct_types_in_expr(expr, struct_templates);
-        }
-        Expr::ZeroValueArray { elem_type, len, .. } => {
-            rewrite_struct_type(elem_type, struct_templates);
-            rewrite_struct_types_in_expr(len, struct_templates);
-        }
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+        parse_visitor::walk_expr(self, expr)
     }
 }
 
+fn rewrite_names_in_item(
+    item: &mut Item,
+    fn_templates: &BTreeMap<String, ItemFn>,
+    struct_templates: &BTreeMap<String, ItemStruct>,
+) {
+    let mut v = RewriteNamesVisitor {
+        fn_templates,
+        struct_templates,
+    };
+    let _ = v.visit_item(item);
+}
+
+
 // ===== Missing turbofish detection =====
+//
+// Errors if any call to a known generic template function lacks turbofish
+// type arguments. Implemented as a [`ParseVisitorMut`] that doesn't actually
+// mutate anything.
+
+struct CheckUnresolvedVisitor<'a> {
+    templates: &'a BTreeMap<String, ItemFn>,
+}
+
+impl ParseVisitorMut for CheckUnresolvedVisitor<'_> {
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        if let Expr::FnCall {
+            path, type_args, ..
+        } = expr
+            && type_args.is_empty()
+            && let FnPath::Ident(id) = path
+        {
+            let name = id.to_string();
+            if let Some(template) = self.templates.get(&name) {
+                let param_names: Vec<_> =
+                    template.type_params.iter().map(|p| p.to_string()).collect();
+                return Err(crate::parse::Error::unsupported(
+                    id.span(),
+                    format!(
+                        "calling generic function '{name}' requires type arguments, e.g., \
+                         {name}::<{}>(...)",
+                        param_names.join(", ")
+                    ),
+                ));
+            }
+        }
+        parse_visitor::walk_expr(self, expr)
+    }
+}
 
 /// Check that no calls to generic template functions remain without turbofish.
 ///
@@ -1709,192 +1036,20 @@ fn rewrite_struct_types_in_expr(expr: &mut Expr, struct_templates: &BTreeMap<Str
 /// call to a template name with empty `type_args` means the user forgot
 /// the turbofish annotation.
 fn check_unresolved_generic_calls(
-    item: &Item,
+    item: &mut Item,
     templates: &BTreeMap<String, ItemFn>,
 ) -> Result<(), crate::parse::Error> {
-    match item {
-        Item::Fn(f) => check_unresolved_in_block(&f.block, templates),
-        Item::Impl(impl_item) => {
-            for ii in &impl_item.items {
-                if let crate::parse::ImplItem::Fn(f) = ii {
-                    check_unresolved_in_block(&f.block, templates)?;
-                }
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn check_unresolved_in_block(
-    block: &Block,
-    templates: &BTreeMap<String, ItemFn>,
-) -> Result<(), crate::parse::Error> {
-    for stmt in &block.stmt {
-        check_unresolved_in_stmt(stmt, templates)?;
-    }
-    Ok(())
-}
-
-fn check_unresolved_in_stmt(
-    stmt: &Stmt,
-    templates: &BTreeMap<String, ItemFn>,
-) -> Result<(), crate::parse::Error> {
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some(init) = &local.init {
-                check_unresolved_in_expr(&init.expr, templates)?;
-            }
-        }
-        Stmt::Const(c) => check_unresolved_in_expr(&c.expr, templates)?,
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            check_unresolved_in_expr(lhs, templates)?;
-            check_unresolved_in_expr(rhs, templates)?;
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            check_unresolved_in_expr(condition, templates)?;
-            check_unresolved_in_block(body, templates)?;
-        }
-        Stmt::Loop { body, .. } => check_unresolved_in_block(body, templates)?,
-        Stmt::Expr { expr, .. } => check_unresolved_in_expr(expr, templates)?,
-        Stmt::If(s) => {
-            check_unresolved_in_expr(&s.condition, templates)?;
-            check_unresolved_in_block(&s.then_block, templates)?;
-            if let Some(eb) = &s.else_branch {
-                match &eb.body {
-                    ElseBody::Block(b) => check_unresolved_in_block(b, templates)?,
-                    ElseBody::If(nested) => {
-                        check_unresolved_in_expr(&nested.condition, templates)?;
-                        check_unresolved_in_block(&nested.then_block, templates)?;
-                    }
-                }
-            }
-        }
-        Stmt::For(f) => {
-            check_unresolved_in_expr(&f.from, templates)?;
-            check_unresolved_in_expr(&f.to, templates)?;
-            check_unresolved_in_block(&f.body, templates)?;
-        }
-        Stmt::Switch(sw) => {
-            check_unresolved_in_expr(&sw.selector, templates)?;
-            for arm in &sw.arms {
-                check_unresolved_in_block(&arm.body, templates)?;
-            }
-        }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                check_unresolved_in_expr(e, templates)?;
-            }
-        }
-        Stmt::Block(b) => check_unresolved_in_block(b, templates)?,
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            check_unresolved_in_expr(slab, templates)?;
-            check_unresolved_in_expr(offset, templates)?;
-            check_unresolved_in_expr(dest, templates)?;
-            check_unresolved_in_expr(size, templates)?;
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            check_unresolved_in_expr(slab, templates)?;
-            check_unresolved_in_expr(offset, templates)?;
-            check_unresolved_in_expr(src, templates)?;
-            if let Some(s) = size {
-                check_unresolved_in_expr(s, templates)?;
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-    }
-    Ok(())
-}
-
-fn check_unresolved_in_expr(
-    expr: &Expr,
-    templates: &BTreeMap<String, ItemFn>,
-) -> Result<(), crate::parse::Error> {
-    match expr {
-        Expr::FnCall {
-            path,
-            type_args,
-            params,
-            ..
-        } => {
-            if type_args.is_empty()
-                && let FnPath::Ident(id) = path
-            {
-                let name = id.to_string();
-                if let Some(template) = templates.get(&name) {
-                    let param_names: Vec<_> =
-                        template.type_params.iter().map(|p| p.to_string()).collect();
-                    return Err(crate::parse::Error::unsupported(
-                        id.span(),
-                        format!(
-                            "calling generic function '{name}' requires type arguments, e.g., \
-                             {name}::<{}>(...)",
-                            param_names.join(", ")
-                        ),
-                    ));
-                }
-            }
-            for param in params.iter() {
-                check_unresolved_in_expr(param, templates)?;
-            }
-            Ok(())
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            check_unresolved_in_expr(lhs, templates)?;
-            check_unresolved_in_expr(rhs, templates)
-        }
-        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
-            check_unresolved_in_expr(expr, templates)
-        }
-        Expr::Array { elems, .. } => {
-            for e in elems.iter() {
-                check_unresolved_in_expr(e, templates)?;
-            }
-            Ok(())
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            check_unresolved_in_expr(lhs, templates)?;
-            check_unresolved_in_expr(index, templates)
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            check_unresolved_in_expr(lhs, templates)?;
-            if let Some(ps) = params {
-                for p in ps.iter() {
-                    check_unresolved_in_expr(p, templates)?;
-                }
-            }
-            Ok(())
-        }
-        Expr::Cast { lhs, .. } | Expr::FieldAccess { base: lhs, .. } => {
-            check_unresolved_in_expr(lhs, templates)
-        }
-        Expr::Struct { fields, .. } => {
-            for f in fields.iter() {
-                check_unresolved_in_expr(&f.expr, templates)?;
-            }
-            Ok(())
-        }
-        Expr::Reference { expr, .. } => check_unresolved_in_expr(expr, templates),
-        Expr::ZeroValueArray { len, .. } => check_unresolved_in_expr(len, templates),
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => Ok(()),
-    }
+    let mut v = CheckUnresolvedVisitor { templates };
+    v.visit_item(item)
 }
 
 // ===== Cross-module instantiation collection =====
+//
+// Scans the module's items for turbofish calls/struct constructions that
+// reference generic functions or structs defined in other modules. Each
+// such reference is rewritten to use a mangled concrete name, and a
+// [`CrossModuleInstantiation`] entry is recorded for the consuming module
+// to ship as IR constructors.
 
 /// Collect turbofish calls that reference generic functions from imported
 /// modules. These become `CrossModuleInstantiation`s that the consuming
@@ -1925,324 +1080,77 @@ fn collect_cross_module_instantiations(
     let mut seen_mangled: BTreeSet<String> = BTreeSet::new();
 
     for item in &mut module.content {
-        collect_cross_module_from_item(
-            item,
+        let mut visitor = CrossModuleVisitor {
             local_templates,
             local_struct_templates,
-            &import_paths,
-            &mut instantiations,
-            &mut seen_mangled,
-        )?;
+            import_paths: &import_paths,
+            out: &mut instantiations,
+            seen: &mut seen_mangled,
+        };
+        visitor.visit_item(item)?;
     }
 
     Ok(instantiations)
 }
 
-fn collect_cross_module_from_item(
-    item: &mut Item,
-    local_templates: &BTreeMap<String, ItemFn>,
-    local_struct_templates: &BTreeMap<String, ItemStruct>,
-    import_paths: &[syn::Path],
-    out: &mut Vec<CrossModuleInstantiation>,
-    seen: &mut BTreeSet<String>,
-) -> Result<(), crate::parse::Error> {
-    match item {
-        Item::Fn(f) => {
-            // Scan function signature types for cross-module struct usages
-            for pair in f.inputs.iter_mut() {
-                collect_cross_module_from_type(
-                    &mut pair.ty,
-                    local_struct_templates,
-                    import_paths,
-                    out,
-                    seen,
-                )?;
-            }
-            if let ReturnType::Type { ty, .. } = &mut f.return_type {
-                collect_cross_module_from_type(
-                    ty,
-                    local_struct_templates,
-                    import_paths,
-                    out,
-                    seen,
-                )?;
-            }
-            collect_cross_module_from_block(
-                &mut f.block,
-                local_templates,
-                local_struct_templates,
-                import_paths,
-                out,
-                seen,
-            )
-        }
-        Item::Impl(impl_item) => {
-            for ii in &mut impl_item.items {
-                if let crate::parse::ImplItem::Fn(f) = ii {
-                    for pair in f.inputs.iter_mut() {
-                        collect_cross_module_from_type(
-                            &mut pair.ty,
-                            local_struct_templates,
-                            import_paths,
-                            out,
-                            seen,
-                        )?;
-                    }
-                    if let ReturnType::Type { ty, .. } = &mut f.return_type {
-                        collect_cross_module_from_type(
-                            ty,
-                            local_struct_templates,
-                            import_paths,
-                            out,
-                            seen,
-                        )?;
-                    }
-                    collect_cross_module_from_block(
-                        &mut f.block,
-                        local_templates,
-                        local_struct_templates,
-                        import_paths,
-                        out,
-                        seen,
-                    )?;
-                }
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
+struct CrossModuleVisitor<'a> {
+    local_templates: &'a BTreeMap<String, ItemFn>,
+    local_struct_templates: &'a BTreeMap<String, ItemStruct>,
+    import_paths: &'a [syn::Path],
+    out: &'a mut Vec<CrossModuleInstantiation>,
+    seen: &'a mut BTreeSet<String>,
 }
 
-/// Scan a type for cross-module generic struct usages and rewrite them.
-fn collect_cross_module_from_type(
-    ty: &mut Type,
-    local_struct_templates: &BTreeMap<String, ItemStruct>,
-    import_paths: &[syn::Path],
-    out: &mut Vec<CrossModuleInstantiation>,
-    seen: &mut BTreeSet<String>,
-) -> Result<(), crate::parse::Error> {
-    match ty {
-        Type::Struct { ident, type_args } if !type_args.is_empty() => {
+impl ParseVisitorMut for CrossModuleVisitor<'_> {
+    fn visit_type(&mut self, ty: &mut Type) -> Result<(), crate::parse::Error> {
+        // Cross-module generic struct usage: `OtherMod::Pair<f32>`.
+        // We detect a `Type::Struct` that has type args but is *not* a
+        // local struct template — it must come from an imported module.
+        if let Type::Struct { ident, type_args } = ty
+            && !type_args.is_empty()
+        {
             let struct_name = ident.to_string();
-            // Only handle non-local struct templates (local ones are already
-            // monomorphized by the same-module pass).
-            if !local_struct_templates.contains_key(&struct_name) {
+            if !self.local_struct_templates.contains_key(&struct_name) {
                 let mangled_type_args: Vec<String> = type_args
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
                 let mangled_name = mangle_name(&struct_name, type_args)?;
-                // Save the parse-side type args before we clear them on
-                // the call site so we can ship them as IR constructors
-                // for runtime substitution.
                 let parse_type_args: Vec<Type> = type_args.clone();
 
-                // Rewrite the type to use the mangled name
                 *ident = Ident::new(&mangled_name, ident.span());
-                let _cleared_args = std::mem::take(type_args);
+                type_args.clear();
 
-                if seen.insert(mangled_name) {
-                    out.push(CrossModuleInstantiation {
-                        import_paths: import_paths.to_vec(),
+                if self.seen.insert(mangled_name) {
+                    self.out.push(CrossModuleInstantiation {
+                        import_paths: self.import_paths.to_vec(),
                         fn_name: struct_name,
                         mangled_type_args,
                         type_args: parse_type_args,
                     });
                 }
-            } else {
-                // Local struct — recurse into type_args
-                for ta in type_args.iter_mut() {
-                    collect_cross_module_from_type(
-                        ta,
-                        local_struct_templates,
-                        import_paths,
-                        out,
-                        seen,
-                    )?;
-                }
+                // type_args has been cleared; nothing left to recurse into.
+                return Ok(());
             }
         }
-        Type::Array { elem, .. } => {
-            collect_cross_module_from_type(elem, local_struct_templates, import_paths, out, seen)?;
-        }
-        Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
-            collect_cross_module_from_type(elem, local_struct_templates, import_paths, out, seen)?;
-        }
-        _ => {}
+        parse_visitor::walk_type(self, ty)
     }
-    Ok(())
-}
 
-fn collect_cross_module_from_block(
-    block: &mut Block,
-    local_templates: &BTreeMap<String, ItemFn>,
-    local_struct_templates: &BTreeMap<String, ItemStruct>,
-    import_paths: &[syn::Path],
-    out: &mut Vec<CrossModuleInstantiation>,
-    seen: &mut BTreeSet<String>,
-) -> Result<(), crate::parse::Error> {
-    for stmt in &mut block.stmt {
-        collect_cross_module_from_stmt(
-            stmt,
-            local_templates,
-            local_struct_templates,
-            import_paths,
-            out,
-            seen,
-        )?;
-    }
-    Ok(())
-}
-
-fn collect_cross_module_from_stmt(
-    stmt: &mut Stmt,
-    local_templates: &BTreeMap<String, ItemFn>,
-    local_struct_templates: &BTreeMap<String, ItemStruct>,
-    import_paths: &[syn::Path],
-    out: &mut Vec<CrossModuleInstantiation>,
-    seen: &mut BTreeSet<String>,
-) -> Result<(), crate::parse::Error> {
-    let lt = local_templates;
-    let lst = local_struct_templates;
-    let ip = import_paths;
-    match stmt {
-        Stmt::Local(local) => {
-            if let Some((_, ty)) = &mut local.ty {
-                collect_cross_module_from_type(ty, lst, ip, out, seen)?;
-            }
-            if let Some(init) = &mut local.init {
-                collect_cross_module_from_expr(&mut init.expr, lt, lst, ip, out, seen)?;
-            }
-        }
-        Stmt::Const(c) => {
-            collect_cross_module_from_type(&mut c.ty, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(&mut c.expr, lt, lst, ip, out, seen)?;
-        }
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(rhs, lt, lst, ip, out, seen)?;
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            collect_cross_module_from_expr(condition, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_block(body, lt, lst, ip, out, seen)?;
-        }
-        Stmt::Loop { body, .. } => {
-            collect_cross_module_from_block(body, lt, lst, ip, out, seen)?;
-        }
-        Stmt::Expr { expr, .. } => {
-            collect_cross_module_from_expr(expr, lt, lst, ip, out, seen)?;
-        }
-        Stmt::If(s) => {
-            collect_cross_module_from_expr(&mut s.condition, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_block(&mut s.then_block, lt, lst, ip, out, seen)?;
-            if let Some(eb) = &mut s.else_branch {
-                match &mut eb.body {
-                    ElseBody::Block(b) => {
-                        collect_cross_module_from_block(b, lt, lst, ip, out, seen)?
-                    }
-                    ElseBody::If(nested) => {
-                        collect_cross_module_from_expr(
-                            &mut nested.condition,
-                            lt,
-                            lst,
-                            ip,
-                            out,
-                            seen,
-                        )?;
-                        collect_cross_module_from_block(
-                            &mut nested.then_block,
-                            lt,
-                            lst,
-                            ip,
-                            out,
-                            seen,
-                        )?;
-                    }
-                }
-            }
-        }
-        Stmt::For(f) => {
-            if let Some((_, ty)) = &mut f.ty {
-                collect_cross_module_from_type(ty, lst, ip, out, seen)?;
-            }
-            collect_cross_module_from_expr(&mut f.from, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(&mut f.to, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_block(&mut f.body, lt, lst, ip, out, seen)?;
-        }
-        Stmt::Switch(sw) => {
-            collect_cross_module_from_expr(&mut sw.selector, lt, lst, ip, out, seen)?;
-            for arm in &mut sw.arms {
-                collect_cross_module_from_block(&mut arm.body, lt, lst, ip, out, seen)?;
-            }
-        }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                collect_cross_module_from_expr(e, lt, lst, ip, out, seen)?;
-            }
-        }
-        Stmt::Block(b) => {
-            collect_cross_module_from_block(b, lt, lst, ip, out, seen)?;
-        }
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            collect_cross_module_from_expr(slab, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(offset, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(dest, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(size, lt, lst, ip, out, seen)?;
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            collect_cross_module_from_expr(slab, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(offset, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(src, lt, lst, ip, out, seen)?;
-            if let Some(s) = size {
-                collect_cross_module_from_expr(s, lt, lst, ip, out, seen)?;
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-    }
-    Ok(())
-}
-
-fn collect_cross_module_from_expr(
-    expr: &mut Expr,
-    local_templates: &BTreeMap<String, ItemFn>,
-    local_struct_templates: &BTreeMap<String, ItemStruct>,
-    import_paths: &[syn::Path],
-    out: &mut Vec<CrossModuleInstantiation>,
-    seen: &mut BTreeSet<String>,
-) -> Result<(), crate::parse::Error> {
-    let lt = local_templates;
-    let lst = local_struct_templates;
-    let ip = import_paths;
-    match expr {
-        Expr::FnCall {
-            path,
-            type_args,
-            params,
-            ..
-        } => {
-            if !type_args.is_empty() {
-                // Check if this is a TypeMethod call to a generic struct
-                // from an imported module (e.g., Pair::<f32>::first(p)).
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        match expr {
+            Expr::FnCall {
+                path,
+                type_args,
+                params,
+                ..
+            } if !type_args.is_empty() => {
+                // First check for `OtherStruct::method(...)` calls where
+                // `OtherStruct` is a cross-module generic struct.
                 if let FnPath::TypeMethod { ty, method, .. } = &*path {
                     let ty_name = ty.to_string();
-                    // If it's not a local struct template, it must be
-                    // cross-module.
-                    if !lst.contains_key(&ty_name)
-                        && !lt.contains_key(&format!("{ty_name}_{method}"))
+                    let combined = format!("{ty_name}_{method}");
+                    if !self.local_struct_templates.contains_key(&ty_name)
+                        && !self.local_templates.contains_key(&combined)
                     {
                         let mangled_type_args: Vec<String> = type_args
                             .iter()
@@ -2255,10 +1163,9 @@ fn collect_cross_module_from_expr(
                         *path = FnPath::Ident(Ident::new(&mangled_fn, span));
                         type_args.clear();
 
-                        // Record the struct template instantiation
-                        if seen.insert(mangled_struct) {
-                            out.push(CrossModuleInstantiation {
-                                import_paths: ip.to_vec(),
+                        if self.seen.insert(mangled_struct) {
+                            self.out.push(CrossModuleInstantiation {
+                                import_paths: self.import_paths.to_vec(),
                                 fn_name: ty_name,
                                 mangled_type_args,
                                 type_args: parse_type_args,
@@ -2267,18 +1174,17 @@ fn collect_cross_module_from_expr(
                     }
                 }
 
-                // Handle regular function templates
+                // Now handle cross-module free function templates. After
+                // the `TypeMethod` path above, the path may have been
+                // rewritten to an `Ident`; double-check `type_args` still
+                // has entries before continuing.
                 if !type_args.is_empty() {
                     let fn_name = match &*path {
                         FnPath::Ident(id) => id.to_string(),
-                        FnPath::TypeMethod { ty, method, .. } => {
-                            format!("{}_{}", ty, method)
-                        }
+                        FnPath::TypeMethod { ty, method, .. } => format!("{}_{}", ty, method),
                     };
-
-                    // Skip if this is a local template (already handled)
-                    if !lt.contains_key(&fn_name) {
-                        if ip.is_empty() {
+                    if !self.local_templates.contains_key(&fn_name) {
+                        if self.import_paths.is_empty() {
                             let span = match &*path {
                                 FnPath::Ident(id) => id.span(),
                                 FnPath::TypeMethod { ty, .. } => ty.span(),
@@ -2307,9 +1213,9 @@ fn collect_cross_module_from_expr(
                         *path = FnPath::Ident(Ident::new(&mangled_name, span));
                         type_args.clear();
 
-                        if seen.insert(mangled_name) {
-                            out.push(CrossModuleInstantiation {
-                                import_paths: ip.to_vec(),
+                        if self.seen.insert(mangled_name) {
+                            self.out.push(CrossModuleInstantiation {
+                                import_paths: self.import_paths.to_vec(),
                                 fn_name,
                                 mangled_type_args,
                                 type_args: parse_type_args,
@@ -2317,53 +1223,21 @@ fn collect_cross_module_from_expr(
                         }
                     }
                 }
-            }
-
-            for param in params.iter_mut() {
-                collect_cross_module_from_expr(param, lt, lst, ip, out, seen)?;
-            }
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(rhs, lt, lst, ip, out, seen)?;
-        }
-        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
-            collect_cross_module_from_expr(expr, lt, lst, ip, out, seen)?;
-        }
-        Expr::Array { elems, .. } => {
-            for e in elems.iter_mut() {
-                collect_cross_module_from_expr(e, lt, lst, ip, out, seen)?;
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(index, lt, lst, ip, out, seen)?;
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
-            if let Some(ps) = params {
-                for p in ps.iter_mut() {
-                    collect_cross_module_from_expr(p, lt, lst, ip, out, seen)?;
+                // Recurse into the call arguments so nested
+                // turbofish/struct constructions are also collected.
+                for param in params.iter_mut() {
+                    self.visit_expr(param)?;
                 }
+                return Ok(());
             }
-        }
-        Expr::Cast { lhs, ty, .. } => {
-            collect_cross_module_from_expr(lhs, lt, lst, ip, out, seen)?;
-            collect_cross_module_from_type(ty, lst, ip, out, seen)?;
-        }
-        Expr::FieldAccess { base, .. } => {
-            collect_cross_module_from_expr(base, lt, lst, ip, out, seen)?;
-        }
-        Expr::Struct {
-            ident,
-            type_args,
-            fields,
-            ..
-        } => {
-            // Handle cross-module generic struct construction
-            if !type_args.is_empty() {
+            Expr::Struct {
+                ident,
+                type_args,
+                fields,
+                ..
+            } if !type_args.is_empty() => {
                 let struct_name = ident.to_string();
-                if !lst.contains_key(&struct_name) {
+                if !self.local_struct_templates.contains_key(&struct_name) {
                     let mangled_type_args: Vec<String> = type_args
                         .iter()
                         .map(mangle_type)
@@ -2374,33 +1248,109 @@ fn collect_cross_module_from_expr(
                     *ident = Ident::new(&mangled_name, ident.span());
                     type_args.clear();
 
-                    if seen.insert(mangled_name) {
-                        out.push(CrossModuleInstantiation {
-                            import_paths: ip.to_vec(),
+                    if self.seen.insert(mangled_name) {
+                        self.out.push(CrossModuleInstantiation {
+                            import_paths: self.import_paths.to_vec(),
                             fn_name: struct_name,
                             mangled_type_args,
                             type_args: parse_type_args,
                         });
                     }
                 }
+                for f in fields.iter_mut() {
+                    self.visit_expr(&mut f.expr)?;
+                }
+                return Ok(());
             }
-            for f in fields.iter_mut() {
-                collect_cross_module_from_expr(&mut f.expr, lt, lst, ip, out, seen)?;
-            }
+            _ => {}
         }
-        Expr::Reference { expr, .. } => {
-            collect_cross_module_from_expr(expr, lt, lst, ip, out, seen)?;
-        }
-        Expr::ZeroValueArray { elem_type, len, .. } => {
-            collect_cross_module_from_type(elem_type, lst, ip, out, seen)?;
-            collect_cross_module_from_expr(len, lt, lst, ip, out, seen)?;
-        }
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
+        parse_visitor::walk_expr(self, expr)
     }
-    Ok(())
 }
 
+
 // ===== Template dependency scanning =====
+//
+// Scans a generic function's body for turbofish calls to other generic
+// functions, building [`TemplateDep`] entries that map each callee's type
+// param to one of the caller's type params by index.
+
+struct ScanDepsVisitor<'a> {
+    templates: &'a BTreeMap<String, ItemFn>,
+    caller_params: &'a [String],
+    out: &'a mut Vec<TemplateDep>,
+    seen: &'a mut BTreeSet<(String, Vec<usize>)>,
+}
+
+impl ParseVisitorMut for ScanDepsVisitor<'_> {
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        if let Expr::FnCall {
+            path,
+            type_args,
+            params,
+            ..
+        } = expr
+            && !type_args.is_empty()
+        {
+            // Only `FnPath::Ident(...)` calls are template-to-template
+            // dependencies; `TypeMethod` paths are handled by the
+            // monomorphizer's struct-method machinery.
+            let fn_name = match path {
+                FnPath::Ident(id) => id.to_string(),
+                FnPath::TypeMethod { .. } => String::new(),
+            };
+            if !fn_name.is_empty() && self.templates.contains_key(&fn_name) {
+                let span = match path {
+                    FnPath::Ident(id) => id.span(),
+                    FnPath::TypeMethod { ty, .. } => ty.span(),
+                };
+
+                // Build the type param mapping: each callee type_arg must
+                // be a `Type::TypeParam` whose name appears in
+                // `caller_params`.
+                let mut mapping = Vec::with_capacity(type_args.len());
+                for ta in type_args.iter() {
+                    let Type::TypeParam { ident } = ta else {
+                        return Err(crate::parse::Error::unsupported(
+                            span,
+                            format!(
+                                "template dependency '{fn_name}' must use caller type parameters \
+                                 directly; concrete dependency type arguments are not supported \
+                                 yet"
+                            ),
+                        ));
+                    };
+                    let Some(idx) = self
+                        .caller_params
+                        .iter()
+                        .position(|p| p == &ident.to_string())
+                    else {
+                        return Err(crate::parse::Error::unsupported(
+                            span,
+                            format!(
+                                "template dependency '{fn_name}' uses unknown type parameter \
+                                 '{ident}'"
+                            ),
+                        ));
+                    };
+                    mapping.push(idx);
+                }
+                if self.seen.insert((fn_name.clone(), mapping.clone())) {
+                    self.out.push(TemplateDep {
+                        callee: fn_name,
+                        type_param_mapping: mapping,
+                    });
+                }
+            }
+            // Recurse into the call arguments.
+            for param in params.iter_mut() {
+                self.visit_expr(param)?;
+            }
+            return Ok(());
+        }
+        parse_visitor::walk_expr(self, expr)
+    }
+}
 
 /// Scan a block for turbofish calls to other generic functions and build
 /// `TemplateDep` entries recording the type param mappings.
@@ -2411,225 +1361,19 @@ fn collect_template_dependencies(
 ) -> Result<Vec<TemplateDep>, crate::parse::Error> {
     let mut deps = Vec::new();
     let mut seen: BTreeSet<(String, Vec<usize>)> = BTreeSet::new();
-    scan_block_for_deps(block, templates, caller_type_params, &mut deps, &mut seen)?;
+    // The visitor doesn't actually mutate; we clone to satisfy the
+    // `&mut Block` signature without imposing `&mut` on our callers.
+    // Templates are small (single-function bodies), so this clone is
+    // negligible.
+    let mut block_clone = block.clone();
+    let mut v = ScanDepsVisitor {
+        templates,
+        caller_params: caller_type_params,
+        out: &mut deps,
+        seen: &mut seen,
+    };
+    v.visit_block(&mut block_clone)?;
     Ok(deps)
-}
-
-fn scan_block_for_deps(
-    block: &Block,
-    templates: &BTreeMap<String, ItemFn>,
-    caller_params: &[String],
-    out: &mut Vec<TemplateDep>,
-    seen: &mut BTreeSet<(String, Vec<usize>)>,
-) -> Result<(), crate::parse::Error> {
-    for stmt in &block.stmt {
-        scan_stmt_for_deps(stmt, templates, caller_params, out, seen)?;
-    }
-    Ok(())
-}
-
-fn scan_stmt_for_deps(
-    stmt: &Stmt,
-    templates: &BTreeMap<String, ItemFn>,
-    caller_params: &[String],
-    out: &mut Vec<TemplateDep>,
-    seen: &mut BTreeSet<(String, Vec<usize>)>,
-) -> Result<(), crate::parse::Error> {
-    match stmt {
-        Stmt::Local(l) => {
-            if let Some(init) = &l.init {
-                scan_expr_for_deps(&init.expr, templates, caller_params, out, seen)?;
-            }
-        }
-        Stmt::Const(c) => scan_expr_for_deps(&c.expr, templates, caller_params, out, seen)?,
-        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(rhs, templates, caller_params, out, seen)?;
-        }
-        Stmt::While {
-            condition, body, ..
-        } => {
-            scan_expr_for_deps(condition, templates, caller_params, out, seen)?;
-            scan_block_for_deps(body, templates, caller_params, out, seen)?;
-        }
-        Stmt::Loop { body, .. } => scan_block_for_deps(body, templates, caller_params, out, seen)?,
-        Stmt::Expr { expr, .. } => scan_expr_for_deps(expr, templates, caller_params, out, seen)?,
-        Stmt::If(s) => {
-            scan_expr_for_deps(&s.condition, templates, caller_params, out, seen)?;
-            scan_block_for_deps(&s.then_block, templates, caller_params, out, seen)?;
-            if let Some(eb) = &s.else_branch {
-                match &eb.body {
-                    ElseBody::Block(b) => {
-                        scan_block_for_deps(b, templates, caller_params, out, seen)?
-                    }
-                    ElseBody::If(nested) => {
-                        scan_expr_for_deps(&nested.condition, templates, caller_params, out, seen)?;
-                        scan_block_for_deps(
-                            &nested.then_block,
-                            templates,
-                            caller_params,
-                            out,
-                            seen,
-                        )?;
-                    }
-                }
-            }
-        }
-        Stmt::For(f) => {
-            scan_expr_for_deps(&f.from, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(&f.to, templates, caller_params, out, seen)?;
-            scan_block_for_deps(&f.body, templates, caller_params, out, seen)?;
-        }
-        Stmt::Switch(sw) => {
-            scan_expr_for_deps(&sw.selector, templates, caller_params, out, seen)?;
-            for arm in &sw.arms {
-                scan_block_for_deps(&arm.body, templates, caller_params, out, seen)?;
-            }
-        }
-        Stmt::Return { expr, .. } => {
-            if let Some(e) = expr {
-                scan_expr_for_deps(e, templates, caller_params, out, seen)?;
-            }
-        }
-        Stmt::Block(b) => scan_block_for_deps(b, templates, caller_params, out, seen)?,
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            scan_expr_for_deps(slab, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(offset, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(dest, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(size, templates, caller_params, out, seen)?;
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            scan_expr_for_deps(slab, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(offset, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(src, templates, caller_params, out, seen)?;
-            if let Some(s) = size {
-                scan_expr_for_deps(s, templates, caller_params, out, seen)?;
-            }
-        }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
-    }
-    Ok(())
-}
-
-fn scan_expr_for_deps(
-    expr: &Expr,
-    templates: &BTreeMap<String, ItemFn>,
-    caller_params: &[String],
-    out: &mut Vec<TemplateDep>,
-    seen: &mut BTreeSet<(String, Vec<usize>)>,
-) -> Result<(), crate::parse::Error> {
-    match expr {
-        Expr::FnCall {
-            path,
-            type_args,
-            params,
-            ..
-        } => {
-            if !type_args.is_empty() {
-                let fn_name = match path {
-                    FnPath::Ident(id) => id.to_string(),
-                    FnPath::TypeMethod { .. } => String::new(), /* TypeMethod deps are handled
-                                                                 * differently */
-                };
-
-                if !fn_name.is_empty() && templates.contains_key(&fn_name) {
-                    let span = match path {
-                        FnPath::Ident(id) => id.span(),
-                        FnPath::TypeMethod { ty, .. } => ty.span(),
-                    };
-
-                    // Build the type param mapping: for each type_arg, find
-                    // which caller param it refers to.
-                    let mut mapping = Vec::with_capacity(type_args.len());
-                    for ta in type_args {
-                        let Type::TypeParam { ident } = ta else {
-                            return Err(crate::parse::Error::unsupported(
-                                span,
-                                format!(
-                                    "template dependency '{fn_name}' must use caller type \
-                                     parameters directly; concrete dependency type arguments are \
-                                     not supported yet"
-                                ),
-                            ));
-                        };
-
-                        let Some(idx) = caller_params.iter().position(|p| p == &ident.to_string())
-                        else {
-                            return Err(crate::parse::Error::unsupported(
-                                span,
-                                format!(
-                                    "template dependency '{fn_name}' uses unknown type parameter \
-                                     '{ident}'"
-                                ),
-                            ));
-                        };
-                        mapping.push(idx);
-                    }
-                    if seen.insert((fn_name.clone(), mapping.clone())) {
-                        out.push(TemplateDep {
-                            callee: fn_name,
-                            type_param_mapping: mapping,
-                        });
-                    }
-                }
-            }
-            for param in params.iter() {
-                scan_expr_for_deps(param, templates, caller_params, out, seen)?;
-            }
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(rhs, templates, caller_params, out, seen)?;
-        }
-        Expr::Unary { expr, .. } | Expr::Paren { inner: expr, .. } => {
-            scan_expr_for_deps(expr, templates, caller_params, out, seen)?;
-        }
-        Expr::Array { elems, .. } => {
-            for e in elems.iter() {
-                scan_expr_for_deps(e, templates, caller_params, out, seen)?;
-            }
-        }
-        Expr::ArrayIndexing { lhs, index, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
-            scan_expr_for_deps(index, templates, caller_params, out, seen)?;
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
-            if let Some(ps) = params {
-                for p in ps.iter() {
-                    scan_expr_for_deps(p, templates, caller_params, out, seen)?;
-                }
-            }
-        }
-        Expr::Cast { lhs, .. } | Expr::FieldAccess { base: lhs, .. } => {
-            scan_expr_for_deps(lhs, templates, caller_params, out, seen)?;
-        }
-        Expr::Struct { fields, .. } => {
-            for f in fields.iter() {
-                scan_expr_for_deps(&f.expr, templates, caller_params, out, seen)?;
-            }
-        }
-        Expr::Reference { expr, .. } => {
-            scan_expr_for_deps(expr, templates, caller_params, out, seen)?;
-        }
-        Expr::ZeroValueArray { len, .. } => {
-            scan_expr_for_deps(len, templates, caller_params, out, seen)?;
-        }
-        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
-    }
-    Ok(())
 }
 
 // ===== Type-to-ident conversion =====
@@ -3448,6 +2192,98 @@ mod test {
         assert!(
             !wgsl.contains("fn first("),
             "Generic impl methods should be removed from WGSL, got:\n{wgsl}"
+        );
+    }
+
+    /// Regression: walkers that handle `Stmt::If` must recurse through the
+    /// full `else if` chain, not stop at the first `else if`.
+    ///
+    /// Before the fix, a turbofish call buried in a deeply nested `else
+    /// if` branch would be invisible to:
+    ///   * `check_unresolved_in_stmt` (would silently miss missing turbofish)
+    ///   * `collect_cross_module_from_stmt` (would miss the cross-module call)
+    ///   * `scan_stmt_for_deps` (would miss the dependency edge)
+    ///
+    /// This test exercises all three by placing the only call to a generic
+    /// function `id::<f32>(...)` inside the third arm of an else-if chain.
+    /// If any walker fails to recurse, the generic template won't be
+    /// monomorphized and `mono_wgsl` will not contain `fn id_f32(...)`.
+    #[test]
+    fn nested_else_if_recursion_finds_calls_in_deep_branches() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn id<T>(x: T) -> T {
+                    x
+                }
+
+                pub fn caller(n: u32) -> f32 {
+                    if n == 0u32 {
+                        return 0.0;
+                    } else if n == 1u32 {
+                        return 1.0;
+                    } else if n == 2u32 {
+                        // The only turbofish call lives here, three levels
+                        // deep into the else-if chain.
+                        return id::<f32>(2.0);
+                    } else {
+                        return 3.0;
+                    }
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("fn id_f32("),
+            "Walker missed turbofish in third else-if arm, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("id_f32(2.0"),
+            "Call site in third else-if arm not rewritten, got:\n{wgsl}"
+        );
+    }
+
+    /// Regression: `scan_stmt_for_deps` must recurse through the full
+    /// `else if` chain when collecting transitive template dependencies.
+    ///
+    /// Here `outer<T>` calls `inner::<T>(x)` only inside the third arm of
+    /// an else-if chain in `outer`'s body. The dependency must still be
+    /// recorded so that calling `outer::<f32>(...)` triggers
+    /// instantiation of `inner_f32` too.
+    #[test]
+    fn nested_else_if_recursion_finds_template_deps_in_deep_branches() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub fn inner<T>(x: T) -> T {
+                    x
+                }
+
+                pub fn outer<T>(x: T, n: u32) -> T {
+                    if n == 0u32 {
+                        return x;
+                    } else if n == 1u32 {
+                        return x;
+                    } else if n == 2u32 {
+                        return inner::<T>(x);
+                    } else {
+                        return x;
+                    }
+                }
+
+                pub fn caller() -> f32 {
+                    outer::<f32>(1.0, 2u32)
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        // If `scan_if_for_deps` recurses correctly, instantiating
+        // `outer<f32>` cascades to instantiate `inner<f32>` too.
+        assert!(
+            wgsl.contains("fn outer_f32("),
+            "outer was not monomorphized, got:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("fn inner_f32("),
+            "inner_f32 should have been instantiated as a transitive dep, got:\n{wgsl}"
         );
     }
 }

@@ -14,6 +14,7 @@ mod ir_emit;
 mod linkage;
 mod monomorphize;
 mod parse;
+mod parse_visitor;
 mod ptr;
 mod sampler;
 mod storage;

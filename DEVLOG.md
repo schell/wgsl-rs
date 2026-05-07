@@ -376,3 +376,39 @@ gain spaces; `Vec4<f32>` renders as the WGSL shorthand `vec4f`).
 Several dead helpers in `monomorphize.rs` (the
 `flatten_struct_placeholder*` family and `type_to_wgsl`) were also
 deleted.
+
+### 2026-05-09: Visitor trait refactor of `monomorphize.rs`
+
+Replaced 7 hand-written recursive AST walkers in `monomorphize.rs`
+(~1,800 lines of structural traversal boilerplate) with a single
+`ParseVisitorMut` trait + family of `walk_*` functions in a new
+`parse_visitor` module (~400 lines). Each walker family is now a
+visitor struct that overrides only the `visit_*` methods relevant to
+its job; the structural recursion is shared via `walk_*` defaults.
+
+Walker conversions:
+* `SubstituteVisitor` — replaces every `Type::TypeParam` with a
+  concrete type from a `BTreeMap`, plus the equivalent rewrites in
+  `FnPath::TypeMethod` and `Expr::Struct` idents.
+* `RewriteNamesVisitor` — merges the previous `rewrite_calls_in_*`
+  and `rewrite_struct_types_in_*` walkers into one pass that mangles
+  both fn-template call sites and struct-type references.
+* `CheckUnresolvedVisitor` — errors if any call to a known generic
+  template lacks turbofish type args.
+* `CrossModuleVisitor` — collects cross-module instantiations and
+  rewrites the call sites' names.
+* `ScanDepsVisitor` — collects template→template dependency edges
+  with type-param index mappings.
+* `MonoCtx` itself implements `ParseVisitorMut` for the
+  instantiation-discovery walk.
+
+Three correctness bugs were also fixed: `check_unresolved_in_stmt`,
+`collect_cross_module_from_stmt`, and `scan_stmt_for_deps` previously
+inlined a one-level `else if` peel that failed to recurse through
+deeply-nested else-if chains. The visitor trait's shared `walk_if`
+recurses correctly, so the bug class is now structurally impossible.
+Two regression tests in `monomorphize::test` lock in the fix.
+
+Net change: `monomorphize.rs` shrunk from 3,453 → 2,289 lines (-1,164),
+plus 402 lines of new shared `parse_visitor` machinery — net **-762
+lines** with cleaner structure and better correctness.

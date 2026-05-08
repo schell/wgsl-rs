@@ -135,7 +135,7 @@ struct InstKey {
 enum TypeKey {
     Scalar(String),
     Vector(u8, Box<TypeKey>),
-    Matrix(u8),
+    Matrix(u8, u8),
     Array(Box<TypeKey>, String),
     RuntimeArray(Box<TypeKey>),
     Atomic(Box<TypeKey>),
@@ -1390,7 +1390,13 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
             scalar_ty,
             ..
         } => format!("Vec{}{}", elements, scalar_ty.short_name()),
-        Type::Matrix { size, .. } => format!("Mat{}f", size),
+        Type::Matrix { columns, rows, .. } => {
+            if columns == rows {
+                format!("Mat{}f", columns)
+            } else {
+                format!("Mat{}x{}f", columns, rows)
+            }
+        }
         Type::Struct { ident, .. } => return ident.clone(),
         Type::Sampler { ident } => return ident.clone(),
         Type::SamplerComparison { ident } => return ident.clone(),
@@ -1425,7 +1431,7 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             scalar_ty,
             ..
         } => format!("vec{}{}", elements, scalar_ty.short_name()),
-        Type::Matrix { size, .. } => format!("mat{}x{}f", size, size),
+        Type::Matrix { columns, rows, .. } => format!("mat{}x{}f", columns, rows),
         Type::Struct { ident, type_args } => {
             if type_args.is_empty() {
                 ident.to_string()
@@ -1491,7 +1497,7 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
             *elements,
             Box::new(TypeKey::Scalar(scalar_ty.wgsl_name().to_string())),
         ),
-        Type::Matrix { size, .. } => TypeKey::Matrix(*size),
+        Type::Matrix { columns, rows, .. } => TypeKey::Matrix(*columns, *rows),
         Type::Struct { ident, type_args } => {
             if type_args.is_empty() {
                 TypeKey::Struct(ident.to_string())

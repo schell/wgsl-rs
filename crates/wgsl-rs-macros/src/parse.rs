@@ -562,12 +562,13 @@ pub enum Type {
     },
 
     /// Matrix types:
-    /// mat{N}x{N}<f32>
-    ///   where N is 2, 3, or 4
+    /// mat{C}x{R}<f32>
+    ///   where C and R are each 2, 3, or 4
     /// Only f32 matrices are supported (matching WGSL).
     #[allow(dead_code)]
     Matrix {
-        size: u8,
+        columns: u8,
+        rows: u8,
         ident: Ident,
         scalar: Option<(Token![<], Ident, Token![>])>,
     },
@@ -660,11 +661,45 @@ fn split_as_vec(s: &str) -> Option<(&str, &str)> {
     Some(split)
 }
 
-fn split_as_mat(s: &str) -> Option<(&str, &str)> {
-    let (_mat, n_suffix) = s.split_once("Mat")?;
-    (n_suffix.len() == 2).then_some(())?;
-    let split = n_suffix.split_at(1);
-    Some(split)
+/// Information extracted from a matrix shorthand alias such as `Mat3f` or
+/// `Mat2x4f`.
+///
+/// `columns` and `rows` are the matrix dimensions; `suffix` is the scalar
+/// suffix (currently always `"f"` since only f32 matrices are supported).
+struct MatAlias<'a> {
+    columns: &'a str,
+    rows: &'a str,
+    suffix: &'a str,
+}
+
+/// Recognise `Mat{N}f` (square shorthand, equivalent to `Mat{N}x{N}f`) or
+/// `Mat{C}x{R}f` (explicit non-square form).
+fn split_as_mat(s: &str) -> Option<MatAlias<'_>> {
+    let (_mat, rest) = s.split_once("Mat")?;
+    // Square shorthand: `Mat{N}{suffix}` where suffix is one character.
+    if rest.len() == 2 {
+        let (n, suffix) = rest.split_at(1);
+        return Some(MatAlias {
+            columns: n,
+            rows: n,
+            suffix,
+        });
+    }
+    // Explicit form: `Mat{C}x{R}{suffix}` => rest is `{C}x{R}{suffix}`.
+    if rest.len() == 4 {
+        let bytes = rest.as_bytes();
+        if bytes[1] == b'x' {
+            let columns = &rest[0..1];
+            let rows = &rest[2..3];
+            let suffix = &rest[3..4];
+            return Some(MatAlias {
+                columns,
+                rows,
+                suffix,
+            });
+        }
+    }
+    None
 }
 
 impl Type {
@@ -761,34 +796,45 @@ impl Type {
                                     ident: ident.clone(),
                                     scalar: None,
                                 }
-                            } else if let Some((n, suffix)) = split_as_mat(other) {
-                                // Check for matrix alias (Mat2f, Mat3f, Mat4f)
-                                let size = match n {
-                                    "2" => 2,
-                                    "3" => 3,
-                                    "4" => 4,
-                                    other_n => UnsupportedSnafu {
-                                        span: ident.span(),
-                                        note: format!(
-                                            "Unsupported matrix type '{other}'. `{other_n}` must \
-                                             be one of 2, 3, or 4"
-                                        ),
+                            } else if let Some(MatAlias {
+                                columns,
+                                rows,
+                                suffix,
+                            }) = split_as_mat(other)
+                            {
+                                // Matrix alias: square (Mat2f, Mat3f, Mat4f) or
+                                // non-square (Mat2x3f, Mat3x4f, etc.).
+                                let parse_dim = |d: &str| -> Result<u8, Error> {
+                                    match d {
+                                        "2" => Ok(2),
+                                        "3" => Ok(3),
+                                        "4" => Ok(4),
+                                        other_n => UnsupportedSnafu {
+                                            span: ident.span(),
+                                            note: format!(
+                                                "Unsupported matrix type '{other}'. `{other_n}` \
+                                                 must be one of 2, 3, or 4"
+                                            ),
+                                        }
+                                        .fail(),
                                     }
-                                    .fail()?,
                                 };
-                                // Only f32 matrices are supported in WGSL
+                                let columns = parse_dim(columns)?;
+                                let rows = parse_dim(rows)?;
+                                // Only f32 matrices are supported in WGSL.
                                 if suffix != "f" {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: format!(
                                             "Unsupported matrix type '{other}'. Only f32 matrices \
-                                             are supported (Mat2f, Mat3f, Mat4f)"
+                                             are supported (e.g. Mat2f, Mat3x4f, Mat4x4f)"
                                         ),
                                     }
                                     .fail()?
                                 }
                                 Type::Matrix {
-                                    size,
+                                    columns,
+                                    rows,
                                     ident: ident.clone(),
                                     scalar: None,
                                 }
@@ -944,8 +990,10 @@ impl Type {
                                             }
                                             .fail()?
                                         }
+                                        // The `Mat{N}<f32>` shorthand is square.
                                         Ok(Type::Matrix {
-                                            size,
+                                            columns: size,
+                                            rows: size,
                                             ident: ident.clone(),
                                             scalar: Some((*lt_token, scalar_ident, *gt_token)),
                                         })

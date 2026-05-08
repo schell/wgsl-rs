@@ -65,6 +65,33 @@ pub type Vec4u = Vec4<u32>;
 /// Concrete type alias for a 4-dimensional vector of `bool` scalar components.
 pub type Vec4b = Vec4<bool>;
 
+impl<T: super::WgslScalar> super::Wgsl for Vec2<T> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::Vector {
+            elements: 2,
+            scalar_ty: Some(T::to_scalar_ir()),
+        }
+    }
+}
+
+impl<T: super::WgslScalar> super::Wgsl for Vec3<T> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::Vector {
+            elements: 3,
+            scalar_ty: Some(T::to_scalar_ir()),
+        }
+    }
+}
+
+impl<T: super::WgslScalar> super::Wgsl for Vec4<T> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::Vector {
+            elements: 4,
+            scalar_ty: Some(T::to_scalar_ir()),
+        }
+    }
+}
+
 impl<T> Vec2<T> {
     /// Construct a 2-dimensional vector from components.
     pub const fn vec2(x: T, y: T) -> Self {

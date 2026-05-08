@@ -3,7 +3,10 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
-use syn::visit_mut::{self, VisitMut};
+use syn::{
+    DeriveInput,
+    visit_mut::{self, VisitMut},
+};
 
 use crate::parse::InterStageIo;
 
@@ -1424,4 +1427,78 @@ pub fn workgroup(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn ptr(input: TokenStream) -> TokenStream {
     ptr::ptr(input)
+}
+
+/// Derives a `Wgsl` implementation for a type.
+///
+/// The generated `to_ir()` method returns:
+/// - `wgsl_rs_ir::Type::Struct { name, type_args }` for structs (where
+///   `type_args` is built from each generic type parameter via `T::to_ir()`).
+/// - `wgsl_rs_ir::Type::Scalar(ScalarType::U32)` for enums (since enums render
+///   as `u32` aliases in WGSL).
+///
+/// By default the macro references the IR re-export at `::wgsl_rs::ir`
+/// and the trait at `::wgsl_rs::std::Wgsl`. Crates that consume `wgsl_rs`
+/// under a different path (e.g. `wgsl-rs` itself, when running its own
+/// tests) can override the path with the `#[wgsl_path(...)]` helper
+/// attribute:
+///
+/// ```ignore
+/// #[derive(Wgsl)]
+/// #[wgsl_path(crate)]
+/// pub struct Foo { ... }
+/// ```
+#[proc_macro_derive(Wgsl, attributes(wgsl_path))]
+pub fn derive_wgsl(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse_macro_input!(input);
+    let ident = input.ident;
+    let (impl_generics, ty_generics, where_generics) = input.generics.split_for_impl();
+
+    // Resolve the path to the `wgsl_rs` crate. Defaults to `::wgsl_rs`
+    // but can be overridden with `#[wgsl_path(<path>)]`.
+    let crate_path: syn::Path = input
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("wgsl_path"))
+        .and_then(|a| a.parse_args::<syn::Path>().ok())
+        .unwrap_or_else(|| syn::parse_quote!(::wgsl_rs));
+    let ir_path = quote::quote! { #crate_path::ir };
+    let wgsl_trait = quote::quote! { #crate_path::std::Wgsl };
+
+    let tys = input
+        .generics
+        .type_params()
+        .map(|param| {
+            let pident = &param.ident;
+            quote::quote! { <#pident as #wgsl_trait>::to_ir() }
+        })
+        .collect::<Vec<_>>();
+
+    match input.data {
+        syn::Data::Struct(_) => quote::quote! {
+            impl #impl_generics #wgsl_trait for #ident #ty_generics #where_generics {
+                fn to_ir() -> #ir_path::Type {
+                    #ir_path::Type::Struct {
+                        name: stringify!(#ident).to_string(),
+                        type_args: ::std::vec![
+                            #(#tys),*
+                        ]
+                    }
+                }
+            }
+        }
+        .into(),
+        syn::Data::Enum(_) => quote::quote! {
+            impl #impl_generics #wgsl_trait for #ident #ty_generics #where_generics {
+                fn to_ir() -> #ir_path::Type {
+                    #ir_path::Type::Scalar(#ir_path::ScalarType::U32)
+                }
+            }
+        }
+        .into(),
+        syn::Data::Union(_) => quote::quote! {
+            compile_error!("derive Wgsl doesn't support Unions")
+        }
+        .into(),
+    }
 }

@@ -7,6 +7,9 @@
 //! WGSL atomics only operate on `atomic<i32>` and `atomic<u32>` types.
 
 use std::sync::atomic::Ordering;
+use wgsl_rs_ir as ir;
+
+use crate::std::Wgsl;
 
 /// Marker trait that denotes what atomic type a certain value takes
 /// on the Rust side.
@@ -60,6 +63,17 @@ impl AtomicScalar for i32 {
 #[derive(Debug)]
 pub struct Atomic<T: AtomicScalar> {
     pub(crate) inner: T::AtomicType,
+}
+
+impl<T: Wgsl + AtomicScalar> Wgsl for Atomic<T>
+where
+    T::AtomicType: std::any::Any + Send + Sync,
+{
+    fn to_ir() -> wgsl_rs_ir::Type {
+        ir::Type::Atomic {
+            elem: Box::new(T::to_ir()),
+        }
+    }
 }
 
 impl<T: AtomicScalar> Default for Atomic<T> {

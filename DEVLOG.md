@@ -415,3 +415,16 @@ Two regression tests in `monomorphize::test` lock in the fix.
 Net change: `monomorphize.rs` shrunk from 3,453 → 2,289 lines (-1,164),
 plus 402 lines of new shared `parse_visitor` machinery — net **-762
 lines** with cleaner structure and better correctness.
+
+### 2026-05-10: Non-square matrices in IR + `Wgsl` impls for std types
+
+Extended `ir::Type::Matrix` from a single `size: u8` to separate
+`columns: u8, rows: u8`, enabling all 9 WGSL matrix shapes (`mat2x2`
+through `mat4x4`). Parse-side recognition added for `MatCxRf` shorthand
+(e.g. `Mat2x3f`, `Mat3x4f`). Added `Wgsl` impls for `bool`, all
+`Vec{2,3,4}<T>` over `WgslScalar`, blanket `[T; N]` and
+`RuntimeArray<T>`, all 9 matrix types, `Sampler`, `SamplerComparison`,
+all sampled and depth texture types. Fixed and hardened the
+`#[derive(Wgsl)]` macro: it now uses fully-qualified paths via a
+`#[wgsl_path(...)]` helper attribute (defaulting to `::wgsl_rs`) and
+correctly emits `Type::Scalar(...)` for enums.

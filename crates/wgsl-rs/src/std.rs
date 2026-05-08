@@ -17,9 +17,10 @@ use std::{
     ops::{Deref, DerefMut},
     sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
+use wgsl_rs_ir as ir;
 
 pub use wgsl_rs_macros::{
-    builtin, compute, fragment, ptr, sampler, storage, texture, uniform, vertex, wgsl_allow,
+    Wgsl, builtin, compute, fragment, ptr, sampler, storage, texture, uniform, vertex, wgsl_allow,
     wgsl_ignore, workgroup, workgroup_size,
 };
 
@@ -51,9 +52,51 @@ pub use vector::*;
 
 pub enum Error {}
 
-/// Marker trait for a WGSL _value_.
-pub trait Wgsl: std::any::Any + Send + Sync {}
-impl<T: std::any::Any + Send + Sync> Wgsl for T {}
+/// Marker trait for an owned type that is Send + Sync.
+pub trait AnySendSync: std::any::Any + Send + Sync {}
+impl<T: std::any::Any + Send + Sync> AnySendSync for T {}
+
+/// Trait for Rust types that can be used in WGSL modules.
+pub trait Wgsl: AnySendSync {
+    fn to_ir() -> wgsl_rs_ir::Type;
+}
+
+/// Trait for Rust types that are WGSL scalar types.
+pub trait WgslScalar: Wgsl {
+    fn to_scalar_ir() -> wgsl_rs_ir::ScalarType;
+}
+
+macro_rules! impl_scalar_wgsl {
+    ($t:ty, $i:ident) => {
+        impl WgslScalar for $t {
+            fn to_scalar_ir() -> ir::ScalarType {
+                ir::ScalarType::$i
+            }
+        }
+        impl Wgsl for $t {
+            fn to_ir() -> ir::Type {
+                ir::Type::Scalar(<$t>::to_scalar_ir())
+            }
+        }
+    };
+}
+
+impl_scalar_wgsl!(f32, F32);
+impl_scalar_wgsl!(u32, U32);
+impl_scalar_wgsl!(i32, I32);
+impl_scalar_wgsl!(bool, Bool);
+
+impl<T: Wgsl, const N: usize> Wgsl for [T; N] {
+    fn to_ir() -> ir::Type {
+        ir::Type::Array {
+            elem: Box::new(T::to_ir()),
+            len: ir::Expr::Lit(ir::Lit::Int {
+                digits: N.to_string(),
+                suffix: String::new(),
+            }),
+        }
+    }
+}
 
 /// Shared reference to a uniform, storage or workgroup variable.
 pub struct ModuleVarReadGuard<'a, T> {
@@ -61,7 +104,7 @@ pub struct ModuleVarReadGuard<'a, T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: Wgsl> Deref for ModuleVarReadGuard<'_, T> {
+impl<T: AnySendSync> Deref for ModuleVarReadGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -81,7 +124,7 @@ pub struct ModuleVarWriteGuard<'a, T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: Wgsl> Deref for ModuleVarWriteGuard<'_, T> {
+impl<T: AnySendSync> Deref for ModuleVarWriteGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -93,7 +136,7 @@ impl<T: Wgsl> Deref for ModuleVarWriteGuard<'_, T> {
     }
 }
 
-impl<T: Wgsl> DerefMut for ModuleVarWriteGuard<'_, T> {
+impl<T: AnySendSync> DerefMut for ModuleVarWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
             .get_mut(&TypeId::of::<T>())
@@ -123,6 +166,14 @@ type TypeMap = HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>;
 /// of the requested concrete type.
 pub struct WgslTypeVariable;
 
+impl Wgsl for WgslTypeVariable {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        ir::Type::TypeParam {
+            name: "T".to_string(),
+        }
+    }
+}
+
 /// Thread-safe module level variable that can be read from or written
 /// to from anywhere.
 struct ModuleVar<T = WgslTypeVariable> {
@@ -137,7 +188,7 @@ impl ModuleVar {
     /// - Panics if the underlying lock has been poisoned.
     /// - Dereferencing the returned guard will panic if it has not previously
     ///   been set.
-    pub fn get<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
+    pub fn get<T: AnySendSync>(&self) -> ModuleVarReadGuard<'_, T> {
         let lock = self
             .inner
             .read()
@@ -178,7 +229,7 @@ impl ModuleVar {
     }
 }
 
-impl<T: Wgsl> ModuleVar<T> {
+impl<T: AnySendSync> ModuleVar<T> {
     pub const fn new() -> Self {
         Self {
             inner: LazyLock::new(Default::default),
@@ -740,6 +791,14 @@ pub fn i32(t: impl Convert<i32>) -> i32 {
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeArray<T> {
     pub data: std::vec::Vec<T>,
+}
+
+impl<T: Wgsl> Wgsl for RuntimeArray<T> {
+    fn to_ir() -> ir::Type {
+        ir::Type::RuntimeArray {
+            elem: Box::new(T::to_ir()),
+        }
+    }
 }
 
 impl<T> RuntimeArray<T> {

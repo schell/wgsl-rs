@@ -388,8 +388,14 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
                 scalar_ty: Some(scalar_from_parse(*scalar_ty)),
             }
         }
-        parse::Type::Matrix { size, scalar, .. } => ir::Type::Matrix {
-            size: *size,
+        parse::Type::Matrix {
+            columns,
+            rows,
+            scalar,
+            ..
+        } => ir::Type::Matrix {
+            columns: *columns,
+            rows: *rows,
             scalar_ty: scalar
                 .as_ref()
                 .map(|(_, ident, _)| scalar_from_ident(ident))

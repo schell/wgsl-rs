@@ -79,9 +79,13 @@ pub enum Type {
         /// The scalar element type. `None` means abstract / unspecified.
         scalar_ty: Option<ScalarType>,
     },
-    /// A square matrix type such as `mat4x4<f32>` or `mat4x4f`.
+    /// A matrix type such as `mat4x4<f32>` / `mat4x4f` (square) or
+    /// `mat2x3<f32>` / `mat2x3f` (non-square). `columns` is the number of
+    /// columns (the first dimension in WGSL's `matCxR<T>`), `rows` is the
+    /// number of rows. WGSL allows any `C` and `R` in `{2, 3, 4}`.
     Matrix {
-        size: u8,
+        columns: u8,
+        rows: u8,
         scalar_ty: Option<ScalarType>,
     },
     /// A fixed-size array `array<T, N>`.

@@ -75,6 +75,30 @@ pub type Mat3f = Mat3x3f;
 /// Alias for `Mat4x4f`.
 pub type Mat4f = Mat4x4f;
 
+macro_rules! impl_matrix_wgsl {
+    ($t:ty, $cols:expr, $rows:expr) => {
+        impl Wgsl for $t {
+            fn to_ir() -> wgsl_rs_ir::Type {
+                wgsl_rs_ir::Type::Matrix {
+                    columns: $cols,
+                    rows: $rows,
+                    scalar_ty: Some(wgsl_rs_ir::ScalarType::F32),
+                }
+            }
+        }
+    };
+}
+
+impl_matrix_wgsl!(Mat2x2f, 2, 2);
+impl_matrix_wgsl!(Mat2x3f, 2, 3);
+impl_matrix_wgsl!(Mat2x4f, 2, 4);
+impl_matrix_wgsl!(Mat3x2f, 3, 2);
+impl_matrix_wgsl!(Mat3x3f, 3, 3);
+impl_matrix_wgsl!(Mat3x4f, 3, 4);
+impl_matrix_wgsl!(Mat4x2f, 4, 2);
+impl_matrix_wgsl!(Mat4x3f, 4, 3);
+impl_matrix_wgsl!(Mat4x4f, 4, 4);
+
 // Const constructor functions matching WGSL naming conventions.
 
 /// Constructs a 2x2 column-major matrix of `f32` components.
@@ -694,6 +718,8 @@ mod test {
 
             use crate::std::*;
 
+            #[derive(Wgsl)]
+            #[wgsl_path(crate)]
             pub struct Uniforms {
                 pub projection: Mat4f,
                 pub modelview: Mat4f,

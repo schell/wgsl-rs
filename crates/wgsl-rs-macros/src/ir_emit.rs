@@ -391,7 +391,11 @@ fn ty(p: &TokenStream, t: &ir::Type) -> TokenStream {
                 #p::Type::Vector { elements: #elements, scalar_ty: #s }
             }
         }
-        ir::Type::Matrix { size, scalar_ty } => {
+        ir::Type::Matrix {
+            columns,
+            rows,
+            scalar_ty,
+        } => {
             let s = match scalar_ty {
                 Some(s) => {
                     let s = scalar(p, *s);
@@ -400,7 +404,7 @@ fn ty(p: &TokenStream, t: &ir::Type) -> TokenStream {
                 None => quote! { ::std::option::Option::None },
             };
             quote! {
-                #p::Type::Matrix { size: #size, scalar_ty: #s }
+                #p::Type::Matrix { columns: #columns, rows: #rows, scalar_ty: #s }
             }
         }
         ir::Type::Array { elem, len } => {

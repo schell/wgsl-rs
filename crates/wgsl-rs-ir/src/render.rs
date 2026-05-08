@@ -524,8 +524,12 @@ fn write_type(w: &mut Writer, ty: &Type) {
                 w.write(scalar_short(*st));
             }
         }
-        Type::Matrix { size, scalar_ty } => {
-            w.write(&format!("mat{size}x{size}"));
+        Type::Matrix {
+            columns,
+            rows,
+            scalar_ty,
+        } => {
+            w.write(&format!("mat{columns}x{rows}"));
             if let Some(st) = scalar_ty {
                 w.write("<");
                 w.write(scalar_name(*st));
@@ -1099,4 +1103,47 @@ fn write_switch(w: &mut Writer, s: &StmtSwitch) {
     w.indent -= 1;
     w.start_line();
     w.write("}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ScalarType, Type};
+
+    /// Square matrices render as `matCxC<T>` or the shorthand `matCxCf` when
+    /// `scalar_ty` is `None`.
+    #[test]
+    fn renders_square_matrix() {
+        let m = Type::Matrix {
+            columns: 4,
+            rows: 4,
+            scalar_ty: Some(ScalarType::F32),
+        };
+        assert_eq!(render_type(&m), "mat4x4<f32>");
+
+        let m_short = Type::Matrix {
+            columns: 3,
+            rows: 3,
+            scalar_ty: None,
+        };
+        assert_eq!(render_type(&m_short), "mat3x3f");
+    }
+
+    /// Non-square matrices render with distinct columns/rows.
+    #[test]
+    fn renders_nonsquare_matrix() {
+        let m = Type::Matrix {
+            columns: 2,
+            rows: 3,
+            scalar_ty: Some(ScalarType::F32),
+        };
+        assert_eq!(render_type(&m), "mat2x3<f32>");
+
+        let m_short = Type::Matrix {
+            columns: 4,
+            rows: 2,
+            scalar_ty: None,
+        };
+        assert_eq!(render_type(&m_short), "mat4x2f");
+    }
 }

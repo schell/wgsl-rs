@@ -480,9 +480,13 @@ pub fn type_to_ident(t: &Type) -> String {
             Some(s) => format!("vec{}{}", elements, scalar_short(*s)),
             None => format!("vec{}", elements),
         },
-        Type::Matrix { size, scalar_ty } => match scalar_ty {
-            Some(s) => format!("mat{0}x{0}{1}", size, scalar_short(*s)),
-            None => format!("mat{0}x{0}f", size),
+        Type::Matrix {
+            columns,
+            rows,
+            scalar_ty,
+        } => match scalar_ty {
+            Some(s) => format!("mat{}x{}{}", columns, rows, scalar_short(*s)),
+            None => format!("mat{}x{}f", columns, rows),
         },
         Type::Array { elem, .. } => format!("array_{}", type_to_ident(elem)),
         Type::RuntimeArray { elem } => format!("array_{}", type_to_ident(elem)),

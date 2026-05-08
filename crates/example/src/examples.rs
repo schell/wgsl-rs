@@ -159,6 +159,7 @@ pub mod compute_shader {
     // Read-only input buffer
     storage!(group(0), binding(0), INPUT: [f32; 256]);
 
+    #[derive(Wgsl)]
     pub struct Output {
         pub inner: f32,
     }
@@ -277,6 +278,7 @@ pub mod enum_example {
     }
 
     #[repr(u32)]
+    #[derive(Wgsl)]
     pub enum Holidays {
         // Syntax error!
         // Halloween = -23,
@@ -980,11 +982,13 @@ pub mod runtime_array_example {
     //! the last field of a struct.
     use wgsl_rs::std::*;
 
+    #[derive(Wgsl)]
     pub struct Particle {
         pub position: Vec3f,
         pub velocity: Vec3f,
     }
 
+    #[derive(Wgsl)]
     pub struct ParticleSystem {
         pub count: u32,
         pub particles: RuntimeArray<Particle>,
@@ -1836,4 +1840,21 @@ pub mod hello_triangle_generic {
         let frame_t = get!(FRAME, T);
         vec4f(1.0, sin(f32(frame_t) / 128.0), 0.0, 1.0)
     }
+
+    #[wgsl_ignore]
+    #[cfg(test)]
+    mod test {
+        #[test]
+        fn can_instantiate() {
+            // super::WGSL_MODULE.instantiate(type_args)
+        }
+    }
 }
+
+// #[wgsl]
+// pub mod test_stuff {
+//     use wgsl_rs::std::*;
+
+//     uniform!(group(0), binding(0), PROJECTION);
+//     uniform!(group(0), binding(1), MODELVIEW);
+// }

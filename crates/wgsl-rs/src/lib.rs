@@ -54,19 +54,28 @@ pub struct Module {
     /// These are resolved at source-assembly time in `wgsl_source()`.
     pub instantiations: &'static [TemplateInstantiation],
 
-    /// Module-level type parameters.
+    /// Module-level type parameters, in instantiation order.
     ///
-    /// When the module contains generic shader entry points (e.g.
-    /// `pub fn frag_main<T: Convert<f32>>() -> Vec4f`) and/or generic
-    /// linkage declarations (e.g. `uniform!(group(0), binding(0), FRAME: T)`),
-    /// the entire module's IR contains unresolved [`ir::Type::TypeParam`]
-    /// nodes. The names listed here are the union of type parameters
-    /// declared on the module's entry points.
+    /// Two distinct kinds of declaration contribute to this list:
     ///
-    /// When this slice is empty, the module is concrete and `wgsl_source()`
-    /// produces a directly usable WGSL source. When it is non-empty, the
-    /// caller must use `instantiate(...)` (passing concrete IR types for
-    /// each parameter) to produce a concrete shader source.
+    /// * `impl Trait` linkage variables, e.g. `uniform!(group(0), binding(0),
+    ///   FRAME: impl Convert<f32>)`. Each such declaration contributes the
+    ///   variable's identifier (`"FRAME"`).
+    /// * Generic shader entry points, e.g. `pub fn frag_main<T: Convert<f32>>()
+    ///   -> Vec4f`. Each one of an entry point's type parameters contributes a
+    ///   positional name of the form `"<fn_name>_<index>"` (e.g.
+    ///   `"frag_main_0"`). Source names like `T` are intentionally not used so
+    ///   that two entry points sharing a letter don't collide.
+    ///
+    /// The two groups appear in declaration order: linkage variables
+    /// first, then entry points.
+    ///
+    /// When this slice is empty, the module is concrete and
+    /// [`Self::wgsl_source`] produces a directly usable WGSL source.
+    /// When it is non-empty, callers should generally use the typestate
+    /// `ModuleBuilder` generated alongside the module, which checks at
+    /// compile time that every parameter has been bound. The lower-level
+    /// [`Self::instantiate`] is also available for advanced cases.
     pub module_type_params: &'static [&'static str],
 }
 
@@ -145,7 +154,12 @@ impl Module {
     /// each module-level type parameter with the corresponding IR type in
     /// `type_args`.
     ///
-    /// `type_args` must be parallel to `module_type_params`.
+    /// `type_args` must be parallel to [`Self::module_type_params`] —
+    /// linkage variables first, then entry-point parameters in
+    /// declaration order. For ergonomic, compile-time-checked
+    /// instantiation, prefer the typestate `ModuleBuilder` generated
+    /// inside each generic `#[wgsl]` module; this method is the lower
+    /// level escape hatch.
     ///
     /// # Panics
     /// Panics if the number of type arguments does not match the number of
@@ -714,8 +728,13 @@ mod test {
     pub mod generic_shader {
         use crate::std::*;
 
-        uniform!(group(0), binding(0), FRAME: T);
+        // The linkage variable is generic via `impl Trait` syntax. Its
+        // module-level type-parameter name is `FRAME` (the variable's
+        // identifier), independent of any entry point's type params.
+        uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 
+        // The fragment entry point has its own type parameter `T`. In the
+        // emitted IR this becomes the positional name `frag_main_0`.
         #[fragment]
         pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
             vec4f(1.0, sin(f32(get!(FRAME, T)) / 128.0), 0.0, 1.0)
@@ -726,28 +745,37 @@ mod test {
     fn generic_module_is_template() {
         let m = &generic_shader::WGSL_MODULE;
         assert!(m.is_template());
-        assert_eq!(m.module_type_params, &["T"]);
+        // FRAME first (linkage var), then frag_main_0 (entry-point param 0).
+        assert_eq!(m.module_type_params, &["FRAME", "frag_main_0"]);
     }
 
     #[test]
-    fn generic_module_template_source_has_placeholder() {
+    fn generic_module_template_source_has_placeholders() {
         let src = generic_shader::WGSL_MODULE.wgsl_source();
+        // The FRAME linkage var renders as a `__TPFRAME__` placeholder
+        // because its declared type is generic.
         assert!(
-            src.contains("__TPT__"),
-            "expected `__TPT__` placeholder in template source, got:\n{src}"
+            src.contains("__TPFRAME__"),
+            "expected `__TPFRAME__` placeholder in template source, got:\n{src}"
         );
-        // The uniform's type should be a placeholder
+        // `frag_main`'s `T` only appears as the hint passed to
+        // `get!(FRAME, T)`, which is stripped at WGSL emission time. So
+        // no `__TPfrag_main_0__` placeholder is expected in the source.
         assert!(
-            src.contains("FRAME") && src.contains("__TPT__"),
-            "expected FRAME uniform with placeholder type, got:\n{src}"
+            !src.contains("__TPfrag_main_0__"),
+            "did not expect `__TPfrag_main_0__` (T is unused in WGSL):\n{src}"
         );
     }
 
     #[test]
     fn generic_module_instantiate_substitutes_placeholders() {
-        let src = generic_shader::WGSL_MODULE.instantiate(&[ir::Type::Scalar(ir::ScalarType::F32)]);
+        // Order matches `module_type_params`: FRAME first, then frag_main_0.
+        let src = generic_shader::WGSL_MODULE.instantiate(&[
+            ir::Type::Scalar(ir::ScalarType::F32),
+            ir::Type::Scalar(ir::ScalarType::F32),
+        ]);
         assert!(
-            !src.contains("__TPT__"),
+            !src.contains("__TPFRAME__") && !src.contains("__TPfrag_main_0__"),
             "expected no placeholders after instantiation, got:\n{src}"
         );
         assert!(
@@ -764,7 +792,7 @@ mod test {
 
     #[test]
     fn generic_uniform_is_type_erased_static() {
-        // The Rust-side static should be `Uniform` (with default
+        // The Rust-side static is `Uniform` (with default
         // WgslTypeVariable), not `Uniform<T>`. Setting and getting via the
         // typed accessors should round-trip.
         generic_shader::FRAME.set_typed::<f32>(42.0f32);
@@ -782,19 +810,34 @@ mod test {
 
     #[test]
     fn generic_module_validate_skips_template() {
-        // `validate()` should be a no-op for template modules — they have
+        // `validate()` is a no-op for template modules — they have
         // unresolved placeholders that aren't valid WGSL.
         generic_shader::WGSL_MODULE
             .validate()
             .expect("template validation should be a no-op");
     }
 
+    #[test]
+    fn generic_module_builder_produces_concrete_ir() {
+        // The typestate builder produces an `ir::Module` with all type
+        // params resolved. Its rendering should be free of placeholders.
+        let m = generic_shader::ModuleBuilder::new()
+            .set_frame::<f32>()
+            .instantiate_frag_main::<f32>()
+            .build();
+        let src = ir::render_module(&m);
+        assert!(!src.contains("__TPFRAME__"));
+        assert!(!src.contains("__TPfrag_main_0__"));
+        assert!(src.contains("f32"));
+    }
+
     #[cfg(feature = "validation")]
     #[test]
     fn generic_module_instantiated_source_is_valid_wgsl() {
-        // Instantiate the template with `f32` and verify the resulting
-        // source actually parses + validates as WGSL.
-        let src = generic_shader::WGSL_MODULE.instantiate(&[ir::Type::Scalar(ir::ScalarType::F32)]);
+        let src = generic_shader::WGSL_MODULE.instantiate(&[
+            ir::Type::Scalar(ir::ScalarType::F32),
+            ir::Type::Scalar(ir::ScalarType::F32),
+        ]);
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| {
             panic!(
                 "parse failed:\n{}\n--- source ---\n{src}",
@@ -814,31 +857,30 @@ mod test {
         });
     }
 
-    // Generic compute shader exercising multiple type parameters and a
-    // generic storage variable.
+    // Generic compute shader exercising multiple linkage and entry-point
+    // type parameters using `impl Trait` syntax.
     #[wgsl(crate_path = crate, skip_validation)]
     pub mod generic_compute {
         use crate::std::*;
 
-        storage!(group(0), binding(0), read_write, INPUT: A);
-        storage!(group(0), binding(1), read_write, OUTPUT: B);
+        storage!(group(0), binding(0), read_write, INPUT: impl Wgsl + Convert<f32> + Clone);
+        storage!(group(0), binding(1), read_write, OUTPUT: impl Wgsl + Convert<f32> + Clone);
 
         #[compute]
         #[workgroup_size(1)]
-        pub fn cs_main<A: Wgsl + Convert<f32> + Clone, B: Wgsl + Convert<f32> + Clone>() {}
+        pub fn cs_main() {}
     }
 
     #[test]
     fn generic_compute_has_two_type_params() {
         let m = &generic_compute::WGSL_MODULE;
         assert!(m.is_template());
-        assert_eq!(m.module_type_params, &["A", "B"]);
+        // Linkage variables in declaration order: INPUT, OUTPUT.
+        assert_eq!(m.module_type_params, &["INPUT", "OUTPUT"]);
     }
 
     #[test]
     fn generic_compute_storages_are_type_erased() {
-        // Both storages are declared with type parameters → both are
-        // type-erased on the Rust side.
         generic_compute::INPUT.set_typed::<f32>(1.5f32);
         generic_compute::OUTPUT.set_typed::<u32>(42u32);
         let a = *generic_compute::INPUT.get_typed::<f32>();
@@ -850,8 +892,14 @@ mod test {
     #[test]
     fn generic_compute_template_has_both_placeholders() {
         let src = generic_compute::WGSL_MODULE.wgsl_source();
-        assert!(src.contains("__TPA__"), "missing __TPA__ in:\n{src}");
-        assert!(src.contains("__TPB__"), "missing __TPB__ in:\n{src}");
+        assert!(
+            src.contains("__TPINPUT__"),
+            "missing __TPINPUT__ in:\n{src}"
+        );
+        assert!(
+            src.contains("__TPOUTPUT__"),
+            "missing __TPOUTPUT__ in:\n{src}"
+        );
     }
 
     #[test]
@@ -860,8 +908,20 @@ mod test {
             ir::Type::Scalar(ir::ScalarType::F32),
             ir::Type::Scalar(ir::ScalarType::U32),
         ]);
-        assert!(!src.contains("__TPA__") && !src.contains("__TPB__"));
+        assert!(!src.contains("__TPINPUT__") && !src.contains("__TPOUTPUT__"));
         assert!(src.contains("INPUT") && src.contains("OUTPUT"));
+        assert!(src.contains("f32") && src.contains("u32"));
+    }
+
+    #[test]
+    fn generic_compute_builder_binds_both_storages() {
+        let m = generic_compute::ModuleBuilder::new()
+            .set_input::<f32>()
+            .set_output::<u32>()
+            .build();
+        let src = ir::render_module(&m);
+        assert!(!src.contains("__TPINPUT__"));
+        assert!(!src.contains("__TPOUTPUT__"));
         assert!(src.contains("f32") && src.contains("u32"));
     }
 }

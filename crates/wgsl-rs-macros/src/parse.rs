@@ -16,7 +16,7 @@
 // work can re-attach span info without re-parsing.
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
@@ -32,68 +32,89 @@ use crate::parse::util::in_progress;
 /// type parameters so that identifiers like `T` can be recognized as
 /// `Type::TypeParam` instead of `Type::Struct`.
 ///
-/// When parsing module-level items (uniforms/storages/samplers/textures),
-/// this context holds the union of type parameters from all entry points
-/// in the module, so a uniform like `uniform!(group(0), binding(0), FRAME: T)`
-/// where `T` is an entry-point type parameter can be parsed correctly.
+/// When parsing entry point function bodies, the context also carries an
+/// optional [`Self::type_param_renames`] map. This rewrites the parsed
+/// type parameter names from their source-level form (e.g. `"T"`, `"S"`)
+/// to a positional encoding (e.g. `"frag_main_0"`, `"frag_main_1"`) so
+/// that the IR and the runtime [`Module::module_type_params`][crate-mod]
+/// list never collide between entry points.
+///
+/// [crate-mod]: ../wgsl_rs/struct.Module.html
 #[derive(Default, Clone)]
 pub struct ParseContext {
     /// Names of type parameters currently in scope (e.g., `"T"`, `"U"`).
     pub type_params: HashSet<String>,
+    /// Optional name map applied when emitting `Type::TypeParam`. When a
+    /// source-level name (`"T"`) is present in this map, the resulting
+    /// `Type::TypeParam` carries the mapped name instead. Empty by
+    /// default, which preserves source-level names.
+    pub type_param_renames: HashMap<String, String>,
 }
 
 impl ParseContext {
     /// Build a context from an iterator of type parameter identifiers.
+    /// No renames are applied; source-level names are used in the IR.
     pub fn from_type_params<I: IntoIterator<Item = Ident>>(iter: I) -> Self {
         Self {
             type_params: iter.into_iter().map(|id| id.to_string()).collect(),
+            type_param_renames: HashMap::new(),
         }
+    }
+
+    /// Build a context from an iterator of `(source_name, encoded_name)`
+    /// pairs. The source name is what appears in the user's Rust source
+    /// (e.g. `"T"`); the encoded name is what should appear in the IR
+    /// (e.g. `"frag_main_0"`).
+    pub fn from_renamed_type_params<I, S, E>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = (S, E)>,
+        S: Into<String>,
+        E: Into<String>,
+    {
+        let mut type_params = HashSet::new();
+        let mut renames = HashMap::new();
+        for (source, encoded) in iter {
+            let source = source.into();
+            let encoded = encoded.into();
+            type_params.insert(source.clone());
+            renames.insert(source, encoded);
+        }
+        Self {
+            type_params,
+            type_param_renames: renames,
+        }
+    }
+
+    /// Apply any rename in the context to `name`, returning the encoded
+    /// name to be stored in `Type::TypeParam`.
+    pub fn encode_type_param(&self, name: &str) -> String {
+        self.type_param_renames
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
     }
 }
 
-/// Collect the union of type parameters declared on shader entry points
-/// (`#[vertex]`, `#[fragment]`, `#[compute]`) within a list of `syn::Item`s.
+/// Collect the (currently empty) set of names that should be visible to
+/// linkage variable type-parsing at module scope.
 ///
-/// These become module-level type parameters: any `uniform!`, `storage!`,
-/// `workgroup!`, `sampler!`, or `texture!` declaration in the same module
-/// may reference them.
-pub fn collect_module_type_params(items: &[syn::Item]) -> Result<Vec<Ident>, Error> {
-    let mut params: Vec<Ident> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-
-    for item in items {
-        let syn::Item::Fn(item_fn) = item else {
-            continue;
-        };
-        if ItemMod::syn_item_has_wgsl_ignore_attribute(item) {
-            continue;
-        }
-
-        // Only entry point functions contribute module-level type params.
-        let fn_attrs = match FnAttrs::try_from(&item_fn.attrs) {
-            Ok(attrs) => attrs,
-            Err(_) => continue,
-        };
-        if matches!(fn_attrs, FnAttrs::None) {
-            continue;
-        }
-
-        for param in &item_fn.sig.generics.params {
-            match param {
-                syn::GenericParam::Type(tp) => {
-                    let name = tp.ident.to_string();
-                    if seen.insert(name) {
-                        params.push(tp.ident.clone());
-                    }
-                }
-                syn::GenericParam::Lifetime(_) | syn::GenericParam::Const(_) => {
-                    // These are rejected during full parsing; skip here.
-                }
-            }
-        }
-    }
-
-    Ok(params)
+/// In earlier versions of `wgsl-rs`, linkage variables could reference an
+/// entry point's type parameter directly by name (e.g.
+/// `uniform!(group(0), binding(0), FRAME: T)` matched against
+/// `fn frag_main<T: ...>()`). That implicit coupling is no longer
+/// supported: linkage variables that need a generic type must use
+/// [`impl Trait`] syntax (e.g. `FRAME: impl Convert<f32>`) which
+/// self-identifies via the variable's name and carries explicit trait
+/// bounds.
+///
+/// Returning an empty `Vec` here causes [`Type::parse`] (called via
+/// `with_context`) to treat any bare type-name in a linkage declaration
+/// as an unknown struct, which surfaces as a normal "unknown type"
+/// diagnostic rather than silently sharing names across the module.
+///
+/// [`impl Trait`]: https://doc.rust-lang.org/reference/types/impl-trait.html
+pub fn collect_module_type_params(_items: &[syn::Item]) -> Result<Vec<Ident>, Error> {
+    Ok(Vec::new())
 }
 
 #[derive(Debug, Snafu)]
@@ -738,8 +759,16 @@ impl Type {
 
                     // Check if this is a type parameter from a generic function
                     if ctx.type_params.contains(&ident_str) {
+                        // Apply any positional rename so that entry point
+                        // type params are encoded uniquely per entry point.
+                        let encoded = ctx.encode_type_param(&ident_str);
+                        let encoded_ident = if encoded == ident_str {
+                            ident.clone()
+                        } else {
+                            Ident::new(&encoded, ident.span())
+                        };
                         return Ok(Type::TypeParam {
-                            ident: ident.clone(),
+                            ident: encoded_ident,
                         });
                     }
 
@@ -3938,6 +3967,14 @@ impl syn::parse::Parse for WorkgroupSizeArgs {
 pub struct ItemFn {
     /// Type parameters for generic functions (empty for non-generic).
     pub type_params: Vec<Ident>,
+    /// The full Rust generics from the source signature, including trait
+    /// bounds and where-clause predicates. Preserved on entry-point
+    /// functions so that the typestate builder can replay the original
+    /// bounds on its `instantiate_<fn_name>` methods.
+    ///
+    /// `None` for non-entry-point functions (which go through same-module
+    /// monomorphization and don't need this).
+    pub syn_generics: Option<syn::Generics>,
     pub fn_attrs: FnAttrs,
     pub fn_token: Token![fn],
     pub ident: Ident,
@@ -3993,14 +4030,29 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
 
-        // Generic entry points are now supported. The entry point's type
-        // parameters become module-level type parameters (their union across
-        // all entry points), and the entire module's WGSL becomes a template
-        // with `__TP{name}__` placeholders.
+        // Generic entry points are supported. Each entry point's type
+        // parameters become module-level type parameters using a positional
+        // encoding (`fn_name_0`, `fn_name_1`, ...) so that the same source
+        // name (e.g. `T`) appearing on multiple entry points doesn't
+        // collide. The whole module's WGSL becomes a template with
+        // `__TP{encoded_name}__` placeholders that the runtime builder /
+        // `instantiate()` replaces with concrete types.
+        //
+        // Non-entry-point generic functions (e.g. user helpers like
+        // `fn id<T>(x: T) -> T`) keep their source-level names because
+        // they go through same-module monomorphization, not module-level
+        // instantiation.
 
-        // Build parse context with type params in scope
-        let ctx = ParseContext {
-            type_params: type_params.iter().map(|id| id.to_string()).collect(),
+        let ctx = if matches!(fn_attrs, FnAttrs::None) {
+            ParseContext::from_type_params(type_params.iter().cloned())
+        } else {
+            let fn_name = sig.ident.to_string();
+            let renamed = type_params.iter().enumerate().map(|(i, id)| {
+                let source = id.to_string();
+                let encoded = format!("{fn_name}_{i}");
+                (source, encoded)
+            });
+            ParseContext::from_renamed_type_params(renamed)
         };
 
         let mut inputs = syn::punctuated::Punctuated::new();
@@ -4036,8 +4088,19 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             }
         }
 
+        // Preserve the full syn::Generics for entry points so the typestate
+        // builder can replay the original trait bounds. Non-entry-point
+        // functions don't need this — same-module monomorphization carries
+        // the bounds via the type system instead.
+        let syn_generics = if matches!(fn_attrs, FnAttrs::None) {
+            None
+        } else {
+            Some(sig.generics.clone())
+        };
+
         Ok(ItemFn {
             type_params,
+            syn_generics,
             fn_attrs,
             fn_token: sig.fn_token,
             ident: sig.ident.clone(),
@@ -4139,6 +4202,7 @@ impl ItemFn {
 
         Ok(ItemFn {
             type_params: vec![],
+            syn_generics: None,
             fn_attrs,
             fn_token: sig.fn_token,
             ident: sig.ident.clone(),
@@ -4426,10 +4490,45 @@ impl TryFrom<&syn::UseTree> for ItemUse {
     }
 }
 
+/// Parse the type half of a linkage variable declaration.
+///
+/// Recognises two shapes:
+///
+/// * Concrete or bare-type-parameter forms (e.g. `u32`, `T`, `Foo<u32>`):
+///   delegates to [`Type::try_from`] with the default context. The resulting
+///   WGSL type may be re-parsed later via `with_context` once the module-level
+///   type parameter set is known.
+///
+/// * `impl Trait` form (e.g. `impl Convert<f32>` or `impl Wgsl + Clone`): the
+///   WGSL type becomes `Type::TypeParam { ident: <var_name> }` and the trait
+///   bounds are returned for use by the typestate builder.
+fn parse_linkage_type(
+    var_name: &Ident,
+    rust_ty: &syn::Type,
+) -> Result<
+    (
+        Type,
+        Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
+    ),
+    Error,
+> {
+    if let syn::Type::ImplTrait(syn::TypeImplTrait { bounds, .. }) = rust_ty {
+        let ty = Type::TypeParam {
+            ident: var_name.clone(),
+        };
+        Ok((ty, Some(bounds.clone())))
+    } else {
+        let ty = Type::try_from(rust_ty)?;
+        Ok((ty, None))
+    }
+}
+
 /// A uniform declaration.
 ///
 /// ```rust,ignore
 /// uniform!(group(0), binding(0), FRAME: u32);
+/// // or
+/// uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 /// ```
 ///
 /// ```wgsl
@@ -4451,6 +4550,17 @@ pub(crate) struct ItemUniform {
 
     // We keep the Rust type around
     pub rust_ty: syn::Type,
+
+    /// Trait bounds when the user wrote `impl Trait` syntax (e.g.
+    /// `FRAME: impl Convert<f32>`). `None` for concrete types and bare
+    /// type-parameter idents.
+    ///
+    /// When `Some(_)`, this linkage variable's WGSL type is treated as a
+    /// module-level type parameter named after the variable itself
+    /// (e.g. `Type::TypeParam { ident: FRAME }`). The bounds are
+    /// preserved so the typestate builder can replay them on its setter
+    /// methods.
+    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
 }
 
 impl syn::parse::Parse for ItemUniform {
@@ -4472,10 +4582,11 @@ impl syn::parse::Parse for ItemUniform {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
-        // Initial parse uses an empty context; callers that have a context
-        // (e.g. with module-level type params) re-resolve via
-        // `ItemUniform::with_context`.
-        let ty = Type::try_from(&rust_ty)?;
+
+        // If the user wrote `impl Trait` syntax (e.g. `FRAME: impl
+        // Convert<f32>`), pull the bounds out and treat the type as a
+        // module-level type parameter named after the variable.
+        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
 
         Ok(ItemUniform {
             group,
@@ -4488,6 +4599,7 @@ impl syn::parse::Parse for ItemUniform {
             group_paren_token,
             binding_ident,
             binding_paren_token,
+            impl_bounds,
         })
     }
 }
@@ -4496,8 +4608,11 @@ impl ItemUniform {
     /// Re-parse this uniform's type using the given parse context. This
     /// upgrades any type identifiers that match a known type parameter from
     /// `Type::Struct` to `Type::TypeParam`.
+    ///
+    /// `impl Trait` linkage types are already resolved during parsing and
+    /// are not affected by the context.
     pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
-        if !ctx.type_params.is_empty() {
+        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
             self.ty = Type::parse(&self.rust_ty, ctx)?;
         }
         Ok(self)
@@ -4574,6 +4689,10 @@ pub(crate) struct ItemStorage {
 
     // We keep the Rust type around
     pub rust_ty: syn::Type,
+
+    /// Trait bounds when the user wrote `impl Trait` syntax. See
+    /// [`ItemUniform::impl_bounds`] for details.
+    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
 }
 
 impl syn::parse::Parse for ItemStorage {
@@ -4618,10 +4737,7 @@ impl syn::parse::Parse for ItemStorage {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
-        // Initial parse uses an empty context; callers that have a context
-        // (e.g. with module-level type params) re-resolve via
-        // `ItemStorage::with_context`.
-        let ty = Type::try_from(&rust_ty)?;
+        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
 
         Ok(ItemStorage {
             group,
@@ -4635,6 +4751,7 @@ impl syn::parse::Parse for ItemStorage {
             group_paren_token,
             binding_ident,
             binding_paren_token,
+            impl_bounds,
         })
     }
 }
@@ -4643,8 +4760,11 @@ impl ItemStorage {
     /// Re-parse this storage's type using the given parse context. This
     /// upgrades any type identifiers that match a known type parameter from
     /// `Type::Struct` to `Type::TypeParam`.
+    ///
+    /// `impl Trait` linkage types are already resolved during parsing and
+    /// are not affected by the context.
     pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
-        if !ctx.type_params.is_empty() {
+        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
             self.ty = Type::parse(&self.rust_ty, ctx)?;
         }
         Ok(self)
@@ -4901,6 +5021,9 @@ pub(crate) struct ItemWorkgroup {
     pub ty: Type,
     /// We keep the Rust type around for the Rust-side expansion
     pub rust_ty: syn::Type,
+    /// Trait bounds when the user wrote `impl Trait` syntax. See
+    /// [`ItemUniform::impl_bounds`] for details.
+    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
 }
 
 impl syn::parse::Parse for ItemWorkgroup {
@@ -4908,16 +5031,14 @@ impl syn::parse::Parse for ItemWorkgroup {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
-        // Initial parse uses an empty context; callers that have a context
-        // (e.g. with module-level type params) re-resolve via
-        // `ItemWorkgroup::with_context`.
-        let ty = Type::try_from(&rust_ty)?;
+        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
 
         Ok(ItemWorkgroup {
             name,
             colon_token,
             ty,
             rust_ty,
+            impl_bounds,
         })
     }
 }
@@ -4926,8 +5047,11 @@ impl ItemWorkgroup {
     /// Re-parse this workgroup variable's type using the given parse context.
     /// This upgrades any type identifiers that match a known type parameter
     /// from `Type::Struct` to `Type::TypeParam`.
+    ///
+    /// `impl Trait` linkage types are already resolved during parsing and
+    /// are not affected by the context.
     pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
-        if !ctx.type_params.is_empty() {
+        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
             self.ty = Type::parse(&self.rust_ty, ctx)?;
         }
         Ok(self)
@@ -5101,10 +5225,9 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
         };
 
         // Build parse context with type params so field types containing T
-        // resolve to Type::TypeParam.
-        let ctx = ParseContext {
-            type_params: type_params.iter().map(|id| id.to_string()).collect(),
-        };
+        // resolve to Type::TypeParam. Generic structs go through same-module
+        // monomorphization and keep source-level names.
+        let ctx = ParseContext::from_type_params(type_params.iter().cloned());
         let fields = FieldsNamed::parse(fields, &ctx)?;
 
         Ok(ItemStruct {
@@ -5388,10 +5511,9 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         };
 
         // Build parse context with type params so method bodies and signatures
-        // can reference them.
-        let ctx = ParseContext {
-            type_params: type_params.iter().map(|id| id.to_string()).collect(),
-        };
+        // can reference them. Generic impls go through same-module
+        // monomorphization and keep source-level names.
+        let ctx = ParseContext::from_type_params(type_params.iter().cloned());
 
         // Parse impl items (functions and constants)
         let mut parsed_items = Vec::new();
@@ -8447,15 +8569,16 @@ mod test {
     }
 
     #[test]
-    fn parse_generic_module_resolves_uniform_type_param() {
-        // A uniform whose type is a type parameter of an entry point should
-        // be parsed with the type recognized as `Type::TypeParam`, not
-        // `Type::Struct`.
+    fn parse_generic_module_resolves_uniform_impl_trait() {
+        // A uniform declared with `impl Trait` syntax should be parsed
+        // with its type set to `Type::TypeParam` named after the variable
+        // (here `FRAME`), and the trait bounds preserved on
+        // `impl_bounds`.
         let item: syn::Item = syn::parse_quote! {
             pub mod my_shader {
                 use wgsl_rs::std::*;
 
-                uniform!(group(0), binding(0), FRAME: T);
+                uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 
                 #[fragment]
                 pub fn frag_main<T: Convert<f32>>() -> Vec4f {
@@ -8474,27 +8597,31 @@ mod test {
                 assert_eq!(u.name.to_string(), "FRAME");
                 match &u.ty {
                     Type::TypeParam { ident } => {
-                        assert_eq!(ident.to_string(), "T");
+                        assert_eq!(ident.to_string(), "FRAME");
                         found = true;
                     }
                     _ => panic!("expected Type::TypeParam"),
                 }
+                assert!(
+                    u.impl_bounds.is_some(),
+                    "expected impl_bounds to be Some for `impl Trait` linkage"
+                );
             }
         }
         assert!(found, "FRAME uniform not found in parsed module");
     }
 
     #[test]
-    fn parse_generic_module_resolves_storage_type_param() {
+    fn parse_generic_module_resolves_storage_impl_trait() {
         let item: syn::Item = syn::parse_quote! {
             pub mod my_shader {
                 use wgsl_rs::std::*;
 
-                storage!(group(0), binding(0), read_write, DATA: T);
+                storage!(group(0), binding(0), read_write, DATA: impl Wgsl + Clone);
 
                 #[compute]
                 #[workgroup_size(1)]
-                pub fn cs_main<T>() {}
+                pub fn cs_main() {}
             }
         };
         let syn::Item::Mod(item_mod) = &item else {
@@ -8506,9 +8633,10 @@ mod test {
             if let Item::Storage(s) = it {
                 assert_eq!(s.name.to_string(), "DATA");
                 if let Type::TypeParam { ident } = &s.ty {
-                    assert_eq!(ident.to_string(), "T");
+                    assert_eq!(ident.to_string(), "DATA");
                     found = true;
                 }
+                assert!(s.impl_bounds.is_some());
             }
         }
         assert!(found, "DATA storage not found");

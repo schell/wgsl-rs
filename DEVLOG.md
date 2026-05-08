@@ -428,3 +428,42 @@ all sampled and depth texture types. Fixed and hardened the
 `#[derive(Wgsl)]` macro: it now uses fully-qualified paths via a
 `#[wgsl_path(...)]` helper attribute (defaulting to `::wgsl_rs`) and
 correctly emits `Type::Scalar(...)` for enums.
+
+### 2026-05-11: Decoupled generic linkages + typestate builder
+
+Decoupled generic linkage variables from entry-point type parameters
+and added a typestate `ModuleBuilder` for ergonomic, compile-time-safe
+template instantiation.
+
+**Linkage variable syntax** is now `impl Trait`:
+`uniform!(group(0), binding(0), FRAME: impl Convert<f32>)`. The trait
+bounds are preserved on the parsed `ItemUniform`/`ItemStorage`/
+`ItemWorkgroup` (new `impl_bounds` field) and replayed on the builder's
+setter methods. Bare-ident generic linkages (`FRAME: T`) are no longer
+recognised; the previous module-level coupling between linkage and
+entry-point type params has been removed.
+
+**Module-level type parameters** in the IR now use distinct, unambiguous
+names. Linkage variables contribute their own identifier (e.g.
+`"FRAME"`); entry-point type parameters use a positional encoding
+(`"<fn_name>_<index>"`, e.g. `"frag_main_0"`, `"frag_main_1"`). This is
+implemented via a new `ParseContext::type_param_renames` map that's
+populated for entry-point function bodies but left empty for non-entry
+generic functions and structs, which still go through same-module
+monomorphization on source names.
+
+**Typestate builder** (`ModuleBuilder`) is generated next to
+`WGSL_MODULE` for any module with `impl Trait` linkage variables or
+generic entry points. One `Needs<X>` / `Has<X>` marker pair is emitted
+per slot; `set_<linkage>::<T>()` and
+`instantiate_<entry>::<T0, T1, ...>()` methods transition slots from
+"needs" to "has", and `build()` is only available when every slot is
+bound. Each method's bounds are the original user-written bounds from
+the source plus a synthetic `+ Wgsl` so the builder can call
+`<T as Wgsl>::to_ir()` to materialise the `ir::Type` at runtime. The
+existing `Module::instantiate(&[ir::Type])` API stays as the lower
+level escape hatch.
+
+`parse::ItemFn` gained a `syn_generics: Option<syn::Generics>` field
+that preserves the original signature generics on entry points so the
+builder codegen can replay them verbatim.

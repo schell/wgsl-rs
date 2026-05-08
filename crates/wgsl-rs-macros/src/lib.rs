@@ -10,6 +10,7 @@ use syn::{
 
 use crate::parse::InterStageIo;
 
+mod builder;
 mod builtins;
 mod ir_convert;
 mod ir_emit;
@@ -177,26 +178,58 @@ impl From<parse::Error> for WgslGenError {
 }
 
 
-/// Collect the union of type parameters declared on shader entry points
-/// (`#[vertex]`, `#[fragment]`, `#[compute]`) within the parsed module.
+/// Collect the encoded names of all module-level type parameters in the
+/// parsed module, in the order they should appear in the generated
+/// `WGSL_MODULE.module_type_params` slice.
 ///
-/// The order is the order of first appearance.
+/// Two sources contribute, both encoded so that no two distinct
+/// declarations can share an IR name:
+///
+/// 1. Linkage variables declared with `impl Trait` syntax. Each one contributes
+///    a single name equal to the variable's identifier (e.g. `"FRAME"` for
+///    `uniform!(..., FRAME: impl Convert<f32>)`).
+/// 2. Type parameters of shader entry points (`#[vertex]`, `#[fragment]`,
+///    `#[compute]`). Each one contributes a positional name of the form
+///    `"<fn_name>_<index>"` (e.g. `"frag_main_0"`, `"frag_main_1"`).
+///    Source-level names like `T` and `S` are intentionally not used so that
+///    two entry points using the same letter don't collide.
+///
+/// Order: linkage variables in declaration order, followed by entry
+/// point parameters in declaration order, in turn following each entry
+/// point's parameter list left-to-right.
 fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> {
     use parse::{FnAttrs, Item};
     let mut params: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Pass 1: linkage variables declared with `impl Trait`.
+    for item in &wgsl_module.content {
+        let name = match item {
+            Item::Uniform(u) if u.impl_bounds.is_some() => u.name.to_string(),
+            Item::Storage(s) if s.impl_bounds.is_some() => s.name.to_string(),
+            Item::Workgroup(w) if w.impl_bounds.is_some() => w.name.to_string(),
+            _ => continue,
+        };
+        if seen.insert(name.clone()) {
+            params.push(name);
+        }
+    }
+
+    // Pass 2: entry point type parameters, encoded positionally.
     for item in &wgsl_module.content {
         let Item::Fn(f) = item else { continue };
         if matches!(f.fn_attrs, FnAttrs::None) {
             continue;
         }
-        for tp in &f.type_params {
-            let name = tp.to_string();
-            if seen.insert(name.clone()) {
-                params.push(name);
+        let fn_name = f.ident.to_string();
+        for (i, _tp) in f.type_params.iter().enumerate() {
+            let encoded = format!("{fn_name}_{i}");
+            if seen.insert(encoded.clone()) {
+                params.push(encoded);
             }
         }
     }
+
     params
 }
 
@@ -214,11 +247,12 @@ fn rewrite_generic_linkages(
     wgsl_module: &parse::ItemMod,
     crate_path: &syn::Path,
 ) -> Result<(), WgslGenError> {
-    use parse::{Item, Type};
+    use parse::Item;
 
     // Collect the names of generic linkage items by scanning the parsed
-    // `wgsl_module`. We key on the linkage variable's `name` so we can find
-    // the matching `syn::Item::Macro` in `input_mod`.
+    // `wgsl_module`. A linkage variable is "generic" if the user declared
+    // it with `impl Trait` syntax (e.g. `FRAME: impl Convert<f32>`); we
+    // detect this via the `impl_bounds` field on each linkage item.
     let mut generic_uniforms: std::collections::BTreeMap<String, (syn::LitInt, syn::LitInt)> =
         Default::default();
     let mut generic_storages: std::collections::BTreeMap<
@@ -229,16 +263,16 @@ fn rewrite_generic_linkages(
 
     for item in &wgsl_module.content {
         match item {
-            Item::Uniform(u) if matches!(u.ty, Type::TypeParam { .. }) => {
+            Item::Uniform(u) if u.impl_bounds.is_some() => {
                 generic_uniforms.insert(u.name.to_string(), (u.group.clone(), u.binding.clone()));
             }
-            Item::Storage(s) if matches!(s.ty, Type::TypeParam { .. }) => {
+            Item::Storage(s) if s.impl_bounds.is_some() => {
                 generic_storages.insert(
                     s.name.to_string(),
                     (s.group.clone(), s.binding.clone(), s.access),
                 );
             }
-            Item::Workgroup(w) if matches!(w.ty, Type::TypeParam { .. }) => {
+            Item::Workgroup(w) if w.impl_bounds.is_some() => {
                 generic_workgroups.insert(w.name.to_string());
             }
             _ => {}
@@ -611,6 +645,17 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         quote! {}
     };
 
+    // For template modules (those with module-level type parameters),
+    // emit a typestate `ModuleBuilder` alongside `WGSL_MODULE`. The
+    // builder enforces at compile time that every linkage variable bound
+    // and every entry-point type parameter has been chosen before
+    // `build()` produces the substituted IR.
+    let builder_fragment = if module_type_params.is_empty() {
+        quote! {}
+    } else {
+        builder::gen_builder(&crate_path, &wgsl_module)
+    };
+
     if let Some((_, content)) = input_mod.content.as_mut() {
         // The module fragment now contains multiple items (constructor
         // fns + the WGSL_MODULE static), so parse it as a list of items
@@ -619,6 +664,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         let wrapper_tokens = quote! {
             mod __wgsl_emit_wrapper {
                 #module_fragment
+                #builder_fragment
             }
         };
         let wrapper_mod: syn::ItemMod = syn::parse2(wrapper_tokens)?;

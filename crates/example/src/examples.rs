@@ -1815,12 +1815,14 @@ pub mod hello_triangle_generic {
     //! color. It has been modified to be polymorphic.
     use wgsl_rs::std::*;
 
-    // Define a uniform in both Rust and WGSL using the uniform! macro.
+    // Define a uniform in both Rust and WGSL using the `uniform!` macro.
     //
-    // The type `T` is a type parameter of the `frag_main` entry point —
-    // when the entry point is instantiated with a concrete type, this
-    // uniform is instantiated with the same type.
-    uniform!(group(0), binding(0), FRAME: T);
+    // The `impl Convert<f32>` syntax declares that `FRAME` carries some
+    // concrete type chosen at instantiation time which can be converted
+    // into an `f32` on the WGSL side. The trait bounds are replayed on
+    // the typestate builder's `set_frame` method so a caller can only
+    // bind FRAME to a type that implements them.
+    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -1830,11 +1832,9 @@ pub mod hello_triangle_generic {
         vec4f(position.x, position.y, 0.0, 1.0)
     }
 
-    /// Here we define a polymorphic fragment stage that uses our generic
-    /// uniform.
-    ///
-    /// The `T` can be any type that can be converted into an `f32` using the
-    /// `Convert<f32>` trait.
+    /// Here we define a polymorphic fragment stage. Its `T` is independent
+    /// of the linkage variable's type — they are bound separately via the
+    /// generated `ModuleBuilder`.
     #[fragment]
     pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
         let frame_t = get!(FRAME, T);
@@ -1846,15 +1846,10 @@ pub mod hello_triangle_generic {
     mod test {
         #[test]
         fn can_instantiate() {
-            // super::WGSL_MODULE.instantiate(type_args)
+            let _ir = super::ModuleBuilder::new()
+                .set_frame::<f32>()
+                .instantiate_frag_main::<f32>()
+                .build();
         }
     }
 }
-
-// #[wgsl]
-// pub mod test_stuff {
-//     use wgsl_rs::std::*;
-
-//     uniform!(group(0), binding(0), PROJECTION);
-//     uniform!(group(0), binding(1), MODELVIEW);
-// }

@@ -14,11 +14,9 @@ mod second_provider {
     }
 }
 
-#[wgsl(crate_path = wgsl_rs)]
+#[wgsl]
 mod consumer {
-    #[rustfmt::skip]
     use super::second_provider::*;
-    #[rustfmt::skip]
     use crate::first_provider::*;
 
     pub fn apply() -> f32 {

@@ -467,3 +467,33 @@ level escape hatch.
 `parse::ItemFn` gained a `syn_generics: Option<syn::Generics>` field
 that preserves the original signature generics on entry points so the
 builder codegen can replay them verbatim.
+
+#### Unified `instantiate` function replaces typestate builder
+
+The typestate `ModuleBuilder` was replaced by a unified `instantiate`
+function that uses `wgsl_rs::linkage::Type<Is = ...>` trait constraints
+to enforce type consistency across entry points at compile time. A `get!(VAR, T)`
+or `get_mut!(VAR, T)` call inside an entry point generates a constraint
+`VAR: Type<Is = T>` in the `where` clause, so conflicting types are
+caught by the Rust compiler.
+
+`Module::instantiate` and `Module::instantiate_scalar` were removed in
+favor of the generated `instantiate` function. The `Type` trait lives in
+`wgsl_rs::linkage`: `T: Type<Is = U>` is satisfied iff `T` and `U` are
+the same type.
+
+The type argument in `get!(VAR, TYPE)` / `get_mut!(VAR, TYPE)` is stored
+as a `syn::Type` (not `parse::Type`) since it represents a Rust-side type
+expression used for code generation, not a WGSL type. This allows type
+params inside built-in generic types like `Vec4<T>` which `Type::parse`
+rejects as requiring a concrete scalar. Entry-point type params with
+colliding names (e.g. `T` in two different functions) are disambiguated
+with a `_fnname` suffix (e.g. `T_main_zeroable`).
+
+#### Bug fixes
+
+Replaced the typestate builder with unified `instantiate` function using
+`Type<Is = ...>` trait constraints; added `#[allow(non_camel_case_types)]` to
+suppress warnings on suffixed type params like `T_frag_main`.
+
+

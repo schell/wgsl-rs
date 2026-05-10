@@ -368,6 +368,10 @@ pub(crate) fn walk_expr<V: ParseVisitorMut + ?Sized>(v: &mut V, e: &mut Expr) ->
             v.visit_type(elem_type)?;
             v.visit_expr(len)?;
         }
+        Expr::LinkageAccess { .. } => {
+            // The type_arg is a syn::Type, not a parse::Type — no
+            // visitor transformation needed.
+        }
         Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => {}
     }
     Ok(())

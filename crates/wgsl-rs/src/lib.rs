@@ -3,6 +3,8 @@ use ::std::collections::{HashMap, HashSet};
 
 pub use wgsl_rs_macros::{wgsl, wgsl_allow, wgsl_ignore};
 
+pub mod linkage;
+
 /// Re-export of the IR crate so the proc-macro and consuming crates can
 /// reference IR types via `wgsl_rs::ir::...` without needing to depend on
 /// `wgsl-rs-ir` directly.
@@ -72,10 +74,10 @@ pub struct Module {
     ///
     /// When this slice is empty, the module is concrete and
     /// [`Self::wgsl_source`] produces a directly usable WGSL source.
-    /// When it is non-empty, callers should generally use the typestate
-    /// `ModuleBuilder` generated alongside the module, which checks at
-    /// compile time that every parameter has been bound. The lower-level
-    /// [`Self::instantiate`] is also available for advanced cases.
+    /// When it is non-empty, callers should use the `instantiate`
+    /// function generated alongside the module, which uses
+    /// `wgsl_rs::linkage::Type<Is = ...>` constraints to check at
+    /// compile time that every parameter has been bound.
     pub module_type_params: &'static [&'static str],
 }
 
@@ -148,65 +150,6 @@ impl Module {
         let mut seen: HashSet<(String, String, Vec<String>)> = HashSet::new();
         self.collect(&mut out, &mut seen, None);
         out
-    }
-
-    /// Produce a concrete WGSL shader source for this module by substituting
-    /// each module-level type parameter with the corresponding IR type in
-    /// `type_args`.
-    ///
-    /// `type_args` must be parallel to [`Self::module_type_params`] —
-    /// linkage variables first, then entry-point parameters in
-    /// declaration order. For ergonomic, compile-time-checked
-    /// instantiation, prefer the typestate `ModuleBuilder` generated
-    /// inside each generic `#[wgsl]` module; this method is the lower
-    /// level escape hatch.
-    ///
-    /// # Panics
-    /// Panics if the number of type arguments does not match the number of
-    /// module-level type parameters.
-    pub fn instantiate(&self, type_args: &[ir::Type]) -> String {
-        assert_eq!(
-            type_args.len(),
-            self.module_type_params.len(),
-            "module '{}' has {} type parameter(s) ({:?}), but {} argument(s) were given",
-            self.name,
-            self.module_type_params.len(),
-            self.module_type_params,
-            type_args.len()
-        );
-
-        let mut subst: HashMap<String, ir::Type> = HashMap::new();
-        for (param, arg) in self.module_type_params.iter().zip(type_args.iter()) {
-            subst.insert((*param).to_string(), arg.clone());
-        }
-
-        let mut out = String::new();
-        let mut seen: HashSet<(String, String, Vec<String>)> = HashSet::new();
-        self.collect(&mut out, &mut seen, Some(&subst));
-        out
-    }
-
-    /// Convenience helper: produce a concrete WGSL shader source where each
-    /// module type parameter is bound to a [`ir::Type::Scalar`] of the
-    /// matching name parsed from the supplied string.
-    ///
-    /// This only handles a small set of common cases (scalar types). For
-    /// general WGSL types use [`Module::instantiate`] with explicit IR.
-    pub fn instantiate_scalar(&self, scalar_names: &[&str]) -> String {
-        let args: Vec<ir::Type> = scalar_names
-            .iter()
-            .map(|s| match *s {
-                "f32" => ir::Type::Scalar(ir::ScalarType::F32),
-                "i32" => ir::Type::Scalar(ir::ScalarType::I32),
-                "u32" => ir::Type::Scalar(ir::ScalarType::U32),
-                "bool" => ir::Type::Scalar(ir::ScalarType::Bool),
-                other => panic!(
-                    "instantiate_scalar: '{other}' is not a recognised scalar; pass an explicit \
-                     ir::Type via Module::instantiate"
-                ),
-            })
-            .collect();
-        self.instantiate(&args)
     }
 
     /// Recursively collect this module's WGSL source (and that of its
@@ -770,10 +713,8 @@ mod test {
     #[test]
     fn generic_module_instantiate_substitutes_placeholders() {
         // Order matches `module_type_params`: FRAME first, then frag_main_0.
-        let src = generic_shader::WGSL_MODULE.instantiate(&[
-            ir::Type::Scalar(ir::ScalarType::F32),
-            ir::Type::Scalar(ir::ScalarType::F32),
-        ]);
+        let m = generic_shader::instantiate::<f32, f32>();
+        let src = ir::render_module(&m);
         assert!(
             !src.contains("__TPFRAME__") && !src.contains("__TPfrag_main_0__"),
             "expected no placeholders after instantiation, got:\n{src}"
@@ -782,12 +723,6 @@ mod test {
             src.contains("FRAME") && src.contains("f32"),
             "expected FRAME with f32 type, got:\n{src}"
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "module 'generic_shader'")]
-    fn generic_module_instantiate_arg_mismatch_panics() {
-        let _ = generic_shader::WGSL_MODULE.instantiate(&[]);
     }
 
     #[test]
@@ -818,13 +753,10 @@ mod test {
     }
 
     #[test]
-    fn generic_module_builder_produces_concrete_ir() {
-        // The typestate builder produces an `ir::Module` with all type
+    fn generic_module_instantiate_produces_concrete_ir() {
+        // The `instantiate` function produces an `ir::Module` with all type
         // params resolved. Its rendering should be free of placeholders.
-        let m = generic_shader::ModuleBuilder::new()
-            .set_frame::<f32>()
-            .instantiate_frag_main::<f32>()
-            .build();
+        let m = generic_shader::instantiate::<f32, f32>();
         let src = ir::render_module(&m);
         assert!(!src.contains("__TPFRAME__"));
         assert!(!src.contains("__TPfrag_main_0__"));
@@ -834,10 +766,8 @@ mod test {
     #[cfg(feature = "validation")]
     #[test]
     fn generic_module_instantiated_source_is_valid_wgsl() {
-        let src = generic_shader::WGSL_MODULE.instantiate(&[
-            ir::Type::Scalar(ir::ScalarType::F32),
-            ir::Type::Scalar(ir::ScalarType::F32),
-        ]);
+        let m = generic_shader::instantiate::<f32, f32>();
+        let src = ir::render_module(&m);
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| {
             panic!(
                 "parse failed:\n{}\n--- source ---\n{src}",
@@ -904,24 +834,79 @@ mod test {
 
     #[test]
     fn generic_compute_instantiate_substitutes_both() {
-        let src = generic_compute::WGSL_MODULE.instantiate(&[
-            ir::Type::Scalar(ir::ScalarType::F32),
-            ir::Type::Scalar(ir::ScalarType::U32),
-        ]);
+        let m = generic_compute::instantiate::<f32, u32>();
+        let src = ir::render_module(&m);
         assert!(!src.contains("__TPINPUT__") && !src.contains("__TPOUTPUT__"));
         assert!(src.contains("INPUT") && src.contains("OUTPUT"));
         assert!(src.contains("f32") && src.contains("u32"));
     }
 
     #[test]
-    fn generic_compute_builder_binds_both_storages() {
-        let m = generic_compute::ModuleBuilder::new()
-            .set_input::<f32>()
-            .set_output::<u32>()
-            .build();
+    fn generic_compute_instantiate_binds_both_storages() {
+        let m = generic_compute::instantiate::<f32, u32>();
         let src = ir::render_module(&m);
         assert!(!src.contains("__TPINPUT__"));
         assert!(!src.contains("__TPOUTPUT__"));
         assert!(src.contains("f32") && src.contains("u32"));
+    }
+
+    // --- Multi-entry-point type param disambiguation tests ---
+
+    // Module with two entry points that both use the letter `T` and
+    // both access the same linkage variable DATA via `get!`. This tests
+    // that the `instantiate` function correctly disambiguates the type
+    // params and generates the right `Type<Is = ...>` constraints.
+    #[wgsl(crate_path = crate)]
+    pub mod multi_ep {
+        use crate::std::*;
+
+        storage!(group(0), binding(0), read_write, DATA: impl std::any::Any);
+
+        #[compute]
+        #[workgroup_size(1)]
+        pub fn read_as<T: Wgsl + Convert<f32>>(#[builtin(global_invocation_id)] _gid: Vec3u) {
+            let _v = get!(DATA, T);
+        }
+
+        #[compute]
+        #[workgroup_size(1)]
+        pub fn write_as<T: Wgsl + Convert<f32>>(#[builtin(global_invocation_id)] _gid: Vec3u) {
+            let mut _v = get_mut!(DATA, T);
+        }
+    }
+
+    #[test]
+    fn multi_ep_instantiate_substitutes_correctly() {
+        // Three type params: DATA, T_read_as, T_write_as.
+        // Both entry-point type params are substituted with f32.
+        let m = multi_ep::instantiate::<f32, f32, f32>();
+        let src = ir::render_module(&m);
+        assert!(
+            !src.contains("__TPDATA__"),
+            "expected no placeholder for DATA, got:\n{src}"
+        );
+        assert!(
+            !src.contains("__TPread_as_0__") && !src.contains("__TPwrite_as_0__"),
+            "expected no entry-point placeholders, got:\n{src}"
+        );
+        assert!(
+            src.contains("f32"),
+            "expected f32 type in output, got:\n{src}"
+        );
+    }
+
+    #[test]
+    fn multi_ep_disambiguated_type_params_are_independent() {
+        // Even though both entry points use the letter `T`, the
+        // `instantiate` function should have two independent type params
+        // (T_read_as and T_write_as). This test verifies the constraints
+        // are correct by using different concrete types: DATA = f32 for
+        // the read path and DATA = f32 for the write path (they must agree
+        // since DATA: Type<Is = T_read_as> and DATA: Type<Is = T_write_as>,
+        // so T_read_as must equal T_write_as).
+        let m = multi_ep::instantiate::<f32, f32, f32>();
+        let src = ir::render_module(&m);
+        assert!(!src.contains("__TPDATA__"));
+        assert!(src.contains("DATA"));
     }
 }

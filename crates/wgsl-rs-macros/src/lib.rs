@@ -646,10 +646,10 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     };
 
     // For template modules (those with module-level type parameters),
-    // emit a typestate `ModuleBuilder` alongside `WGSL_MODULE`. The
-    // builder enforces at compile time that every linkage variable bound
-    // and every entry-point type parameter has been chosen before
-    // `build()` produces the substituted IR.
+    // emit an `instantiate` function alongside `WGSL_MODULE`. The
+    // function uses `wgsl_rs::linkage::Type<Is = ...>` constraints to
+    // enforce at compile time that every linkage variable's concrete type
+    // is consistent across all entry points that use it.
     let builder_fragment = if module_type_params.is_empty() {
         quote! {}
     } else {

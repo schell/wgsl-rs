@@ -1649,6 +1649,36 @@ pub enum Expr {
         elem_type: Box<Type>,
         len: Box<Expr>,
     },
+    /// Access to a generic linkage variable via `get!(VAR)` / `get!(VAR, T)`
+    /// or `get_mut!(VAR)` / `get_mut!(VAR, T)`.
+    ///
+    /// The one-argument form (`get!(VAR)`) has `type_arg = None` and is used
+    /// for concrete linkage variables. The two-argument form (`get!(VAR, T)`)
+    /// has `type_arg = Some(T)` and is used for generic linkage variables.
+    ///
+    /// In WGSL output, this emits just the identifier. The type argument is
+    /// only used for constraint collection during builder generation.
+    LinkageAccess {
+        /// Whether this is `get!` or `get_mut!`.
+        kind: LinkageKind,
+        /// The variable name (e.g., `FRAME`, `BINS`).
+        ident: syn::Ident,
+        /// The type argument for generic access (e.g., `Vec4<T>`, `f32`).
+        /// Stored as a `syn::Type` rather than a `parse::Type` because the
+        /// type argument is a Rust-side type expression used for code
+        /// generation (the `instantiate` function's `where` clause), not a
+        /// WGSL type. This allows arbitrary Rust type expressions like
+        /// `Vec4<T>` where `T` is a type parameter.
+        /// `None` for the one-argument form.
+        type_arg: Option<syn::Type>,
+    },
+}
+
+/// Whether a linkage access is `get!` or `get_mut!`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkageKind {
+    Get,
+    GetMut,
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -2120,44 +2150,64 @@ impl Expr {
                     }
                     .fail()
                 };
-                // Some macros have no meaning in WGSL, and we will simply strip them.
-                //
                 // `get!`/`get_mut!` accept two forms:
                 //   - `get!(IDENT)` for concrete module variables
-                //   - `get!(IDENT, T)` for generic module variables (the concrete type only
-                //     matters on the Rust side)
-                // In both cases, only the identifier is meaningful for WGSL.
+                //   - `get!(IDENT, T)` for generic module variables
+                // Both are preserved as `Expr::LinkageAccess` so the type
+                // argument can be collected for constraint checking during
+                // builder generation. In WGSL output, only the identifier
+                // is emitted.
                 let noop_macros = ["get_mut", "get"];
                 if let Some(macro_ident) = mac.path.get_ident() {
                     let macro_ident_str = macro_ident.to_string();
                     if noop_macros.contains(&macro_ident_str.as_str()) {
-                        // Parse the tokens inside as either `IDENT` or
-                        // `IDENT, TYPE` — only the identifier is kept for
-                        // WGSL emission.
                         struct GetArgs {
                             ident: Ident,
+                            type_arg: Option<syn::Type>,
                         }
                         impl syn::parse::Parse for GetArgs {
                             fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
                                 let ident: Ident = input.parse()?;
-                                if input.peek(syn::Token![,]) {
+                                let type_arg = if input.peek(syn::Token![,]) {
                                     let _: syn::Token![,] = input.parse()?;
-                                    let _: syn::Type = input.parse()?;
-                                }
-                                Ok(GetArgs { ident })
+                                    Some(input.parse()?)
+                                } else {
+                                    None
+                                };
+                                Ok(GetArgs { ident, type_arg })
                             }
                         }
-                        let GetArgs { ident } = syn::parse2(mac.tokens.clone()).map_err(|e| {
-                            UnsupportedSnafu {
-                                span: mac.path.span(),
-                                note: format!(
-                                    "{macro_ident_str}! expects an identifier (optionally \
-                                     followed by `, T`), got: {e}"
-                                ),
-                            }
-                            .build()
-                        })?;
-                        Self::Ident(ident)
+                        let GetArgs { ident, type_arg } =
+                            syn::parse2(mac.tokens.clone()).map_err(|e| {
+                                UnsupportedSnafu {
+                                    span: mac.path.span(),
+                                    note: format!(
+                                        "{macro_ident_str}! expects an identifier (optionally \
+                                         followed by `, T`), got: {e}"
+                                    ),
+                                }
+                                .build()
+                            })?;
+                        let kind = if macro_ident_str == "get_mut" {
+                            LinkageKind::GetMut
+                        } else {
+                            LinkageKind::Get
+                        };
+                        // Store the type argument as a `syn::Type` rather than
+                        // converting to `parse::Type`. The type arg is a
+                        // Rust-side expression (e.g. `Vec4<T>`, `f32`) used
+                        // for code generation in the `instantiate` function's
+                        // `where` clause. Converting through `Type::parse`
+                        // would reject type params inside built-in generics
+                        // like `Vec4<T>` (since WGSL vectors require a
+                        // concrete scalar), and would also apply positional
+                        // renames (e.g. `T` → `frag_main_0`) that should
+                        // only happen on the WGSL/IR side.
+                        Self::LinkageAccess {
+                            kind,
+                            ident,
+                            type_arg,
+                        }
                     } else {
                         return trigger_unsupported();
                     }
@@ -2255,6 +2305,7 @@ impl Expr {
                 .join(expr.span())
                 .unwrap_or_else(|| and_token.span),
             Expr::ZeroValueArray { bracket_token, .. } => bracket_token.span.join(),
+            Expr::LinkageAccess { ident, .. } => ident.span(),
         }
     }
 }
@@ -5673,6 +5724,9 @@ fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
         Expr::TypePath { ty, .. } => maybe_replace_self(name, ty),
         Expr::Reference { expr, .. } => resolve_self_in_expr(name, expr),
         Expr::ZeroValueArray { len, .. } => resolve_self_in_expr(name, len),
+        Expr::LinkageAccess { ident, .. } => {
+            maybe_replace_self(name, ident);
+        }
     }
 }
 

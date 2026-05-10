@@ -588,6 +588,7 @@ pub fn expr_from_parse(e: &parse::Expr) -> Result<ir::Expr> {
             elem_type: Box::new(ty_from_parse(elem_type)?),
             len: Box::new(expr_from_parse(len)?),
         },
+        parse::Expr::LinkageAccess { ident, .. } => ir::Expr::Ident(ident.to_string()),
     })
 }
 

@@ -1,10 +1,11 @@
-//! Typestate-builder code generation for generic `#[wgsl]` modules.
+//! `instantiate` function code generation for generic `#[wgsl]` modules.
 //!
-//! When a `#[wgsl]` module declares one or more `impl Trait` linkage
-//! variables and/or generic shader entry points, the proc macro emits a
-//! `ModuleBuilder` struct alongside `WGSL_MODULE`. The builder uses a
-//! typestate pattern to ensure that every type parameter has been bound
-//! to a concrete type before [`build()`] is called.
+//! When a `#[wgsl]` module has module-level type parameters (from `impl Trait`
+//! linkage variables and/or generic entry points), the proc macro emits an
+//! `instantiate` function alongside `WGSL_MODULE`. The function uses
+//! `wgsl_rs::linkage::Type<Is = ...>` trait constraints to enforce at compile
+//! time that every linkage variable's concrete type is consistent across all
+//! entry points that use it.
 //!
 //! For a module like
 //!
@@ -14,414 +15,779 @@
 //!     uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 //!
 //!     #[fragment]
-//!     pub fn frag_main<T: Convert<f32> + Clone, S: Wgsl>() -> Vec4f { ... }
+//!     pub fn frag_main<T: Convert<f32> + Clone>() -> Vec4f {
+//!         vec4f(1.0, sin(f32(get!(FRAME, T)) / 128.0), 0.0, 1.0)
+//!     }
 //! }
 //! ```
 //!
 //! the proc macro emits:
 //!
 //! ```ignore
-//! pub struct NeedsFRAME;
-//! pub struct HasFRAME;
-//! pub struct NeedsFragMain;
-//! pub struct HasFragMain;
-//!
-//! pub struct ModuleBuilder<S0 = NeedsFRAME, S1 = NeedsFragMain> { /* ... */ }
-//!
-//! impl ModuleBuilder<NeedsFRAME, NeedsFragMain> {
-//!     pub fn new() -> Self { /* ... */ }
-//! }
-//!
-//! // Linkage var setter — bounds replayed from `impl Convert<f32>`.
-//! impl<S1> ModuleBuilder<NeedsFRAME, S1> {
-//!     pub fn set_frame<FRAME: Convert<f32> + Wgsl>(self)
-//!         -> ModuleBuilder<HasFRAME, S1> { /* ... */ }
-//! }
-//!
-//! // Entry-point instantiator — bounds replayed from the fn signature.
-//! impl<S0> ModuleBuilder<S0, NeedsFragMain> {
-//!     pub fn instantiate_frag_main<T: Convert<f32> + Clone + Wgsl, S: Wgsl>(self)
-//!         -> ModuleBuilder<S0, HasFragMain> { /* ... */ }
-//! }
-//!
-//! // Terminal build only available when every state is satisfied.
-//! impl ModuleBuilder<HasFRAME, HasFragMain> {
-//!     pub fn build(self) -> wgsl_rs::ir::Module { /* ... */ }
+//! pub fn instantiate<T, FRAME>() -> wgsl_rs::ir::Module
+//! where
+//!     T: Convert<f32> + Clone + wgsl_rs::std::Wgsl,
+//!     FRAME: Convert<f32> + wgsl_rs::std::Wgsl,
+//!     FRAME: wgsl_rs::linkage::Type<Is = T>,
+//! {
+//!     let mut ir_module = (WGSL_MODULE.ir_constructor)();
+//!     let __subst: ::std::collections::HashMap<::std::string::String, wgsl_rs::ir::Type> = [
+//!         ("FRAME".to_string(), <FRAME as wgsl_rs::std::Wgsl>::to_ir()),
+//!         ("frag_main_0".to_string(), <T as wgsl_rs::std::Wgsl>::to_ir()),
+//!     ].into_iter().collect();
+//!     wgsl_rs::ir::substitute_types(&mut ir_module, &__subst);
+//!     ir_module
 //! }
 //! ```
 //!
-//! `Wgsl` is added as an extra bound on every generic parameter so the
-//! builder can call `<T as Wgsl>::to_ir()` to materialise an `ir::Type`
-//! at runtime.
+//! The `FRAME: Type<Is = T>` constraint means the Rust compiler will reject
+//! any call where `FRAME`'s concrete type differs from `T`'s concrete type.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use crate::parse;
 
-/// One slot in the typestate tuple.
-struct Slot {
-    /// Identifier for the slot's "needs" state marker (e.g. `NeedsFRAME`).
-    needs_ty: syn::Ident,
-    /// Identifier for the slot's "has" state marker (e.g. `HasFRAME`).
-    has_ty: syn::Ident,
-    /// Code that, given `self` (the builder) and producing a new builder,
-    /// pushes the encoded `(name, ir::Type)` substitution entries for this
-    /// slot. Generated as the body of the setter / instantiator method.
-    method: TokenStream,
+/// A linkage variable slot: an `impl Trait` declaration (uniform, storage, or
+/// workgroup) that becomes a generic type parameter on `instantiate`.
+struct LinkageSlot {
+    /// The variable name (e.g. `FRAME`, `BINS`). Used as the generic type
+    /// parameter ident.
+    name: syn::Ident,
+    /// The `impl Trait1 + Trait2 + ...` bounds from the declaration.
+    bounds: syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+    /// The module-level type parameter name. For linkage variables this is
+    /// the same as the variable name (e.g. `"FRAME"`).
+    encoded_name: String,
 }
 
-/// Emit a `ModuleBuilder` typestate struct and its impls for the given
-/// parsed module. Returns an empty token stream when the module has no
-/// `impl Trait` linkage variables and no generic entry points.
+/// An entry-point type-parameter slot. Each type parameter of each entry
+/// point function becomes a generic type parameter on `instantiate`.
+#[allow(dead_code)]
+struct EntryPointSlot {
+    /// The type parameter ident used on the `instantiate` function.
+    /// This may be disambiguated from the original name if there are
+    /// collisions (e.g. `T_main_array` instead of `T`).
+    name: syn::Ident,
+    /// The original type parameter ident from the source code (e.g. `T`).
+    /// Used to find bounds in the function's generics.
+    original_name: syn::Ident,
+    /// The function's full `syn::Generics` (for replaying bounds).
+    generics: syn::Generics,
+    /// The positional encoded name (e.g. `"frag_main_0"`).
+    encoded_name: String,
+    /// The parent function's name (for deduplication / diagnostics).
+    fn_name: String,
+}
+
+/// Generate an `instantiate` function for the given module. Returns an empty
+/// token stream when the module has no module-level type parameters (i.e.
+/// no `impl Trait` linkage variables and no generic entry points).
 pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) -> TokenStream {
     let ir_p = quote! { #crate_path::ir };
     let std_p = quote! { #crate_path::std };
+    let linkage_p = quote! { #crate_path::linkage };
 
-    let mut slots: Vec<Slot> = Vec::new();
+    let mut linkage_slots: Vec<LinkageSlot> = Vec::new();
+    let mut ep_slots: Vec<EntryPointSlot> = Vec::new();
 
-    // Slots 0..N — `impl Trait` linkage variables.
+    // Collect linkage variable slots.
     for item in &wgsl_module.content {
-        let (var_name, bounds_opt) = match item {
+        let (name, bounds_opt) = match item {
             parse::Item::Uniform(u) => (u.name.clone(), u.impl_bounds.as_ref()),
             parse::Item::Storage(s) => (s.name.clone(), s.impl_bounds.as_ref()),
             parse::Item::Workgroup(w) => (w.name.clone(), w.impl_bounds.as_ref()),
             _ => continue,
         };
         let Some(bounds) = bounds_opt else { continue };
-
-        let needs_ty = format_ident!("Needs{}", var_name);
-        let has_ty = format_ident!("Has{}", var_name);
-        let setter_name = format_ident!("set_{}", lowercase(&var_name.to_string()));
-        let var_name_str = var_name.to_string();
-        let type_param_ident = var_name.clone();
-        let method = quote! {
-            #[doc = concat!(
-                "Bind the linkage variable `",
-                stringify!(#type_param_ident),
-                "` to a concrete type.",
-            )]
-            pub fn #setter_name<#type_param_ident: #bounds + #std_p::Wgsl>(
-                mut self,
-            ) -> ModuleBuilder<__MB_REST__> {
-                self.subst.push((
-                    ::std::string::String::from(#var_name_str),
-                    <#type_param_ident as #std_p::Wgsl>::to_ir(),
-                ));
-                ModuleBuilder {
-                    subst: self.subst,
-                    _phantom: ::std::marker::PhantomData,
-                }
-            }
-        };
-        slots.push(Slot {
-            needs_ty,
-            has_ty,
-            method,
+        linkage_slots.push(LinkageSlot {
+            name: name.clone(),
+            bounds: bounds.clone(),
+            encoded_name: name.to_string(),
         });
     }
 
-    // Slots N..M — generic entry-point functions.
+    // Collect entry-point type-parameter slots.
+    // Always suffix type params with their function name so the names
+    // are predictable and readable (e.g. `T_main_array` rather than
+    // bare `T` that becomes `T_main_zeroable` on collision).
     for item in &wgsl_module.content {
         let parse::Item::Fn(f) = item else { continue };
         if matches!(f.fn_attrs, parse::FnAttrs::None) {
             continue;
         }
-        if f.type_params.is_empty() {
+        let Some(syn_generics) = &f.syn_generics else {
             continue;
-        }
-        let fn_name = &f.ident;
-        let fn_name_str = fn_name.to_string();
-        let needs_ty = format_ident!("Needs{}", to_camel_case(&fn_name_str));
-        let has_ty = format_ident!("Has{}", to_camel_case(&fn_name_str));
-        let method_name = format_ident!("instantiate_{}", fn_name_str);
-
-        // Replay the original syn::Generics on the method, augmenting each
-        // type parameter with `+ Wgsl` so we can call `to_ir()` on it.
-        let generics = f
-            .syn_generics
-            .clone()
-            .expect("entry-point fn should carry syn_generics");
-        let augmented_generics = augment_generics_with_wgsl(generics, &std_p);
-        let (impl_generics, _, where_clause) = augmented_generics.split_for_impl();
-
-        // Build the body: push one (encoded_name, T::to_ir()) entry per
-        // type parameter.
-        let push_stmts: Vec<TokenStream> = f
-            .type_params
-            .iter()
-            .enumerate()
-            .map(|(i, tp_ident)| {
-                let encoded = format!("{fn_name_str}_{i}");
-                quote! {
-                    self.subst.push((
-                        ::std::string::String::from(#encoded),
-                        <#tp_ident as #std_p::Wgsl>::to_ir(),
-                    ));
-                }
-            })
-            .collect();
-
-        let method = quote! {
-            #[doc = concat!(
-                "Instantiate the entry point `",
-                stringify!(#fn_name),
-                "` with concrete types for its generic parameters.",
-            )]
-            pub fn #method_name #impl_generics (
-                mut self,
-            ) -> ModuleBuilder<__MB_REST__>
-            #where_clause
-            {
-                #(#push_stmts)*
-                ModuleBuilder {
-                    subst: self.subst,
-                    _phantom: ::std::marker::PhantomData,
-                }
-            }
         };
-        slots.push(Slot {
-            needs_ty,
-            has_ty,
-            method,
-        });
+        let fn_name_str = f.ident.to_string();
+        for (i, tp) in f.type_params.iter().enumerate() {
+            let encoded = format!("{fn_name_str}_{i}");
+            let name = format_ident!("{}_{}", tp, fn_name_str);
+            ep_slots.push(EntryPointSlot {
+                name,
+                original_name: tp.clone(),
+                generics: syn_generics.clone(),
+                encoded_name: encoded,
+                fn_name: fn_name_str.clone(),
+            });
+        }
     }
 
-    if slots.is_empty() {
+    if linkage_slots.is_empty() && ep_slots.is_empty() {
         return quote! {};
     }
 
-    emit(slots, &ir_p)
-}
+    // Collect linkage constraints from get!/get_mut! calls.
+    let constraints = collect_linkage_constraints(wgsl_module);
 
-/// Generate the actual builder code given the slot list.
-///
-/// Each slot lives at a position in a fixed-arity type tuple (encoded as
-/// the type parameters of `ModuleBuilder<S0, S1, ...>`). For each slot we
-/// emit:
-///
-/// * a public marker pair `Needs<X> / Has<X>`,
-/// * an `impl<other slots...> ModuleBuilder<NeedsX, ...> { fn setter(...) }`
-///   block whose return type is the same `ModuleBuilder` with the slot's type
-///   changed to `HasX`.
-///
-/// Finally we emit the `new()` and `build()` methods on the fully-needs
-/// and fully-has variants respectively.
-fn emit(slots: Vec<Slot>, ir_p: &TokenStream) -> TokenStream {
-    let n = slots.len();
+    // Build the generic params and where clause.
+    let mut generic_params: Vec<syn::GenericParam> = Vec::new();
+    let mut where_predicates: Vec<syn::WherePredicate> = Vec::new();
 
-    // Marker types (NeedsFRAME, HasFRAME, etc.). We collect them all so
-    // the doc-link is unambiguous.
-    let markers: Vec<TokenStream> = slots
-        .iter()
-        .map(|s| {
-            let needs = &s.needs_ty;
-            let has = &s.has_ty;
-            quote! {
-                #[doc = "Typestate marker for an unbound builder slot."]
-                pub struct #needs;
-                #[doc = "Typestate marker for a bound builder slot."]
-                pub struct #has;
-            }
-        })
-        .collect();
-
-    // Slot type-parameter idents: `S0, S1, ...`
-    let slot_param: Vec<syn::Ident> = (0..n).map(|i| format_ident!("S{i}")).collect();
-
-    // The full default tuple, e.g. `<NeedsFRAME, NeedsFragMain>`.
-    let initial_states: Vec<&syn::Ident> = slots.iter().map(|s| &s.needs_ty).collect();
-    // The fully-bound tuple, e.g. `<HasFRAME, HasFragMain>`.
-    let final_states: Vec<&syn::Ident> = slots.iter().map(|s| &s.has_ty).collect();
-
-    // The struct definition. Defaults the slot type params to the initial
-    // states so that `ModuleBuilder` (no turbofish) means "needs all".
-    let struct_def = quote! {
-        /// Typestate builder for instantiating this module's type
-        /// parameters with concrete types.
-        ///
-        /// Construct via `ModuleBuilder::new()`, call each setter /
-        /// `instantiate_*` method exactly once (in any order), and finish
-        /// with `build()` to obtain an [`ir::Module`][mod_ir]. The Rust
-        /// type system enforces that every slot has been bound before
-        /// `build()` is reachable.
-        ///
-        /// [mod_ir]: ../wgsl_rs_ir/struct.Module.html
-        pub struct ModuleBuilder<
-            #(#slot_param = #initial_states),*
-        > {
-            subst: ::std::vec::Vec<(
-                ::std::string::String,
-                #ir_p::Type,
-            )>,
-            _phantom: ::std::marker::PhantomData<fn() -> ( #(#slot_param,)* )>,
-        }
-    };
-
-    // Constructor on the fully-unbound state.
-    let constructor = quote! {
-        impl ModuleBuilder<#(#initial_states),*> {
-            /// Start a fresh builder with no type parameters bound.
-            pub fn new() -> Self {
-                Self {
-                    subst: ::std::vec::Vec::new(),
-                    _phantom: ::std::marker::PhantomData,
-                }
-            }
-        }
-
-        impl ::std::default::Default for ModuleBuilder<#(#initial_states),*> {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-    };
-
-    // Setter / instantiator impls — one per slot. Each impl block is
-    // generic over the *other* slots' states and constrains only its own
-    // slot to `Needs<X>`. The return type changes only that slot to
-    // `Has<X>`.
-    let setter_impls: Vec<TokenStream> = slots
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| {
-            // Build the impl-side and return-side type tuples.
-            let mut impl_generics: Vec<TokenStream> = Vec::with_capacity(n - 1);
-            let mut self_args: Vec<TokenStream> = Vec::with_capacity(n);
-            let mut ret_args: Vec<TokenStream> = Vec::with_capacity(n);
-            for (i, other) in slots.iter().enumerate() {
-                if i == idx {
-                    let needs = &slot.needs_ty;
-                    let has = &slot.has_ty;
-                    self_args.push(quote! { #needs });
-                    ret_args.push(quote! { #has });
-                    let _ = other; // silence unused
-                } else {
-                    let p = &slot_param[i];
-                    impl_generics.push(quote! { #p });
-                    self_args.push(quote! { #p });
-                    ret_args.push(quote! { #p });
-                }
-            }
-
-            // Substitute the placeholder __MB_REST__ in the slot's method
-            // body with the concrete return-type tuple. This avoids each
-            // slot having to know its own index when it is constructed.
-            let method = substitute_rest(&slot.method, &ret_args);
-
-            quote! {
-                impl< #(#impl_generics),* > ModuleBuilder< #(#self_args),* > {
-                    #method
-                }
-            }
-        })
-        .collect();
-
-    // Terminal `build` method on the fully-bound state.
-    let build_impl = quote! {
-        impl ModuleBuilder<#(#final_states),*> {
-            /// Build the substituted [`ir::Module`][mod_ir] for this
-            /// instantiation.
-            ///
-            /// Calls the module's `ir_constructor`, applies the
-            /// substitution map collected by the builder, and returns
-            /// the owned IR. The caller can render it to WGSL via
-            /// `wgsl_rs::ir::render_module`.
-            ///
-            /// [mod_ir]: ../wgsl_rs_ir/struct.Module.html
-            pub fn build(self) -> #ir_p::Module {
-                let mut ir_module = (WGSL_MODULE.ir_constructor)();
-                let map: ::std::collections::HashMap<
-                    ::std::string::String,
-                    #ir_p::Type,
-                > = self.subst.into_iter().collect();
-                #ir_p::substitute_types(&mut ir_module, &map);
-                ir_module
-            }
-        }
-    };
-
-    quote! {
-        #(#markers)*
-        #struct_def
-        #constructor
-        #(#setter_impls)*
-        #build_impl
-    }
-}
-
-/// Walk the token stream and replace any standalone `__MB_REST__` ident
-/// with a comma-separated expansion of `replacement`. This is a hack to
-/// let each slot construct its method body without knowing its own index;
-/// the surrounding `emit` function fills in the concrete tuple.
-fn substitute_rest(input: &TokenStream, replacement: &[TokenStream]) -> TokenStream {
-    use proc_macro2::TokenTree;
-    let mut out = TokenStream::new();
-    for tt in input.clone() {
-        match &tt {
-            TokenTree::Ident(id) if id == "__MB_REST__" => {
-                let mut first = true;
-                for r in replacement {
-                    if !first {
-                        out.extend(quote! { , });
-                    }
-                    first = false;
-                    out.extend(r.clone());
-                }
-            }
-            TokenTree::Group(g) => {
-                let inner = substitute_rest(&g.stream(), replacement);
-                let mut new_group = proc_macro2::Group::new(g.delimiter(), inner);
-                new_group.set_span(g.span());
-                out.extend(std::iter::once(TokenTree::Group(new_group)));
-            }
-            _ => out.extend(std::iter::once(tt)),
-        }
-    }
-    out
-}
-
-/// Add `+ Wgsl` to every type parameter's bounds. This lets the builder
-/// call `<T as Wgsl>::to_ir()` regardless of what bounds the user
-/// originally wrote.
-fn augment_generics_with_wgsl(mut generics: syn::Generics, std_p: &TokenStream) -> syn::Generics {
-    let wgsl_path: syn::Path =
-        syn::parse2(quote! { #std_p::Wgsl }).expect("std_p::Wgsl is a valid path");
     let wgsl_bound = syn::TypeParamBound::Trait(syn::TraitBound {
         paren_token: None,
         modifier: syn::TraitBoundModifier::None,
         lifetimes: None,
-        path: wgsl_path,
+        path: syn::parse2(quote! { #std_p::Wgsl }).expect("Wgsl is a valid path"),
     });
-    for param in generics.params.iter_mut() {
-        if let syn::GenericParam::Type(tp) = param {
-            tp.bounds.push(wgsl_bound.clone());
-        }
+
+    // Add linkage variable generic params (e.g. <FRAME>).
+    for slot in &linkage_slots {
+        let mut tp: syn::TypeParam = syn::TypeParam::from(slot.name.clone());
+        tp.bounds = slot.bounds.clone();
+        push_wgsl_if_missing(&mut tp.bounds, &wgsl_bound);
+        generic_params.push(syn::GenericParam::Type(tp));
     }
-    generics
-}
 
-/// Lowercase a name, used to derive setter method names from variable
-/// idents (e.g. `FRAME` -> `frame`).
-fn lowercase(s: &str) -> String {
-    s.to_lowercase()
-}
+    // Add entry-point type parameter generic params (e.g. <T>).
+    for slot in &ep_slots {
+        let mut tp: syn::TypeParam = syn::TypeParam::from(slot.name.clone());
+        // Replay the bounds from the function's generics, plus Wgsl.
+        if let Some(syn::GenericParam::Type(orig_tp)) = slot
+            .generics
+            .params
+            .iter()
+            .find(|p| matches!(p, syn::GenericParam::Type(t) if t.ident == slot.original_name))
+        {
+            tp.bounds = orig_tp.bounds.clone();
+        }
+        push_wgsl_if_missing(&mut tp.bounds, &wgsl_bound);
+        generic_params.push(syn::GenericParam::Type(tp));
+    }
 
-/// Convert a snake_case identifier to CamelCase, used to derive marker
-/// type names from entry point function names (e.g. `frag_main` ->
-/// `FragMain`).
-fn to_camel_case(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut upper_next = true;
-    for ch in s.chars() {
-        if ch == '_' {
-            upper_next = true;
-        } else if upper_next {
-            out.extend(ch.to_uppercase());
-            upper_next = false;
+    // Add Type<Is = ...> constraints from get!/get_mut! calls.
+    // For each constraint, build a rename map scoped to its entry point
+    // function so that type params are disambiguated correctly (e.g.
+    // `T` in `main_zeroable`'s constraint becomes `T_main_zeroable`,
+    // not `T_main_array`).
+    for constraint in &constraints {
+        let linkage_name = format_ident!("{}", constraint.linkage_name);
+        let linkage_ty: syn::Type = syn::parse_quote!(#linkage_name);
+
+        let renames: Vec<(String, syn::Ident)> = ep_slots
+            .iter()
+            .filter(|slot| slot.fn_name == constraint.fn_name)
+            .filter(|slot| slot.name != slot.original_name)
+            .map(|slot| (slot.original_name.to_string(), slot.name.clone()))
+            .collect();
+
+        let mut rhs_ty = constraint.type_expr.clone();
+        rename_type_params_in_syn_type(&mut rhs_ty, &renames);
+
+        where_predicates.push(syn::WherePredicate::Type(syn::PredicateType {
+            lifetimes: None,
+            bounded_ty: linkage_ty,
+            colon_token: syn::Token![:](proc_macro2::Span::call_site()),
+            bounds: vec![syn::TypeParamBound::Trait(syn::TraitBound {
+                paren_token: None,
+                modifier: syn::TraitBoundModifier::None,
+                lifetimes: None,
+                path: syn::parse2(quote! { #linkage_p::Type<Is = #rhs_ty> })
+                    .expect("Type<Is = ...> should be a valid path"),
+            })]
+            .into_iter()
+            .collect(),
+        }));
+    }
+
+    // Build the where clause.
+    let where_clause = if where_predicates.is_empty() {
+        None
+    } else {
+        let wc = syn::WhereClause {
+            where_token: syn::Token![where](proc_macro2::Span::call_site()),
+            predicates: where_predicates.into_iter().collect(),
+        };
+        Some(wc)
+    };
+
+    // Build the substitution-map entries.
+    let mut subst_entries: Vec<TokenStream> = Vec::new();
+
+    for slot in &linkage_slots {
+        let name = &slot.name;
+        let encoded_name_str = &slot.encoded_name;
+        subst_entries.push(quote! {
+            (::std::string::String::from(#encoded_name_str), <#name as #std_p::Wgsl>::to_ir())
+        });
+    }
+
+    for slot in &ep_slots {
+        let name = &slot.name;
+        let encoded_name_str = &slot.encoded_name;
+        subst_entries.push(quote! {
+            (::std::string::String::from(#encoded_name_str), <#name as #std_p::Wgsl>::to_ir())
+        });
+    }
+
+    // Assemble the generic params.
+    let has_generics = !generic_params.is_empty();
+    let generics = syn::Generics {
+        lt_token: if has_generics {
+            Some(syn::Token![<](proc_macro2::Span::call_site()))
         } else {
-            out.push(ch);
+            None
+        },
+        params: generic_params.into_iter().collect(),
+        gt_token: if has_generics {
+            Some(syn::Token![>](proc_macro2::Span::call_site()))
+        } else {
+            None
+        },
+        where_clause,
+    };
+    let (impl_generics, _type_generics, split_where_clause) = generics.split_for_impl();
+
+    quote! {
+        /// Instantiate this module's generic type parameters with concrete types.
+        ///
+        /// The `where` clause enforces at compile time that every linkage
+        /// variable's concrete type is consistent across all entry points
+        /// that use it via [`wgsl_rs::linkage::Type`] constraints.
+        #[allow(non_camel_case_types)]
+        pub fn instantiate #impl_generics () -> #ir_p::Module
+        #split_where_clause
+        {
+            let mut __ir_module = (WGSL_MODULE.ir_constructor)();
+            let __subst: ::std::collections::HashMap<::std::string::String, #ir_p::Type> = [
+                #(#subst_entries),*
+            ].into_iter().collect();
+            #ir_p::substitute_types(&mut __ir_module, &__subst);
+            __ir_module
         }
     }
-    out
+}
+
+/// Convert a parsed `Type` from a `LinkageConstraint`'s `type_expr` field
+/// into a `syn::Type` suitable for a `where` clause predicate.
+///
+/// Type parameters (like `T` from an entry point) are resolved to the
+/// corresponding generic parameter ident on the `instantiate` function.
+/// Concrete types (scalars, vectors, structs) are reconstructed as
+/// `syn::Type` values.
+/// Collect all `get!(VAR, TYPE)` / `get_mut!(VAR, TYPE)` constraints from
+/// entry-point functions in the module.
+///
+/// Only entry points are included (helper functions are deferred to a future
+/// iteration that includes call graph analysis).
+fn collect_linkage_constraints(wgsl_module: &parse::ItemMod) -> Vec<LinkageConstraint> {
+    use parse::FnAttrs;
+    let mut constraints: Vec<LinkageConstraint> = Vec::new();
+
+    for item in &wgsl_module.content {
+        let parse::Item::Fn(f) = item else { continue };
+        if matches!(f.fn_attrs, FnAttrs::None) {
+            continue;
+        }
+        let fn_name = f.ident.to_string();
+        let fn_type_params: Vec<String> = f.type_params.iter().map(|id| id.to_string()).collect();
+        walk_expr_for_linkage_constraints(
+            &f.block.stmt,
+            &fn_name,
+            true,
+            &fn_type_params,
+            &mut constraints,
+        );
+    }
+
+    constraints
+}
+
+/// A type constraint collected from a `get!(VAR, TYPE)` or `get_mut!(VAR,
+/// TYPE)` usage within a function body.
+#[allow(dead_code)]
+struct LinkageConstraint {
+    /// The linkage variable name (e.g., "BINS", "FRAME").
+    linkage_name: String,
+    /// The type expression used at the call site (e.g., `Vec4<T>`, `f32`, `T`).
+    /// Stored as `syn::Type` because it's a Rust-side type expression used for
+    /// code generation (the `instantiate` function's `where` clause), not a
+    /// WGSL type.
+    type_expr: syn::Type,
+    /// The name of the function where this constraint was found.
+    fn_name: String,
+    /// Whether the function is an entry point.
+    is_entry_point: bool,
+    /// Type parameters in scope at this call site.
+    fn_type_params: Vec<String>,
+}
+
+/// Recursively walk a block of statements, collecting `LinkageAccess`
+/// constraints.
+fn walk_expr_for_linkage_constraints(
+    stmts: &[parse::Stmt],
+    fn_name: &str,
+    is_entry_point: bool,
+    fn_type_params: &[String],
+    constraints: &mut Vec<LinkageConstraint>,
+) {
+    use parse::Stmt;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                if let Some(init) = &local.init {
+                    walk_expr_for_constraints_recursive(
+                        &init.expr,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+            }
+            Stmt::Expr { expr, .. } => {
+                walk_expr_for_constraints_recursive(
+                    expr,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::If(parse_if) => {
+                walk_expr_for_constraints_recursive(
+                    &parse_if.condition,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                walk_expr_for_linkage_constraints(
+                    &parse_if.then_block.stmt,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                if let Some(else_branch) = &parse_if.else_branch {
+                    match &else_branch.body {
+                        parse::ElseBody::Block(block) => {
+                            walk_expr_for_linkage_constraints(
+                                &block.stmt,
+                                fn_name,
+                                is_entry_point,
+                                fn_type_params,
+                                constraints,
+                            );
+                        }
+                        parse::ElseBody::If(nested_if) => {
+                            walk_expr_for_constraints_recursive(
+                                &nested_if.condition,
+                                fn_name,
+                                is_entry_point,
+                                fn_type_params,
+                                constraints,
+                            );
+                            walk_expr_for_linkage_constraints(
+                                &nested_if.then_block.stmt,
+                                fn_name,
+                                is_entry_point,
+                                fn_type_params,
+                                constraints,
+                            );
+                        }
+                    }
+                }
+            }
+            Stmt::For(parse_for) => {
+                walk_expr_for_constraints_recursive(
+                    &parse_for.from,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                walk_expr_for_constraints_recursive(
+                    &parse_for.to,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                walk_expr_for_linkage_constraints(
+                    &parse_for.body.stmt,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::Return { expr, .. } => {
+                if let Some(expr) = expr {
+                    walk_expr_for_constraints_recursive(
+                        expr,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+            }
+            Stmt::Assignment { lhs, rhs, .. } => {
+                walk_expr_for_constraints_recursive(
+                    lhs,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                walk_expr_for_constraints_recursive(
+                    rhs,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::CompoundAssignment { lhs, rhs, .. } => {
+                walk_expr_for_constraints_recursive(
+                    lhs,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                walk_expr_for_constraints_recursive(
+                    rhs,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::While {
+                condition, body, ..
+            } => {
+                walk_expr_for_constraints_recursive(
+                    condition,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+                walk_expr_for_linkage_constraints(
+                    &body.stmt,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::Loop { body, .. } => {
+                walk_expr_for_linkage_constraints(
+                    &body.stmt,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::Block(block) => {
+                walk_expr_for_linkage_constraints(
+                    &block.stmt,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+            Stmt::Switch(switch) => {
+                for arm in &switch.arms {
+                    walk_expr_for_linkage_constraints(
+                        &arm.body.stmt,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+            }
+            Stmt::Break { .. }
+            | Stmt::Continue { .. }
+            | Stmt::Const(_)
+            | Stmt::Discard { .. }
+            | Stmt::SlabRead { .. }
+            | Stmt::SlabWrite { .. } => {}
+        }
+    }
+}
+
+/// Walk an expression tree, collecting `LinkageAccess` constraints when we find
+/// `get!(VAR, TYPE)` or `get_mut!(VAR, TYPE)` with a type argument.
+fn walk_expr_for_constraints_recursive(
+    expr: &parse::Expr,
+    fn_name: &str,
+    is_entry_point: bool,
+    fn_type_params: &[String],
+    constraints: &mut Vec<LinkageConstraint>,
+) {
+    match expr {
+        parse::Expr::LinkageAccess {
+            ident,
+            type_arg: Some(ty),
+            ..
+        } => {
+            constraints.push(LinkageConstraint {
+                linkage_name: ident.to_string(),
+                type_expr: ty.clone(),
+                fn_name: fn_name.to_string(),
+                is_entry_point,
+                fn_type_params: fn_type_params.to_vec(),
+            });
+        }
+        parse::Expr::Binary { lhs, rhs, .. } => {
+            walk_expr_for_constraints_recursive(
+                lhs,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+            walk_expr_for_constraints_recursive(
+                rhs,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::Unary { expr, .. } => {
+            walk_expr_for_constraints_recursive(
+                expr,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::Paren { inner, .. } => {
+            walk_expr_for_constraints_recursive(
+                inner,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::Array { elems, .. } => {
+            for elem in elems.iter() {
+                walk_expr_for_constraints_recursive(
+                    elem,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+        }
+        parse::Expr::ArrayIndexing { lhs, index, .. } => {
+            walk_expr_for_constraints_recursive(
+                lhs,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+            walk_expr_for_constraints_recursive(
+                index,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::Swizzle { lhs, params, .. } => {
+            walk_expr_for_constraints_recursive(
+                lhs,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+            if let Some(params) = params {
+                for param in params.iter() {
+                    walk_expr_for_constraints_recursive(
+                        param,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+            }
+        }
+        parse::Expr::Cast { lhs, .. } => {
+            walk_expr_for_constraints_recursive(
+                lhs,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::FnCall { params, .. } => {
+            for param in params.iter() {
+                walk_expr_for_constraints_recursive(
+                    param,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+        }
+        parse::Expr::Struct { fields, .. } => {
+            for field in fields.iter() {
+                walk_expr_for_constraints_recursive(
+                    &field.expr,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+        }
+        parse::Expr::FieldAccess { base, .. } => {
+            walk_expr_for_constraints_recursive(
+                base,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::Reference { expr, .. } => {
+            walk_expr_for_constraints_recursive(
+                expr,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::ZeroValueArray { len, .. } => {
+            walk_expr_for_constraints_recursive(
+                len,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::Expr::Lit(_) | parse::Expr::Ident(_) | parse::Expr::TypePath { .. } => {}
+        parse::Expr::LinkageAccess { type_arg: None, .. } => {}
+    }
+}
+
+/// Push the `Wgsl` trait bound onto `bounds` only if it isn't already present.
+/// This avoids duplicate bounds like `T: Wgsl + crate::std::Wgsl`.
+fn push_wgsl_if_missing(
+    bounds: &mut syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+    wgsl_bound: &syn::TypeParamBound,
+) {
+    let syn::TypeParamBound::Trait(wgsl_trait) = wgsl_bound else {
+        bounds.push(wgsl_bound.clone());
+        return;
+    };
+    let wgsl_path = &wgsl_trait.path;
+    let already_has_wgsl = bounds.iter().any(|b| {
+        if let syn::TypeParamBound::Trait(tb) = b {
+            paths_match(&tb.path, wgsl_path)
+        } else {
+            false
+        }
+    });
+    if !already_has_wgsl {
+        bounds.push(wgsl_bound.clone());
+    }
+}
+
+/// Check if two syn paths refer to the same trait, comparing only the
+/// final segment (the trait name). This handles the case where one path
+/// is `Wgsl` (unqualified, from the user's code) and the other is
+/// `crate_path::std::Wgsl` (fully qualified, from our code generation).
+fn paths_match(a: &syn::Path, b: &syn::Path) -> bool {
+    let a_last = a.segments.last();
+    let b_last = b.segments.last();
+    match (a_last, b_last) {
+        (Some(sa), Some(sb)) => sa.ident == sb.ident,
+        _ => false,
+    }
+}
+
+/// Walk a `syn::Type` and replace any path segments whose `ident` matches
+/// an entry in `renames` with the disambiguated ident. This ensures that
+/// type params like `T` in a constraint expression get replaced by their
+/// disambiguated names (e.g. `T_main_array`) when multiple entry points
+/// use the same letter.
+fn rename_type_params_in_syn_type(ty: &mut syn::Type, renames: &[(String, syn::Ident)]) {
+    if renames.is_empty() {
+        return;
+    }
+    match ty {
+        syn::Type::Path(type_path) => {
+            // A single-segment path like `T` or `Vec4` may be a type param.
+            // A multi-segment path like `crate::T` is less likely, but we
+            // check the last segment as the most common case.
+            for segment in &mut type_path.path.segments {
+                for (original, replacement) in renames {
+                    if segment.ident == original {
+                        segment.ident = replacement.clone();
+                    }
+                }
+                // Also rename type arguments inside angle brackets (e.g. `Vec4<T>`)
+                if let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments {
+                    for arg in &mut args.args {
+                        if let syn::GenericArgument::Type(inner_ty) = arg {
+                            rename_type_params_in_syn_type(inner_ty, renames);
+                        }
+                    }
+                }
+            }
+        }
+        syn::Type::Reference(type_ref) => {
+            rename_type_params_in_syn_type(&mut type_ref.elem, renames);
+        }
+        syn::Type::Paren(type_paren) => {
+            rename_type_params_in_syn_type(&mut type_paren.elem, renames);
+        }
+        syn::Type::Slice(type_slice) => {
+            rename_type_params_in_syn_type(&mut type_slice.elem, renames);
+        }
+        syn::Type::Array(type_array) => {
+            rename_type_params_in_syn_type(&mut type_array.elem, renames);
+        }
+        syn::Type::Group(type_group) => {
+            rename_type_params_in_syn_type(&mut type_group.elem, renames);
+        }
+        syn::Type::Tuple(type_tuple) => {
+            for elem in &mut type_tuple.elems {
+                rename_type_params_in_syn_type(elem, renames);
+            }
+        }
+        syn::Type::Ptr(type_ptr) => {
+            rename_type_params_in_syn_type(&mut type_ptr.elem, renames);
+        }
+        _ => {}
+    }
 }

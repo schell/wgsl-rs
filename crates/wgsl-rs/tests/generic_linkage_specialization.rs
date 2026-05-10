@@ -1,6 +1,4 @@
-use wgsl_rs::{std::WgslScalar, wgsl};
-
-use crate::generic_linkage::Zeroable;
+use wgsl_rs::wgsl;
 
 #[wgsl]
 pub mod generic_linkage {
@@ -13,7 +11,7 @@ pub mod generic_linkage {
     //! During parsing, each time a generic linkage is accessed we need to log a
     //! type constraint. Then during code gen, we can list these constraints
     //! on the builder methods. This should catch conflicting constraints at
-    //! code gen time (module compile time) or at instantiation.
+    //! instantiation.
     use wgsl_rs::std::*;
 
     pub trait Zeroable {
@@ -39,7 +37,7 @@ pub mod generic_linkage {
     }
 
     // Here BINS is defined with the constraint `impl std::any::Any`.
-    storage!(group(0), binding(0), BINS: impl std::any::Any);
+    storage!(group(0), binding(0), BINS: impl Zeroable);
 
     #[compute]
     #[workgroup_size(64)]
@@ -76,47 +74,4 @@ pub mod generic_linkage {
         let mut bins = get_mut!(BINS, f32);
         *bins = 0.0;
     }
-
-    #[wgsl_ignore]
-    mod linkage {
-        use std::marker::PhantomData;
-
-        use super::*;
-
-        pub trait Type {
-            type Is;
-        }
-        impl<T> Type for T {
-            type Is = T;
-        }
-
-        /// User starts here by specifying the concrete type of all things
-        pub fn instantiate<UniformBins, MainArrayT, MainZeroableT>() -> wgsl_rs::ir::Module
-        where
-            // From uniform!
-            UniformBins: std::any::Any,
-            // From main_array
-            UniformBins: Type<Is = Vec4<MainArrayT>>,
-            MainArrayT: WgslScalar + Zeroable,
-            // From main_zeroable
-            UniformBins: Type<Is = MainZeroableT>,
-            MainZeroableT: Wgsl + Zeroable,
-            // From main_f32
-            UniformBins: Type<Is = f32>,
-        {
-            let mut ir_module = (super::WGSL_MODULE.ir_constructor)();
-            let substitutes: std::collections::HashMap<String, wgsl_rs::ir::Type> =
-                todo!("collect types from the variables");
-            wgsl_rs::ir::substitute_types(&mut ir_module, &substitutes);
-            ir_module
-        }
-
-        // But we can't ever instantiate because of the conflict in
-        // constraints.
-        // fn instantiate_it() {
-        //     let _ = Builder::instantiate::<f32, Vec4f, Vec4f>();
-        // }
-    }
-
-    // But how do we encode BINS = f32?
 }

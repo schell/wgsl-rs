@@ -1832,9 +1832,10 @@ pub mod hello_triangle_generic {
         vec4f(position.x, position.y, 0.0, 1.0)
     }
 
-    /// Here we define a polymorphic fragment stage. Its `T` is independent
-    /// of the linkage variable's type — they are bound separately via the
-    /// generated `ModuleBuilder`.
+    /// Here we define a polymorphic fragment stage. Its `T` is connected
+    /// to the linkage variable's type via `get!(FRAME, T)`, which generates
+    /// a `FRAME: linkage::Type<Is = T>` constraint on the `instantiate`
+    /// function.
     #[fragment]
     pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
         let frame_t = get!(FRAME, T);
@@ -1846,10 +1847,7 @@ pub mod hello_triangle_generic {
     mod test {
         #[test]
         fn can_instantiate() {
-            let _ir = super::ModuleBuilder::new()
-                .set_frame::<f32>()
-                .instantiate_frag_main::<f32>()
-                .build();
+            let _ir = super::instantiate::<f32, f32>();
         }
     }
 }

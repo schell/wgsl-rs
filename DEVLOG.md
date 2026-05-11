@@ -126,74 +126,6 @@ return type location or builtin, `wgsl-rs` will automatically insert an appropri
 I think most people who need to specify a return value other than the default `@builtin(position)` for
 vertex shaders or `@location(0)` for fragment shaders will use a struct, so this is fine.
 
-## features
-
-### wgpu linkage (`linkage-wgpu` feature)
-
-When the `linkage-wgpu` feature is enabled, the `#[wgsl]` macro generates additional wgpu-specific
-code to simplify integration with wgpu applications:
-
-**Buffer descriptors and creation functions** - For each `uniform!` and `storage!` declaration:
-- A `{NAME}_BUFFER_DESCRIPTOR: wgpu::BufferDescriptor<'static>` constant
-- A `create_{name}_buffer(device: &wgpu::Device) -> wgpu::Buffer` function
-
-**Bind group modules** - For each bind group, a `linkage::bind_group_{N}` module containing:
-- `LAYOUT_ENTRIES` and `LAYOUT_DESCRIPTOR` constants
-- `layout(device)` - creates the bind group layout
-- `create(device, layout, ...)` - type-safe bind group creation with named parameters
-- `create_dynamic(device, layout, entries)` - dynamic bind group creation with a slice
-
-**Shader entry point modules** - For vertex, fragment, and compute entry points:
-- Entry point name constants
-- Helper functions for creating pipeline states
-
-This feature adds `wgpu` as a dependency to `wgsl-rs`.
-
-### 2026-01-05: switch statement support (match → switch)
-
-Rust `match` statements transpile to WGSL `switch` statements:
-- `match x { 0 => {...}, 1 => {...}, _ => {...} }` → `switch x { case 0 {...} case 1 {...} default {...} }`
-- Or-patterns `1 | 2 | 3 => {...}` → `case 1, 2, 3 {...}`
-- Missing `_` arm auto-generates `default {}`
-- Non-literal patterns (constants, identifiers) emit a warning suppressed with `#[wgsl_allow(non_literal_match_statement_patterns)]`
-- Match expressions (in let bindings) are unsupported (WGSL switch is a statement)
-- Guard clauses, range patterns, struct/tuple patterns are unsupported
-- For future work regarding type checking, we may be able to get away with a trick. We _could_ alter the Rust code
-  to result in the pattern matched, then use that result in an empty function that takes an integer. This would
-  cause Rust to do the type checking for us, before WGSL validation. That would keep us from having to emit a warning. 
-
-  Example input Rust:
-  ```rust
-  match my_expr {
-    MyEnum::Variant1 => {
-      do_stuff();
-    }
-  }
-  ```
-
-  Output Rust:
-  ```rust
-  let __match_result = match my_expr {
-    input @ MyEnum::Variant1 => {
-      do_stuff();
-      input
-    }
-  };
-  __ensure_integer(__match_result);
-  ```
-
-  Output WGSL:
-  ```wgsl
-  switch my_expr {
-    case MyEnum_Variant1: {
-      do_stuff();
-    }
-    default: {}
-  }
-  ```
-
-  Maybe we should also look into what we can do with for-loop bounds and the `non_literal_loop_bounds` warning in this manner.
-
 ### 2026-01-03: for-loop support and warnings with #[wgsl_allow]
 
 `for i in 0..n` transpiles to `for (var i = 0; i < n; i++)` and `for i in 0..=n` transpiles to `for (var i = 0; i <= n; i++)`.
@@ -496,4 +428,14 @@ Replaced the typestate builder with unified `instantiate` function using
 `Type<Is = ...>` trait constraints; added `#[allow(non_camel_case_types)]` to
 suppress warnings on suffixed type params like `T_frag_main`.
 
+#### Test validation
 
+- Replaced typestate builder with unified `instantiate` function using
+  `Type<Is = ...>` trait constraints; added `#[allow(non_camel_case_types)]` to
+  suppress warnings on suffixed type params like `T_frag_main`.
+
+- Added auto-generated WGSL validation tests for all modules (not just imports);
+  added `validate_with_instantiation_types(T1, T2, ...)` attribute for template
+  modules; removed dead `WgslValidate` variant and naga dep from proc-macro
+  crate; added `validate_wgsl_source()` free function; surfaced pre-existing
+  monomorphization bug in `generic_structs` example.

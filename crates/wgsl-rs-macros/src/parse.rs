@@ -221,6 +221,10 @@ pub enum WarningName {
     /// Match statement patterns that are not integer literals cannot be
     /// verified at compile-time to be valid WGSL case selectors.
     NonLiteralMatchStatementPatterns,
+    /// Template (generic) modules should specify concrete types for
+    /// validation via `validate_with_instantiation_types(T1, T2, ...)`
+    /// to ensure the instantiated WGSL is valid.
+    MissingValidationTypes,
 }
 
 impl std::fmt::Display for WarningName {
@@ -238,6 +242,12 @@ impl std::fmt::Display for WarningName {
                  #[wgsl_allow(non_literal_match_statement_patterns)] to the match statement to \
                  suppress this warning.",
             ),
+            WarningName::MissingValidationTypes => f.write_str(
+                "template module has no validate_with_instantiation_types attribute, so no \
+                 automated WGSL validation test will be generated. Add \
+                 validate_with_instantiation_types(T1, T2, ...) to the #[wgsl] attribute, or add \
+                 #[wgsl(skip_validation)] to suppress this warning.",
+            ),
         }
     }
 }
@@ -251,6 +261,7 @@ impl TryFrom<&syn::Ident> for WarningName {
             "non_literal_match_statement_patterns" => {
                 Ok(WarningName::NonLiteralMatchStatementPatterns)
             }
+            "missing_validation_types" => Ok(WarningName::MissingValidationTypes),
             other => UnsupportedSnafu {
                 span: ident.span(),
                 note: format!("Unknown warning name '{other}'"),
@@ -295,6 +306,10 @@ pub(crate) fn emit_warning(_warning: &Warning) {
                 WarningName::NonLiteralMatchStatementPatterns => {
                     "Add #[wgsl_allow(non_literal_match_statement_patterns)] to suppress this \
                      warning"
+                }
+                WarningName::MissingValidationTypes => {
+                    "Add validate_with_instantiation_types(T1, T2, ...) to the #[wgsl] attribute, \
+                     or add #[wgsl(skip_validation)] to suppress this warning"
                 }
             };
 

@@ -329,22 +329,30 @@ impl Module {
             return Ok(());
         }
 
-        let source = self.wgsl_source();
-
-        // Parse the WGSL source
-        let module =
-            naga::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;
-
-        // Run semantic validation
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        .map_err(|e| e.emit_to_string(&source))?;
-
-        Ok(())
+        validate_wgsl_source(&self.wgsl_source())
     }
+}
+
+/// Validates arbitrary WGSL source text using naga.
+///
+/// Parses the source, then runs naga's semantic validation. This is useful
+/// for validating the output of `instantiate::<...>()` + `ir::render_module()`
+/// for generic (template) modules.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if validation succeeds, or an error message describing
+/// the validation failure.
+#[cfg(feature = "validation")]
+pub fn validate_wgsl_source(source: &str) -> Result<(), String> {
+    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .map_err(|e| e.emit_to_string(source))?;
+    Ok(())
 }
 
 pub mod std;
@@ -667,7 +675,7 @@ mod test {
 
     // --- Generic linkage / generic entry-point tests ---
 
-    #[wgsl(crate_path = crate)]
+    #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, f32))]
     pub mod generic_shader {
         use crate::std::*;
 
@@ -768,28 +776,13 @@ mod test {
     fn generic_module_instantiated_source_is_valid_wgsl() {
         let m = generic_shader::instantiate::<f32, f32>();
         let src = ir::render_module(&m);
-        let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| {
-            panic!(
-                "parse failed:\n{}\n--- source ---\n{src}",
-                e.emit_to_string(&src)
-            )
-        });
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| {
-            panic!(
-                "validate failed:\n{}\n--- source ---\n{src}",
-                e.emit_to_string(&src)
-            )
-        });
+        crate::validate_wgsl_source(&src)
+            .expect("instantiated generic_shader should produce valid WGSL");
     }
 
     // Generic compute shader exercising multiple linkage and entry-point
     // type parameters using `impl Trait` syntax.
-    #[wgsl(crate_path = crate, skip_validation)]
+    #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, u32))]
     pub mod generic_compute {
         use crate::std::*;
 
@@ -856,7 +849,7 @@ mod test {
     // both access the same linkage variable DATA via `get!`. This tests
     // that the `instantiate` function correctly disambiguates the type
     // params and generates the right `Type<Is = ...>` constraints.
-    #[wgsl(crate_path = crate)]
+    #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, f32, f32))]
     pub mod multi_ep {
         use crate::std::*;
 

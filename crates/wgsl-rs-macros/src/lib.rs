@@ -1,7 +1,7 @@
 #![cfg_attr(nightly, feature(proc_macro_diagnostic))]
 
 use proc_macro::TokenStream;
-use quote::{ToTokens, quote};
+use quote::{ToTokens, format_ident, quote};
 use snafu::prelude::*;
 use syn::{
     DeriveInput,
@@ -87,6 +87,30 @@ struct Attrs {
     ///
     /// Set via `#[wgsl(skip_validation)]`.
     skip_validation: bool,
+
+    /// Concrete type lists for validating template (generic) modules.
+    ///
+    /// Each occurrence of `validate_with_instantiation_types(T1, T2, ...)`
+    /// provides a set of concrete types to instantiate the module with and
+    /// validate the resulting WGSL. The types must match the order and
+    /// number of type parameters in the module's `instantiate` function.
+    ///
+    /// For non-template modules, this has no effect (they are always
+    /// validated via `WGSL_MODULE.validate()`).
+    validate_instantiations: Vec<Vec<syn::Type>>,
+}
+
+struct InstantiationTypes {
+    types: syn::punctuated::Punctuated<syn::Type, syn::Token![,]>,
+}
+
+impl syn::parse::Parse for InstantiationTypes {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let content;
+        syn::parenthesized!(content in input);
+        let types = content.parse_terminated(syn::Type::parse, syn::Token![,])?;
+        Ok(Self { types })
+    }
 }
 
 impl syn::parse::Parse for Attrs {
@@ -108,12 +132,18 @@ impl syn::parse::Parse for Attrs {
                 "skip_validation" => {
                     attrs.skip_validation = true;
                 }
+                "validate_with_instantiation_types" => {
+                    let types: InstantiationTypes = input.parse()?;
+                    attrs
+                        .validate_instantiations
+                        .push(types.types.into_iter().collect());
+                }
                 other => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "Unknown attribute '{other}', expected 'crate_path' or \
-                             'skip_validation'"
+                            "Unknown attribute '{other}', expected 'crate_path', \
+                             'skip_validation', or 'validate_with_instantiation_types'"
                         ),
                     ));
                 }
@@ -150,19 +180,9 @@ impl Attrs {
 
 #[derive(Debug, Snafu)]
 enum WgslGenError {
-    RustParse {
-        source: syn::Error,
-    },
+    RustParse { source: syn::Error },
 
-    WgslParse {
-        source: parse::Error,
-    },
-
-    #[cfg(feature = "validation")]
-    WgslValidate {
-        input_mod: Box<syn::ItemMod>,
-        error: syn::Error,
-    },
+    WgslParse { source: parse::Error },
 }
 
 impl From<syn::Error> for WgslGenError {
@@ -563,15 +583,9 @@ fn gen_wgsl_module(
 
 /// Generates a `#[test]` function that validates the assembled WGSL source.
 ///
-/// Emitted for `#[wgsl]` modules that import from other `#[wgsl]` modules
-/// (and aren't templates). The full WGSL source for such a module — including
-/// the imported code — is only knowable at runtime, so validation is deferred
-/// to a `cargo test`-time test that calls `WGSL_MODULE.validate()`.
-///
-/// Standalone modules (no imports) and template modules don't get the
-/// auto-generated test; the former because the user can validate them
-/// directly, the latter because their placeholders aren't valid WGSL until
-/// instantiated.
+/// Emitted for non-template `#[wgsl]` modules (unless `skip_validation` is
+/// set). The validation is deferred to `cargo test` time, where it calls
+/// `WGSL_MODULE.validate()`.
 ///
 /// The `validate()` method is available on `Module` when the `wgsl-rs` crate
 /// has the `validation` feature enabled (the default). We gate the generated
@@ -587,6 +601,40 @@ fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
             WGSL_MODULE.validate().expect(#error_msg);
         }
     }
+}
+
+/// Generates `#[test]` functions that validate instantiated WGSL source for
+/// template (generic) modules.
+///
+/// Each occurrence of `validate_with_instantiation_types(T1, T2, ...)`
+/// produces a test that calls `instantiate::<T1, T2, ...>()`, renders the
+/// IR to WGSL, and validates the result with naga.
+fn gen_instantiated_validation_tests(
+    module_ident: &syn::Ident,
+    crate_path: &syn::Path,
+    instantiations: &[Vec<syn::Type>],
+) -> proc_macro2::TokenStream {
+    let ir_p = quote! { #crate_path::ir };
+    let validate_fn = quote! { #crate_path::validate_wgsl_source };
+    let tests: Vec<proc_macro2::TokenStream> = instantiations
+        .iter()
+        .enumerate()
+        .map(|(i, types)| {
+            let test_name = format_ident!("__validate_wgsl_instantiated_{i}");
+            let error_msg =
+                format!("WGSL validation failed for instantiated module '{module_ident}'");
+            quote! {
+                #[cfg(test)]
+                #[test]
+                fn #test_name() {
+                    let __m = instantiate::<#(#types),*>();
+                    let __src = #ir_p::render_module(&__m);
+                    #validate_fn(&__src).expect(#error_msg);
+                }
+            }
+        })
+        .collect();
+    quote! { #(#tests)* }
 }
 
 fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream, WgslGenError> {
@@ -620,14 +668,48 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         &module_type_params,
     )?;
 
-    // Generate validation test for modules with imports (unless skip_validation is
-    // set)
-    let validation_test =
-        if !attrs.skip_validation && !imports.is_empty() && module_type_params.is_empty() {
-            gen_validation_test(&input_mod.ident)
+    // Generate validation tests.
+    //
+    // Non-template modules get a `__validate_wgsl` test that calls
+    // `WGSL_MODULE.validate()`. Template (generic) modules cannot be
+    // validated standalone — their placeholders aren't valid WGSL. Instead,
+    // each `validate_with_instantiation_types(T1, T2, ...)` attribute
+    // produces a test that instantiates with those concrete types, renders
+    // the IR, and validates with naga.
+    let is_template = !module_type_params.is_empty();
+    let validation_test = if !attrs.skip_validation && !is_template {
+        gen_validation_test(&input_mod.ident)
+    } else {
+        quote! {}
+    };
+    let instantiated_validation_tests =
+        if !attrs.skip_validation && is_template && !attrs.validate_instantiations.is_empty() {
+            gen_instantiated_validation_tests(
+                &input_mod.ident,
+                &crate_path,
+                &attrs.validate_instantiations,
+            )
         } else {
             quote! {}
         };
+
+    // Warn if a template module has no validate_with_instantiation_types
+    // and no skip_validation. On stable this is a compile error; on nightly
+    // it's a diagnostic warning. Either way, the user should either provide
+    // concrete types for validation or explicitly opt out with skip_validation.
+    if is_template && !attrs.skip_validation && attrs.validate_instantiations.is_empty() {
+        let warning = parse::Warning {
+            name: parse::WarningName::MissingValidationTypes,
+            spans: vec![input_mod.ident.span()],
+        };
+        if cfg!(nightly) {
+            parse::emit_warning(&warning);
+        } else {
+            return Err(WgslGenError::WgslParse {
+                source: parse::Error::SuppressableWarning { warning },
+            });
+        }
+    }
 
     // Generate linkage module when feature is enabled.
     //
@@ -672,10 +754,21 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
             content.extend(wrapper_content);
         }
 
-        // Add validation test function if generated
+        // Add validation test function(s) if generated
         if !validation_test.is_empty() {
             let test_item: syn::Item = syn::parse2(validation_test)?;
             content.push(test_item);
+        }
+        if !instantiated_validation_tests.is_empty() {
+            let wrapper = quote! {
+                mod __inst_validate_wrapper {
+                    #instantiated_validation_tests
+                }
+            };
+            let wrapper_mod: syn::ItemMod = syn::parse2(wrapper)?;
+            if let Some((_, wrapper_content)) = wrapper_mod.content {
+                content.extend(wrapper_content);
+            }
         }
 
         // Add linkage if the feature is set (skipped for template modules
@@ -688,10 +781,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     }
 
     // NOTE: Compile-time WGSL validation has been removed in favor of
-    // runtime validation. Modules with imports still get an
-    // auto-generated `__validate_wgsl` test (gated on `skip_validation`)
-    // that calls `WGSL_MODULE.validate()` at `cargo test` time. Modules
-    // without imports can validate via the same method.
+    // runtime validation. All non-template modules get an auto-generated
+    // `__validate_wgsl` test. Template (generic) modules get an
+    // auto-generated test for each `validate_with_instantiation_types(...)`
+    // attribute, which instantiates the module with the provided concrete
+    // types and validates the resulting WGSL source with naga.
     let _ = &attrs;
 
     // Strip #[wgsl_allow] attributes before emitting Rust code.
@@ -723,9 +817,27 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// | `#[wgsl]` | Transpile the module with default settings. |
 /// | `#[wgsl(skip_validation)]` | Skip the auto-generated `__validate_wgsl` test. |
 /// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
+/// | `#[wgsl(validate_with_instantiation_types(T1, T2, ...))]` | For template (generic) modules: validate WGSL output after instantiating with the given concrete types. Can be repeated. |
 ///
 /// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs,
 /// skip_validation)]`.
+///
+/// # Auto-generated Validation Tests
+///
+/// Every non-template `#[wgsl]` module gets an auto-generated `__validate_wgsl`
+/// test that calls `WGSL_MODULE.validate()` at `cargo test` time. Template
+/// (generic) modules cannot be validated standalone because their type
+/// placeholders aren't valid WGSL; instead, use
+/// `validate_with_instantiation_types(T1, T2, ...)` to specify concrete types
+/// for instantiation:
+///
+/// ```ignore
+/// #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, f32))]
+/// pub mod my_shader { ... }
+/// ```
+///
+/// Each occurrence generates a `__validate_wgsl_instantiated_N` test that
+/// instantiates the module, renders the IR to WGSL, and validates with naga.
 ///
 /// # Entry Points
 ///
@@ -1045,14 +1157,6 @@ pub fn wgsl(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
             WgslGenError::RustParse { source } => source.to_compile_error().into(),
             WgslGenError::WgslParse { source } => {
                 syn::Error::from(source).to_compile_error().into()
-            }
-            WgslGenError::WgslValidate { input_mod, error } => {
-                let error = error.into_compile_error();
-                quote! {
-                    #input_mod
-                    #error
-                }
-                .into()
             }
         },
     }

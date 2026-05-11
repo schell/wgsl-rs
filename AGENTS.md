@@ -79,6 +79,10 @@ cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
 The [DEVLOG](DEVLOG.md) is a set of long-lived development notes.
 It is a very informal change-log that also contains thoughts about this library's purpose, requirements, and challenges.
 
+Each day of work has an entry with the heading "### YYYY-MM-DD: {description}".
+If your session is the first of the day, create a new day entry, otherwise append the
+high-level description of your session to the current day's entry.
+
 ## SESSION.md file
 
 An ephemeral session file is maintained at SESSION.md, which you can use as scratch space for your editing session.

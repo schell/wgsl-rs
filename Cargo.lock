@@ -3766,7 +3766,6 @@ name = "wgsl-rs-macros"
 version = "0.1.0"
 dependencies = [
  "itertools",
- "naga",
  "proc-macro2",
  "quote",
  "snafu",

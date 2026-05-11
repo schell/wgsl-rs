@@ -1,6 +1,6 @@
 use wgsl_rs::wgsl;
 
-#[wgsl]
+#[wgsl(skip_validation)]
 pub mod generic_linkage {
     //! This module exercises an issue where one generic linkage is used as
     //! different concrete types.

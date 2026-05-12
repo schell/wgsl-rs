@@ -66,6 +66,13 @@ pub trait WgslScalar: Wgsl {
     fn to_scalar_ir() -> wgsl_rs_ir::ScalarType;
 }
 
+/// Trait for WGSL scalar types that are valid as sampled texture types.
+///
+/// WGSL only allows `f32`, `i32`, and `u32` as the sampled type for
+/// `texture_2d<T>`, `texture_1d<T>`, etc. `bool` is a valid WGSL scalar
+/// but not a valid texture sampled type.
+pub trait WgslTextureScalar: WgslScalar {}
+
 macro_rules! impl_scalar_wgsl {
     ($t:ty, $i:ident) => {
         impl WgslScalar for $t {
@@ -81,9 +88,16 @@ macro_rules! impl_scalar_wgsl {
     };
 }
 
-impl_scalar_wgsl!(f32, F32);
-impl_scalar_wgsl!(u32, U32);
-impl_scalar_wgsl!(i32, I32);
+macro_rules! impl_texture_scalar_wgsl {
+    ($t:ty, $i:ident) => {
+        impl_scalar_wgsl!($t, $i);
+        impl WgslTextureScalar for $t {}
+    };
+}
+
+impl_texture_scalar_wgsl!(f32, F32);
+impl_texture_scalar_wgsl!(u32, U32);
+impl_texture_scalar_wgsl!(i32, I32);
 impl_scalar_wgsl!(bool, Bool);
 
 impl<T: Wgsl, const N: usize> Wgsl for [T; N] {
@@ -153,12 +167,11 @@ type TypeMap = HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>;
 /// Default placeholder type for module-level variables that are generic over
 /// a WGSL type parameter.
 ///
-/// When a `uniform!`, `storage!` or `workgroup!` declaration uses a type
-/// parameter (e.g. `uniform!(group(0), binding(0), FRAME: T)` where `T` is
-/// a type parameter of an entry point), the generated Rust `static` is
-/// declared as `Uniform<WgslTypeVariable>` (i.e. `Uniform`). This is because
-/// Rust statics require concrete types and `T` is not in scope at module
-/// level.
+/// When a `uniform!`, `storage!` or `workgroup!` declaration uses an
+/// `impl Trait` type (e.g. `uniform!(group(0), binding(0), FRAME: impl
+/// Convert<f32>)`), the generated Rust `static` is declared as
+/// `Uniform<WgslTypeVariable>` (i.e. `Uniform`). This is because Rust statics
+/// require concrete types and the concrete type is not known at module level.
 ///
 /// Such "generic" module variables are accessed via `get_typed::<T>()` /
 /// `set_typed::<T>()` (or the two-arg `get!(VAR, T)` / `get_mut!(VAR, T)`
@@ -561,8 +574,9 @@ impl<AM: AccessMode> Storage<WgslTypeVariable, AM> {
 /// - `get!(VAR)` — reads the inner value of a concrete module variable.
 /// - `get!(VAR, T)` — reads the inner value of a *generic* module variable,
 ///   downcasting to the concrete type `T`. The variable must have been declared
-///   with a type parameter (e.g. `uniform!(group(0), binding(0), FRAME: T)`);
-///   using this form on a non-generic variable is a compile-time error.
+///   with an `impl Trait` type (e.g. `uniform!(group(0), binding(0), FRAME:
+///   impl Convert<f32>)`); using this form on a non-generic variable is a
+///   compile-time error.
 ///
 /// # Example
 /// ```ignore
@@ -572,7 +586,7 @@ impl<AM: AccessMode> Storage<WgslTypeVariable, AM> {
 /// let value = get!(OUTPUT).field;
 ///
 /// // Generic uniform usage:
-/// uniform!(group(0), binding(0), FRAME: T);
+/// uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 ///
 /// fn use_frame<T: Wgsl + Convert<f32>>() -> f32 {
 ///     f32(get!(FRAME, T))

@@ -11,7 +11,7 @@
 
 use crate::std::{
     ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3u, Vec4f, Vec4i, Vec4u, Wgsl,
-    WgslScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
+    WgslTextureScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
 };
 
 mod builtins;
@@ -196,7 +196,7 @@ pub struct Texture1D<T> {
     data: ModuleVar<TextureData1D<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for Texture1D<T> {
+impl<T: WgslTextureScalar> Wgsl for Texture1D<T> {
     fn to_ir() -> ir::Type {
         ir::Type::Texture {
             kind: ir::TextureKind::Texture1D,
@@ -205,7 +205,7 @@ impl<T: WgslScalar> Wgsl for Texture1D<T> {
     }
 }
 
-impl<T: WgslScalar> Texture1D<T> {
+impl<T: WgslTextureScalar> Texture1D<T> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -237,7 +237,7 @@ impl<T: WgslScalar> Texture1D<T> {
     }
 }
 
-impl<T: WgslScalar + Default + Copy> Texture1D<T> {
+impl<T: WgslTextureScalar + Default + Copy> Texture1D<T> {
     /// Initialize the texture with the given width.
     ///
     /// Not available in WGSL.
@@ -246,7 +246,7 @@ impl<T: WgslScalar + Default + Copy> Texture1D<T> {
     }
 }
 
-impl<T: WgslScalar> TextureDimensionsQuery for Texture1D<T> {
+impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture1D<T> {
     type Output = u32;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -254,7 +254,7 @@ impl<T: WgslScalar> TextureDimensionsQuery for Texture1D<T> {
     }
 }
 
-impl<T: WgslScalar> TextureNumLevelsQuery for Texture1D<T> {
+impl<T: WgslTextureScalar> TextureNumLevelsQuery for Texture1D<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
@@ -369,7 +369,7 @@ pub struct Texture2D<T> {
     data: ModuleVar<TextureData2D<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for Texture2D<T> {
+impl<T: WgslTextureScalar> Wgsl for Texture2D<T> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::Texture2D,
@@ -410,7 +410,7 @@ impl<T: Wgsl> Texture2D<T> {
     }
 }
 
-impl<T: WgslScalar + Default + Copy> Texture2D<T> {
+impl<T: WgslTextureScalar + Default + Copy> Texture2D<T> {
     /// Initialize the texture with the given dimensions.
     ///
     /// Not available in WGSL.
@@ -784,7 +784,7 @@ pub struct Texture2DArray<T> {
     data: ModuleVar<TextureData2DArray<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for Texture2DArray<T> {
+impl<T: WgslTextureScalar> Wgsl for Texture2DArray<T> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::Texture2DArray,
@@ -1077,7 +1077,7 @@ pub struct Texture3D<T> {
     data: ModuleVar<TextureData3D<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for Texture3D<T> {
+impl<T: WgslTextureScalar> Wgsl for Texture3D<T> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::Texture3D,
@@ -1160,7 +1160,7 @@ pub struct TextureCube<T> {
     data: ModuleVar<TextureDataCube<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for TextureCube<T> {
+impl<T: WgslTextureScalar> Wgsl for TextureCube<T> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::TextureCube,
@@ -1241,7 +1241,7 @@ pub struct TextureCubeArray<T> {
     data: ModuleVar<TextureDataCubeArray<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for TextureCubeArray<T> {
+impl<T: WgslTextureScalar> Wgsl for TextureCubeArray<T> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::TextureCubeArray,
@@ -1328,7 +1328,7 @@ pub struct TextureMultisampled2D<T> {
     data: ModuleVar<TextureDataMultisampled2D<T>>,
 }
 
-impl<T: WgslScalar> Wgsl for TextureMultisampled2D<T> {
+impl<T: WgslTextureScalar> Wgsl for TextureMultisampled2D<T> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::TextureMultisampled2D,

@@ -29,6 +29,11 @@ pub use wgsl_rs_ir as ir;
 ///     }
 /// }
 pub struct Module {
+    /// Unique identifier for this module, assigned at proc-macro expansion
+    /// time. Used to deduplicate modules during source assembly (diamond
+    /// import graphs, same-named modules from different paths).
+    pub id: u64,
+
     /// Name of the module.
     pub name: &'static str,
 
@@ -147,8 +152,9 @@ impl Module {
     /// [`Module::instantiate`] for a concrete shader source.
     pub fn wgsl_source(&self) -> String {
         let mut out = String::new();
-        let mut seen: HashSet<(String, String, Vec<String>)> = HashSet::new();
-        self.collect(&mut out, &mut seen, None);
+        let mut visited_modules: HashSet<u64> = HashSet::new();
+        let mut seen: HashSet<(u64, String, Vec<String>)> = HashSet::new();
+        self.collect(&mut out, &mut visited_modules, &mut seen, None);
         out
     }
 
@@ -156,15 +162,23 @@ impl Module {
     /// imports / instantiations) into `out`. When `subst` is `Some`, the
     /// caller's substitution map is applied to *this* module's IR (but not
     /// to imported modules — imports are concrete by construction).
+    ///
+    /// `visited_modules` tracks module IDs that have already been emitted,
+    /// preventing duplicate definitions in diamond import graphs.
+    /// `seen` tracks `(module_id, template_name, mangled_type_args)` triples
+    /// to deduplicate cross-module template instantiations.
     fn collect(
         &self,
         out: &mut String,
-        seen: &mut HashSet<(String, String, Vec<String>)>,
+        visited_modules: &mut HashSet<u64>,
+        seen: &mut HashSet<(u64, String, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
     ) {
-        // 1. Imports first (depth-first, deduplicated by repeated module instances).
+        // 1. Imports first (depth-first, deduplicated by module ID).
         for m in self.imports {
-            m.collect(out, seen, None);
+            if visited_modules.insert(m.id) {
+                m.collect(out, visited_modules, seen, None);
+            }
         }
 
         // 2. Build this module's IR, optionally substituting type params.
@@ -196,15 +210,15 @@ impl Module {
 
 /// Resolve `template_name` from the given candidate modules, recursively
 /// instantiate its dependencies, then render its substituted IR into
-/// `out`. Tracks `(module, name, mangled_type_args)` triples in `seen` to
-/// avoid duplicate emission.
+/// `out`. Tracks `(module_id, name, mangled_type_args)` triples in `seen`
+/// to avoid duplicate emission.
 fn instantiate_template_into(
     modules: &[&Module],
     template_name: &str,
     mangled_type_args: &[String],
     type_args: &[ir::Type],
     out: &mut String,
-    seen: &mut HashSet<(String, String, Vec<String>)>,
+    seen: &mut HashSet<(u64, String, Vec<String>)>,
 ) {
     let available_templates: Vec<String> = modules
         .iter()
@@ -248,7 +262,7 @@ fn instantiate_template_into(
     };
 
     let key = (
-        module.name.to_string(),
+        module.id,
         template_name.to_string(),
         mangled_type_args.to_vec(),
     );
@@ -358,6 +372,7 @@ pub fn validate_wgsl_source(source: &str) -> Result<(), String> {
 pub mod std;
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod test {
     use crate::{GenericTemplate, Module, TemplateDependency, TemplateInstantiation, ir, wgsl};
 
@@ -579,6 +594,7 @@ mod test {
         static EMPTY_INSTS: [TemplateInstantiation; 0] = [];
         static EMPTY_TYPE_PARAMS: [&str; 0] = [];
         static MOD_A: Module = Module {
+            id: 0,
             name: "a",
             imports: &EMPTY_MODS,
             ir_constructor: empty_module_ir,
@@ -587,6 +603,7 @@ mod test {
             module_type_params: &EMPTY_TYPE_PARAMS,
         };
         static MOD_B: Module = Module {
+            id: 1,
             name: "b",
             imports: &EMPTY_MODS,
             ir_constructor: empty_module_ir,
@@ -601,6 +618,7 @@ mod test {
             mangled_type_args: &["f32"],
         }];
         static ROOT: Module = Module {
+            id: 2,
             name: "root",
             imports: &EMPTY_MODS,
             ir_constructor: empty_module_ir,

@@ -3,12 +3,15 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use snafu::prelude::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use syn::{
     DeriveInput,
     visit_mut::{self, VisitMut},
 };
 
 use crate::parse::InterStageIo;
+
+static NEXT_MODULE_ID: AtomicU64 = AtomicU64::new(0);
 
 mod builder;
 mod builtins;
@@ -553,6 +556,8 @@ fn gen_wgsl_module(
 
     let module_ctor_ident = quote::format_ident!("__wgsl_module_ctor");
 
+    let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
+
     Ok(quote! {
         fn #module_ctor_ident() -> #ir_p::Module {
             #module_constructor_body
@@ -563,6 +568,7 @@ fn gen_wgsl_module(
         #(#inst_constructors)*
 
         pub static WGSL_MODULE: #crate_path::Module = #crate_path::Module {
+            id: #module_id,
             name: stringify!(#name),
             imports: &[
                 #(&#imports),*
@@ -647,11 +653,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let imports = wgsl_module.imports(&crate_path);
 
     // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
-    // input Rust module that have a type-parameter type (e.g.
-    // `uniform!(group(0), binding(0), FRAME: T)` where `T` is a type
-    // parameter of an entry point). The generated `pub static` for such a
-    // declaration must use the type-erased default (`Uniform<WgslTypeVariable>`,
-    // i.e. just `Uniform`) because `T` is not in scope at module level.
+    // input Rust module that have a generic type (e.g.
+    // `uniform!(group(0), binding(0), FRAME: impl Convert<f32>)`). The
+    // generated `pub static` for such a declaration must use the
+    // type-erased default (`Uniform<WgslTypeVariable>`, i.e. just
+    // `Uniform`) because the concrete type is not known at module level.
     rewrite_generic_linkages(&mut input_mod, &wgsl_module, &crate_path)?;
 
     // Compute the union of type parameters across all entry points in this

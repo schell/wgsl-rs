@@ -576,6 +576,7 @@ impl Parse for PtrMacroArgs {
 
 /// Types.
 #[derive(Clone)]
+#[allow(clippy::enum_variant_names)]
 pub enum Type {
     /// Concrete scalar types:
     /// * i32
@@ -614,7 +615,7 @@ pub enum Type {
         bracket_token: syn::token::Bracket,
         elem: Box<Type>,
         semi_token: Token![;],
-        len: Expr,
+        len: Box<Expr>,
     },
 
     /// Runtime-sized array type: RuntimeArray<T>
@@ -756,7 +757,7 @@ impl Type {
                 bracket_token: *bracket_token,
                 elem: Box::new(elem),
                 semi_token: *semi_token,
-                len: Expr::parse(len, ctx)?,
+                len: Box::new(Expr::parse(len, ctx)?),
             })
         } else if let syn::Type::Path(type_path) = ty {
             util::some_is_unsupported(
@@ -2663,7 +2664,16 @@ impl Stmt {
             syn::Stmt::Local(local) => Ok(Stmt::Local(Box::new(Local::parse(local, ctx)?))),
             syn::Stmt::Item(item) => match item {
                 syn::Item::Const(item_const) => {
-                    Ok(Stmt::Const(Box::new(ItemConst::parse(item_const, ctx)?)))
+                    let c = ItemConst::parse(item_const, ctx)?;
+                    if let Some(span) = expr_contains_linkage_access(&c.expr) {
+                        return Err(Error::unsupported(
+                            span,
+                            "get!/get_mut! cannot be used in const initializers (WGSL const \
+                             expressions cannot access storage/uniform buffers)"
+                                .to_string(),
+                        ));
+                    }
+                    Ok(Stmt::Const(Box::new(c)))
                 }
                 other => UnsupportedSnafu {
                     span: other.span(),
@@ -3324,7 +3334,7 @@ fn parse_pattern_recursive(
                 path: path.clone(),
             }))?;
             non_literal_spans.push(path.span());
-            selectors.push(CaseSelector::Expr(expr));
+            selectors.push(CaseSelector::Expr(Box::new(expr)));
         }
 
         // Identifier pattern: `x` - could be a const binding
@@ -3356,7 +3366,7 @@ fn parse_pattern_recursive(
             // Treat as identifier expression (could be a const)
             let expr = Expr::Ident(ident.clone());
             non_literal_spans.push(ident.span());
-            selectors.push(CaseSelector::Expr(expr));
+            selectors.push(CaseSelector::Expr(Box::new(expr)));
         }
 
         // Unsupported patterns
@@ -3521,7 +3531,7 @@ pub enum CaseSelector {
     /// Named constant, enum variant, or other expression.
     /// Examples: `MY_CONST`, `State::Running`
     /// These emit a warning unless suppressed.
-    Expr(Expr),
+    Expr(Box<Expr>),
     /// The default case from `_` pattern.
     Default(Span),
 }
@@ -4389,6 +4399,31 @@ impl ItemConst {
             expr: Expr::try_from(expr)?,
             semi_token: *semi_token,
         })
+    }
+}
+
+fn expr_contains_linkage_access(expr: &Expr) -> Option<proc_macro2::Span> {
+    match expr {
+        Expr::LinkageAccess { ident, .. } => Some(ident.span()),
+        Expr::Unary { expr, .. } => expr_contains_linkage_access(expr),
+        Expr::Binary { lhs, rhs, .. } => {
+            expr_contains_linkage_access(lhs).or_else(|| expr_contains_linkage_access(rhs))
+        }
+        Expr::Paren { inner, .. } => expr_contains_linkage_access(inner),
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            expr_contains_linkage_access(lhs).or_else(|| expr_contains_linkage_access(index))
+        }
+        Expr::Swizzle { lhs, .. } => expr_contains_linkage_access(lhs),
+        Expr::Cast { lhs, .. } => expr_contains_linkage_access(lhs),
+        Expr::FnCall { params, .. } => params.iter().find_map(expr_contains_linkage_access),
+        Expr::Struct { fields, .. } => fields
+            .iter()
+            .find_map(|f| expr_contains_linkage_access(&f.expr)),
+        Expr::FieldAccess { base, .. } => expr_contains_linkage_access(base),
+        Expr::Reference { expr, .. } => expr_contains_linkage_access(expr),
+        Expr::ZeroValueArray { len, .. } => expr_contains_linkage_access(len),
+        Expr::Array { elems, .. } => elems.iter().find_map(expr_contains_linkage_access),
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => None,
     }
 }
 
@@ -5459,9 +5494,9 @@ impl TryFrom<&syn::ItemEnum> for ItemEnum {
 #[derive(Clone)]
 pub enum ImplItem {
     /// A function defined in an impl block.
-    Fn(ItemFn),
+    Fn(Box<ItemFn>),
     /// A constant defined in an impl block.
-    Const(ItemConst),
+    Const(Box<ItemConst>),
 }
 
 /// An impl block for a struct.
@@ -5587,11 +5622,11 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             match item {
                 syn::ImplItem::Fn(impl_fn) => {
                     let item_fn = ItemFn::try_from_impl_fn(impl_fn, is_trait_impl, &ctx)?;
-                    parsed_items.push(ImplItem::Fn(item_fn));
+                    parsed_items.push(ImplItem::Fn(Box::new(item_fn)));
                 }
                 syn::ImplItem::Const(impl_const) => {
                     let item_const = ItemConst::try_from_impl_const(impl_const)?;
-                    parsed_items.push(ImplItem::Const(item_const));
+                    parsed_items.push(ImplItem::Const(Box::new(item_const)));
                 }
                 other => {
                     return UnsupportedSnafu {

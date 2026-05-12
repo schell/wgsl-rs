@@ -563,7 +563,7 @@ impl MonoCtx {
                             }
                             self.reserved_names.insert(method_mangled_name.clone());
 
-                            let mut mono_fn = f.clone();
+                            let mut mono_fn = (**f).clone();
                             mono_fn.ident = Ident::new(&method_mangled_name, f.ident.span());
 
                             // Substitute types in inputs
@@ -585,7 +585,7 @@ impl MonoCtx {
                         crate::parse::ImplItem::Const(c) => {
                             let const_mangled_name = format!("{}_{}", mangled_name, c.ident);
 
-                            let mut mono_const = c.clone();
+                            let mut mono_const = (**c).clone();
                             mono_const.ident = Ident::new(&const_mangled_name, c.ident.span());
                             substitute_type(&mut mono_const.ty, &impl_subst);
                             substitute_expr(&mut mono_const.expr, &impl_subst);

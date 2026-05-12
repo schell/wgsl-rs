@@ -524,7 +524,9 @@ fn walk_expr_for_linkage_constraints(
             }
             Stmt::Break { .. }
             | Stmt::Continue { .. }
-            | Stmt::Const(_)
+            | Stmt::Const(_) // `get!`/`get_mut!` in const initializers would
+                            // produce invalid WGSL (const exprs can't access
+                            // storage/uniform buffers); the parser rejects this.
             | Stmt::Discard { .. }
             | Stmt::SlabRead { .. }
             | Stmt::SlabWrite { .. } => {}

@@ -439,3 +439,12 @@ suppress warnings on suffixed type params like `T_frag_main`.
   modules; removed dead `WgslValidate` variant and naga dep from proc-macro
   crate; added `validate_wgsl_source()` free function; surfaced pre-existing
   monomorphization bug in `generic_structs` example.
+
+### 2026-05-12: Address PR #101 review comments
+
+Fixed stale `FRAME: T` docs to use `impl Trait` syntax; added `Module.id`
+field (atomic counter) for diamond-import deduplication and module-identity-
+based instantiation dedupe; boxed large enum variants in `parse.rs` per
+clippy; added `WgslTextureScalar` trait (f32/i32/u32 only) to prevent
+`Texture2D<bool>`; added compile-time rejection of `get!`/`get_mut!` in
+const initializers with trybuild test.

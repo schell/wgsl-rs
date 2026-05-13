@@ -332,6 +332,51 @@ struct LinkageConstraint {
     fn_type_params: Vec<String>,
 }
 
+fn walk_else_for_linkage_constraints(
+    else_branch: &parse::ElseBranch,
+    fn_name: &str,
+    is_entry_point: bool,
+    fn_type_params: &[String],
+    constraints: &mut Vec<LinkageConstraint>,
+) {
+    match &else_branch.body {
+        parse::ElseBody::Block(block) => {
+            walk_expr_for_linkage_constraints(
+                &block.stmt,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+        }
+        parse::ElseBody::If(nested_if) => {
+            walk_expr_for_constraints_recursive(
+                &nested_if.condition,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+            walk_expr_for_linkage_constraints(
+                &nested_if.then_block.stmt,
+                fn_name,
+                is_entry_point,
+                fn_type_params,
+                constraints,
+            );
+            if let Some(nested_else) = &nested_if.else_branch {
+                walk_else_for_linkage_constraints(
+                    nested_else,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
+            }
+        }
+    }
+}
+
 /// Recursively walk a block of statements, collecting `LinkageAccess`
 /// constraints.
 fn walk_expr_for_linkage_constraints(
@@ -380,33 +425,13 @@ fn walk_expr_for_linkage_constraints(
                     constraints,
                 );
                 if let Some(else_branch) = &parse_if.else_branch {
-                    match &else_branch.body {
-                        parse::ElseBody::Block(block) => {
-                            walk_expr_for_linkage_constraints(
-                                &block.stmt,
-                                fn_name,
-                                is_entry_point,
-                                fn_type_params,
-                                constraints,
-                            );
-                        }
-                        parse::ElseBody::If(nested_if) => {
-                            walk_expr_for_constraints_recursive(
-                                &nested_if.condition,
-                                fn_name,
-                                is_entry_point,
-                                fn_type_params,
-                                constraints,
-                            );
-                            walk_expr_for_linkage_constraints(
-                                &nested_if.then_block.stmt,
-                                fn_name,
-                                is_entry_point,
-                                fn_type_params,
-                                constraints,
-                            );
-                        }
-                    }
+                    walk_else_for_linkage_constraints(
+                        else_branch,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
                 }
             }
             Stmt::For(parse_for) => {
@@ -512,7 +537,25 @@ fn walk_expr_for_linkage_constraints(
                 );
             }
             Stmt::Switch(switch) => {
+                walk_expr_for_constraints_recursive(
+                    &switch.selector,
+                    fn_name,
+                    is_entry_point,
+                    fn_type_params,
+                    constraints,
+                );
                 for arm in &switch.arms {
+                    for sel in &arm.selectors {
+                        if let parse::CaseSelector::Expr(e) = sel {
+                            walk_expr_for_constraints_recursive(
+                                e,
+                                fn_name,
+                                is_entry_point,
+                                fn_type_params,
+                                constraints,
+                            );
+                        }
+                    }
                     walk_expr_for_linkage_constraints(
                         &arm.body.stmt,
                         fn_name,
@@ -527,9 +570,38 @@ fn walk_expr_for_linkage_constraints(
             | Stmt::Const(_) // `get!`/`get_mut!` in const initializers would
                             // produce invalid WGSL (const exprs can't access
                             // storage/uniform buffers); the parser rejects this.
-            | Stmt::Discard { .. }
-            | Stmt::SlabRead { .. }
-            | Stmt::SlabWrite { .. } => {}
+            | Stmt::Discard { .. } => {}
+            Stmt::SlabRead { slab, offset, dest, size, .. } => {
+                for expr in [slab, offset, dest, size] {
+                    walk_expr_for_constraints_recursive(
+                        expr,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+            }
+            Stmt::SlabWrite { slab, offset, src, size, .. } => {
+                for expr in [slab, offset, src] {
+                    walk_expr_for_constraints_recursive(
+                        expr,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+                if let Some(size_expr) = size {
+                    walk_expr_for_constraints_recursive(
+                        size_expr,
+                        fn_name,
+                        is_entry_point,
+                        fn_type_params,
+                        constraints,
+                    );
+                }
+            }
         }
     }
 }

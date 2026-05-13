@@ -340,7 +340,9 @@ impl Module {
         // that aren't valid WGSL identifiers. They cannot be validated
         // standalone — the user must call `instantiate(...)` first.
         if self.is_template() {
-            return Ok(());
+            return Err(
+                "cannot validate a template module — call instantiate(...) first".to_string(),
+            );
         }
 
         validate_wgsl_source(&self.wgsl_source())
@@ -770,12 +772,13 @@ mod test {
     }
 
     #[test]
-    fn generic_module_validate_skips_template() {
-        // `validate()` is a no-op for template modules — they have
+    fn generic_module_validate_rejects_template() {
+        // `validate()` returns an error for template modules — they have
         // unresolved placeholders that aren't valid WGSL.
-        generic_shader::WGSL_MODULE
-            .validate()
-            .expect("template validation should be a no-op");
+        assert!(
+            generic_shader::WGSL_MODULE.validate().is_err(),
+            "template modules should fail validation"
+        );
     }
 
     #[test]

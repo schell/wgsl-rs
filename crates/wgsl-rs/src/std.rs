@@ -756,13 +756,13 @@ impl Convert<i32> for i32 {
 
 impl<A: Clone + Convert<B> + Wgsl, B> Convert<B> for ModuleVarReadGuard<'_, A> {
     fn convert(self) -> B {
-        self.clone().convert()
+        (*self).clone().convert()
     }
 }
 
 impl<A: Clone + Convert<B> + Wgsl, B> Convert<B> for ModuleVarWriteGuard<'_, A> {
     fn convert(self) -> B {
-        self.clone().convert()
+        (*self).clone().convert()
     }
 }
 

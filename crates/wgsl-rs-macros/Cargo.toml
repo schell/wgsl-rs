@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
+default = ["validation"]
 linkage-wgpu = []
+validation = []
 
 [lib]
 proc-macro = true

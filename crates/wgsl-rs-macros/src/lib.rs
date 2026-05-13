@@ -593,12 +593,13 @@ fn gen_wgsl_module(
 /// set). The validation is deferred to `cargo test` time, where it calls
 /// `WGSL_MODULE.validate()`.
 ///
-/// The `validate()` method is available on `Module` when the `wgsl-rs` crate
-/// has the `validation` feature enabled (the default). We gate the generated
-/// test on `#[cfg(test)]` only — not `feature = "validation"` — because the
-/// feature belongs to `wgsl-rs`, not the consuming crate, and checking it
-/// here would produce an "unexpected cfg" warning in downstream crates.
+/// The test is only generated when the `validation` feature is enabled
+/// (the default). Without this feature, `Module::validate()` is unavailable,
+/// so the test would not compile.
 fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
+    if !cfg!(feature = "validation") {
+        return quote! {};
+    }
     let error_msg = format!("WGSL validation failed for module '{module_ident}'");
     quote! {
         #[cfg(test)]
@@ -615,11 +616,16 @@ fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
 /// Each occurrence of `validate_with_instantiation_types(T1, T2, ...)`
 /// produces a test that calls `instantiate::<T1, T2, ...>()`, renders the
 /// IR to WGSL, and validates the result with naga.
+///
+/// The tests are only generated when the `validation` feature is enabled.
 fn gen_instantiated_validation_tests(
     module_ident: &syn::Ident,
     crate_path: &syn::Path,
     instantiations: &[Vec<syn::Type>],
 ) -> proc_macro2::TokenStream {
+    if !cfg!(feature = "validation") {
+        return quote! {};
+    }
     let ir_p = quote! { #crate_path::ir };
     let validate_fn = quote! { #crate_path::validate_wgsl_source };
     let tests: Vec<proc_macro2::TokenStream> = instantiations
@@ -831,8 +837,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// # Auto-generated Validation Tests
 ///
 /// Every non-template `#[wgsl]` module gets an auto-generated `__validate_wgsl`
-/// test that calls `WGSL_MODULE.validate()` at `cargo test` time. Template
-/// (generic) modules cannot be validated standalone because their type
+/// test that calls `WGSL_MODULE.validate()` at `cargo test` time, provided the
+/// `validation` feature is enabled (the default). Without this feature,
+/// `Module::validate()` is unavailable, so no test is generated.
+///
+/// Template (generic) modules cannot be validated standalone because their type
 /// placeholders aren't valid WGSL; instead, use
 /// `validate_with_instantiation_types(T1, T2, ...)` to specify concrete types
 /// for instantiation:

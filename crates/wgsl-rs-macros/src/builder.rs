@@ -278,13 +278,6 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     }
 }
 
-/// Convert a parsed `Type` from a `LinkageConstraint`'s `type_expr` field
-/// into a `syn::Type` suitable for a `where` clause predicate.
-///
-/// Type parameters (like `T` from an entry point) are resolved to the
-/// corresponding generic parameter ident on the `instantiate` function.
-/// Concrete types (scalars, vectors, structs) are reconstructed as
-/// `syn::Type` values.
 /// Collect all `get!(VAR, TYPE)` / `get_mut!(VAR, TYPE)` constraints from
 /// entry-point functions in the module.
 ///

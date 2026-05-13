@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 default = ["validation", "dispatch-runtime"]
-validation = ["dep:naga"]
+validation = ["dep:naga", "wgsl-rs-macros/validation"]
 dispatch-runtime = ["dep:rayon"]
 linkage-wgpu = ["dep:wgpu", "wgsl-rs-macros/linkage-wgpu"]
 

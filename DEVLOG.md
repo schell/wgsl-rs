@@ -448,3 +448,15 @@ based instantiation dedupe; boxed large enum variants in `parse.rs` per
 clippy; added `WgslTextureScalar` trait (f32/i32/u32 only) to prevent
 `Texture2D<bool>`; added compile-time rejection of `get!`/`get_mut!` in
 const initializers with trybuild test.
+
+### 2026-05-13: PR #101 review round 2 — validation feature gating, README fix, doc cleanup
+
+- Fixed README validation table: all non-template modules get auto-generated
+  `__validate_wgsl` tests, not just modules with imports.
+- Added `validation` feature to `wgsl-rs-macros` Cargo.toml; `wgsl-rs`
+  propagates it. `gen_validation_test` and `gen_instantiated_validation_tests`
+  now check `cfg!(feature = "validation")` so no tests are generated when
+  the feature is off (avoids compile errors when `default-features = false`).
+- Removed stray doc comment above `collect_linkage_constraints` in builder.rs.
+- Replied to all Copilot review comments (validate Err, validation gating,
+  README correction, doc cleanup).

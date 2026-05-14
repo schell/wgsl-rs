@@ -1,6 +1,7 @@
 //! WGSL abstract syntax tree-ish.
 //!
 //! The syntax here is the subset of Rust that can be interpreted as WGSL.
+//
 // HEY!
 //
 // This module is incomplete at best.
@@ -8,6 +9,15 @@
 // See the WGSL spec
 // [subsection](https://gpuweb.github.io/gpuweb/wgsl/#grammar-recursive-descent)
 // on grammar for help implementing this module.
+//
+// Many fields below carry `syn::Token![...]` values for span preservation
+// (used in error reporting). The IR-based production path reads only the
+// semantic content; the tokens are retained so future error-reporting
+// work can re-attach span info without re-parsing.
+#![allow(dead_code)]
+
+use std::collections::{HashMap, HashSet};
+
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
@@ -15,6 +25,97 @@ use syn::{Ident, Token, parenthesized, parse::Parse, spanned::Spanned};
 
 #[allow(unused_imports)]
 use crate::parse::util::in_progress;
+
+/// Parsing context that carries information about type parameters in scope.
+///
+/// When parsing inside a generic function, this context holds the names of
+/// type parameters so that identifiers like `T` can be recognized as
+/// `Type::TypeParam` instead of `Type::Struct`.
+///
+/// When parsing entry point function bodies, the context also carries an
+/// optional [`Self::type_param_renames`] map. This rewrites the parsed
+/// type parameter names from their source-level form (e.g. `"T"`, `"S"`)
+/// to a positional encoding (e.g. `"frag_main_0"`, `"frag_main_1"`) so
+/// that the IR and the runtime [`Module::module_type_params`][crate-mod]
+/// list never collide between entry points.
+///
+/// [crate-mod]: ../wgsl_rs/struct.Module.html
+#[derive(Default, Clone)]
+pub struct ParseContext {
+    /// Names of type parameters currently in scope (e.g., `"T"`, `"U"`).
+    pub type_params: HashSet<String>,
+    /// Optional name map applied when emitting `Type::TypeParam`. When a
+    /// source-level name (`"T"`) is present in this map, the resulting
+    /// `Type::TypeParam` carries the mapped name instead. Empty by
+    /// default, which preserves source-level names.
+    pub type_param_renames: HashMap<String, String>,
+}
+
+impl ParseContext {
+    /// Build a context from an iterator of type parameter identifiers.
+    /// No renames are applied; source-level names are used in the IR.
+    pub fn from_type_params<I: IntoIterator<Item = Ident>>(iter: I) -> Self {
+        Self {
+            type_params: iter.into_iter().map(|id| id.to_string()).collect(),
+            type_param_renames: HashMap::new(),
+        }
+    }
+
+    /// Build a context from an iterator of `(source_name, encoded_name)`
+    /// pairs. The source name is what appears in the user's Rust source
+    /// (e.g. `"T"`); the encoded name is what should appear in the IR
+    /// (e.g. `"frag_main_0"`).
+    pub fn from_renamed_type_params<I, S, E>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = (S, E)>,
+        S: Into<String>,
+        E: Into<String>,
+    {
+        let mut type_params = HashSet::new();
+        let mut renames = HashMap::new();
+        for (source, encoded) in iter {
+            let source = source.into();
+            let encoded = encoded.into();
+            type_params.insert(source.clone());
+            renames.insert(source, encoded);
+        }
+        Self {
+            type_params,
+            type_param_renames: renames,
+        }
+    }
+
+    /// Apply any rename in the context to `name`, returning the encoded
+    /// name to be stored in `Type::TypeParam`.
+    pub fn encode_type_param(&self, name: &str) -> String {
+        self.type_param_renames
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+}
+
+/// Collect the (currently empty) set of names that should be visible to
+/// linkage variable type-parsing at module scope.
+///
+/// In earlier versions of `wgsl-rs`, linkage variables could reference an
+/// entry point's type parameter directly by name (e.g.
+/// `uniform!(group(0), binding(0), FRAME: T)` matched against
+/// `fn frag_main<T: ...>()`). That implicit coupling is no longer
+/// supported: linkage variables that need a generic type must use
+/// [`impl Trait`] syntax (e.g. `FRAME: impl Convert<f32>`) which
+/// self-identifies via the variable's name and carries explicit trait
+/// bounds.
+///
+/// Returning an empty `Vec` here causes [`Type::parse`] (called via
+/// `with_context`) to treat any bare type-name in a linkage declaration
+/// as an unknown struct, which surfaces as a normal "unknown type"
+/// diagnostic rather than silently sharing names across the module.
+///
+/// [`impl Trait`]: https://doc.rust-lang.org/reference/types/impl-trait.html
+pub fn collect_module_type_params(_items: &[syn::Item]) -> Result<Vec<Ident>, Error> {
+    Ok(Vec::new())
+}
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -64,6 +165,19 @@ pub enum Error {
     },
 }
 
+impl Error {
+    /// Create an `Unsupported` error with the given span and note.
+    ///
+    /// This is a convenience for use from other modules that can't access the
+    /// private snafu context selectors.
+    pub fn unsupported(span: proc_macro2::Span, note: impl Into<String>) -> Self {
+        Error::Unsupported {
+            span,
+            note: note.into(),
+        }
+    }
+}
+
 impl From<syn::Error> for Error {
     fn from(value: syn::Error) -> Self {
         UnsupportedSnafu {
@@ -107,6 +221,10 @@ pub enum WarningName {
     /// Match statement patterns that are not integer literals cannot be
     /// verified at compile-time to be valid WGSL case selectors.
     NonLiteralMatchStatementPatterns,
+    /// Template (generic) modules should specify concrete types for
+    /// validation via `validate_with_instantiation_types(T1, T2, ...)`
+    /// to ensure the instantiated WGSL is valid.
+    MissingValidationTypes,
 }
 
 impl std::fmt::Display for WarningName {
@@ -124,6 +242,12 @@ impl std::fmt::Display for WarningName {
                  #[wgsl_allow(non_literal_match_statement_patterns)] to the match statement to \
                  suppress this warning.",
             ),
+            WarningName::MissingValidationTypes => f.write_str(
+                "template module has no validate_with_instantiation_types attribute, so no \
+                 automated WGSL validation test will be generated. Add \
+                 validate_with_instantiation_types(T1, T2, ...) to the #[wgsl] attribute, or add \
+                 #[wgsl(skip_validation)] to suppress this warning.",
+            ),
         }
     }
 }
@@ -137,6 +261,7 @@ impl TryFrom<&syn::Ident> for WarningName {
             "non_literal_match_statement_patterns" => {
                 Ok(WarningName::NonLiteralMatchStatementPatterns)
             }
+            "missing_validation_types" => Ok(WarningName::MissingValidationTypes),
             other => UnsupportedSnafu {
                 span: ident.span(),
                 note: format!("Unknown warning name '{other}'"),
@@ -181,6 +306,10 @@ pub(crate) fn emit_warning(_warning: &Warning) {
                 WarningName::NonLiteralMatchStatementPatterns => {
                     "Add #[wgsl_allow(non_literal_match_statement_patterns)] to suppress this \
                      warning"
+                }
+                WarningName::MissingValidationTypes => {
+                    "Add validate_with_instantiation_types(T1, T2, ...) to the #[wgsl] attribute, \
+                     or add #[wgsl(skip_validation)] to suppress this warning"
                 }
             };
 
@@ -310,6 +439,16 @@ impl ScalarType {
             ScalarType::Bool => "bool",
         }
     }
+
+    /// Returns the single-character suffix used in WGSL vector/matrix aliases.
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            ScalarType::I32 => "i",
+            ScalarType::U32 => "u",
+            ScalarType::F32 => "f",
+            ScalarType::Bool => "b",
+        }
+    }
 }
 
 /// WGSL address spaces for pointer and variable types.
@@ -436,6 +575,8 @@ impl Parse for PtrMacroArgs {
 }
 
 /// Types.
+#[derive(Clone)]
+#[allow(clippy::enum_variant_names)]
 pub enum Type {
     /// Concrete scalar types:
     /// * i32
@@ -458,12 +599,13 @@ pub enum Type {
     },
 
     /// Matrix types:
-    /// mat{N}x{N}<f32>
-    ///   where N is 2, 3, or 4
+    /// mat{C}x{R}<f32>
+    ///   where C and R are each 2, 3, or 4
     /// Only f32 matrices are supported (matching WGSL).
     #[allow(dead_code)]
     Matrix {
-        size: u8,
+        columns: u8,
+        rows: u8,
         ident: Ident,
         scalar: Option<(Token![<], Ident, Token![>])>,
     },
@@ -473,7 +615,7 @@ pub enum Type {
         bracket_token: syn::token::Bracket,
         elem: Box<Type>,
         semi_token: Token![;],
-        len: Expr,
+        len: Box<Expr>,
     },
 
     /// Runtime-sized array type: RuntimeArray<T>
@@ -496,8 +638,13 @@ pub enum Type {
         gt_token: Token![>],
     },
 
-    /// Struct type: eg. MyStruct
-    Struct { ident: Ident },
+    /// Struct type: eg. `MyStruct` or generic struct instantiation like
+    /// `Pair<f32>`.
+    ///
+    /// `type_args` is empty for non-generic struct types. For generic struct
+    /// types, it contains the concrete type arguments (e.g., `[f32]` for
+    /// `Pair<f32>`).
+    Struct { ident: Ident, type_args: Vec<Type> },
 
     /// Pointer type: ptr<address_space, T>
     /// Created from `ptr!(address_space, T)` macro invocations.
@@ -536,6 +683,12 @@ pub enum Type {
         kind: TextureDepthKind,
         ident: Ident,
     },
+
+    /// An unresolved type parameter (e.g., `T`) inside a generic function.
+    ///
+    /// During monomorphization this is resolved to a concrete type.
+    /// Must not survive to code generation.
+    TypeParam { ident: Ident },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -545,17 +698,51 @@ fn split_as_vec(s: &str) -> Option<(&str, &str)> {
     Some(split)
 }
 
-fn split_as_mat(s: &str) -> Option<(&str, &str)> {
-    let (_mat, n_suffix) = s.split_once("Mat")?;
-    (n_suffix.len() == 2).then_some(())?;
-    let split = n_suffix.split_at(1);
-    Some(split)
+/// Information extracted from a matrix shorthand alias such as `Mat3f` or
+/// `Mat2x4f`.
+///
+/// `columns` and `rows` are the matrix dimensions; `suffix` is the scalar
+/// suffix (currently always `"f"` since only f32 matrices are supported).
+struct MatAlias<'a> {
+    columns: &'a str,
+    rows: &'a str,
+    suffix: &'a str,
 }
 
-impl TryFrom<&syn::Type> for Type {
-    type Error = Error;
+/// Recognise `Mat{N}f` (square shorthand, equivalent to `Mat{N}x{N}f`) or
+/// `Mat{C}x{R}f` (explicit non-square form).
+fn split_as_mat(s: &str) -> Option<MatAlias<'_>> {
+    let (_mat, rest) = s.split_once("Mat")?;
+    // Square shorthand: `Mat{N}{suffix}` where suffix is one character.
+    if rest.len() == 2 {
+        let (n, suffix) = rest.split_at(1);
+        return Some(MatAlias {
+            columns: n,
+            rows: n,
+            suffix,
+        });
+    }
+    // Explicit form: `Mat{C}x{R}{suffix}` => rest is `{C}x{R}{suffix}`.
+    if rest.len() == 4 {
+        let bytes = rest.as_bytes();
+        if bytes[1] == b'x' {
+            let columns = &rest[0..1];
+            let rows = &rest[2..3];
+            let suffix = &rest[3..4];
+            return Some(MatAlias {
+                columns,
+                rows,
+                suffix,
+            });
+        }
+    }
+    None
+}
 
-    fn try_from(ty: &syn::Type) -> Result<Self, Self::Error> {
+impl Type {
+    /// Parse a `syn::Type` into a WGSL `Type`, using the given context to
+    /// resolve type parameter names.
+    pub fn parse(ty: &syn::Type, ctx: &ParseContext) -> Result<Self, Error> {
         let span = ty.span();
         if let syn::Type::Array(syn::TypeArray {
             bracket_token,
@@ -565,12 +752,12 @@ impl TryFrom<&syn::Type> for Type {
         }) = ty
         {
             // Parse [T; N]
-            let elem = Type::try_from(elem.as_ref())?;
+            let elem = Type::parse(elem.as_ref(), ctx)?;
             Ok(Type::Array {
                 bracket_token: *bracket_token,
                 elem: Box::new(elem),
                 semi_token: *semi_token,
-                len: Expr::try_from(len)?,
+                len: Box::new(Expr::parse(len, ctx)?),
             })
         } else if let syn::Type::Path(type_path) = ty {
             util::some_is_unsupported(
@@ -584,8 +771,25 @@ impl TryFrom<&syn::Type> for Type {
             let ident = &segment.ident;
             match &segment.arguments {
                 syn::PathArguments::None => {
+                    let ident_str = ident.to_string();
+
+                    // Check if this is a type parameter from a generic function
+                    if ctx.type_params.contains(&ident_str) {
+                        // Apply any positional rename so that entry point
+                        // type params are encoded uniquely per entry point.
+                        let encoded = ctx.encode_type_param(&ident_str);
+                        let encoded_ident = if encoded == ident_str {
+                            ident.clone()
+                        } else {
+                            Ident::new(&encoded, ident.span())
+                        };
+                        return Ok(Type::TypeParam {
+                            ident: encoded_ident,
+                        });
+                    }
+
                     // Expect this to be a vector alias, a scalar type, or a struct
-                    Ok(match ident.to_string().as_str() {
+                    Ok(match ident_str.as_str() {
                         "i32" | "u32" | "f32" | "bool" => Type::Scalar {
                             ty: ScalarType::try_from(ident)?,
                             ident: ident.clone(),
@@ -637,34 +841,45 @@ impl TryFrom<&syn::Type> for Type {
                                     ident: ident.clone(),
                                     scalar: None,
                                 }
-                            } else if let Some((n, suffix)) = split_as_mat(other) {
-                                // Check for matrix alias (Mat2f, Mat3f, Mat4f)
-                                let size = match n {
-                                    "2" => 2,
-                                    "3" => 3,
-                                    "4" => 4,
-                                    other_n => UnsupportedSnafu {
-                                        span: ident.span(),
-                                        note: format!(
-                                            "Unsupported matrix type '{other}'. `{other_n}` must \
-                                             be one of 2, 3, or 4"
-                                        ),
+                            } else if let Some(MatAlias {
+                                columns,
+                                rows,
+                                suffix,
+                            }) = split_as_mat(other)
+                            {
+                                // Matrix alias: square (Mat2f, Mat3f, Mat4f) or
+                                // non-square (Mat2x3f, Mat3x4f, etc.).
+                                let parse_dim = |d: &str| -> Result<u8, Error> {
+                                    match d {
+                                        "2" => Ok(2),
+                                        "3" => Ok(3),
+                                        "4" => Ok(4),
+                                        other_n => UnsupportedSnafu {
+                                            span: ident.span(),
+                                            note: format!(
+                                                "Unsupported matrix type '{other}'. `{other_n}` \
+                                                 must be one of 2, 3, or 4"
+                                            ),
+                                        }
+                                        .fail(),
                                     }
-                                    .fail()?,
                                 };
-                                // Only f32 matrices are supported in WGSL
+                                let columns = parse_dim(columns)?;
+                                let rows = parse_dim(rows)?;
+                                // Only f32 matrices are supported in WGSL.
                                 if suffix != "f" {
                                     UnsupportedSnafu {
                                         span: ident.span(),
                                         note: format!(
                                             "Unsupported matrix type '{other}'. Only f32 matrices \
-                                             are supported (Mat2f, Mat3f, Mat4f)"
+                                             are supported (e.g. Mat2f, Mat3x4f, Mat4x4f)"
                                         ),
                                     }
                                     .fail()?
                                 }
                                 Type::Matrix {
-                                    size,
+                                    columns,
+                                    rows,
                                     ident: ident.clone(),
                                     scalar: None,
                                 }
@@ -678,177 +893,203 @@ impl TryFrom<&syn::Type> for Type {
                                 // We assume this is a struct
                                 Type::Struct {
                                     ident: ident.clone(),
+                                    type_args: vec![],
                                 }
                             }
                         }
                     })
                 }
                 syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
-                    colon2_token,
+                    colon2_token: _,
                     lt_token,
                     args,
                     gt_token,
                 }) => {
-                    // Expect this to be a vector or matrix of the form `Vec{N}<{scalar}>` or
-                    // `Mat{N}<f32>`
-                    util::some_is_unsupported(
-                        colon2_token.as_ref(),
-                        "Prefix path syntax unsupported in WGSL",
-                    )?;
-
-                    snafu::ensure!(
-                        args.len() == 1,
-                        UnsupportedSnafu {
-                            span: args.span(),
-                            note: "Unsupported generics"
-                        }
-                    );
-
                     let ident_str = ident.to_string();
 
-                    // Check for vector types
-                    let elements = match ident_str.as_str() {
-                        "Vec2" => Some(2u8),
-                        "Vec3" => Some(3),
-                        "Vec4" => Some(4),
-                        _ => None,
-                    };
+                    // Check for known builtin generic types first (these all
+                    // take exactly one type argument).
+                    let is_builtin_generic = matches!(
+                        ident_str.as_str(),
+                        "Vec2"
+                            | "Vec3"
+                            | "Vec4"
+                            | "Mat2"
+                            | "Mat3"
+                            | "Mat4"
+                            | "RuntimeArray"
+                            | "Atomic"
+                    ) || TextureKind::from_rust_name(&ident_str).is_some();
 
-                    // Check for matrix types
-                    let matrix_size = match ident_str.as_str() {
-                        "Mat2" => Some(2u8),
-                        "Mat3" => Some(3),
-                        "Mat4" => Some(4),
-                        _ => None,
-                    };
-
-                    // Check for RuntimeArray
-                    let is_runtime_array = ident_str == "RuntimeArray";
-
-                    // Check for Atomic
-                    let is_atomic = ident_str == "Atomic";
-
-                    let arg = args.first().expect("checked that len was 1");
-                    match arg {
-                        syn::GenericArgument::Type(ty) => {
-                            // Handle RuntimeArray<T> first - it can take any element type
-                            if is_runtime_array {
-                                let elem_type = Type::try_from(ty)?;
-                                return Ok(Type::RuntimeArray {
-                                    ident: ident.clone(),
-                                    lt_token: *lt_token,
-                                    elem: Box::new(elem_type),
-                                    gt_token: *gt_token,
-                                });
+                    if is_builtin_generic {
+                        snafu::ensure!(
+                            args.len() == 1,
+                            UnsupportedSnafu {
+                                span: args.span(),
+                                note: "Built-in generic types take exactly one type argument"
                             }
+                        );
 
-                            // Handle Atomic<T> - only i32 or u32 allowed
-                            if is_atomic {
-                                let elem_type = Type::try_from(ty)?;
-                                match &elem_type {
-                                    Type::Scalar {
-                                        ty: ScalarType::I32 | ScalarType::U32,
-                                        ..
-                                    } => {
-                                        return Ok(Type::Atomic {
-                                            ident: ident.clone(),
-                                            lt_token: *lt_token,
-                                            elem: Box::new(elem_type),
-                                            gt_token: *gt_token,
-                                        });
-                                    }
-                                    _ => {
-                                        return UnsupportedSnafu {
-                                            span: ty.span(),
-                                            note: "Atomic<T> requires T to be i32 or u32",
+                        // Check for vector types
+                        let elements = match ident_str.as_str() {
+                            "Vec2" => Some(2u8),
+                            "Vec3" => Some(3),
+                            "Vec4" => Some(4),
+                            _ => None,
+                        };
+
+                        // Check for matrix types
+                        let matrix_size = match ident_str.as_str() {
+                            "Mat2" => Some(2u8),
+                            "Mat3" => Some(3),
+                            "Mat4" => Some(4),
+                            _ => None,
+                        };
+
+                        let arg = args.first().expect("checked that len was 1");
+                        match arg {
+                            syn::GenericArgument::Type(ty) => {
+                                // Handle RuntimeArray<T>
+                                if ident_str == "RuntimeArray" {
+                                    let elem_type = Type::parse(ty, ctx)?;
+                                    return Ok(Type::RuntimeArray {
+                                        ident: ident.clone(),
+                                        lt_token: *lt_token,
+                                        elem: Box::new(elem_type),
+                                        gt_token: *gt_token,
+                                    });
+                                }
+
+                                // Handle Atomic<T> - only i32 or u32 allowed
+                                if ident_str == "Atomic" {
+                                    let elem_type = Type::parse(ty, ctx)?;
+                                    match &elem_type {
+                                        Type::Scalar {
+                                            ty: ScalarType::I32 | ScalarType::U32,
+                                            ..
+                                        } => {
+                                            return Ok(Type::Atomic {
+                                                ident: ident.clone(),
+                                                lt_token: *lt_token,
+                                                elem: Box::new(elem_type),
+                                                gt_token: *gt_token,
+                                            });
                                         }
-                                        .fail();
+                                        _ => {
+                                            return UnsupportedSnafu {
+                                                span: ty.span(),
+                                                note: "Atomic<T> requires T to be i32 or u32",
+                                            }
+                                            .fail();
+                                        }
                                     }
                                 }
-                            }
 
-                            // Handle sampled texture types: Texture1D<T>, Texture2D<T>, etc.
-                            // T must be f32, i32, or u32
-                            if let Some(texture_kind) = TextureKind::from_rust_name(&ident_str) {
-                                let elem_type = Type::try_from(ty)?;
-                                match &elem_type {
-                                    Type::Scalar {
-                                        ty:
-                                            sampled_type @ (ScalarType::F32
-                                            | ScalarType::I32
-                                            | ScalarType::U32),
-                                        ..
-                                    } => {
-                                        return Ok(Type::Texture {
-                                            kind: texture_kind,
-                                            sampled_type: *sampled_type,
-                                            ident: ident.clone(),
-                                        });
-                                    }
-                                    _ => {
-                                        return UnsupportedSnafu {
-                                            span: ty.span(),
-                                            note: "Sampled texture type parameter must be f32, \
-                                                   i32, or u32",
+                                // Handle sampled texture types
+                                if let Some(texture_kind) = TextureKind::from_rust_name(&ident_str)
+                                {
+                                    let elem_type = Type::parse(ty, ctx)?;
+                                    match &elem_type {
+                                        Type::Scalar {
+                                            ty:
+                                                sampled_type @ (ScalarType::F32
+                                                | ScalarType::I32
+                                                | ScalarType::U32),
+                                            ..
+                                        } => {
+                                            return Ok(Type::Texture {
+                                                kind: texture_kind,
+                                                sampled_type: *sampled_type,
+                                                ident: ident.clone(),
+                                            });
                                         }
-                                        .fail();
+                                        _ => {
+                                            return UnsupportedSnafu {
+                                                span: ty.span(),
+                                                note: "Sampled texture type parameter must be \
+                                                       f32, i32, or u32",
+                                            }
+                                            .fail();
+                                        }
                                     }
                                 }
-                            }
 
-                            if let Type::Scalar {
-                                ty: scalar_ty,
-                                ident: scalar_ident,
-                            } = Type::try_from(ty)?
-                            {
-                                if let Some(elements) = elements {
-                                    // Vector type
-                                    Ok(Type::Vector {
-                                        elements,
-                                        scalar_ty,
-                                        ident: ident.clone(),
-                                        scalar: Some((*lt_token, scalar_ident, *gt_token)),
-                                    })
-                                } else if let Some(size) = matrix_size {
-                                    // Matrix type - only f32 is supported
-                                    if !matches!(scalar_ty, ScalarType::F32) {
-                                        UnsupportedSnafu {
-                                            span: ty.span(),
-                                            note: "Only f32 matrices are supported in WGSL",
+                                // Vector or matrix with scalar type argument
+                                if let Type::Scalar {
+                                    ty: scalar_ty,
+                                    ident: scalar_ident,
+                                } = Type::parse(ty, ctx)?
+                                {
+                                    if let Some(elements) = elements {
+                                        Ok(Type::Vector {
+                                            elements,
+                                            scalar_ty,
+                                            ident: ident.clone(),
+                                            scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                        })
+                                    } else if let Some(size) = matrix_size {
+                                        if !matches!(scalar_ty, ScalarType::F32) {
+                                            UnsupportedSnafu {
+                                                span: ty.span(),
+                                                note: "Only f32 matrices are supported in WGSL",
+                                            }
+                                            .fail()?
                                         }
-                                        .fail()?
+                                        // The `Mat{N}<f32>` shorthand is square.
+                                        Ok(Type::Matrix {
+                                            columns: size,
+                                            rows: size,
+                                            ident: ident.clone(),
+                                            scalar: Some((*lt_token, scalar_ident, *gt_token)),
+                                        })
+                                    } else {
+                                        unreachable!(
+                                            "already checked this is a builtin generic type"
+                                        )
                                     }
-                                    Ok(Type::Matrix {
-                                        size,
-                                        ident: ident.clone(),
-                                        scalar: Some((*lt_token, scalar_ident, *gt_token)),
-                                    })
                                 } else {
                                     UnsupportedSnafu {
-                                        span: ident.span(),
-                                        note: "Unsupported generic type, must be one of Vec2, \
-                                               Vec3, Vec4, Mat2, Mat3, Mat4, RuntimeArray, \
-                                               Atomic, or a texture type (Texture1D, Texture2D, \
-                                               etc.)",
+                                        span: ty.span(),
+                                        note: format!(
+                                            "Expected concrete scalar type. Saw '{}'",
+                                            ty.into_token_stream()
+                                        ),
                                     }
                                     .fail()
                                 }
-                            } else {
-                                UnsupportedSnafu {
-                                    span: ty.span(),
-                                    note: format!(
-                                        "Expected concrete scalar type. Saw '{}'",
-                                        ty.into_token_stream()
-                                    ),
+                            }
+                            other => UnsupportedSnafu {
+                                span: other.span(),
+                                note: format!("'{}' is unsupported", other.into_token_stream()),
+                            }
+                            .fail(),
+                        }
+                    } else {
+                        // Not a known builtin — treat as a generic struct
+                        // instantiation (e.g., `Pair<f32>`, `Wrapper<i32,
+                        // u32>`).
+                        let mut type_args = Vec::new();
+                        for arg in args {
+                            match arg {
+                                syn::GenericArgument::Type(ty) => {
+                                    type_args.push(Type::parse(ty, ctx)?);
                                 }
-                                .fail()
+                                other => {
+                                    return UnsupportedSnafu {
+                                        span: other.span(),
+                                        note: format!(
+                                            "unsupported generic argument '{}' on struct type",
+                                            other.into_token_stream()
+                                        ),
+                                    }
+                                    .fail();
+                                }
                             }
                         }
-                        other => UnsupportedSnafu {
-                            span: other.span(),
-                            note: format!("'{}' is unsupported", other.into_token_stream()),
-                        }
-                        .fail(),
+                        Ok(Type::Struct {
+                            ident: ident.clone(),
+                            type_args,
+                        })
                     }
                 }
                 other => UnsupportedSnafu {
@@ -883,7 +1124,7 @@ impl TryFrom<&syn::Type> for Type {
                     }
                 };
 
-                let elem = Type::try_from(&parsed.store_type)?;
+                let elem = Type::parse(&parsed.store_type, ctx)?;
 
                 Ok(Type::Ptr {
                     address_space,
@@ -910,8 +1151,16 @@ impl TryFrom<&syn::Type> for Type {
     }
 }
 
+impl TryFrom<&syn::Type> for Type {
+    type Error = Error;
+
+    fn try_from(ty: &syn::Type) -> Result<Self, Self::Error> {
+        Type::parse(ty, &ParseContext::default())
+    }
+}
+
 /// A literal value.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Lit {
     Bool(syn::LitBool),
     Float(syn::LitFloat),
@@ -1076,6 +1325,7 @@ fn extract_zero_value_scalar_type(expr: &syn::Expr, span: Span) -> Result<Type, 
 
 /// A binary operator: `+` `-` `*` `/` `%` `==` `!=` `<` `<=` `>` `>=` `&&` `||`
 /// `&` `|` `^` `<<` `>>`.
+#[derive(Clone)]
 pub enum BinOp {
     // Arithmetic
     Add(Token![+]),
@@ -1173,6 +1423,7 @@ impl std::fmt::Display for BinOp {
 
 /// A compound assignment operator: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`,
 /// `^=`, `<<=`, `>>=`
+#[derive(Clone)]
 #[allow(clippy::enum_variant_names)]
 pub enum CompoundOp {
     AddAssign(Token![+=]),
@@ -1232,6 +1483,7 @@ fn is_compound_assign_op(op: &syn::BinOp) -> bool {
 }
 
 /// A unary operator: "!" or "-"
+#[derive(Clone)]
 pub enum UnOp {
     Not(Token![!]),
     Neg(Token![-]),
@@ -1257,6 +1509,7 @@ impl TryFrom<&syn::UnOp> for UnOp {
     }
 }
 
+#[derive(Clone)]
 pub struct FieldValue {
     pub member: Ident,
     pub colon_token: Option<Token![:]>,
@@ -1267,6 +1520,13 @@ impl TryFrom<&syn::FieldValue> for FieldValue {
     type Error = Error;
 
     fn try_from(value: &syn::FieldValue) -> Result<Self, Self::Error> {
+        FieldValue::parse(value, &ParseContext::default())
+    }
+}
+
+impl FieldValue {
+    /// Parse a struct field value with context for type parameter resolution.
+    pub fn parse(value: &syn::FieldValue, ctx: &ParseContext) -> Result<Self, Error> {
         Ok(FieldValue {
             member: match &value.member {
                 syn::Member::Named(ident) => ident.clone(),
@@ -1277,7 +1537,7 @@ impl TryFrom<&syn::FieldValue> for FieldValue {
                 .fail()?,
             },
             colon_token: value.colon_token,
-            expr: Expr::try_from(&value.expr)?,
+            expr: Expr::parse(&value.expr, ctx)?,
         })
     }
 }
@@ -1285,6 +1545,7 @@ impl TryFrom<&syn::FieldValue> for FieldValue {
 /// A function path - either a simple identifier or a type-qualified path.
 ///
 /// Used in function calls to support both `foo(args)` and `Type::method(args)`.
+#[derive(Clone)]
 pub enum FnPath {
     /// Simple function call: `foo()`
     Ident(Ident),
@@ -1300,6 +1561,7 @@ pub enum FnPath {
 }
 
 /// WGSL expressions.
+#[derive(Clone)]
 pub enum Expr {
     /// A literal value.
     Lit(Lit),
@@ -1349,14 +1611,24 @@ pub enum Expr {
     ///
     /// Supports both simple calls like `foo(args)` and type-qualified calls
     /// like `Light::attenuate(args)` for calling impl block methods.
+    /// Generic calls use turbofish: `foo::<f32>(args)`.
     FnCall {
         path: FnPath,
+        /// Concrete type arguments from turbofish syntax (e.g., `foo::<f32,
+        /// u32>`). Empty for non-generic calls.
+        type_args: Vec<Type>,
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
     },
-    /// Struct constructor
+    /// Struct constructor.
+    ///
+    /// `type_args` carries concrete type arguments for generic struct
+    /// construction (e.g., `Pair::<f32> { ... }`). Empty for non-generic
+    /// structs. After monomorphization, the ident is rewritten to the mangled
+    /// name and type_args is cleared.
     Struct {
         ident: Ident,
+        type_args: Vec<Type>,
         brace_token: syn::token::Brace,
         fields: syn::punctuated::Punctuated<FieldValue, syn::Token![,]>,
     },
@@ -1393,17 +1665,55 @@ pub enum Expr {
         elem_type: Box<Type>,
         len: Box<Expr>,
     },
+    /// Access to a generic linkage variable via `get!(VAR)` / `get!(VAR, T)`
+    /// or `get_mut!(VAR)` / `get_mut!(VAR, T)`.
+    ///
+    /// The one-argument form (`get!(VAR)`) has `type_arg = None` and is used
+    /// for concrete linkage variables. The two-argument form (`get!(VAR, T)`)
+    /// has `type_arg = Some(T)` and is used for generic linkage variables.
+    ///
+    /// In WGSL output, this emits just the identifier. The type argument is
+    /// only used for constraint collection during builder generation.
+    LinkageAccess {
+        /// Whether this is `get!` or `get_mut!`.
+        kind: LinkageKind,
+        /// The variable name (e.g., `FRAME`, `BINS`).
+        ident: syn::Ident,
+        /// The type argument for generic access (e.g., `Vec4<T>`, `f32`).
+        /// Stored as a `syn::Type` rather than a `parse::Type` because the
+        /// type argument is a Rust-side type expression used for code
+        /// generation (the `instantiate` function's `where` clause), not a
+        /// WGSL type. This allows arbitrary Rust type expressions like
+        /// `Vec4<T>` where `T` is a type parameter.
+        /// `None` for the one-argument form.
+        type_arg: Option<syn::Type>,
+    },
+}
+
+/// Whether a linkage access is `get!` or `get_mut!`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkageKind {
+    Get,
+    GetMut,
 }
 
 impl TryFrom<&syn::Expr> for Expr {
     type Error = Error;
 
     fn try_from(value: &syn::Expr) -> Result<Self, Self::Error> {
+        Expr::parse(value, &ParseContext::default())
+    }
+}
+
+impl Expr {
+    /// Parse a `syn::Expr` into a WGSL `Expr`, using the given context to
+    /// resolve type parameter names.
+    pub fn parse(value: &syn::Expr, ctx: &ParseContext) -> Result<Self, Error> {
         Ok(match value {
             syn::Expr::Lit(syn::ExprLit { attrs: _, lit }) => Self::Lit(Lit::try_from(lit)?),
             syn::Expr::Unary(syn::ExprUnary { attrs: _, op, expr }) => {
                 let op = UnOp::try_from(op)?;
-                let expr = Box::new(Expr::try_from(expr.as_ref())?);
+                let expr = Box::new(Expr::parse(expr.as_ref(), ctx)?);
                 Self::Unary { op, expr }
             }
             syn::Expr::Path(syn::PatPath {
@@ -1453,7 +1763,7 @@ impl TryFrom<&syn::Expr> for Expr {
                 paren_token,
                 expr,
             }) => {
-                let inner = Box::new(Expr::try_from(expr.as_ref())?);
+                let inner = Box::new(Expr::parse(expr.as_ref(), ctx)?);
                 Self::Paren {
                     paren_token: *paren_token,
                     inner,
@@ -1467,7 +1777,7 @@ impl TryFrom<&syn::Expr> for Expr {
                 let mut expr_elems = syn::punctuated::Punctuated::new();
                 for pair in elems.pairs() {
                     let expr = pair.value();
-                    let parsed = Expr::try_from(*expr)?;
+                    let parsed = Expr::parse(expr, ctx)?;
                     expr_elems.push_value(parsed);
                     if let Some(comma) = pair.punct() {
                         expr_elems.push_punct(**comma);
@@ -1487,7 +1797,7 @@ impl TryFrom<&syn::Expr> for Expr {
             }) => {
                 let elem_type =
                     Box::new(extract_zero_value_scalar_type(expr.as_ref(), expr.span())?);
-                let len = Box::new(Expr::try_from(len.as_ref())?);
+                let len = Box::new(Expr::parse(len.as_ref(), ctx)?);
                 Self::ZeroValueArray {
                     bracket_token: *bracket_token,
                     elem_type,
@@ -1500,8 +1810,8 @@ impl TryFrom<&syn::Expr> for Expr {
                 bracket_token,
                 index,
             }) => {
-                let lhs = Box::new(Expr::try_from(lhs.as_ref())?);
-                let index = Box::new(Expr::try_from(index.as_ref())?);
+                let lhs = Box::new(Expr::parse(lhs.as_ref(), ctx)?);
+                let index = Box::new(Expr::parse(index.as_ref(), ctx)?);
                 Self::ArrayIndexing {
                     lhs,
                     bracket_token: *bracket_token,
@@ -1514,7 +1824,7 @@ impl TryFrom<&syn::Expr> for Expr {
                 dot_token,
                 member,
             }) => {
-                let base = Box::new(Expr::try_from(base.as_ref())?);
+                let base = Box::new(Expr::parse(base.as_ref(), ctx)?);
                 let field = match member {
                     syn::Member::Named(ident) => ident.clone(),
                     unnamed => UnsupportedSnafu {
@@ -1573,12 +1883,12 @@ impl TryFrom<&syn::Expr> for Expr {
                                syntax: Type::method(receiver, args)",
                     }
                 );
-                let lhs = Box::new(Expr::try_from(receiver.as_ref())?);
+                let lhs = Box::new(Expr::parse(receiver.as_ref(), ctx)?);
                 let params = if is_setter {
                     let mut param_args = syn::punctuated::Punctuated::new();
                     for pair in args.pairs() {
                         let (expr, comma) = pair.into_tuple();
-                        let expr = Expr::try_from(expr)?;
+                        let expr = Expr::parse(expr, ctx)?;
                         param_args.push_value(expr);
                         if let Some(comma) = comma {
                             param_args.push_punct(*comma);
@@ -1610,9 +1920,9 @@ impl TryFrom<&syn::Expr> for Expr {
                 op,
                 right,
             }) => Self::Binary {
-                lhs: Box::new(Expr::try_from(left.as_ref())?),
+                lhs: Box::new(Expr::parse(left.as_ref(), ctx)?),
                 op: BinOp::try_from(op)?,
-                rhs: Box::new(Expr::try_from(right.as_ref())?),
+                rhs: Box::new(Expr::parse(right.as_ref(), ctx)?),
             },
             syn::Expr::Cast(syn::ExprCast {
                 attrs: _,
@@ -1620,8 +1930,8 @@ impl TryFrom<&syn::Expr> for Expr {
                 as_token: _,
                 ty,
             }) => {
-                let lhs = Box::new(Expr::try_from(lhs.as_ref())?);
-                let ty = Box::new(Type::try_from(ty.as_ref())?);
+                let lhs = Box::new(Expr::parse(lhs.as_ref(), ctx)?);
+                let ty = Box::new(Type::parse(ty.as_ref(), ctx)?);
                 Self::Cast { lhs, ty }
             }
             syn::Expr::Call(syn::ExprCall {
@@ -1634,28 +1944,85 @@ impl TryFrom<&syn::Expr> for Expr {
                     util::some_is_unsupported(expr_path.qself.as_ref(), "QSelf unsupported")?;
 
                     let syn_path = &expr_path.path;
-                    let fn_path = if let Some(ident) = syn_path.get_ident() {
-                        // Simple function call: foo(args)
-                        FnPath::Ident(ident.clone())
-                    } else if syn_path.segments.len() == 2 {
-                        // Type::method call: Light::attenuate(args)
-                        let ty = syn_path.segments[0].ident.clone();
-                        let method = syn_path.segments[1].ident.clone();
-                        // Check for no generics on segments
-                        for seg in &syn_path.segments {
-                            if !matches!(seg.arguments, syn::PathArguments::None) {
+                    let (fn_path, type_args) = if syn_path.segments.len() == 1 {
+                        let seg = &syn_path.segments[0];
+                        match &seg.arguments {
+                            syn::PathArguments::None => {
+                                // Simple function call: foo(args)
+                                (FnPath::Ident(seg.ident.clone()), vec![])
+                            }
+                            syn::PathArguments::AngleBracketed(angle_args) => {
+                                // Turbofish call: foo::<T1, T2>(args)
+                                let mut ta = Vec::new();
+                                for arg in &angle_args.args {
+                                    match arg {
+                                        syn::GenericArgument::Type(ty) => {
+                                            ta.push(Type::parse(ty, ctx)?);
+                                        }
+                                        other => {
+                                            return UnsupportedSnafu {
+                                                span: other.span(),
+                                                note: "only type arguments are supported in \
+                                                       turbofish",
+                                            }
+                                            .fail();
+                                        }
+                                    }
+                                }
+                                (FnPath::Ident(seg.ident.clone()), ta)
+                            }
+                            other => {
                                 return UnsupportedSnafu {
-                                    span: seg.arguments.span(),
-                                    note: "generic arguments in function paths are not supported",
+                                    span: other.span(),
+                                    note: "unsupported path arguments in function call",
                                 }
                                 .fail();
                             }
                         }
-                        FnPath::TypeMethod {
-                            ty,
-                            colon2_token: Token![::](syn_path.segments[0].ident.span()),
-                            method,
+                    } else if syn_path.segments.len() == 2 {
+                        // Type::method call: Light::attenuate(args)
+                        // or generic struct method: Pair::<f32>::first(args)
+                        let ty = syn_path.segments[0].ident.clone();
+                        let method = syn_path.segments[1].ident.clone();
+
+                        // Extract type args from the first segment (the type)
+                        // for generic struct method calls like Pair::<f32>::first()
+                        let mut type_args = Vec::new();
+                        if let syn::PathArguments::AngleBracketed(angle_args) =
+                            &syn_path.segments[0].arguments
+                        {
+                            for arg in &angle_args.args {
+                                match arg {
+                                    syn::GenericArgument::Type(ty) => {
+                                        type_args.push(Type::parse(ty, ctx)?);
+                                    }
+                                    other => {
+                                        return UnsupportedSnafu {
+                                            span: other.span(),
+                                            note: "only type arguments are supported in \
+                                                   type::method paths",
+                                        }
+                                        .fail();
+                                    }
+                                }
+                            }
                         }
+                        // The method segment should not have its own generics
+                        if !matches!(syn_path.segments[1].arguments, syn::PathArguments::None) {
+                            return UnsupportedSnafu {
+                                span: syn_path.segments[1].arguments.span(),
+                                note: "generic arguments on the method segment are not supported",
+                            }
+                            .fail();
+                        }
+                        (
+                            FnPath::TypeMethod {
+                                ty,
+                                colon2_token: Token![::](syn_path.segments[0].ident.span()),
+                                method,
+                            },
+                            type_args,
+                        )
                     } else {
                         return UnsupportedSnafu {
                             span: syn_path.span(),
@@ -1668,7 +2035,7 @@ impl TryFrom<&syn::Expr> for Expr {
                     let mut params = syn::punctuated::Punctuated::new();
                     for pair in args.pairs() {
                         let expr = pair.value();
-                        let param = Expr::try_from(*expr)?;
+                        let param = Expr::parse(expr, ctx)?;
                         params.push_value(param);
                         if let Some(comma) = pair.punct() {
                             params.push_punct(**comma);
@@ -1676,6 +2043,7 @@ impl TryFrom<&syn::Expr> for Expr {
                     }
                     Self::FnCall {
                         path: fn_path,
+                        type_args,
                         paren_token,
                         params,
                     }
@@ -1699,17 +2067,54 @@ impl TryFrom<&syn::Expr> for Expr {
                 rest,
             }) => {
                 util::some_is_unsupported(qself.as_ref(), "")?;
-                let ident = path.get_ident().context(UnsupportedSnafu {
-                    span: path.span(),
-                    note: "Struct name cannot be a path",
-                })?;
                 util::some_is_unsupported(dot2_token.as_ref(), "Default struct construction")?;
                 util::some_is_unsupported(rest.as_ref(), "Default struct construction")?;
+
+                // Extract the struct ident and optional type arguments.
+                // For `Pair::<f32> { ... }`, the path has one segment with
+                // angle-bracketed args.
+                let segment = path.segments.first().context(UnsupportedSnafu {
+                    span: path.span(),
+                    note: "Struct constructor requires a name",
+                })?;
+                snafu::ensure!(
+                    path.segments.len() == 1,
+                    UnsupportedSnafu {
+                        span: path.span(),
+                        note: "Struct name cannot be a multi-segment path"
+                    }
+                );
+
+                let struct_ident = segment.ident.clone();
+                let mut type_args = Vec::new();
+                if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                    args,
+                    ..
+                }) = &segment.arguments
+                {
+                    for arg in args {
+                        match arg {
+                            syn::GenericArgument::Type(ty) => {
+                                type_args.push(Type::parse(ty, ctx)?);
+                            }
+                            other => {
+                                return UnsupportedSnafu {
+                                    span: other.span(),
+                                    note: format!(
+                                        "unsupported generic argument '{}' in struct constructor",
+                                        other.into_token_stream()
+                                    ),
+                                }
+                                .fail();
+                            }
+                        }
+                    }
+                }
 
                 let mut parsed_fields = syn::punctuated::Punctuated::new();
                 for pair in fields.pairs() {
                     let field = pair.value();
-                    let parsed = FieldValue::try_from(*field)?;
+                    let parsed = FieldValue::parse(field, ctx)?;
                     parsed_fields.push_value(parsed);
                     if let Some(comma) = pair.punct() {
                         parsed_fields.push_punct(**comma);
@@ -1717,7 +2122,8 @@ impl TryFrom<&syn::Expr> for Expr {
                 }
 
                 Expr::Struct {
-                    ident: ident.clone(),
+                    ident: struct_ident,
+                    type_args,
                     brace_token: *brace_token,
                     fields: parsed_fields,
                 }
@@ -1744,7 +2150,7 @@ impl TryFrom<&syn::Expr> for Expr {
                 let _ = mutability;
                 Self::Reference {
                     and_token: *and_token,
-                    expr: Box::new(Expr::try_from(expr.as_ref())?),
+                    expr: Box::new(Expr::parse(expr.as_ref(), ctx)?),
                 }
             }
             // Handle get_mut!(IDENT) - strip the macro, return just the ident for WGSL
@@ -1760,22 +2166,64 @@ impl TryFrom<&syn::Expr> for Expr {
                     }
                     .fail()
                 };
-                // Some macros have no meaning in WGSL, and we will simply strip them
+                // `get!`/`get_mut!` accept two forms:
+                //   - `get!(IDENT)` for concrete module variables
+                //   - `get!(IDENT, T)` for generic module variables
+                // Both are preserved as `Expr::LinkageAccess` so the type
+                // argument can be collected for constraint checking during
+                // builder generation. In WGSL output, only the identifier
+                // is emitted.
                 let noop_macros = ["get_mut", "get"];
                 if let Some(macro_ident) = mac.path.get_ident() {
                     let macro_ident_str = macro_ident.to_string();
                     if noop_macros.contains(&macro_ident_str.as_str()) {
-                        // Parse the tokens inside the macro as a single identifier
-                        let ident: Ident = syn::parse2(mac.tokens.clone()).map_err(|e| {
-                            UnsupportedSnafu {
-                                span: mac.path.span(),
-                                note: format!(
-                                    "{macro_ident_str}! expects a single identifier, got: {e}"
-                                ),
+                        struct GetArgs {
+                            ident: Ident,
+                            type_arg: Option<syn::Type>,
+                        }
+                        impl syn::parse::Parse for GetArgs {
+                            fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+                                let ident: Ident = input.parse()?;
+                                let type_arg = if input.peek(syn::Token![,]) {
+                                    let _: syn::Token![,] = input.parse()?;
+                                    Some(input.parse()?)
+                                } else {
+                                    None
+                                };
+                                Ok(GetArgs { ident, type_arg })
                             }
-                            .build()
-                        })?;
-                        Self::Ident(ident)
+                        }
+                        let GetArgs { ident, type_arg } =
+                            syn::parse2(mac.tokens.clone()).map_err(|e| {
+                                UnsupportedSnafu {
+                                    span: mac.path.span(),
+                                    note: format!(
+                                        "{macro_ident_str}! expects an identifier (optionally \
+                                         followed by `, T`), got: {e}"
+                                    ),
+                                }
+                                .build()
+                            })?;
+                        let kind = if macro_ident_str == "get_mut" {
+                            LinkageKind::GetMut
+                        } else {
+                            LinkageKind::Get
+                        };
+                        // Store the type argument as a `syn::Type` rather than
+                        // converting to `parse::Type`. The type arg is a
+                        // Rust-side expression (e.g. `Vec4<T>`, `f32`) used
+                        // for code generation in the `instantiate` function's
+                        // `where` clause. Converting through `Type::parse`
+                        // would reject type params inside built-in generics
+                        // like `Vec4<T>` (since WGSL vectors require a
+                        // concrete scalar), and would also apply positional
+                        // renames (e.g. `T` → `frag_main_0`) that should
+                        // only happen on the WGSL/IR side.
+                        Self::LinkageAccess {
+                            kind,
+                            ident,
+                            type_arg,
+                        }
                     } else {
                         return trigger_unsupported();
                     }
@@ -1790,9 +2238,7 @@ impl TryFrom<&syn::Expr> for Expr {
             .fail()?,
         })
     }
-}
 
-impl Expr {
     /// Returns true if this expression is a literal value.
     pub fn is_literal(&self) -> bool {
         matches!(self, Expr::Lit(_))
@@ -1838,12 +2284,13 @@ impl Expr {
                     Type::Array { bracket_token, .. } => bracket_token.span.join(),
                     Type::RuntimeArray { ident, .. } => ident.span(),
                     Type::Atomic { ident, .. } => ident.span(),
-                    Type::Struct { ident } => ident.span(),
+                    Type::Struct { ident, .. } => ident.span(),
                     Type::Ptr { span, .. } => *span,
                     Type::Sampler { ident } => ident.span(),
                     Type::SamplerComparison { ident } => ident.span(),
                     Type::Texture { ident, .. } => ident.span(),
                     Type::TextureDepth { ident, .. } => ident.span(),
+                    Type::TypeParam { ident } => ident.span(),
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }
@@ -1874,6 +2321,7 @@ impl Expr {
                 .join(expr.span())
                 .unwrap_or_else(|| and_token.span),
             Expr::ZeroValueArray { bracket_token, .. } => bracket_token.span.join(),
+            Expr::LinkageAccess { ident, .. } => ident.span(),
         }
     }
 }
@@ -1890,6 +2338,7 @@ impl Expr {
 // ```
 //
 // Then we can remove this #[allow(dead_code)]
+#[derive(Clone)]
 #[allow(dead_code)]
 pub enum ReturnTypeAnnotation {
     None,
@@ -1899,6 +2348,7 @@ pub enum ReturnTypeAnnotation {
     DefaultLocation,
 }
 
+#[derive(Clone)]
 pub enum ReturnType {
     Default,
     Type {
@@ -1912,10 +2362,17 @@ impl TryFrom<&syn::ReturnType> for ReturnType {
     type Error = Error;
 
     fn try_from(ret: &syn::ReturnType) -> Result<Self, Self::Error> {
+        ReturnType::parse(ret, &ParseContext::default())
+    }
+}
+
+impl ReturnType {
+    /// Parse a return type with context for type parameter resolution.
+    pub fn parse(ret: &syn::ReturnType, ctx: &ParseContext) -> Result<Self, Error> {
         match ret {
             syn::ReturnType::Default => Ok(ReturnType::Default),
             syn::ReturnType::Type(arrow, ty) => {
-                let scalar = Type::try_from(ty.as_ref())?;
+                let scalar = Type::parse(ty.as_ref(), ctx)?;
                 Ok(ReturnType::Type {
                     arrow: *arrow,
                     ty: Box::new(scalar),
@@ -1926,6 +2383,7 @@ impl TryFrom<&syn::ReturnType> for ReturnType {
     }
 }
 
+#[derive(Clone)]
 pub struct LocalInit {
     pub eq_token: Token![=],
     pub expr: Expr,
@@ -1935,6 +2393,13 @@ impl TryFrom<&syn::LocalInit> for LocalInit {
     type Error = Error;
 
     fn try_from(value: &syn::LocalInit) -> Result<Self, Self::Error> {
+        LocalInit::parse(value, &ParseContext::default())
+    }
+}
+
+impl LocalInit {
+    /// Parse a local initializer with context for type parameter resolution.
+    pub fn parse(value: &syn::LocalInit, ctx: &ParseContext) -> Result<Self, Error> {
         if let Some((else_token, _)) = value.diverge.as_ref() {
             UnsupportedIfThenSnafu {
                 span: else_token.span(),
@@ -1943,11 +2408,12 @@ impl TryFrom<&syn::LocalInit> for LocalInit {
         }
         Ok(LocalInit {
             eq_token: value.eq_token,
-            expr: Expr::try_from(value.expr.as_ref())?,
+            expr: Expr::parse(value.expr.as_ref(), ctx)?,
         })
     }
 }
 
+#[derive(Clone)]
 pub struct Local {
     pub let_token: Token![let],
     /// If `mutability` is `Some`, this is a `var` binding, otherwise this is a
@@ -1963,12 +2429,19 @@ impl TryFrom<&syn::Local> for Local {
     type Error = Error;
 
     fn try_from(value: &syn::Local) -> Result<Self, Self::Error> {
+        Local::parse(value, &ParseContext::default())
+    }
+}
+
+impl Local {
+    /// Parse a local binding with context for type parameter resolution.
+    pub fn parse(value: &syn::Local, ctx: &ParseContext) -> Result<Self, Error> {
         let let_token = value.let_token;
         let semi_token = value.semi_token;
 
         struct IdentMutTy(Ident, Option<Token![mut]>, Option<(Token![:], Type)>);
 
-        fn ident_mut_ty(pat: &syn::Pat) -> Result<IdentMutTy, Error> {
+        fn ident_mut_ty(pat: &syn::Pat, ctx: &ParseContext) -> Result<IdentMutTy, Error> {
             match pat {
                 syn::Pat::Ident(syn::PatIdent {
                     attrs: _,
@@ -2004,8 +2477,8 @@ impl TryFrom<&syn::Local> for Local {
                     colon_token,
                     ty,
                 }) => {
-                    let mut output = ident_mut_ty(pat.as_ref())?;
-                    output.2 = Some((*colon_token, Type::try_from(ty.as_ref())?));
+                    let mut output = ident_mut_ty(pat.as_ref(), ctx)?;
+                    output.2 = Some((*colon_token, Type::parse(ty.as_ref(), ctx)?));
                     Ok(output)
                 }
                 _ => UnsupportedSnafu {
@@ -2019,9 +2492,9 @@ impl TryFrom<&syn::Local> for Local {
             }
         }
 
-        let IdentMutTy(ident, mutability, ty) = ident_mut_ty(&value.pat)?;
+        let IdentMutTy(ident, mutability, ty) = ident_mut_ty(&value.pat, ctx)?;
         let init = if let Some(init) = &value.init {
-            Some(LocalInit::try_from(init)?)
+            Some(LocalInit::parse(init, ctx)?)
         } else {
             None
         };
@@ -2082,6 +2555,7 @@ impl Parse for SlabWriteMacroArgs {
     }
 }
 
+#[derive(Clone)]
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
@@ -2179,11 +2653,27 @@ impl TryFrom<&syn::Stmt> for Stmt {
     type Error = Error;
 
     fn try_from(value: &syn::Stmt) -> Result<Self, Self::Error> {
+        Stmt::parse(value, &ParseContext::default())
+    }
+}
+
+impl Stmt {
+    /// Parse a statement with context for type parameter resolution.
+    pub fn parse(value: &syn::Stmt, ctx: &ParseContext) -> Result<Self, Error> {
         match value {
-            syn::Stmt::Local(local) => Ok(Stmt::Local(Box::new(Local::try_from(local)?))),
+            syn::Stmt::Local(local) => Ok(Stmt::Local(Box::new(Local::parse(local, ctx)?))),
             syn::Stmt::Item(item) => match item {
                 syn::Item::Const(item_const) => {
-                    Ok(Stmt::Const(Box::new(ItemConst::try_from(item_const)?)))
+                    let c = ItemConst::parse(item_const, ctx)?;
+                    if let Some(span) = expr_contains_linkage_access(&c.expr) {
+                        return Err(Error::unsupported(
+                            span,
+                            "get!/get_mut! cannot be used in const initializers (WGSL const \
+                             expressions cannot access storage/uniform buffers)"
+                                .to_string(),
+                        ));
+                    }
+                    Ok(Stmt::Const(Box::new(c)))
                 }
                 other => UnsupportedSnafu {
                     span: other.span(),
@@ -2195,7 +2685,7 @@ impl TryFrom<&syn::Stmt> for Stmt {
                 match expr {
                     // Handle for-loops
                     syn::Expr::ForLoop(for_loop) => {
-                        Ok(Stmt::For(Box::new(ForLoop::try_from(for_loop)?)))
+                        Ok(Stmt::For(Box::new(ForLoop::parse(for_loop, ctx)?)))
                     }
                     // Handle assignments
                     syn::Expr::Assign(syn::ExprAssign {
@@ -2209,9 +2699,9 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             note: "Assignment statements must end with a semicolon".to_string(),
                         })?;
                         Ok(Stmt::Assignment {
-                            lhs: Expr::try_from(left.as_ref())?,
+                            lhs: Expr::parse(left.as_ref(), ctx)?,
                             eq_token: *eq_token,
-                            rhs: Expr::try_from(right.as_ref())?,
+                            rhs: Expr::parse(right.as_ref(), ctx)?,
                             semi_token,
                         })
                     }
@@ -2229,9 +2719,9 @@ impl TryFrom<&syn::Stmt> for Stmt {
                                 .to_string(),
                         })?;
                         Ok(Stmt::CompoundAssignment {
-                            lhs: Expr::try_from(left.as_ref())?,
+                            lhs: Expr::parse(left.as_ref(), ctx)?,
                             op: CompoundOp::try_from(op)?,
-                            rhs: Expr::try_from(right.as_ref())?,
+                            rhs: Expr::parse(right.as_ref(), ctx)?,
                             semi_token,
                         })
                     }
@@ -2249,8 +2739,8 @@ impl TryFrom<&syn::Stmt> for Stmt {
                         )?;
                         Ok(Stmt::While {
                             while_token: *while_token,
-                            condition: Expr::try_from(cond.as_ref())?,
-                            body: Block::try_from(body)?,
+                            condition: Expr::parse(cond.as_ref(), ctx)?,
+                            body: Block::parse(body, ctx)?,
                         })
                     }
                     // Loop statement: `loop { ... }`
@@ -2266,11 +2756,11 @@ impl TryFrom<&syn::Stmt> for Stmt {
                         )?;
                         Ok(Stmt::Loop {
                             loop_token: *loop_token,
-                            body: Block::try_from(body)?,
+                            body: Block::parse(body, ctx)?,
                         })
                     }
                     // If statements are control flow statements in WGSL
-                    syn::Expr::If(expr_if) => Ok(Stmt::If(Box::new(StmtIf::try_from(expr_if)?))),
+                    syn::Expr::If(expr_if) => Ok(Stmt::If(Box::new(StmtIf::parse(expr_if, ctx)?))),
                     // Break statement: `break;`
                     syn::Expr::Break(syn::ExprBreak {
                         attrs: _,
@@ -2325,7 +2815,7 @@ impl TryFrom<&syn::Stmt> for Stmt {
                             note: "Return statements must end with a semicolon".to_string(),
                         })?;
                         let expr_opt = if let Some(e) = return_expr {
-                            Some(Expr::try_from(e.as_ref())?)
+                            Some(Expr::parse(e.as_ref(), ctx)?)
                         } else {
                             None
                         };
@@ -2337,14 +2827,14 @@ impl TryFrom<&syn::Stmt> for Stmt {
                     }
                     // Match statement → Switch statement
                     syn::Expr::Match(expr_match) => {
-                        Ok(Stmt::Switch(Box::new(StmtSwitch::try_from(expr_match)?)))
+                        Ok(Stmt::Switch(Box::new(StmtSwitch::parse(expr_match, ctx)?)))
                     }
                     // Block statement → compound statement
                     syn::Expr::Block(syn::ExprBlock { block, .. }) => {
-                        Ok(Stmt::Block(Block::try_from(block)?))
+                        Ok(Stmt::Block(Block::parse(block, ctx)?))
                     }
                     _ => Ok(Stmt::Expr {
-                        expr: Expr::try_from(expr)?,
+                        expr: Expr::parse(expr, ctx)?,
                         semi_token: *semi_token,
                     }),
                 }
@@ -2365,10 +2855,10 @@ impl TryFrom<&syn::Stmt> for Stmt {
                                 note: format!("slab_read_array! parse error: {e}"),
                             })?;
                         Ok(Stmt::SlabRead {
-                            slab: Expr::try_from(&args.0)?,
-                            offset: Expr::try_from(&args.1)?,
-                            dest: Expr::try_from(&args.2)?,
-                            size: Expr::try_from(&args.3)?,
+                            slab: Expr::parse(&args.0, ctx)?,
+                            offset: Expr::parse(&args.1, ctx)?,
+                            dest: Expr::parse(&args.2, ctx)?,
+                            size: Expr::parse(&args.3, ctx)?,
                             span,
                         })
                     }
@@ -2379,10 +2869,10 @@ impl TryFrom<&syn::Stmt> for Stmt {
                                 note: format!("slab_write_array! parse error: {e}"),
                             })?;
                         Ok(Stmt::SlabWrite {
-                            slab: Expr::try_from(&args.0)?,
-                            offset: Expr::try_from(&args.1)?,
-                            src: Expr::try_from(&args.2)?,
-                            size: args.3.as_ref().map(Expr::try_from).transpose()?,
+                            slab: Expr::parse(&args.0, ctx)?,
+                            offset: Expr::parse(&args.1, ctx)?,
+                            src: Expr::parse(&args.2, ctx)?,
+                            size: args.3.as_ref().map(|e| Expr::parse(e, ctx)).transpose()?,
                             span,
                         })
                     }
@@ -2398,6 +2888,7 @@ impl TryFrom<&syn::Stmt> for Stmt {
     }
 }
 
+#[derive(Clone)]
 pub struct Block {
     pub brace_token: syn::token::Brace,
     pub stmt: Vec<Stmt>,
@@ -2407,10 +2898,17 @@ impl TryFrom<&syn::Block> for Block {
     type Error = Error;
 
     fn try_from(value: &syn::Block) -> Result<Self, Self::Error> {
+        Block::parse(value, &ParseContext::default())
+    }
+}
+
+impl Block {
+    /// Parse a block with context for type parameter resolution.
+    pub fn parse(value: &syn::Block, ctx: &ParseContext) -> Result<Self, Error> {
         let brace_token = value.brace_token;
         let mut stmts = Vec::new();
         for stmt in &value.stmts {
-            stmts.push(Stmt::try_from(stmt)?);
+            stmts.push(Stmt::parse(stmt, ctx)?);
         }
         Ok(Block {
             brace_token,
@@ -2434,6 +2932,7 @@ impl TryFrom<&syn::Block> for Block {
 /// - Labels are not supported
 /// - Only range expressions are supported (no arbitrary iterators)
 /// - The loop variable cannot be `_`
+#[derive(Clone)]
 pub struct ForLoop {
     pub for_token: Token![for],
     /// The loop variable identifier
@@ -2461,6 +2960,13 @@ impl TryFrom<&syn::ExprForLoop> for ForLoop {
     type Error = Error;
 
     fn try_from(value: &syn::ExprForLoop) -> Result<Self, Self::Error> {
+        ForLoop::parse(value, &ParseContext::default())
+    }
+}
+
+impl ForLoop {
+    /// Parse a for-loop with context for type parameter resolution.
+    pub fn parse(value: &syn::ExprForLoop, ctx: &ParseContext) -> Result<Self, Error> {
         let syn::ExprForLoop {
             attrs,
             label,
@@ -2484,10 +2990,10 @@ impl TryFrom<&syn::ExprForLoop> for ForLoop {
         }
 
         // Parse the pattern to get ident and optional type
-        let (ident, ty) = parse_for_loop_pattern(pat)?;
+        let (ident, ty) = parse_for_loop_pattern(pat, ctx)?;
 
         // Parse the range expression
-        let (from, inclusive, range_span, to) = parse_range_expr(expr)?;
+        let (from, inclusive, range_span, to) = parse_range_expr(expr, ctx)?;
 
         // Check for non-literal bounds and emit warning/error if not suppressed
         let mut non_literal_spans = vec![];
@@ -2513,7 +3019,7 @@ impl TryFrom<&syn::ExprForLoop> for ForLoop {
         }
 
         // Parse the body
-        let body = Block::try_from(body)?;
+        let body = Block::parse(body, ctx)?;
 
         Ok(ForLoop {
             for_token: *for_token,
@@ -2561,7 +3067,10 @@ fn attrs_contain_wgsl_ignore(attrs: &[syn::Attribute]) -> bool {
 
 /// Parse a for-loop pattern to extract the identifier and optional type
 /// annotation.
-fn parse_for_loop_pattern(pat: &syn::Pat) -> Result<(Ident, Option<(Token![:], Type)>), Error> {
+fn parse_for_loop_pattern(
+    pat: &syn::Pat,
+    ctx: &ParseContext,
+) -> Result<(Ident, Option<(Token![:], Type)>), Error> {
     match pat {
         syn::Pat::Ident(syn::PatIdent {
             attrs: _,
@@ -2606,8 +3115,8 @@ fn parse_for_loop_pattern(pat: &syn::Pat) -> Result<(Ident, Option<(Token![:], T
             ty,
         }) => {
             // Recursively parse the inner pattern
-            let (ident, _) = parse_for_loop_pattern(pat)?;
-            let parsed_ty = Type::try_from(ty.as_ref())?;
+            let (ident, _) = parse_for_loop_pattern(pat, ctx)?;
+            let parsed_ty = Type::parse(ty.as_ref(), ctx)?;
             Ok((ident, Some((*colon_token, parsed_ty))))
         }
         syn::Pat::Wild(wild) => UnsupportedSnafu {
@@ -2627,7 +3136,10 @@ fn parse_for_loop_pattern(pat: &syn::Pat) -> Result<(Ident, Option<(Token![:], T
 }
 
 /// Parse a range expression to extract from, to, and whether it's inclusive.
-fn parse_range_expr(expr: &syn::Expr) -> Result<(Expr, bool, Span, Expr), Error> {
+fn parse_range_expr(
+    expr: &syn::Expr,
+    ctx: &ParseContext,
+) -> Result<(Expr, bool, Span, Expr), Error> {
     match expr {
         syn::Expr::Range(syn::ExprRange {
             attrs: _,
@@ -2650,8 +3162,8 @@ fn parse_range_expr(expr: &syn::Expr) -> Result<(Expr, bool, Span, Expr), Error>
                 syn::RangeLimits::Closed(dot2eq) => (true, dot2eq.span()),
             };
 
-            let from = Expr::try_from(from.as_ref())?;
-            let to = Expr::try_from(to.as_ref())?;
+            let from = Expr::parse(from.as_ref(), ctx)?;
+            let to = Expr::parse(to.as_ref(), ctx)?;
 
             Ok((from, inclusive, range_span, to))
         }
@@ -2670,6 +3182,13 @@ impl TryFrom<&syn::ExprMatch> for StmtSwitch {
     type Error = Error;
 
     fn try_from(value: &syn::ExprMatch) -> Result<Self, Self::Error> {
+        StmtSwitch::parse(value, &ParseContext::default())
+    }
+}
+
+impl StmtSwitch {
+    /// Parse a switch statement with context for type parameter resolution.
+    pub fn parse(value: &syn::ExprMatch, ctx: &ParseContext) -> Result<Self, Error> {
         let syn::ExprMatch {
             attrs,
             match_token,
@@ -2682,7 +3201,7 @@ impl TryFrom<&syn::ExprMatch> for StmtSwitch {
         let allowed = parse_wgsl_allow(attrs)?;
 
         // Parse the selector expression
-        let selector = Box::new(Expr::try_from(expr.as_ref())?);
+        let selector = Box::new(Expr::parse(expr.as_ref(), ctx)?);
 
         // Track non-literal pattern spans for warning
         let mut non_literal_spans = vec![];
@@ -2709,7 +3228,7 @@ impl TryFrom<&syn::ExprMatch> for StmtSwitch {
 
             // Parse the body - must be a block
             let body = match &*arm.body {
-                syn::Expr::Block(syn::ExprBlock { block, .. }) => Block::try_from(block)?,
+                syn::Expr::Block(syn::ExprBlock { block, .. }) => Block::parse(block, ctx)?,
                 other => {
                     return UnsupportedSnafu {
                         span: other.span(),
@@ -2815,7 +3334,7 @@ fn parse_pattern_recursive(
                 path: path.clone(),
             }))?;
             non_literal_spans.push(path.span());
-            selectors.push(CaseSelector::Expr(expr));
+            selectors.push(CaseSelector::Expr(Box::new(expr)));
         }
 
         // Identifier pattern: `x` - could be a const binding
@@ -2847,7 +3366,7 @@ fn parse_pattern_recursive(
             // Treat as identifier expression (could be a const)
             let expr = Expr::Ident(ident.clone());
             non_literal_spans.push(ident.span());
-            selectors.push(CaseSelector::Expr(expr));
+            selectors.push(CaseSelector::Expr(Box::new(expr)));
         }
 
         // Unsupported patterns
@@ -2910,6 +3429,7 @@ fn parse_pattern_recursive(
 ///
 /// Unlike Rust, WGSL `if` is a statement, not an expression.
 /// This means you cannot write `let x = if cond { a } else { b }` in WGSL.
+#[derive(Clone)]
 pub struct StmtIf {
     pub if_token: Token![if],
     pub condition: Box<Expr>,
@@ -2918,12 +3438,14 @@ pub struct StmtIf {
 }
 
 /// The else branch of an if statement.
+#[derive(Clone)]
 pub struct ElseBranch {
     pub else_token: Token![else],
     pub body: ElseBody,
 }
 
 /// The body of an else branch - either a block or another if statement.
+#[derive(Clone)]
 pub enum ElseBody {
     Block(Block),
     If(Box<StmtIf>),
@@ -2933,15 +3455,22 @@ impl TryFrom<&syn::ExprIf> for StmtIf {
     type Error = Error;
 
     fn try_from(value: &syn::ExprIf) -> Result<Self, Self::Error> {
-        let condition = Box::new(Expr::try_from(value.cond.as_ref())?);
-        let then_block = Block::try_from(&value.then_branch)?;
+        StmtIf::parse(value, &ParseContext::default())
+    }
+}
+
+impl StmtIf {
+    /// Parse an if statement with context for type parameter resolution.
+    pub fn parse(value: &syn::ExprIf, ctx: &ParseContext) -> Result<Self, Error> {
+        let condition = Box::new(Expr::parse(value.cond.as_ref(), ctx)?);
+        let then_block = Block::parse(&value.then_branch, ctx)?;
 
         let else_branch = if let Some((else_token, else_expr)) = &value.else_branch {
             let body = match else_expr.as_ref() {
                 syn::Expr::Block(syn::ExprBlock { block, .. }) => {
-                    ElseBody::Block(Block::try_from(block)?)
+                    ElseBody::Block(Block::parse(block, ctx)?)
                 }
-                syn::Expr::If(else_if) => ElseBody::If(Box::new(StmtIf::try_from(else_if)?)),
+                syn::Expr::If(else_if) => ElseBody::If(Box::new(StmtIf::parse(else_if, ctx)?)),
                 other => {
                     return UnsupportedSnafu {
                         span: other.span(),
@@ -2973,6 +3502,7 @@ impl TryFrom<&syn::ExprIf> for StmtIf {
 /// - Selector must be a concrete integer type (i32 or u32)
 /// - Case selectors must be const-expressions
 /// - Exactly one default clause (auto-generated if missing)
+#[derive(Clone)]
 pub struct StmtSwitch {
     pub match_token: Token![match],
     pub selector: Box<Expr>,
@@ -2983,6 +3513,7 @@ pub struct StmtSwitch {
 }
 
 /// A single arm in a switch statement.
+#[derive(Clone)]
 pub struct SwitchArm {
     /// The case selectors (may contain Default for wildcard patterns)
     pub selectors: Vec<CaseSelector>,
@@ -2993,18 +3524,20 @@ pub struct SwitchArm {
 }
 
 /// A case selector value in a switch arm.
+#[derive(Clone)]
 pub enum CaseSelector {
     /// Integer literal: `0`, `1`, `42u32`, etc.
     Literal(Lit),
     /// Named constant, enum variant, or other expression.
     /// Examples: `MY_CONST`, `State::Running`
     /// These emit a warning unless suppressed.
-    Expr(Expr),
+    Expr(Box<Expr>),
     /// The default case from `_` pattern.
     Default(Span),
 }
 
 /// WGSL built-in annotations for shader inputs and outputs.
+#[derive(Clone)]
 pub enum BuiltIn {
     VertexIndex(Ident),
     InstanceIndex(Ident),
@@ -3056,6 +3589,7 @@ impl TryFrom<&Ident> for BuiltIn {
     }
 }
 
+#[derive(Clone)]
 pub enum InterpolationType {
     Perspective(syn::Ident),
     Linear(syn::Ident),
@@ -3077,6 +3611,7 @@ impl Parse for InterpolationType {
     }
 }
 
+#[derive(Clone)]
 pub enum InterpolationSampling {
     Center(syn::Ident),
     Centroid(syn::Ident),
@@ -3103,6 +3638,7 @@ impl Parse for InterpolationSampling {
 }
 
 /// <https://gpuweb.github.io/gpuweb/wgsl/#interpolation>
+#[derive(Clone)]
 pub struct Interpolate {
     pub ty: InterpolationType,
     pub comma_token: Option<Token![,]>,
@@ -3150,6 +3686,7 @@ impl Parse for Interpolate {
 /// * invariant
 ///
 /// See <https://gpuweb.github.io/gpuweb/wgsl/#stage-inputs-outputs>.
+#[derive(Clone)]
 pub enum InterStageIo {
     BuiltIn {
         ident: Ident,
@@ -3266,6 +3803,7 @@ impl TryFrom<&syn::Attribute> for InterStageIo {
     }
 }
 
+#[derive(Clone)]
 pub struct FnArg {
     pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
@@ -3277,6 +3815,13 @@ impl TryFrom<&syn::FnArg> for FnArg {
     type Error = Error;
 
     fn try_from(value: &syn::FnArg) -> Result<Self, Self::Error> {
+        FnArg::parse(value, &ParseContext::default())
+    }
+}
+
+impl FnArg {
+    /// Parse a function argument with context for type parameter resolution.
+    pub fn parse(value: &syn::FnArg, ctx: &ParseContext) -> Result<Self, Error> {
         match value {
             syn::FnArg::Receiver(receiver) => CurrentlyUnsupportedSnafu {
                 span: receiver.span(),
@@ -3317,7 +3862,7 @@ impl TryFrom<&syn::FnArg> for FnArg {
                         inter_stage_io.push(InterStageIo::try_from(attr)?);
                     }
 
-                    let ty = Type::try_from(ty.as_ref())?;
+                    let ty = Type::parse(ty.as_ref(), ctx)?;
 
                     Ok(FnArg {
                         inter_stage_io,
@@ -3342,6 +3887,7 @@ impl TryFrom<&syn::FnArg> for FnArg {
 /// Workgroup size for compute shaders.
 ///
 /// In WGSL: `@workgroup_size(x, y, z)` where y and z default to 1.
+#[derive(Clone)]
 pub struct WorkgroupSize {
     pub ident: Ident,
     pub paren_token: syn::token::Paren,
@@ -3350,7 +3896,7 @@ pub struct WorkgroupSize {
     pub z: Option<(syn::Token![,], syn::LitInt)>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum FnAttrs {
     #[default]
     None,
@@ -3493,7 +4039,18 @@ impl syn::parse::Parse for WorkgroupSizeArgs {
     }
 }
 
+#[derive(Clone)]
 pub struct ItemFn {
+    /// Type parameters for generic functions (empty for non-generic).
+    pub type_params: Vec<Ident>,
+    /// The full Rust generics from the source signature, including trait
+    /// bounds and where-clause predicates. Preserved on entry-point
+    /// functions so that the typestate builder can replay the original
+    /// bounds on its `instantiate_<fn_name>` methods.
+    ///
+    /// `None` for non-entry-point functions (which go through same-module
+    /// monomorphization and don't need this).
+    pub syn_generics: Option<syn::Generics>,
     pub fn_attrs: FnAttrs,
     pub fn_token: Token![fn],
     pub ident: Ident,
@@ -3523,18 +4080,68 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 
         ensure_ident_is_not_shadowing_builtin(&sig.ident)?;
 
+        // Extract type parameters from generics (ignore bounds and where clauses)
+        let mut type_params = Vec::new();
+        for param in &sig.generics.params {
+            match param {
+                syn::GenericParam::Type(tp) => {
+                    type_params.push(tp.ident.clone());
+                }
+                syn::GenericParam::Lifetime(lt) => {
+                    return UnsupportedSnafu {
+                        span: lt.lifetime.span(),
+                        note: "lifetime parameters are not supported in WGSL",
+                    }
+                    .fail();
+                }
+                syn::GenericParam::Const(cp) => {
+                    return UnsupportedSnafu {
+                        span: cp.ident.span(),
+                        note: "const generic parameters are not yet supported in WGSL",
+                    }
+                    .fail();
+                }
+            }
+        }
+
         let fn_attrs = FnAttrs::try_from(attrs)?;
+
+        // Generic entry points are supported. Each entry point's type
+        // parameters become module-level type parameters using a positional
+        // encoding (`fn_name_0`, `fn_name_1`, ...) so that the same source
+        // name (e.g. `T`) appearing on multiple entry points doesn't
+        // collide. The whole module's WGSL becomes a template with
+        // `__TP{encoded_name}__` placeholders that the runtime builder /
+        // `instantiate()` replaces with concrete types.
+        //
+        // Non-entry-point generic functions (e.g. user helpers like
+        // `fn id<T>(x: T) -> T`) keep their source-level names because
+        // they go through same-module monomorphization, not module-level
+        // instantiation.
+
+        let ctx = if matches!(fn_attrs, FnAttrs::None) {
+            ParseContext::from_type_params(type_params.iter().cloned())
+        } else {
+            let fn_name = sig.ident.to_string();
+            let renamed = type_params.iter().enumerate().map(|(i, id)| {
+                let source = id.to_string();
+                let encoded = format!("{fn_name}_{i}");
+                (source, encoded)
+            });
+            ParseContext::from_renamed_type_params(renamed)
+        };
+
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
-            let arg = FnArg::try_from(*input)?;
+            let arg = FnArg::parse(input, &ctx)?;
             inputs.push_value(arg);
             if let Some(comma) = pair.punct() {
                 inputs.push_punct(**comma);
             }
         }
 
-        let mut return_type = ReturnType::try_from(&sig.output)?;
+        let mut return_type = ReturnType::parse(&sig.output, &ctx)?;
         match &mut return_type {
             ReturnType::Default => {}
             ReturnType::Type {
@@ -3557,14 +4164,26 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             }
         }
 
+        // Preserve the full syn::Generics for entry points so the typestate
+        // builder can replay the original trait bounds. Non-entry-point
+        // functions don't need this — same-module monomorphization carries
+        // the bounds via the type system instead.
+        let syn_generics = if matches!(fn_attrs, FnAttrs::None) {
+            None
+        } else {
+            Some(sig.generics.clone())
+        };
+
         Ok(ItemFn {
+            type_params,
+            syn_generics,
             fn_attrs,
             fn_token: sig.fn_token,
             ident: sig.ident.clone(),
             paren_token: sig.paren_token,
             inputs,
             return_type,
-            block: Block::try_from(block.as_ref())?,
+            block: Block::parse(block.as_ref(), &ctx)?,
         })
     }
 }
@@ -3573,8 +4192,14 @@ impl ItemFn {
     /// Convert an impl item function to an ItemFn.
     ///
     /// This is similar to `TryFrom<&syn::ItemFn>` but handles the slightly
-    /// different structure of `syn::ImplItemFn`.
-    pub fn try_from_impl_fn(value: &syn::ImplItemFn) -> Result<Self, Error> {
+    /// different structure of `syn::ImplItemFn`. The `ctx` carries type
+    /// parameters from the parent `impl<T>` block so method signatures and
+    /// bodies can reference them.
+    pub fn try_from_impl_fn(
+        value: &syn::ImplItemFn,
+        is_trait_impl: bool,
+        ctx: &ParseContext,
+    ) -> Result<Self, Error> {
         let syn::ImplItemFn {
             attrs,
             vis,
@@ -3588,28 +4213,47 @@ impl ItemFn {
             "default fns are not supported in WGSL",
         )?;
 
-        snafu::ensure!(
-            matches!(vis, syn::Visibility::Public(_)),
-            VisibilitySnafu {
-                span: sig.span(),
-                item: "Impl methods"
-            }
-        );
+        // Trait impl methods have inherited visibility (no `pub` keyword),
+        // so we only require `pub` on inherent impl methods.
+        if !is_trait_impl {
+            snafu::ensure!(
+                matches!(vis, syn::Visibility::Public(_)),
+                VisibilitySnafu {
+                    span: sig.span(),
+                    item: "Impl methods"
+                }
+            );
+        }
 
         ensure_ident_is_not_shadowing_builtin(&sig.ident)?;
+
+        // Reject generic methods in impl blocks (methods with their own type
+        // params, as opposed to the impl block's type params).
+        if sig
+            .generics
+            .params
+            .iter()
+            .any(|p| matches!(p, syn::GenericParam::Type(_)))
+        {
+            return UnsupportedSnafu {
+                span: sig.generics.span(),
+                note: "generic methods in impl blocks are not yet supported",
+            }
+            .fail();
+        }
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
-            let arg = FnArg::try_from(*input)?;
+            let arg = FnArg::parse(input, ctx)?;
             inputs.push_value(arg);
             if let Some(comma) = pair.punct() {
                 inputs.push_punct(**comma);
             }
         }
 
-        let mut return_type = ReturnType::try_from(&sig.output)?;
+        let mut return_type = ReturnType::parse(&sig.output, ctx)?;
         match &mut return_type {
             ReturnType::Default => {}
             ReturnType::Type {
@@ -3633,13 +4277,15 @@ impl ItemFn {
         }
 
         Ok(ItemFn {
+            type_params: vec![],
+            syn_generics: None,
             fn_attrs,
             fn_token: sig.fn_token,
             ident: sig.ident.clone(),
             paren_token: sig.paren_token,
             inputs,
             return_type,
-            block: Block::try_from(block)?,
+            block: Block::parse(block, ctx)?,
         })
     }
 }
@@ -3659,6 +4305,7 @@ fn ensure_ident_is_not_shadowing_builtin(ident: &Ident) -> Result<(), Error> {
     }
 }
 
+#[derive(Clone)]
 pub struct ItemConst {
     pub const_token: Token![const],
     pub ident: Ident,
@@ -3673,6 +4320,13 @@ impl TryFrom<&syn::ItemConst> for ItemConst {
     type Error = Error;
 
     fn try_from(value: &syn::ItemConst) -> Result<Self, Self::Error> {
+        ItemConst::parse(value, &ParseContext::default())
+    }
+}
+
+impl ItemConst {
+    /// Parse a constant with context for type parameter resolution.
+    pub fn parse(value: &syn::ItemConst, ctx: &ParseContext) -> Result<Self, Error> {
         let syn::ItemConst {
             attrs: _,
             vis: _,
@@ -3689,15 +4343,12 @@ impl TryFrom<&syn::ItemConst> for ItemConst {
             const_token: *const_token,
             ident: ident.clone(),
             colon_token: *colon_token,
-            ty: Type::try_from(ty.as_ref())?,
+            ty: Type::parse(ty.as_ref(), ctx)?,
             eq_token: *eq_token,
-            expr: Expr::try_from(expr.as_ref())?,
+            expr: Expr::parse(expr.as_ref(), ctx)?,
             semi_token: *semi_token,
         })
     }
-}
-
-impl ItemConst {
     /// Convert an impl item constant to an ItemConst.
     ///
     /// This is similar to `TryFrom<&syn::ItemConst>` but handles the slightly
@@ -3751,7 +4402,33 @@ impl ItemConst {
     }
 }
 
+fn expr_contains_linkage_access(expr: &Expr) -> Option<proc_macro2::Span> {
+    match expr {
+        Expr::LinkageAccess { ident, .. } => Some(ident.span()),
+        Expr::Unary { expr, .. } => expr_contains_linkage_access(expr),
+        Expr::Binary { lhs, rhs, .. } => {
+            expr_contains_linkage_access(lhs).or_else(|| expr_contains_linkage_access(rhs))
+        }
+        Expr::Paren { inner, .. } => expr_contains_linkage_access(inner),
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            expr_contains_linkage_access(lhs).or_else(|| expr_contains_linkage_access(index))
+        }
+        Expr::Swizzle { lhs, .. } => expr_contains_linkage_access(lhs),
+        Expr::Cast { lhs, .. } => expr_contains_linkage_access(lhs),
+        Expr::FnCall { params, .. } => params.iter().find_map(expr_contains_linkage_access),
+        Expr::Struct { fields, .. } => fields
+            .iter()
+            .find_map(|f| expr_contains_linkage_access(&f.expr)),
+        Expr::FieldAccess { base, .. } => expr_contains_linkage_access(base),
+        Expr::Reference { expr, .. } => expr_contains_linkage_access(expr),
+        Expr::ZeroValueArray { len, .. } => expr_contains_linkage_access(len),
+        Expr::Array { elems, .. } => elems.iter().find_map(expr_contains_linkage_access),
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => None,
+    }
+}
+
 /// A WGSL "module".
+#[derive(Clone)]
 pub struct ItemMod {
     #[allow(dead_code)]
     pub ident: Ident,
@@ -3763,22 +4440,34 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
 
     fn try_from(item_mod: &syn::ItemMod) -> Result<Self, Self::Error> {
         let ident = item_mod.ident.clone();
-        let mut content = Vec::new();
 
         // Only handle inline modules (with content)
-        if let Some((_, items)) = &item_mod.content {
-            for item in items {
-                content.push(Item::try_from(item)?);
-            }
-            Ok(ItemMod { ident, content })
-        } else {
-            // For now, error on modules without inline content
-            UnsupportedSnafu {
+        let Some((_, items)) = &item_mod.content else {
+            return UnsupportedSnafu {
                 span: item_mod.span(),
                 note: "Modules without inline content are not supported.",
             }
-            .fail()
+            .fail();
+        };
+
+        // First pass: collect module-level type parameters from entry points.
+        let module_type_params = collect_module_type_params(items)?;
+        let module_ctx = ParseContext::from_type_params(module_type_params.iter().cloned());
+
+        // Second pass: parse each item, re-resolving linkage types using the
+        // module-level context so type params are recognized.
+        let mut content = Vec::new();
+        for item in items {
+            let parsed = Item::try_from(item)?;
+            let parsed = match parsed {
+                Item::Uniform(u) => Item::Uniform(Box::new((*u).with_context(&module_ctx)?)),
+                Item::Storage(s) => Item::Storage(Box::new((*s).with_context(&module_ctx)?)),
+                Item::Workgroup(w) => Item::Workgroup(Box::new((*w).with_context(&module_ctx)?)),
+                other => other,
+            };
+            content.push(parsed);
         }
+        Ok(ItemMod { ident, content })
     }
 }
 
@@ -3845,6 +4534,7 @@ impl ItemMod {
 
 /// A WGSL use/import statement.
 /// Only supports glob imports of an entire module, e.g. `use foo::bar::*;`
+#[derive(Clone)]
 pub struct ItemUse {
     pub modules: Vec<syn::Path>,
 }
@@ -3901,15 +4591,51 @@ impl TryFrom<&syn::UseTree> for ItemUse {
     }
 }
 
+/// Parse the type half of a linkage variable declaration.
+///
+/// Recognises two shapes:
+///
+/// * Concrete or bare-type-parameter forms (e.g. `u32`, `T`, `Foo<u32>`):
+///   delegates to [`Type::try_from`] with the default context. The resulting
+///   WGSL type may be re-parsed later via `with_context` once the module-level
+///   type parameter set is known.
+///
+/// * `impl Trait` form (e.g. `impl Convert<f32>` or `impl Wgsl + Clone`): the
+///   WGSL type becomes `Type::TypeParam { ident: <var_name> }` and the trait
+///   bounds are returned for use by the typestate builder.
+fn parse_linkage_type(
+    var_name: &Ident,
+    rust_ty: &syn::Type,
+) -> Result<
+    (
+        Type,
+        Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
+    ),
+    Error,
+> {
+    if let syn::Type::ImplTrait(syn::TypeImplTrait { bounds, .. }) = rust_ty {
+        let ty = Type::TypeParam {
+            ident: var_name.clone(),
+        };
+        Ok((ty, Some(bounds.clone())))
+    } else {
+        let ty = Type::try_from(rust_ty)?;
+        Ok((ty, None))
+    }
+}
+
 /// A uniform declaration.
 ///
 /// ```rust,ignore
 /// uniform!(group(0), binding(0), FRAME: u32);
+/// // or
+/// uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
 /// ```
 ///
 /// ```wgsl
 /// @group(0) @binding(0) var<uniform> FRAME: u32;
 /// ```
+#[derive(Clone)]
 pub(crate) struct ItemUniform {
     pub group_ident: Ident,
     pub group_paren_token: syn::token::Paren,
@@ -3925,6 +4651,17 @@ pub(crate) struct ItemUniform {
 
     // We keep the Rust type around
     pub rust_ty: syn::Type,
+
+    /// Trait bounds when the user wrote `impl Trait` syntax (e.g.
+    /// `FRAME: impl Convert<f32>`). `None` for concrete types and bare
+    /// type-parameter idents.
+    ///
+    /// When `Some(_)`, this linkage variable's WGSL type is treated as a
+    /// module-level type parameter named after the variable itself
+    /// (e.g. `Type::TypeParam { ident: FRAME }`). The bounds are
+    /// preserved so the typestate builder can replay them on its setter
+    /// methods.
+    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
 }
 
 impl syn::parse::Parse for ItemUniform {
@@ -3946,7 +4683,11 @@ impl syn::parse::Parse for ItemUniform {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
-        let ty = Type::try_from(&rust_ty)?;
+
+        // If the user wrote `impl Trait` syntax (e.g. `FRAME: impl
+        // Convert<f32>`), pull the bounds out and treat the type as a
+        // module-level type parameter named after the variable.
+        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
 
         Ok(ItemUniform {
             group,
@@ -3959,7 +4700,23 @@ impl syn::parse::Parse for ItemUniform {
             group_paren_token,
             binding_ident,
             binding_paren_token,
+            impl_bounds,
         })
+    }
+}
+
+impl ItemUniform {
+    /// Re-parse this uniform's type using the given parse context. This
+    /// upgrades any type identifiers that match a known type parameter from
+    /// `Type::Struct` to `Type::TypeParam`.
+    ///
+    /// `impl Trait` linkage types are already resolved during parsing and
+    /// are not affected by the context.
+    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
+        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
+            self.ty = Type::parse(&self.rust_ty, ctx)?;
+        }
+        Ok(self)
     }
 }
 
@@ -4015,6 +4772,7 @@ pub enum StorageAccess {
 /// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
 /// @group(0) @binding(0) var<storage, read_write> DATA: array<f32, 256>;
 /// ```
+#[derive(Clone)]
 pub(crate) struct ItemStorage {
     pub group_ident: Ident,
     pub group_paren_token: syn::token::Paren,
@@ -4032,6 +4790,10 @@ pub(crate) struct ItemStorage {
 
     // We keep the Rust type around
     pub rust_ty: syn::Type,
+
+    /// Trait bounds when the user wrote `impl Trait` syntax. See
+    /// [`ItemUniform::impl_bounds`] for details.
+    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
 }
 
 impl syn::parse::Parse for ItemStorage {
@@ -4076,7 +4838,7 @@ impl syn::parse::Parse for ItemStorage {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
-        let ty = Type::try_from(&rust_ty)?;
+        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
 
         Ok(ItemStorage {
             group,
@@ -4090,7 +4852,23 @@ impl syn::parse::Parse for ItemStorage {
             group_paren_token,
             binding_ident,
             binding_paren_token,
+            impl_bounds,
         })
+    }
+}
+
+impl ItemStorage {
+    /// Re-parse this storage's type using the given parse context. This
+    /// upgrades any type identifiers that match a known type parameter from
+    /// `Type::Struct` to `Type::TypeParam`.
+    ///
+    /// `impl Trait` linkage types are already resolved during parsing and
+    /// are not affected by the context.
+    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
+        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
+            self.ty = Type::parse(&self.rust_ty, ctx)?;
+        }
+        Ok(self)
     }
 }
 
@@ -4131,6 +4909,7 @@ impl TryFrom<&syn::ItemMacro> for ItemStorage {
 /// @group(0) @binding(1) var MY_SAMPLER: sampler;
 /// @group(0) @binding(2) var MY_CMP_SAMPLER: sampler_comparison;
 /// ```
+#[derive(Clone)]
 pub(crate) struct ItemSampler {
     pub group_ident: Ident,
     pub group_paren_token: syn::token::Paren,
@@ -4235,6 +5014,7 @@ impl TryFrom<&syn::ItemMacro> for ItemSampler {
 /// @group(0) @binding(0) var DIFFUSE_TEX: texture_2d<f32>;
 /// @group(1) @binding(0) var SHADOW_MAP: texture_depth_2d;
 /// ```
+#[derive(Clone)]
 pub(crate) struct ItemTexture {
     pub group_ident: Ident,
     pub group_paren_token: syn::token::Paren,
@@ -4335,12 +5115,16 @@ impl TryFrom<&syn::ItemMacro> for ItemTexture {
 ///
 /// Workgroup variables are shared between all invocations in a compute shader
 /// workgroup. They can only be used in compute shaders.
+#[derive(Clone)]
 pub(crate) struct ItemWorkgroup {
     pub name: syn::Ident,
     pub colon_token: Token![:],
     pub ty: Type,
     /// We keep the Rust type around for the Rust-side expansion
     pub rust_ty: syn::Type,
+    /// Trait bounds when the user wrote `impl Trait` syntax. See
+    /// [`ItemUniform::impl_bounds`] for details.
+    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
 }
 
 impl syn::parse::Parse for ItemWorkgroup {
@@ -4348,14 +5132,30 @@ impl syn::parse::Parse for ItemWorkgroup {
         let name: syn::Ident = input.parse()?;
         let colon_token: syn::Token![:] = input.parse()?;
         let rust_ty: syn::Type = input.parse()?;
-        let ty = Type::try_from(&rust_ty)?;
+        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
 
         Ok(ItemWorkgroup {
             name,
             colon_token,
             ty,
             rust_ty,
+            impl_bounds,
         })
+    }
+}
+
+impl ItemWorkgroup {
+    /// Re-parse this workgroup variable's type using the given parse context.
+    /// This upgrades any type identifiers that match a known type parameter
+    /// from `Type::Struct` to `Type::TypeParam`.
+    ///
+    /// `impl Trait` linkage types are already resolved during parsing and
+    /// are not affected by the context.
+    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
+        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
+            self.ty = Type::parse(&self.rust_ty, ctx)?;
+        }
+        Ok(self)
     }
 }
 
@@ -4387,6 +5187,7 @@ impl TryFrom<&syn::ItemMacro> for ItemWorkgroup {
     }
 }
 
+#[derive(Clone)]
 pub struct Field {
     pub inter_stage_io: Vec<InterStageIo>,
     pub ident: Ident,
@@ -4394,16 +5195,15 @@ pub struct Field {
     pub ty: Type,
 }
 
-impl TryFrom<&syn::Field> for Field {
-    type Error = Error;
-
-    fn try_from(value: &syn::Field) -> Result<Self, Self::Error> {
+impl Field {
+    /// Parse a field with a context for resolving type parameters.
+    fn parse_with_ctx(value: &syn::Field, ctx: &ParseContext) -> Result<Self, Error> {
         let ident = value
             .ident
             .clone()
             .expect("only named fields are supported, and we checked for that before parsing this");
         let colon_token = value.colon_token;
-        let ty = Type::try_from(&value.ty)?;
+        let ty = Type::parse(&value.ty, ctx)?;
         let mut inter_stage_io = vec![];
         for attr in value.attrs.iter() {
             inter_stage_io.push(InterStageIo::try_from(attr)?);
@@ -4417,20 +5217,28 @@ impl TryFrom<&syn::Field> for Field {
     }
 }
 
+impl TryFrom<&syn::Field> for Field {
+    type Error = Error;
+
+    fn try_from(value: &syn::Field) -> Result<Self, Self::Error> {
+        Field::parse_with_ctx(value, &ParseContext::default())
+    }
+}
+
+#[derive(Clone)]
 pub struct FieldsNamed {
     pub brace_token: syn::token::Brace,
     pub named: syn::punctuated::Punctuated<Field, Token![,]>,
 }
 
-impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
-    type Error = Error;
-
-    fn try_from(value: &syn::FieldsNamed) -> Result<Self, Self::Error> {
+impl FieldsNamed {
+    /// Parse fields with a context for resolving type parameters.
+    fn parse(value: &syn::FieldsNamed, ctx: &ParseContext) -> Result<Self, Error> {
         let brace_token = value.brace_token;
         let mut named = syn::punctuated::Punctuated::new();
         for pair in value.named.pairs() {
             let field = pair.value();
-            let parsed = Field::try_from(*field)?;
+            let parsed = Field::parse_with_ctx(field, ctx)?;
             named.push_value(parsed);
             if let Some(comma) = pair.punct() {
                 named.push_punct(**comma);
@@ -4440,7 +5248,18 @@ impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
     }
 }
 
+impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
+    type Error = Error;
+
+    fn try_from(value: &syn::FieldsNamed) -> Result<Self, Self::Error> {
+        FieldsNamed::parse(value, &ParseContext::default())
+    }
+}
+
+#[derive(Clone)]
 pub struct ItemStruct {
+    /// Type parameters for generic structs (empty for non-generic).
+    pub type_params: Vec<Ident>,
     pub struct_token: Token![struct],
     pub ident: Ident,
     pub fields: FieldsNamed,
@@ -4467,13 +5286,31 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
                 item: "Structs"
             }
         );
-        snafu::ensure!(
-            generics.lt_token.is_none(),
-            UnsupportedSnafu {
-                span: generics.span(),
-                note: "Generics are not supported"
+        // Extract type parameters from generics (ignore bounds and where
+        // clauses — those are Rust-only).
+        let mut type_params = Vec::new();
+        for param in &generics.params {
+            match param {
+                syn::GenericParam::Type(tp) => {
+                    type_params.push(tp.ident.clone());
+                }
+                syn::GenericParam::Lifetime(lt) => {
+                    return UnsupportedSnafu {
+                        span: lt.lifetime.span(),
+                        note: "lifetime parameters are not supported on WGSL structs",
+                    }
+                    .fail();
+                }
+                syn::GenericParam::Const(cp) => {
+                    return UnsupportedSnafu {
+                        span: cp.ident.span(),
+                        note: "const generic parameters are not yet supported on WGSL structs",
+                    }
+                    .fail();
+                }
             }
-        );
+        }
+
         let fields = match fields {
             syn::Fields::Named(fields_named) => fields_named,
             syn::Fields::Unnamed(fields_unnamed) => UnsupportedSnafu {
@@ -4487,8 +5324,15 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             }
             .fail()?,
         };
-        let fields = FieldsNamed::try_from(fields)?;
+
+        // Build parse context with type params so field types containing T
+        // resolve to Type::TypeParam. Generic structs go through same-module
+        // monomorphization and keep source-level names.
+        let ctx = ParseContext::from_type_params(type_params.iter().cloned());
+        let fields = FieldsNamed::parse(fields, &ctx)?;
+
         Ok(ItemStruct {
+            type_params,
             struct_token: *struct_token,
             ident: ident.clone(),
             fields,
@@ -4499,6 +5343,7 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
 /// A single variant of an enum.
 ///
 /// Only unit variants are supported (no tuple or struct variants).
+#[derive(Clone)]
 pub struct EnumVariant {
     pub ident: Ident,
     /// Optional explicit discriminant value, e.g., `First = 5`.
@@ -4528,6 +5373,7 @@ pub struct EnumVariant {
 /// const State_Running: u32 = 1u;
 /// const State_Stopped: u32 = 10u;
 /// ```
+#[derive(Clone)]
 pub struct ItemEnum {
     pub enum_token: Token![enum],
     pub ident: Ident,
@@ -4645,11 +5491,12 @@ impl TryFrom<&syn::ItemEnum> for ItemEnum {
 /// An item that can appear inside an impl block.
 ///
 /// Currently supports functions and constants.
+#[derive(Clone)]
 pub enum ImplItem {
     /// A function defined in an impl block.
-    Fn(ItemFn),
+    Fn(Box<ItemFn>),
     /// A constant defined in an impl block.
-    Const(ItemConst),
+    Const(Box<ItemConst>),
 }
 
 /// An impl block for a struct.
@@ -4679,7 +5526,10 @@ pub enum ImplItem {
 ///     return light.intensity / (distance * distance);
 /// }
 /// ```
+#[derive(Clone)]
 pub struct ItemImpl {
+    /// Type parameters for generic impl blocks (empty for non-generic).
+    pub type_params: Vec<Ident>,
     pub _impl_token: Token![impl],
     pub self_ty: Ident,
     pub _brace_token: syn::token::Brace,
@@ -4709,33 +5559,49 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         )?;
         util::some_is_unsupported(unsafety.as_ref(), "unsafe impls are not supported in WGSL")?;
 
-        // Reject generics
-        if !generics.params.is_empty() {
-            return UnsupportedSnafu {
-                span: generics.span(),
-                note: "generic impl blocks are not supported in WGSL",
+        // Extract type parameters from generics (ignore bounds and where
+        // clauses — those are Rust-only).
+        let mut type_params = Vec::new();
+        for param in &generics.params {
+            match param {
+                syn::GenericParam::Type(tp) => {
+                    type_params.push(tp.ident.clone());
+                }
+                syn::GenericParam::Lifetime(lt) => {
+                    return UnsupportedSnafu {
+                        span: lt.lifetime.span(),
+                        note: "lifetime parameters are not supported on WGSL impl blocks",
+                    }
+                    .fail();
+                }
+                syn::GenericParam::Const(cp) => {
+                    return UnsupportedSnafu {
+                        span: cp.ident.span(),
+                        note: "const generic parameters are not yet supported on WGSL impl blocks",
+                    }
+                    .fail();
+                }
             }
-            .fail();
         }
 
-        // Trait impls are caught upstream in `Item::try_from` and returned as
-        // `Item::TraitImpl` before reaching this point.
-        if trait_.is_some() {
-            unreachable!(
-                "trait impls should be handled by Item::try_from before reaching ItemImpl"
-            );
-        }
+        // For trait impls (e.g. `impl Foo for Bar { ... }`), we ignore the
+        // trait path and just use the self_ty + methods, same as inherent impls.
+        let is_trait_impl = trait_.is_some();
 
-        // Get the struct name (self_ty must be a simple ident)
+        // Get the type name. For non-generic impls, self_ty must be a simple
+        // ident. For generic impls like `impl<T> Pair<T>`, self_ty is a path
+        // with angle brackets — we extract just the ident.
         let self_ty_ident = match self_ty.as_ref() {
-            syn::Type::Path(type_path) => type_path
-                .path
-                .get_ident()
-                .context(UnsupportedSnafu {
+            syn::Type::Path(type_path) => {
+                let segment = type_path.path.segments.first().context(UnsupportedSnafu {
                     span: type_path.span(),
                     note: "impl block type must be a simple identifier",
-                })?
-                .clone(),
+                })?;
+                // Verify the type args on self_ty (if any) match the impl's
+                // type params. We don't store them — the monomorphization pass
+                // uses the impl's type_params directly.
+                segment.ident.clone()
+            }
             other => {
                 return UnsupportedSnafu {
                     span: other.span(),
@@ -4745,17 +5611,22 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             }
         };
 
+        // Build parse context with type params so method bodies and signatures
+        // can reference them. Generic impls go through same-module
+        // monomorphization and keep source-level names.
+        let ctx = ParseContext::from_type_params(type_params.iter().cloned());
+
         // Parse impl items (functions and constants)
         let mut parsed_items = Vec::new();
         for item in items {
             match item {
                 syn::ImplItem::Fn(impl_fn) => {
-                    let item_fn = ItemFn::try_from_impl_fn(impl_fn)?;
-                    parsed_items.push(ImplItem::Fn(item_fn));
+                    let item_fn = ItemFn::try_from_impl_fn(impl_fn, is_trait_impl, &ctx)?;
+                    parsed_items.push(ImplItem::Fn(Box::new(item_fn)));
                 }
                 syn::ImplItem::Const(impl_const) => {
                     let item_const = ItemConst::try_from_impl_const(impl_const)?;
-                    parsed_items.push(ImplItem::Const(item_const));
+                    parsed_items.push(ImplItem::Const(Box::new(item_const)));
                 }
                 other => {
                     return UnsupportedSnafu {
@@ -4768,6 +5639,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         }
 
         let mut result = ItemImpl {
+            type_params,
             _impl_token: *impl_token,
             self_ty: self_ty_ident,
             _brace_token: *brace_token,
@@ -4821,7 +5693,14 @@ fn resolve_self_in_return_type(name: &Ident, rt: &mut ReturnType) {
 
 fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
     match ty {
-        Type::Struct { ident } => maybe_replace_self(name, ident),
+        Type::Struct {
+            ident, type_args, ..
+        } => {
+            maybe_replace_self(name, ident);
+            for ta in type_args.iter_mut() {
+                resolve_self_in_type(name, ta);
+            }
+        }
         Type::Array { elem, len, .. } => {
             resolve_self_in_type(name, elem);
             resolve_self_in_expr(name, len);
@@ -4835,7 +5714,8 @@ fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
         | Type::Sampler { .. }
         | Type::SamplerComparison { .. }
         | Type::Texture { .. }
-        | Type::TextureDepth { .. } => {}
+        | Type::TextureDepth { .. }
+        | Type::TypeParam { .. } => {}
     }
 }
 
@@ -4870,8 +5750,16 @@ fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
             resolve_self_in_expr(name, lhs);
             resolve_self_in_type(name, ty);
         }
-        Expr::FnCall { path, params, .. } => {
+        Expr::FnCall {
+            path,
+            type_args,
+            params,
+            ..
+        } => {
             resolve_self_in_fn_path(name, path);
+            for ta in type_args.iter_mut() {
+                resolve_self_in_type(name, ta);
+            }
             for param in params.iter_mut() {
                 resolve_self_in_expr(name, param);
             }
@@ -4886,6 +5774,9 @@ fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
         Expr::TypePath { ty, .. } => maybe_replace_self(name, ty),
         Expr::Reference { expr, .. } => resolve_self_in_expr(name, expr),
         Expr::ZeroValueArray { len, .. } => resolve_self_in_expr(name, len),
+        Expr::LinkageAccess { ident, .. } => {
+            maybe_replace_self(name, ident);
+        }
     }
 }
 
@@ -4990,6 +5881,7 @@ fn resolve_self_in_if(name: &Ident, stmt_if: &mut StmtIf) {
 }
 
 /// WGSL items that may appear in a "module" or scope.
+#[derive(Clone)]
 pub enum Item {
     Const(Box<ItemConst>),
     Uniform(Box<ItemUniform>),
@@ -5007,8 +5899,6 @@ pub enum Item {
     MacroRules,
     /// Trait definitions are Rust-only and produce no WGSL output.
     Trait,
-    /// Trait impl blocks are Rust-only and produce no WGSL output.
-    TraitImpl,
     /// Skip this item, it is Rust-only
     Ignored,
 }
@@ -5067,13 +5957,10 @@ impl TryFrom<&syn::Item> for Item {
             }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
             syn::Item::Impl(item_impl) => {
-                // Trait impl blocks (e.g. `impl Foo for Bar { ... }`) are Rust-only
-                // and produce no WGSL. Inherent impl blocks are parsed normally.
-                if item_impl.trait_.is_some() {
-                    Ok(Item::TraitImpl)
-                } else {
-                    Ok(Item::Impl(ItemImpl::try_from(item_impl)?))
-                }
+                // Both inherent impl blocks and trait impl blocks are parsed.
+                // Trait impl methods generate the same Type_method WGSL functions
+                // as inherent impl methods. The trait name is ignored.
+                Ok(Item::Impl(ItemImpl::try_from(item_impl)?))
             }
             syn::Item::Enum(item_enum) => Ok(Item::Enum(ItemEnum::try_from(item_enum)?)),
             syn::Item::Trait(_) => Ok(Item::Trait),
@@ -5099,7 +5986,140 @@ impl TryFrom<&syn::Item> for Item {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::code_gen::GenerateCode;
+    use crate::ir_convert;
+
+    /// Test-only helper: convert a parse-side AST node to its WGSL
+    /// rendering by routing it through the IR pipeline. Provides a
+    /// `to_wgsl()` method on the parse types that returns the same
+    /// rendering used by production code.
+    trait ToWgsl {
+        fn to_wgsl(&self) -> String;
+    }
+
+    impl ToWgsl for Type {
+        fn to_wgsl(&self) -> String {
+            let ir_ty = ir_convert::ty_from_parse(self).expect("ty_from_parse");
+            wgsl_rs_ir::render_type(&ir_ty)
+        }
+    }
+
+    impl ToWgsl for Expr {
+        fn to_wgsl(&self) -> String {
+            let ir_expr = ir_convert::expr_from_parse(self).expect("expr_from_parse");
+            wgsl_rs_ir::render_expr(&ir_expr)
+        }
+    }
+
+    impl ToWgsl for Block {
+        fn to_wgsl(&self) -> String {
+            let ir_block = ir_convert::block_from_parse(self).expect("block_from_parse");
+            wgsl_rs_ir::render_block(&ir_block)
+        }
+    }
+
+    impl ToWgsl for Stmt {
+        fn to_wgsl(&self) -> String {
+            // Wrap the stmt in a synthetic single-statement block and
+            // strip the surrounding braces so the rendered text is the
+            // statement only.
+            let block = Block {
+                brace_token: syn::token::Brace::default(),
+                stmt: vec![self.clone()],
+            };
+            let ir_block = ir_convert::block_from_parse(&block).expect("block_from_parse");
+            let rendered = wgsl_rs_ir::render_block(&ir_block);
+            // Strip leading "{\n", trailing "}\n", and the per-line
+            // indent the block renderer added.
+            let mut lines: Vec<&str> = rendered.lines().collect();
+            if lines.first().is_some_and(|l| l.trim() == "{") {
+                lines.remove(0);
+            }
+            if lines.last().is_some_and(|l| l.trim() == "}") {
+                lines.pop();
+            }
+            lines
+                .into_iter()
+                .map(|l| l.strip_prefix("    ").unwrap_or(l))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    impl ToWgsl for ItemMod {
+        fn to_wgsl(&self) -> String {
+            module_to_wgsl(self)
+        }
+    }
+
+    impl ToWgsl for Item {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(self)
+        }
+    }
+
+    /// Render a single parse `Item` via the IR pipeline.
+    fn item_to_wgsl(item: &Item) -> String {
+        let ir_items =
+            ir_convert::items_from_parse(std::slice::from_ref(item)).expect("items_from_parse");
+        wgsl_rs_ir::render_items(&ir_items)
+    }
+
+    /// Render a full module's content list via the IR pipeline.
+    fn module_to_wgsl(module: &ItemMod) -> String {
+        let ir_items = ir_convert::items_from_parse(&module.content).expect("items_from_parse");
+        wgsl_rs_ir::render_items(&ir_items)
+    }
+
+    impl ToWgsl for ItemUniform {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Uniform(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemStorage {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Storage(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemSampler {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Sampler(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemTexture {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Texture(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemWorkgroup {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Workgroup(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemFn {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Fn(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemConst {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Const(Box::new(self.clone())))
+        }
+    }
+    impl ToWgsl for ItemStruct {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Struct(self.clone()))
+        }
+    }
+    impl ToWgsl for ItemImpl {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Impl(self.clone()))
+        }
+    }
+    impl ToWgsl for ItemEnum {
+        fn to_wgsl(&self) -> String {
+            item_to_wgsl(&Item::Enum(self.clone()))
+        }
+    }
 
     #[test]
     fn parse_lit_bool() {
@@ -5126,14 +6146,14 @@ mod test {
     fn parse_expr_binary() {
         let expr: syn::Expr = syn::parse_str("333 +  333").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333+333", &expr.to_wgsl());
+        assert_eq!("333 + 333", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ident() {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333+TIMES", &expr.to_wgsl());
+        assert_eq!("333 + TIMES", &expr.to_wgsl());
     }
 
     // Remainder operator
@@ -5141,7 +6161,7 @@ mod test {
     fn parse_expr_binary_rem() {
         let expr: syn::Expr = syn::parse_str("10 % 3").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("10%3", &expr.to_wgsl());
+        assert_eq!("10 % 3", &expr.to_wgsl());
     }
 
     // Comparison operators
@@ -5149,42 +6169,42 @@ mod test {
     fn parse_expr_binary_eq() {
         let expr: syn::Expr = syn::parse_str("a == b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a==b", &expr.to_wgsl());
+        assert_eq!("a == b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ne() {
         let expr: syn::Expr = syn::parse_str("a != b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a!=b", &expr.to_wgsl());
+        assert_eq!("a != b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_lt() {
         let expr: syn::Expr = syn::parse_str("a < b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a<b", &expr.to_wgsl());
+        assert_eq!("a < b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_le() {
         let expr: syn::Expr = syn::parse_str("a <= b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a<=b", &expr.to_wgsl());
+        assert_eq!("a <= b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_gt() {
         let expr: syn::Expr = syn::parse_str("a > b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a>b", &expr.to_wgsl());
+        assert_eq!("a > b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ge() {
         let expr: syn::Expr = syn::parse_str("a >= b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a>=b", &expr.to_wgsl());
+        assert_eq!("a >= b", &expr.to_wgsl());
     }
 
     // Logical operators
@@ -5192,14 +6212,14 @@ mod test {
     fn parse_expr_binary_and() {
         let expr: syn::Expr = syn::parse_str("a && b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a&&b", &expr.to_wgsl());
+        assert_eq!("a && b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_or() {
         let expr: syn::Expr = syn::parse_str("a || b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a||b", &expr.to_wgsl());
+        assert_eq!("a || b", &expr.to_wgsl());
     }
 
     // Bitwise operators
@@ -5207,42 +6227,45 @@ mod test {
     fn parse_expr_binary_bitand() {
         let expr: syn::Expr = syn::parse_str("a & b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a&b", &expr.to_wgsl());
+        assert_eq!("a & b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_bitor() {
         let expr: syn::Expr = syn::parse_str("a | b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a|b", &expr.to_wgsl());
+        assert_eq!("a | b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_bitxor() {
         let expr: syn::Expr = syn::parse_str("a ^ b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a^b", &expr.to_wgsl());
+        assert_eq!("a ^ b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_shl() {
         let expr: syn::Expr = syn::parse_str("a << b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a<<b", &expr.to_wgsl());
+        assert_eq!("a << b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_shr() {
         let expr: syn::Expr = syn::parse_str("a >> b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a>>b", &expr.to_wgsl());
+        assert_eq!("a >> b", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_vec4_f32_type() {
+        // The IR renderer uses the WGSL shorthand `vec4f` whenever a
+        // scalar element type is known, regardless of whether the
+        // source used `Vec4<f32>` or `Vec4f`.
         let ty: syn::Type = syn::parse_str("Vec4<f32>").unwrap();
         let ty = Type::try_from(&ty).unwrap();
-        assert_eq!("vec4<f32>", &ty.to_wgsl());
+        assert_eq!("vec4f", &ty.to_wgsl());
     }
 
     #[test]
@@ -5716,26 +6739,27 @@ mod test {
         };
         let result = Item::try_from(&item);
         assert!(
-            matches!(result, Ok(Item::TraitImpl)),
-            "trait impl should be accepted as passthrough"
+            matches!(result, Ok(Item::Impl(_))),
+            "trait impl should be parsed as Item::Impl"
         );
     }
 
     #[test]
-    fn parse_impl_rejects_generics() {
+    fn parse_generic_impl_block() {
         let item: syn::Item = syn::parse_quote! {
             impl<T> Light {
                 pub fn foo() {}
             }
         };
         let result = Item::try_from(&item);
-        assert!(result.is_err());
-        let err = format!("{}", result.err().unwrap());
-        assert!(
-            err.contains("generic impl blocks are not supported"),
-            "Expected error about generics, got: {}",
-            err
-        );
+        match result {
+            Ok(Item::Impl(impl_item)) => {
+                assert_eq!(impl_item.type_params.len(), 1);
+                assert_eq!(impl_item.type_params[0].to_string(), "T");
+                assert_eq!(impl_item.self_ty.to_string(), "Light");
+            }
+            other => panic!("Expected Ok(Item::Impl), got: {:?}", other.is_err()),
+        }
     }
 
     #[test]
@@ -7526,6 +8550,436 @@ mod test {
             "discard;",
             "Expected 'discard;' in WGSL, got: {}",
             wgsl
+        );
+    }
+
+    // ===== Generic function parsing tests =====
+
+    #[test]
+    fn parse_generic_free_fn() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn identity<T>(x: T) -> T {
+                x
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                assert_eq!(f.ident.to_string(), "identity");
+                assert_eq!(f.type_params.len(), 1);
+                assert_eq!(f.type_params[0].to_string(), "T");
+                // Parameters and return type should be TypeParam
+                assert!(matches!(
+                    f.inputs.first().unwrap().ty,
+                    Type::TypeParam { .. }
+                ));
+                match &f.return_type {
+                    ReturnType::Type { ty, .. } => {
+                        assert!(matches!(ty.as_ref(), Type::TypeParam { .. }));
+                    }
+                    _ => panic!("Expected return type"),
+                }
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_turbofish_call() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn caller() -> f32 {
+                identity::<f32>(1.0)
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                // The body should contain a trailing expr (return) with a FnCall
+                let last_stmt = f.block.stmt.last().unwrap();
+                match last_stmt {
+                    Stmt::Expr { expr, .. } => match expr {
+                        Expr::FnCall {
+                            path, type_args, ..
+                        } => {
+                            assert!(matches!(path, FnPath::Ident(id) if id == "identity"));
+                            assert_eq!(type_args.len(), 1);
+                            assert!(matches!(
+                                &type_args[0],
+                                Type::Scalar {
+                                    ty: ScalarType::F32,
+                                    ..
+                                }
+                            ));
+                        }
+                        _ => panic!("Expected FnCall"),
+                    },
+                    _ => panic!("Expected Stmt::Expr"),
+                }
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_nested_turbofish_in_generic() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn foo<T>(x: T) -> T {
+                bar::<T>(x)
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                assert_eq!(f.type_params.len(), 1);
+                let last_stmt = f.block.stmt.last().unwrap();
+                match last_stmt {
+                    Stmt::Expr { expr, .. } => match expr {
+                        Expr::FnCall { type_args, .. } => {
+                            assert_eq!(type_args.len(), 1);
+                            assert!(
+                                matches!(&type_args[0], Type::TypeParam { ident } if ident == "T")
+                            );
+                        }
+                        _ => panic!("Expected FnCall"),
+                    },
+                    _ => panic!("Expected Stmt::Expr"),
+                }
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_entrypoint_accepted() {
+        // Generic entry points are now supported. Their type parameters
+        // become module-level type parameters and the resulting WGSL
+        // module is treated as a template.
+        let item: syn::Item = syn::parse_quote! {
+            #[vertex]
+            pub fn my_vertex<T>() -> Vec4f {
+                Vec4f { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_ok(), "expected Ok");
+        match result.unwrap() {
+            Item::Fn(item_fn) => {
+                assert_eq!(item_fn.type_params.len(), 1);
+                assert_eq!(item_fn.type_params[0].to_string(), "T");
+                assert!(matches!(item_fn.fn_attrs, FnAttrs::Vertex(_)));
+            }
+            _ => panic!("expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_module_resolves_uniform_impl_trait() {
+        // A uniform declared with `impl Trait` syntax should be parsed
+        // with its type set to `Type::TypeParam` named after the variable
+        // (here `FRAME`), and the trait bounds preserved on
+        // `impl_bounds`.
+        let item: syn::Item = syn::parse_quote! {
+            pub mod my_shader {
+                use wgsl_rs::std::*;
+
+                uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+
+                #[fragment]
+                pub fn frag_main<T: Convert<f32>>() -> Vec4f {
+                    Vec4f { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+                }
+            }
+        };
+        let syn::Item::Mod(item_mod) = &item else {
+            panic!("expected Mod");
+        };
+        let parsed = ItemMod::try_from(item_mod).expect("parse");
+
+        let mut found = false;
+        for it in &parsed.content {
+            if let Item::Uniform(u) = it {
+                assert_eq!(u.name.to_string(), "FRAME");
+                match &u.ty {
+                    Type::TypeParam { ident } => {
+                        assert_eq!(ident.to_string(), "FRAME");
+                        found = true;
+                    }
+                    _ => panic!("expected Type::TypeParam"),
+                }
+                assert!(
+                    u.impl_bounds.is_some(),
+                    "expected impl_bounds to be Some for `impl Trait` linkage"
+                );
+            }
+        }
+        assert!(found, "FRAME uniform not found in parsed module");
+    }
+
+    #[test]
+    fn parse_generic_module_resolves_storage_impl_trait() {
+        let item: syn::Item = syn::parse_quote! {
+            pub mod my_shader {
+                use wgsl_rs::std::*;
+
+                storage!(group(0), binding(0), read_write, DATA: impl Wgsl + Clone);
+
+                #[compute]
+                #[workgroup_size(1)]
+                pub fn cs_main() {}
+            }
+        };
+        let syn::Item::Mod(item_mod) = &item else {
+            panic!("expected Mod");
+        };
+        let parsed = ItemMod::try_from(item_mod).expect("parse");
+        let mut found = false;
+        for it in &parsed.content {
+            if let Item::Storage(s) = it {
+                assert_eq!(s.name.to_string(), "DATA");
+                if let Type::TypeParam { ident } = &s.ty {
+                    assert_eq!(ident.to_string(), "DATA");
+                    found = true;
+                }
+                assert!(s.impl_bounds.is_some());
+            }
+        }
+        assert!(found, "DATA storage not found");
+    }
+
+    #[test]
+    fn parse_generic_impl_method_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub fn generic_method<T>(x: T) -> T { x }
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("generic methods in impl blocks are not yet supported"),
+            "Expected error about generic impl methods, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_non_generic_fn_unchanged() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn add(a: f32, b: f32) -> f32 {
+                a + b
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                assert!(f.type_params.is_empty());
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_trait_impl_produces_impl() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Doubler for f32 {
+                pub fn double(x: f32) -> f32 {
+                    x + x
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(impl_item) => {
+                assert_eq!(impl_item.self_ty.to_string(), "f32");
+                assert_eq!(impl_item.items.len(), 1);
+                match &impl_item.items[0] {
+                    ImplItem::Fn(f) => {
+                        assert_eq!(f.ident.to_string(), "double");
+                    }
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
+            }
+            _ => panic!("Expected Item::Impl for trait impl block"),
+        }
+    }
+
+    #[test]
+    fn trait_definition_stays_rust_only() {
+        let item: syn::Item = syn::parse_quote! {
+            pub trait Doubler {
+                fn double(x: f32) -> f32;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        assert!(
+            matches!(item, Item::Trait),
+            "Trait definition should be Item::Trait (Rust-only)"
+        );
+    }
+
+    #[test]
+    fn parse_generic_struct() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct Pair<T> {
+                pub a: T,
+                pub b: T,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Struct(s) => {
+                assert_eq!(s.ident.to_string(), "Pair");
+                assert_eq!(s.type_params.len(), 1);
+                assert_eq!(s.type_params[0].to_string(), "T");
+                assert_eq!(s.fields.named.len(), 2);
+                // Both fields should have TypeParam type
+                for field in s.fields.named.iter() {
+                    assert!(
+                        matches!(&field.ty, Type::TypeParam { ident } if ident == "T"),
+                        "Expected field type to be TypeParam T",
+                    );
+                }
+            }
+            _ => panic!("Expected Item::Struct"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct_multiple_type_params() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct KeyValue<K, V> {
+                pub key: K,
+                pub value: V,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Struct(s) => {
+                assert_eq!(s.type_params.len(), 2);
+                assert_eq!(s.type_params[0].to_string(), "K");
+                assert_eq!(s.type_params[1].to_string(), "V");
+                assert!(
+                    matches!(&s.fields.named[0].ty, Type::TypeParam { ident } if ident == "K"),
+                    "Expected first field type to be TypeParam K",
+                );
+                assert!(
+                    matches!(&s.fields.named[1].ty, Type::TypeParam { ident } if ident == "V"),
+                    "Expected second field type to be TypeParam V",
+                );
+            }
+            _ => panic!("Expected Item::Struct"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct_type_in_function() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn make_pair() -> f32 {
+                let p: Pair<f32> = Pair::<f32> { a: 1.0, b: 2.0 };
+                return p.a;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                // Check that the local variable has a Struct type with type_args
+                let first_stmt = &f.block.stmt[0];
+                match first_stmt {
+                    Stmt::Local(local) => {
+                        let (_, ty) = local.ty.as_ref().expect("local should have type");
+                        match ty {
+                            Type::Struct { ident, type_args } => {
+                                assert_eq!(ident.to_string(), "Pair");
+                                assert_eq!(type_args.len(), 1);
+                                assert!(matches!(
+                                    &type_args[0],
+                                    Type::Scalar {
+                                        ty: ScalarType::F32,
+                                        ..
+                                    }
+                                ));
+                            }
+                            _ => panic!("Expected Type::Struct with type_args"),
+                        }
+                        // Also check the struct constructor expression
+                        let init = local.init.as_ref().expect("local should have init");
+                        match &init.expr {
+                            Expr::Struct {
+                                ident, type_args, ..
+                            } => {
+                                assert_eq!(ident.to_string(), "Pair");
+                                assert_eq!(type_args.len(), 1);
+                            }
+                            _ => panic!("Expected Expr::Struct"),
+                        }
+                    }
+                    _ => panic!("Expected Stmt::Local"),
+                }
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_impl_block_with_methods() {
+        let item: syn::Item = syn::parse_quote! {
+            impl<T> Pair<T> {
+                pub fn first(p: Pair<T>) -> T {
+                    return p.a;
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Impl(impl_item) => {
+                assert_eq!(impl_item.type_params.len(), 1);
+                assert_eq!(impl_item.type_params[0].to_string(), "T");
+                assert_eq!(impl_item.self_ty.to_string(), "Pair");
+                assert_eq!(impl_item.items.len(), 1);
+                match &impl_item.items[0] {
+                    ImplItem::Fn(f) => {
+                        assert_eq!(f.ident.to_string(), "first");
+                        // The parameter type should be Struct with TypeParam args
+                        let param_ty = &f.inputs.first().unwrap().ty;
+                        match param_ty {
+                            Type::Struct { ident, type_args } => {
+                                assert_eq!(ident.to_string(), "Pair");
+                                assert_eq!(type_args.len(), 1);
+                                assert!(matches!(
+                                    &type_args[0],
+                                    Type::TypeParam { ident } if ident == "T"
+                                ));
+                            }
+                            _ => panic!("Expected Struct type with type_args"),
+                        }
+                        // Return type should be TypeParam
+                        match &f.return_type {
+                            ReturnType::Type { ty, .. } => {
+                                assert!(matches!(ty.as_ref(), Type::TypeParam { .. }));
+                            }
+                            _ => panic!("Expected return type"),
+                        }
+                    }
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct_rejects_lifetime() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct Bad<'a> {
+                pub x: f32,
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(result.is_err());
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("lifetime"),
+            "Expected error about lifetimes, got: {err}"
         );
     }
 }

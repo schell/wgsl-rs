@@ -15,6 +15,8 @@
 //! is no parallel dispatch runtime. When a multi-threaded compute dispatch
 //! is implemented, these should be revisited to use proper thread barriers.
 
+use crate::std::Wgsl;
+
 use super::{
     Workgroup,
     atomic::{Atomic, atomic_load, atomic_load_i32},
@@ -101,7 +103,7 @@ pub trait WorkgroupUniformLoad {
     fn uniform_load(&self) -> Self::Output;
 }
 
-impl<T: Clone> WorkgroupUniformLoad for Workgroup<T> {
+impl<T: Wgsl + Clone> WorkgroupUniformLoad for Workgroup<T> {
     type Output = T;
 
     fn uniform_load(&self) -> T {

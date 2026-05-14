@@ -26,7 +26,6 @@ use wgsl_rs::wgsl;
 pub mod derivative_shader {
     use wgsl_rs::std::*;
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -63,13 +62,11 @@ pub mod derivative_shader {
 pub mod derivative_variants_shader {
     use wgsl_rs::std::*;
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
     }
 
-    #[output]
     pub struct DerivativeVariantOutputs {
         #[location(0)]
         pub fine: Vec4f,

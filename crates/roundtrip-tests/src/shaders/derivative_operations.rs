@@ -13,7 +13,6 @@ const HEIGHT: u32 = 32;
 pub mod derivative_basic {
     use wgsl_rs::std::*;
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -37,13 +36,11 @@ pub mod derivative_basic {
 pub mod derivative_variants {
     use wgsl_rs::std::*;
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
     }
 
-    #[output]
     pub struct Outputs {
         #[location(0)]
         pub fine: Vec4f,

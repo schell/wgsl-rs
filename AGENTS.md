@@ -1,9 +1,13 @@
 # wgsl-rs
 
 Rust-to-WGSL transpiler using proc macros.
-Workspace with `wgsl-rs`, `wgsl-rs-macros`, `example`, and `xtask` crates.
+Workspace with `wgsl-rs`, `wgsl-rs-ir`, `wgsl-rs-macros`, `example`, and `xtask` crates.
 
-`wgsl-rs` maintains
+The proc-macro converts a parsed Rust module to an owned IR (defined in
+`wgsl-rs-ir`), then emits a `WGSL_MODULE` static carrying a constructor
+that builds that IR at runtime. The runtime crate (`wgsl-rs`) renders the
+IR to WGSL on demand and supports IR-level type substitution for generic
+shader instantiation.
 
 ## Project Lore
 
@@ -62,16 +66,22 @@ cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
   and use `unreachable!` when encountering an invariant that is impossible. Similarly use `.expect("{reason}")`
   where appropriate.
 - **Spans**: Preserve `proc_macro2::Span` on all parsed types for error mapping back to Rust source
-- **Comments**: C++ style section labels like `// =====` to mark sections of code are not needed.
-  Instead, if a new section is absolutely necessary - place the code in a new module with appropriate
-  module level documentation.
-  Please document all functions. If parameters are self explanatory, don't bother writing parameters in
-  documentation.
+- **Comments**: Prefer to split distinct concerns into separate modules with module-level
+  documentation rather than reaching for `// ===== Section =====` headers in a single file.
+  That said, `// =====` headers are acceptable inside long files (e.g. `monomorphize.rs`,
+  `parse.rs`) where splitting into sub-modules would itself be a larger refactor than the
+  organizational benefit warrants.
+  Please document all functions. If parameters are self-explanatory, don't bother writing
+  parameter docs.
 
 ## DEVLOG.md file
 
 The [DEVLOG](DEVLOG.md) is a set of long-lived development notes.
 It is a very informal change-log that also contains thoughts about this library's purpose, requirements, and challenges.
+
+Each day of work has an entry with the heading "### YYYY-MM-DD: {description}".
+If your session is the first of the day, create a new day entry, otherwise append the
+high-level description of your session to the current day's entry.
 
 ## SESSION.md file
 

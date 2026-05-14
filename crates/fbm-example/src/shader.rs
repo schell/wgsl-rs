@@ -74,7 +74,6 @@ pub mod fbm_shader {
     }
 
     /// Fragment input providing the built-in position.
-    #[input]
     pub struct FragIn {
         #[builtin(position)]
         pub frag_coord: Vec4f,

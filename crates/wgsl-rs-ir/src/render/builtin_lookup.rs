@@ -1,16 +1,17 @@
-//! WGSL builtin function name mappings.
+//! WGSL builtin function name translations.
 //!
-//! Maps Rust snake_case names to WGSL camelCase names for builtin functions
-//! that require name translation during code generation.
+//! Maps Rust snake_case names to WGSL camelCase / templated names for
+//! builtin functions and type aliases that require translation during
+//! rendering. Names that match between Rust and WGSL (e.g. `sin`, `cos`,
+//! `abs`) are NOT included here.
+//!
+//! This table is duplicated from `wgsl-rs-macros/src/builtins.rs` so that
+//! `wgsl-rs-ir` can stay completely standalone (no dependency on the
+//! proc-macro crate). The two should be kept in sync; tests should pin
+//! both copies.
 
-/// Lookup table for builtin functions that need name translation.
-///
-/// Format: (rust_snake_case, wgslCamelCase)
-///
-/// Note: Functions where Rust and WGSL names match (e.g., `sin`, `cos`, `abs`)
-/// are NOT included here since they don't need translation.
-pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
-    // Boolean vector aliases that _should_ exist in WGSL
+const TABLE: &[(&str, &str)] = &[
+    // Boolean vector aliases
     ("vec2b", "vec2<bool>"),
     ("vec3b", "vec3<bool>"),
     ("vec4b", "vec4<bool>"),
@@ -158,93 +159,11 @@ pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     ("texture_store_array", "textureStore"),
 ];
 
-/// Looks up the WGSL name for a Rust function name.
-///
-/// Returns `Some(wgsl_name)` if translation is needed, `None` if the name
-/// should be used as-is.
-///
-/// Note: production WGSL rendering goes through `wgsl_rs_ir`, which keeps
-/// its own copy of the table. This function is retained for parity and
-/// for the in-crate tests that pin the table contents.
-#[allow(dead_code)]
-pub fn lookup_wgsl_name(rust_name: &str) -> Option<&'static str> {
-    BUILTIN_CASE_NAME_MAP
+/// Translate a Rust-style builtin function name to the WGSL form. Returns
+/// `None` if no translation is needed (the name should be used as-is).
+pub fn lookup(name: &str) -> Option<&'static str> {
+    TABLE
         .iter()
-        .find(|(rust, _)| *rust == rust_name)
+        .find(|(rust, _)| *rust == name)
         .map(|(_, wgsl)| *wgsl)
-}
-
-/// Checks if a name (either Rust or WGSL form) is reserved for a builtin.
-///
-/// Returns `Some((rust_name, wgsl_name))` if reserved, `None` otherwise.
-pub fn is_reserved_builtin(name: &str) -> Option<(&'static str, &'static str)> {
-    BUILTIN_CASE_NAME_MAP
-        .iter()
-        .find(|(rust, wgsl)| *rust == name || *wgsl == name)
-        .copied()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lookup_existing_builtin() {
-        assert_eq!(
-            lookup_wgsl_name("count_leading_zeros"),
-            Some("countLeadingZeros")
-        );
-        assert_eq!(lookup_wgsl_name("inverse_sqrt"), Some("inverseSqrt"));
-        assert_eq!(
-            lookup_wgsl_name("texture_dimensions"),
-            Some("textureDimensions")
-        );
-    }
-
-    #[test]
-    fn lookup_non_builtin_returns_none() {
-        assert_eq!(lookup_wgsl_name("sin"), None);
-        assert_eq!(lookup_wgsl_name("my_custom_function"), None);
-    }
-
-    #[test]
-    fn is_reserved_matches_rust_name() {
-        let result = is_reserved_builtin("count_leading_zeros");
-        assert_eq!(result, Some(("count_leading_zeros", "countLeadingZeros")));
-    }
-
-    #[test]
-    fn is_reserved_matches_wgsl_name() {
-        let result = is_reserved_builtin("countLeadingZeros");
-        assert_eq!(result, Some(("count_leading_zeros", "countLeadingZeros")));
-    }
-
-    #[test]
-    fn is_reserved_returns_none_for_non_builtin() {
-        assert_eq!(is_reserved_builtin("my_function"), None);
-        assert_eq!(is_reserved_builtin("sin"), None);
-    }
-
-    #[test]
-    fn lookup_bitcast_builtins() {
-        assert_eq!(lookup_wgsl_name("bitcast_f32"), Some("bitcast<f32>"));
-        assert_eq!(lookup_wgsl_name("bitcast_u32"), Some("bitcast<u32>"));
-        assert_eq!(lookup_wgsl_name("bitcast_i32"), Some("bitcast<i32>"));
-        assert_eq!(
-            lookup_wgsl_name("bitcast_vec2f"),
-            Some("bitcast<vec2<f32>>")
-        );
-        assert_eq!(
-            lookup_wgsl_name("bitcast_vec4i"),
-            Some("bitcast<vec4<i32>>")
-        );
-    }
-
-    #[test]
-    fn bitcast_names_are_reserved() {
-        assert!(is_reserved_builtin("bitcast_f32").is_some());
-        assert!(is_reserved_builtin("bitcast_u32").is_some());
-        assert!(is_reserved_builtin("bitcast_i32").is_some());
-        assert!(is_reserved_builtin("bitcast_vec3u").is_some());
-    }
 }

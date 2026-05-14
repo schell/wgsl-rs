@@ -1,19 +1,27 @@
 #![cfg_attr(nightly, feature(proc_macro_diagnostic))]
 
 use proc_macro::TokenStream;
-use quote::{ToTokens, quote};
+use quote::{ToTokens, format_ident, quote};
 use snafu::prelude::*;
-use syn::visit_mut::{self, VisitMut};
+use std::sync::atomic::{AtomicU64, Ordering};
+use syn::{
+    DeriveInput,
+    visit_mut::{self, VisitMut},
+};
 
-#[cfg(feature = "validation")]
-use crate::code_gen::GeneratedWgslCode;
 use crate::parse::InterStageIo;
 
+static NEXT_MODULE_ID: AtomicU64 = AtomicU64::new(0);
+
+mod builder;
 mod builtins;
-mod code_gen;
+mod ir_convert;
+mod ir_emit;
 #[cfg(feature = "linkage-wgpu")]
 mod linkage;
+mod monomorphize;
 mod parse;
+mod parse_visitor;
 mod ptr;
 mod sampler;
 mod storage;
@@ -51,6 +59,25 @@ fn strip_wgsl_allow_attrs(expr: &mut syn::Expr) {
     attrs.retain(|attr| !attr.path().is_ident("wgsl_allow"));
 }
 
+/// Visitor that strips inter-stage IO attributes (`#[builtin(...)]`,
+/// `#[location(N)]`, `#[interpolate(...)]`, `#[blend_src(N)]`, `#[invariant]`)
+/// from struct fields.
+///
+/// These attributes are read during WGSL parsing (in `Field::parse_with_ctx`),
+/// but they aren't valid Rust attributes on struct fields. The `#[wgsl]` macro
+/// strips them from the emitted Rust code so the struct compiles as plain
+/// Rust, while the IO information has already been captured for WGSL output.
+struct StripIoAttrs;
+
+impl VisitMut for StripIoAttrs {
+    fn visit_field_mut(&mut self, field: &mut syn::Field) {
+        field
+            .attrs
+            .retain(|attr| InterStageIo::try_from(attr).is_err());
+        visit_mut::visit_field_mut(self, field);
+    }
+}
+
 #[derive(Default)]
 struct Attrs {
     /// Present if the `wgsl` macro is of the form:
@@ -59,10 +86,34 @@ struct Attrs {
     /// Otherwise this is `None`.
     crate_path: Option<syn::Path>,
 
-    /// If true, skip all validation (compile-time and test-time).
+    /// If true, skip the auto-generated `__validate_wgsl` test.
     ///
     /// Set via `#[wgsl(skip_validation)]`.
     skip_validation: bool,
+
+    /// Concrete type lists for validating template (generic) modules.
+    ///
+    /// Each occurrence of `validate_with_instantiation_types(T1, T2, ...)`
+    /// provides a set of concrete types to instantiate the module with and
+    /// validate the resulting WGSL. The types must match the order and
+    /// number of type parameters in the module's `instantiate` function.
+    ///
+    /// For non-template modules, this has no effect (they are always
+    /// validated via `WGSL_MODULE.validate()`).
+    validate_instantiations: Vec<Vec<syn::Type>>,
+}
+
+struct InstantiationTypes {
+    types: syn::punctuated::Punctuated<syn::Type, syn::Token![,]>,
+}
+
+impl syn::parse::Parse for InstantiationTypes {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let content;
+        syn::parenthesized!(content in input);
+        let types = content.parse_terminated(syn::Type::parse, syn::Token![,])?;
+        Ok(Self { types })
+    }
 }
 
 impl syn::parse::Parse for Attrs {
@@ -84,12 +135,18 @@ impl syn::parse::Parse for Attrs {
                 "skip_validation" => {
                     attrs.skip_validation = true;
                 }
+                "validate_with_instantiation_types" => {
+                    let types: InstantiationTypes = input.parse()?;
+                    attrs
+                        .validate_instantiations
+                        .push(types.types.into_iter().collect());
+                }
                 other => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
-                            "Unknown attribute '{other}', expected 'crate_path' or \
-                             'skip_validation'"
+                            "Unknown attribute '{other}', expected 'crate_path', \
+                             'skip_validation', or 'validate_with_instantiation_types'"
                         ),
                     ));
                 }
@@ -126,19 +183,9 @@ impl Attrs {
 
 #[derive(Debug, Snafu)]
 enum WgslGenError {
-    RustParse {
-        source: syn::Error,
-    },
+    RustParse { source: syn::Error },
 
-    WgslParse {
-        source: parse::Error,
-    },
-
-    #[cfg(feature = "validation")]
-    WgslValidate {
-        input_mod: Box<syn::ItemMod>,
-        error: syn::Error,
-    },
+    WgslParse { source: parse::Error },
 }
 
 impl From<syn::Error> for WgslGenError {
@@ -153,127 +200,406 @@ impl From<parse::Error> for WgslGenError {
     }
 }
 
-#[cfg(feature = "validation")]
-fn validate_wgsl(code: &GeneratedWgslCode, source_lines: &[String]) -> Result<(), syn::Error> {
-    // Validate the module and emit validation errors as compilation errors
-    // by mapping the WGSL spans to Rust spans.
-    let source = source_lines.join("\n");
 
-    /// Converts a byte offset in the source to a LineColumn position.
-    /// Returns 1-based line and column numbers to match our WGSL source map.
-    fn offset_to_line_column(source: &str, offset: u32) -> proc_macro2::LineColumn {
-        let mut line = 1;
-        let mut column = 1;
-        for (i, ch) in source.char_indices() {
-            if i >= offset as usize {
-                break;
-            }
-            if ch == '\n' {
-                line += 1;
-                column = 1;
-            } else {
-                column += 1;
-            }
+/// Collect the encoded names of all module-level type parameters in the
+/// parsed module, in the order they should appear in the generated
+/// `WGSL_MODULE.module_type_params` slice.
+///
+/// Two sources contribute, both encoded so that no two distinct
+/// declarations can share an IR name:
+///
+/// 1. Linkage variables declared with `impl Trait` syntax. Each one contributes
+///    a single name equal to the variable's identifier (e.g. `"FRAME"` for
+///    `uniform!(..., FRAME: impl Convert<f32>)`).
+/// 2. Type parameters of shader entry points (`#[vertex]`, `#[fragment]`,
+///    `#[compute]`). Each one contributes a positional name of the form
+///    `"<fn_name>_<index>"` (e.g. `"frag_main_0"`, `"frag_main_1"`).
+///    Source-level names like `T` and `S` are intentionally not used so that
+///    two entry points using the same letter don't collide.
+///
+/// Order: linkage variables in declaration order, followed by entry
+/// point parameters in declaration order, in turn following each entry
+/// point's parameter list left-to-right.
+fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> {
+    use parse::{FnAttrs, Item};
+    let mut params: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Pass 1: linkage variables declared with `impl Trait`.
+    for item in &wgsl_module.content {
+        let name = match item {
+            Item::Uniform(u) if u.impl_bounds.is_some() => u.name.to_string(),
+            Item::Storage(s) if s.impl_bounds.is_some() => s.name.to_string(),
+            Item::Workgroup(w) if w.impl_bounds.is_some() => w.name.to_string(),
+            _ => continue,
+        };
+        if seen.insert(name.clone()) {
+            params.push(name);
         }
-        proc_macro2::LineColumn { line, column }
     }
 
-    /// Converts a naga error message and source location into a syn::Error,
-    /// mapping WGSL source positions back to Rust source spans when possible.
-    fn convert_naga_error(
-        code: &GeneratedWgslCode,
-        source: &str,
-        msg: &str,
-        loc: Option<naga::SourceLocation>,
-    ) -> syn::Error {
-        if let Some(naga::SourceLocation { offset, length, .. }) = loc {
-            let wgsl_start = offset_to_line_column(source, offset);
-            let wgsl_end = offset_to_line_column(source, offset + length);
-
-            // First, try to find a mapping that exactly matches the naga span
-            if let Some(mapping) = code.mapping_for_wgsl_span(wgsl_start, wgsl_end) {
-                return syn::Error::new(mapping.rust_atom.span(), msg);
-            }
-
-            // Fall back to finding any mapping that contains the start position
-            if let Some(mapping) = code.all_mappings_containing_wgsl_lc(wgsl_start).next() {
-                return syn::Error::new(mapping.rust_atom.span(), msg);
+    // Pass 2: entry point type parameters, encoded positionally.
+    for item in &wgsl_module.content {
+        let Item::Fn(f) = item else { continue };
+        if matches!(f.fn_attrs, FnAttrs::None) {
+            continue;
+        }
+        let fn_name = f.ident.to_string();
+        for (i, _tp) in f.type_params.iter().enumerate() {
+            let encoded = format!("{fn_name}_{i}");
+            if seen.insert(encoded.clone()) {
+                params.push(encoded);
             }
         }
-        // Fall back to call_site if we can't map the location
-        syn::Error::new(proc_macro2::Span::call_site(), msg)
     }
 
-    // First, parse the WGSL source
-    let module = match naga::front::wgsl::parse_str(&source) {
-        Ok(module) => module,
-        Err(e) => {
-            let mut errors = e.labels().map(|(naga_span, label_msg)| {
-                let loc = Some(naga_span.location(&source));
-                convert_naga_error(
-                    code,
-                    &source,
-                    &format!("WGSL parse error: {label_msg}"),
-                    loc,
-                )
-            });
-            let error = errors
-                .next()
-                .unwrap_or_else(|| syn::Error::new(proc_macro2::Span::call_site(), format!("{e}")));
-            return Err(errors.fold(error, |mut error, e| {
-                error.combine(e);
-                error
-            }));
+    params
+}
+
+/// Replace any `uniform!`/`storage!`/`workgroup!` macro item in the input
+/// Rust module whose declared type is a *type parameter* of one of the
+/// module's entry points with the pre-expanded "type-erased" form
+/// (e.g. `pub static FRAME: Uniform = Uniform::new(0, 0);`).
+///
+/// The default of `Uniform` / `Storage` / `Workgroup` is `WgslTypeVariable`,
+/// which keeps a runtime `TypeId`-keyed map of values; `get!(VAR, T)` /
+/// `get_mut!(VAR, T)` then read/write a value of the requested concrete
+/// type.
+fn rewrite_generic_linkages(
+    input_mod: &mut syn::ItemMod,
+    wgsl_module: &parse::ItemMod,
+    crate_path: &syn::Path,
+) -> Result<(), WgslGenError> {
+    use parse::Item;
+
+    // Collect the names of generic linkage items by scanning the parsed
+    // `wgsl_module`. A linkage variable is "generic" if the user declared
+    // it with `impl Trait` syntax (e.g. `FRAME: impl Convert<f32>`); we
+    // detect this via the `impl_bounds` field on each linkage item.
+    let mut generic_uniforms: std::collections::BTreeMap<String, (syn::LitInt, syn::LitInt)> =
+        Default::default();
+    let mut generic_storages: std::collections::BTreeMap<
+        String,
+        (syn::LitInt, syn::LitInt, parse::StorageAccess),
+    > = Default::default();
+    let mut generic_workgroups: std::collections::BTreeSet<String> = Default::default();
+
+    for item in &wgsl_module.content {
+        match item {
+            Item::Uniform(u) if u.impl_bounds.is_some() => {
+                generic_uniforms.insert(u.name.to_string(), (u.group.clone(), u.binding.clone()));
+            }
+            Item::Storage(s) if s.impl_bounds.is_some() => {
+                generic_storages.insert(
+                    s.name.to_string(),
+                    (s.group.clone(), s.binding.clone(), s.access),
+                );
+            }
+            Item::Workgroup(w) if w.impl_bounds.is_some() => {
+                generic_workgroups.insert(w.name.to_string());
+            }
+            _ => {}
         }
+    }
+
+    if generic_uniforms.is_empty() && generic_storages.is_empty() && generic_workgroups.is_empty() {
+        return Ok(());
+    }
+
+    let Some((_, items)) = input_mod.content.as_mut() else {
+        return Ok(());
     };
 
-    // Then run validation
-    let validation_result = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::all(),
-    )
-    .subgroup_stages(naga::valid::ShaderStages::all())
-    .subgroup_operations(naga::valid::SubgroupOperationSet::all())
-    .validate(&module);
+    for item in items.iter_mut() {
+        let syn::Item::Macro(item_macro) = item else {
+            continue;
+        };
+        let Some(macro_ident) = item_macro.mac.path.get_ident() else {
+            continue;
+        };
+        let macro_name = macro_ident.to_string();
 
-    if let Err(e) = validation_result {
-        let loc = e.location(&source);
-        let msg = format!("WGSL validation error: {}", e.emit_to_string(&source));
-        return Err(convert_naga_error(code, &source, &msg, loc));
+        // Find the variable name that this macro declares (the bare ident
+        // after the last `,` and before the `:`).
+        let var_name = match macro_name.as_str() {
+            "uniform" | "storage" | "workgroup" => {
+                extract_linkage_var_name(item_macro.mac.tokens.clone())
+            }
+            _ => None,
+        };
+        let Some(var_name) = var_name else {
+            continue;
+        };
+
+        let replacement: Option<proc_macro2::TokenStream> = match macro_name.as_str() {
+            "uniform" => generic_uniforms.get(&var_name).map(|(group, binding)| {
+                let name = quote::format_ident!("{}", var_name);
+                quote! {
+                    pub static #name: #crate_path::std::Uniform =
+                        #crate_path::std::Uniform::new(#group, #binding);
+                }
+            }),
+            "storage" => generic_storages
+                .get(&var_name)
+                .map(|(group, binding, access)| {
+                    let name = quote::format_ident!("{}", var_name);
+                    let access_mode = match access {
+                        parse::StorageAccess::Read => quote!(#crate_path::std::Read),
+                        parse::StorageAccess::ReadWrite => quote!(#crate_path::std::ReadWrite),
+                    };
+                    quote! {
+                        pub static #name: #crate_path::std::Storage<
+                            #crate_path::std::WgslTypeVariable,
+                            #access_mode,
+                        > = #crate_path::std::Storage::new(#group, #binding);
+                    }
+                }),
+            "workgroup" => generic_workgroups.get(&var_name).map(|_| {
+                let name = quote::format_ident!("{}", var_name);
+                quote! {
+                    pub static #name: #crate_path::std::Workgroup =
+                        #crate_path::std::Workgroup::new();
+                }
+            }),
+            _ => None,
+        };
+
+        if let Some(tokens) = replacement {
+            *item = syn::parse2::<syn::Item>(tokens)?;
+        }
     }
 
     Ok(())
+}
+
+/// Extracts the variable name from a `uniform!` / `storage!` / `workgroup!`
+/// macro token stream. Returns `None` if the tokens don't match the
+/// expected form.
+fn extract_linkage_var_name(tokens: proc_macro2::TokenStream) -> Option<String> {
+    use proc_macro2::TokenTree;
+    let mut last_ident: Option<String> = None;
+    for tt in tokens {
+        if let TokenTree::Punct(p) = &tt
+            && p.as_char() == ':'
+        {
+            return last_ident;
+        }
+        if let TokenTree::Ident(id) = &tt {
+            last_ident = Some(id.to_string());
+        }
+    }
+    None
+}
+
+/// Construct a token stream that names the IR crate via the consuming
+/// crate's wgsl-rs root path (e.g. `wgsl_rs::ir`).
+fn ir_path(crate_path: &syn::Path) -> proc_macro2::TokenStream {
+    quote! { #crate_path::ir }
 }
 
 fn gen_wgsl_module(
     name: &syn::Ident,
     crate_path: &syn::Path,
     imports: &[proc_macro2::TokenStream],
-    source_lines: &[String],
-) -> proc_macro2::TokenStream {
-    quote! {
-        pub const WGSL_MODULE: #crate_path::Module = #crate_path::Module {
+    wgsl_module: &parse::ItemMod,
+    mono_result: &monomorphize::MonoResult,
+    module_type_params: &[String],
+) -> Result<proc_macro2::TokenStream, WgslGenError> {
+    fn is_wgsl_std_import(crate_path: &syn::Path, path: &syn::Path) -> bool {
+        let wgsl_std = {
+            let mut std = crate_path.clone();
+            if !std.segments.empty_or_trailing() {
+                std.segments.push_punct(syn::token::PathSep::default());
+            }
+            std.segments.push_value(syn::PathSegment {
+                ident: quote::format_ident!("std"),
+                arguments: syn::PathArguments::None,
+            });
+            std
+        };
+        wgsl_std.into_token_stream().to_string() == path.into_token_stream().to_string()
+    }
+
+    let ir_p = ir_path(crate_path);
+    let module_name_lit = wgsl_module.ident.to_string();
+
+    // Convert the parse module's items to IR items and emit a constructor
+    // function body that builds the IR at runtime.
+    let ir_items = ir_convert::items_from_parse(&wgsl_module.content).map_err(|e| {
+        WgslGenError::WgslParse {
+            source: e.into_parse(),
+        }
+    })?;
+    let module_constructor_body = {
+        let item_exprs: Vec<proc_macro2::TokenStream> = ir_items
+            .iter()
+            .map(|i| ir_emit::emit_item(&ir_p, i))
+            .collect();
+        quote! {
+            #ir_p::Module {
+                name: ::std::string::String::from(#module_name_lit),
+                items: ::std::vec![#(#item_exprs),*],
+            }
+        }
+    };
+
+    // Generate template entries for generic functions / structs defined in
+    // this module. The IR is built lazily by an emitted constructor
+    // function.
+    let mut template_constructors: Vec<proc_macro2::TokenStream> = Vec::new();
+    let template_entries: Vec<proc_macro2::TokenStream> = mono_result
+        .template_macros
+        .iter()
+        .enumerate()
+        .map(|(idx, tmpl)| {
+            let name_lit = &tmpl.fn_name;
+            let params: Vec<&str> = tmpl.type_param_names.iter().map(|s| s.as_str()).collect();
+
+            // Convert the template's items to IR.
+            let ir_items =
+                ir_convert::items_from_parse(&tmpl.items).map_err(|e| WgslGenError::WgslParse {
+                    source: e.into_parse(),
+                })?;
+            let body_items: Vec<proc_macro2::TokenStream> = ir_items
+                .iter()
+                .map(|i| ir_emit::emit_item(&ir_p, i))
+                .collect();
+
+            let ctor_ident = quote::format_ident!("__wgsl_template_{}_ctor", idx);
+            template_constructors.push(quote! {
+                fn #ctor_ident() -> ::std::vec::Vec<#ir_p::Item> {
+                    ::std::vec![#(#body_items),*]
+                }
+            });
+
+            let dep_entries: Vec<proc_macro2::TokenStream> = tmpl
+                .dependencies
+                .iter()
+                .map(|dep| {
+                    let callee = &dep.callee;
+                    let mapping = &dep.type_param_mapping;
+                    quote! {
+                        #crate_path::TemplateDependency {
+                            callee: #callee,
+                            type_param_mapping: &[#(#mapping),*],
+                        }
+                    }
+                })
+                .collect();
+
+            Ok::<_, WgslGenError>(quote! {
+                #crate_path::GenericTemplate {
+                    name: #name_lit,
+                    type_params: &[#(#params),*],
+                    ir_constructor: #ctor_ident,
+                    dependencies: &[#(#dep_entries),*],
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Generate instantiation entries for cross-module generic calls. Each
+    // entry's `type_args_constructor` produces the concrete IR types at
+    // runtime; the mangled identifier-safe names are stored as static
+    // string slices for deduplication.
+    let mut inst_constructors: Vec<proc_macro2::TokenStream> = Vec::new();
+    let inst_entries: Vec<proc_macro2::TokenStream> = mono_result
+        .cross_module_instantiations
+        .iter()
+        .enumerate()
+        .map(|(idx, inst)| {
+            let import_paths = &inst.import_paths;
+            let tmpl_name_lit = &inst.fn_name;
+            let mangled_args: Vec<&str> =
+                inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
+
+            // Build IR types for each type argument.
+            let ir_args: Vec<wgsl_rs_ir::Type> = inst
+                .type_args
+                .iter()
+                .map(ir_convert::ty_from_parse)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| WgslGenError::WgslParse {
+                    source: e.into_parse(),
+                })?;
+            let arg_exprs: Vec<proc_macro2::TokenStream> = ir_args
+                .iter()
+                .map(|t| ir_emit::emit_type(&ir_p, t))
+                .collect();
+
+            let ctor_ident = quote::format_ident!("__wgsl_inst_{}_ctor", idx);
+            inst_constructors.push(quote! {
+                fn #ctor_ident() -> ::std::vec::Vec<#ir_p::Type> {
+                    ::std::vec![#(#arg_exprs),*]
+                }
+            });
+
+            let modules: Vec<proc_macro2::TokenStream> = import_paths
+                .iter()
+                .filter(|path| !is_wgsl_std_import(crate_path, path))
+                .map(|path| quote! { &#path::WGSL_MODULE })
+                .collect();
+
+            Ok::<_, WgslGenError>(quote! {
+                #crate_path::TemplateInstantiation {
+                    modules: &[#(#modules),*],
+                    template_name: #tmpl_name_lit,
+                    type_args_constructor: #ctor_ident,
+                    mangled_type_args: &[#(#mangled_args),*],
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let module_type_params_lits: Vec<&str> =
+        module_type_params.iter().map(|s| s.as_str()).collect();
+
+    let module_ctor_ident = quote::format_ident!("__wgsl_module_ctor");
+
+    let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
+
+    Ok(quote! {
+        fn #module_ctor_ident() -> #ir_p::Module {
+            #module_constructor_body
+        }
+
+        #(#template_constructors)*
+
+        #(#inst_constructors)*
+
+        pub static WGSL_MODULE: #crate_path::Module = #crate_path::Module {
+            id: #module_id,
             name: stringify!(#name),
             imports: &[
                 #(&#imports),*
             ],
-            source: &[
-                #(#source_lines),*
-            ]
+            ir_constructor: #module_ctor_ident,
+            templates: &[
+                #(#template_entries),*
+            ],
+            instantiations: &[
+                #(#inst_entries),*
+            ],
+            module_type_params: &[
+                #(#module_type_params_lits),*
+            ],
         };
-    }
+    })
 }
 
-/// Generates a `#[test]` function that validates the concatenated WGSL source.
+/// Generates a `#[test]` function that validates the assembled WGSL source.
 ///
-/// This is used for modules that have imports, which cannot be validated at
-/// compile-time because the imported symbols aren't available during macro
-/// expansion. The `validate()` method is available on `Module` when the
-/// `wgsl-rs` crate has the `validation` feature enabled (the default). We
-/// gate on `#[cfg(test)]` only — not `feature = "validation"` — because the
-/// feature belongs to `wgsl-rs`, not the consuming crate, and checking it
-/// here would produce an "unexpected cfg" warning in downstream crates.
+/// Emitted for non-template `#[wgsl]` modules (unless `skip_validation` is
+/// set). The validation is deferred to `cargo test` time, where it calls
+/// `WGSL_MODULE.validate()`.
+///
+/// The test is only generated when the `validation` feature is enabled
+/// (the default). Without this feature, `Module::validate()` is unavailable,
+/// so the test would not compile.
 fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
+    if !cfg!(feature = "validation") {
+        return quote! {};
+    }
     let error_msg = format!("WGSL validation failed for module '{module_ident}'");
     quote! {
         #[cfg(test)]
@@ -284,66 +610,195 @@ fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
     }
 }
 
+/// Generates `#[test]` functions that validate instantiated WGSL source for
+/// template (generic) modules.
+///
+/// Each occurrence of `validate_with_instantiation_types(T1, T2, ...)`
+/// produces a test that calls `instantiate::<T1, T2, ...>()`, renders the
+/// IR to WGSL, and validates the result with naga.
+///
+/// The tests are only generated when the `validation` feature is enabled.
+fn gen_instantiated_validation_tests(
+    module_ident: &syn::Ident,
+    crate_path: &syn::Path,
+    instantiations: &[Vec<syn::Type>],
+) -> proc_macro2::TokenStream {
+    if !cfg!(feature = "validation") {
+        return quote! {};
+    }
+    let ir_p = quote! { #crate_path::ir };
+    let validate_fn = quote! { #crate_path::validate_wgsl_source };
+    let tests: Vec<proc_macro2::TokenStream> = instantiations
+        .iter()
+        .enumerate()
+        .map(|(i, types)| {
+            let test_name = format_ident!("__validate_wgsl_instantiated_{i}");
+            let error_msg =
+                format!("WGSL validation failed for instantiated module '{module_ident}'");
+            quote! {
+                #[cfg(test)]
+                #[test]
+                fn #test_name() {
+                    let __m = instantiate::<#(#types),*>();
+                    let __src = #ir_p::render_module(&__m);
+                    #validate_fn(&__src).expect(#error_msg);
+                }
+            }
+        })
+        .collect();
+    quote! { #(#tests)* }
+}
+
 fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream, WgslGenError> {
     // Parse Attrs from attr TokenStream
     let attrs: Attrs = syn::parse(attr)?;
     let crate_path = attrs.crate_path();
 
-    let wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    let mono_result = monomorphize::run(&mut wgsl_module)?;
     let imports = wgsl_module.imports(&crate_path);
 
-    let code = code_gen::generate_wgsl(&wgsl_module);
-    let source_lines = code.source_lines();
-    let module_fragment = gen_wgsl_module(&wgsl_module.ident, &crate_path, &imports, &source_lines);
+    // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
+    // input Rust module that have a generic type (e.g.
+    // `uniform!(group(0), binding(0), FRAME: impl Convert<f32>)`). The
+    // generated `pub static` for such a declaration must use the
+    // type-erased default (`Uniform<WgslTypeVariable>`, i.e. just
+    // `Uniform`) because the concrete type is not known at module level.
+    rewrite_generic_linkages(&mut input_mod, &wgsl_module, &crate_path)?;
 
-    // Generate validation test for modules with imports (unless skip_validation is
-    // set)
-    let validation_test = if !attrs.skip_validation && !imports.is_empty() {
+    // Compute the union of type parameters across all entry points in this
+    // module. These become the module-level type parameters for the generated
+    // `Module::module_type_params` field.
+    let module_type_params: Vec<String> = collect_entry_point_type_params(&wgsl_module);
+
+    let module_fragment = gen_wgsl_module(
+        &wgsl_module.ident,
+        &crate_path,
+        &imports,
+        &wgsl_module,
+        &mono_result,
+        &module_type_params,
+    )?;
+
+    // Generate validation tests.
+    //
+    // Non-template modules get a `__validate_wgsl` test that calls
+    // `WGSL_MODULE.validate()`. Template (generic) modules cannot be
+    // validated standalone — their placeholders aren't valid WGSL. Instead,
+    // each `validate_with_instantiation_types(T1, T2, ...)` attribute
+    // produces a test that instantiates with those concrete types, renders
+    // the IR, and validates with naga.
+    let is_template = !module_type_params.is_empty();
+    let validation_test = if !attrs.skip_validation && !is_template {
         gen_validation_test(&input_mod.ident)
     } else {
         quote! {}
     };
+    let instantiated_validation_tests =
+        if !attrs.skip_validation && is_template && !attrs.validate_instantiations.is_empty() {
+            gen_instantiated_validation_tests(
+                &input_mod.ident,
+                &crate_path,
+                &attrs.validate_instantiations,
+            )
+        } else {
+            quote! {}
+        };
 
-    // Generate linkage module when feature is enabled
+    // Warn if a template module has no validate_with_instantiation_types
+    // and no skip_validation. On stable this is a compile error; on nightly
+    // it's a diagnostic warning. Either way, the user should either provide
+    // concrete types for validation or explicitly opt out with skip_validation.
+    if is_template && !attrs.skip_validation && attrs.validate_instantiations.is_empty() {
+        let warning = parse::Warning {
+            name: parse::WarningName::MissingValidationTypes,
+            spans: vec![input_mod.ident.span()],
+        };
+        if cfg!(nightly) {
+            parse::emit_warning(&warning);
+        } else {
+            return Err(WgslGenError::WgslParse {
+                source: parse::Error::SuppressableWarning { warning },
+            });
+        }
+    }
+
+    // Generate linkage module when feature is enabled.
+    //
+    // Template modules (with module-level type parameters) skip linkage
+    // generation: the WGSL `shader_source()` is a template with unresolved
+    // placeholders, so a `wgpu::ShaderModule` can't be built from it
+    // directly. Users must instantiate the template first, then construct
+    // their own pipeline / bind groups manually for now.
     #[cfg(feature = "linkage-wgpu")]
-    let linkage_fragment = {
+    let linkage_fragment = if module_type_params.is_empty() {
         let linkage_info =
             linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
         linkage::generate_linkage_module(&linkage_info)
+    } else {
+        quote! {}
+    };
+
+    // For template modules (those with module-level type parameters),
+    // emit an `instantiate` function alongside `WGSL_MODULE`. The
+    // function uses `wgsl_rs::linkage::Type<Is = ...>` constraints to
+    // enforce at compile time that every linkage variable's concrete type
+    // is consistent across all entry points that use it.
+    let builder_fragment = if module_type_params.is_empty() {
+        quote! {}
+    } else {
+        builder::gen_builder(&crate_path, &wgsl_module)
     };
 
     if let Some((_, content)) = input_mod.content.as_mut() {
-        let fragment_item: syn::Item = syn::parse2(module_fragment)?;
-        content.push(fragment_item);
+        // The module fragment now contains multiple items (constructor
+        // fns + the WGSL_MODULE static), so parse it as a list of items
+        // by wrapping in a synthetic `mod __wgsl_emit { ... }` and
+        // splicing its contents.
+        let wrapper_tokens = quote! {
+            mod __wgsl_emit_wrapper {
+                #module_fragment
+                #builder_fragment
+            }
+        };
+        let wrapper_mod: syn::ItemMod = syn::parse2(wrapper_tokens)?;
+        if let Some((_, wrapper_content)) = wrapper_mod.content {
+            content.extend(wrapper_content);
+        }
 
-        // Add validation test function if generated
+        // Add validation test function(s) if generated
         if !validation_test.is_empty() {
             let test_item: syn::Item = syn::parse2(validation_test)?;
             content.push(test_item);
         }
+        if !instantiated_validation_tests.is_empty() {
+            let wrapper = quote! {
+                mod __inst_validate_wrapper {
+                    #instantiated_validation_tests
+                }
+            };
+            let wrapper_mod: syn::ItemMod = syn::parse2(wrapper)?;
+            if let Some((_, wrapper_content)) = wrapper_mod.content {
+                content.extend(wrapper_content);
+            }
+        }
 
-        // Add linkage if the feature is set
+        // Add linkage if the feature is set (skipped for template modules
+        // — see the linkage_fragment construction above).
         #[cfg(feature = "linkage-wgpu")]
-        {
+        if !linkage_fragment.is_empty() {
             let linkage_item: syn::Item = syn::parse2(linkage_fragment)?;
             content.push(linkage_item);
         }
     }
 
-    #[cfg(feature = "validation")]
-    if !attrs.skip_validation {
-        // Only validate modules that don't have imports from other WGSL modules.
-        // Modules with imports cannot be validated in isolation because naga doesn't
-        // see the imported symbols. These modules will be validated at test-time
-        // via the auto-generated __validate_wgsl() test function.
-        // Note: imports from `wgsl_rs::std` are filtered out by `imports()`, so modules
-        // that only import from std will still be validated at compile-time.
-        if imports.is_empty()
-            && let Err(error) = validate_wgsl(&code, &source_lines)
-        {
-            return WgslValidateSnafu { input_mod, error }.fail();
-        }
-    }
+    // NOTE: Compile-time WGSL validation has been removed in favor of
+    // runtime validation. All non-template modules get an auto-generated
+    // `__validate_wgsl` test. Template (generic) modules get an
+    // auto-generated test for each `validate_with_instantiation_types(...)`
+    // attribute, which instantiates the module with the provided concrete
+    // types and validates the resulting WGSL source with naga.
+    let _ = &attrs;
 
     // Strip #[wgsl_allow] attributes before emitting Rust code.
     // These attributes are used during parsing but must be removed from the output
@@ -351,26 +806,53 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // feature.
     StripWgslAllowAttrs.visit_item_mod_mut(&mut input_mod);
 
+    // Strip inter-stage IO attributes (#[builtin], #[location], etc.) from
+    // struct fields. These aren't valid Rust attributes on fields, but they
+    // are read during WGSL parsing.
+    StripIoAttrs.visit_item_mod_mut(&mut input_mod);
+
     Ok(input_mod.into_token_stream().into())
 }
 
 /// Transpiles a Rust module to WGSL.
 ///
-/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_MODULE` constant
-/// containing the transpiled WGSL source. The Rust code inside the module
-/// remains fully functional and can be executed on the CPU, while the
-/// generated WGSL runs on the GPU.
+/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_MODULE` static
+/// containing the module's IR constructor and metadata. The Rust code
+/// inside the module remains fully functional and can be executed on the
+/// CPU, while the WGSL produced by `WGSL_MODULE.wgsl_source()` (or
+/// `WGSL_MODULE.instantiate(...)` for generic modules) runs on the GPU.
 ///
 /// # Module Options
 ///
 /// | Syntax | Description |
 /// |--------|-------------|
 /// | `#[wgsl]` | Transpile the module with default settings. |
-/// | `#[wgsl(skip_validation)]` | Skip compile-time and test-time WGSL validation. |
+/// | `#[wgsl(skip_validation)]` | Skip the auto-generated `__validate_wgsl` test. |
 /// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
+/// | `#[wgsl(validate_with_instantiation_types(T1, T2, ...))]` | For template (generic) modules: validate WGSL output after instantiating with the given concrete types. Can be repeated. |
 ///
 /// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs,
 /// skip_validation)]`.
+///
+/// # Auto-generated Validation Tests
+///
+/// Every non-template `#[wgsl]` module gets an auto-generated `__validate_wgsl`
+/// test that calls `WGSL_MODULE.validate()` at `cargo test` time, provided the
+/// `validation` feature is enabled (the default). Without this feature,
+/// `Module::validate()` is unavailable, so no test is generated.
+///
+/// Template (generic) modules cannot be validated standalone because their type
+/// placeholders aren't valid WGSL; instead, use
+/// `validate_with_instantiation_types(T1, T2, ...)` to specify concrete types
+/// for instantiation:
+///
+/// ```ignore
+/// #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, f32))]
+/// pub mod my_shader { ... }
+/// ```
+///
+/// Each occurrence generates a `__validate_wgsl_instantiated_N` test that
+/// instantiates the module, renders the IR to WGSL, and validates with naga.
 ///
 /// # Entry Points
 ///
@@ -463,13 +945,13 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 ///
 /// # IO Structs
 ///
-/// Use `#[input]` and `#[output]` on structs to group inter-stage IO
-/// fields. These attributes strip the IO annotations from the Rust output
-/// (so the struct compiles as plain Rust) while preserving them in the
-/// WGSL output.
+/// Inside a `#[wgsl]` module, place IO annotations directly on struct
+/// fields. The `#[wgsl]` macro automatically strips these annotations from
+/// the emitted Rust code so the struct compiles as plain Rust, while
+/// preserving them in the WGSL output. The same struct can be used as
+/// both a vertex shader output and a fragment shader input.
 ///
 /// ```ignore
-/// #[output]
 /// pub struct VertexOutput {
 ///     #[builtin(position)]
 ///     pub pos: Vec4f,
@@ -651,7 +1133,6 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 ///
 ///     uniform!(group(0), binding(0), UNIFORMS: Uniforms);
 ///
-///     #[output]
 ///     pub struct VertexOutput {
 ///         #[builtin(position)]
 ///         pub clip_position: Vec4f,
@@ -691,14 +1172,6 @@ pub fn wgsl(attr: TokenStream, token_stream: TokenStream) -> TokenStream {
             WgslGenError::RustParse { source } => source.to_compile_error().into(),
             WgslGenError::WgslParse { source } => {
                 syn::Error::from(source).to_compile_error().into()
-            }
-            WgslGenError::WgslValidate { input_mod, error } => {
-                let error = error.into_compile_error();
-                quote! {
-                    #input_mod
-                    #error
-                }
-                .into()
             }
         },
     }
@@ -802,7 +1275,8 @@ pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 /// Suppresses specific wgsl-rs warnings/errors on annotated statements.
 ///
 /// Use this attribute to acknowledge cases where the transpiler cannot
-/// guarantee correctness at compile time, but you know the code is valid.
+/// guarantee correctness during macro expansion, but you know the code
+/// is valid.
 ///
 /// # Available Warnings
 ///
@@ -1120,65 +1594,76 @@ pub fn ptr(input: TokenStream) -> TokenStream {
     ptr::ptr(input)
 }
 
-/// Marks a struct as a shader input, preserving IO attributes in WGSL.
+/// Derives a `Wgsl` implementation for a type.
 ///
-/// Fields may carry `#[builtin(...)]`, `#[location(N)]`, and
-/// `#[interpolate(...)]` attributes. These are emitted in the WGSL output
-/// and stripped from the Rust output so the struct compiles normally.
+/// The generated `to_ir()` method returns:
+/// - `wgsl_rs_ir::Type::Struct { name, type_args }` for structs (where
+///   `type_args` is built from each generic type parameter via `T::to_ir()`).
+/// - `wgsl_rs_ir::Type::Scalar(ScalarType::U32)` for enums (since enums render
+///   as `u32` aliases in WGSL).
 ///
-/// See [`wgsl`] for the full annotation reference.
-#[proc_macro_attribute]
-pub fn input(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
-    let mut rust_struct: syn::ItemStruct = syn::parse_macro_input!(token_stream);
-    if let syn::Fields::Named(syn::FieldsNamed {
-        brace_token: _,
-        named,
-    }) = &mut rust_struct.fields
-    {
-        for syn::Field { attrs, .. } in named.iter_mut() {
-            // Only keep the attributes that aren't from wgsl-rs
-            let mut output_attrs = vec![];
-            for attr in std::mem::take(attrs).into_iter() {
-                if let Ok(_inter_stage_io) = InterStageIo::try_from(&attr) {
-                    // Generate some linkage for this struct
-                } else {
-                    output_attrs.push(attr);
-                }
-            }
-            *attrs = output_attrs;
-        }
-    }
-    rust_struct.into_token_stream().into()
-}
+/// By default the macro references the IR re-export at `::wgsl_rs::ir`
+/// and the trait at `::wgsl_rs::std::Wgsl`. Crates that consume `wgsl_rs`
+/// under a different path (e.g. `wgsl-rs` itself, when running its own
+/// tests) can override the path with the `#[wgsl_path(...)]` helper
+/// attribute:
+///
+/// ```ignore
+/// #[derive(Wgsl)]
+/// #[wgsl_path(crate)]
+/// pub struct Foo { ... }
+/// ```
+#[proc_macro_derive(Wgsl, attributes(wgsl_path))]
+pub fn derive_wgsl(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse_macro_input!(input);
+    let ident = input.ident;
+    let (impl_generics, ty_generics, where_generics) = input.generics.split_for_impl();
 
-/// Marks a struct as a shader output, preserving IO attributes in WGSL.
-///
-/// Fields may carry `#[builtin(...)]`, `#[location(N)]`,
-/// `#[interpolate(...)]`, `#[blend_src(N)]`, and `#[invariant]`
-/// attributes. These are emitted in the WGSL output and stripped from
-/// the Rust output so the struct compiles normally.
-///
-/// See [`wgsl`] for the full annotation reference.
-#[proc_macro_attribute]
-pub fn output(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
-    let mut rust_struct: syn::ItemStruct = syn::parse_macro_input!(token_stream);
-    if let syn::Fields::Named(syn::FieldsNamed {
-        brace_token: _,
-        named,
-    }) = &mut rust_struct.fields
-    {
-        for syn::Field { attrs, .. } in named.iter_mut() {
-            // Only keep the attributes that aren't from wgsl-rs
-            let mut output_attrs = vec![];
-            for attr in std::mem::take(attrs).into_iter() {
-                if let Ok(_inter_stage_io) = InterStageIo::try_from(&attr) {
-                    // Generate some linkage for this struct
-                } else {
-                    output_attrs.push(attr);
+    // Resolve the path to the `wgsl_rs` crate. Defaults to `::wgsl_rs`
+    // but can be overridden with `#[wgsl_path(<path>)]`.
+    let crate_path: syn::Path = input
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("wgsl_path"))
+        .and_then(|a| a.parse_args::<syn::Path>().ok())
+        .unwrap_or_else(|| syn::parse_quote!(::wgsl_rs));
+    let ir_path = quote::quote! { #crate_path::ir };
+    let wgsl_trait = quote::quote! { #crate_path::std::Wgsl };
+
+    let tys = input
+        .generics
+        .type_params()
+        .map(|param| {
+            let pident = &param.ident;
+            quote::quote! { <#pident as #wgsl_trait>::to_ir() }
+        })
+        .collect::<Vec<_>>();
+
+    match input.data {
+        syn::Data::Struct(_) => quote::quote! {
+            impl #impl_generics #wgsl_trait for #ident #ty_generics #where_generics {
+                fn to_ir() -> #ir_path::Type {
+                    #ir_path::Type::Struct {
+                        name: stringify!(#ident).to_string(),
+                        type_args: ::std::vec![
+                            #(#tys),*
+                        ]
+                    }
                 }
             }
-            *attrs = output_attrs;
         }
+        .into(),
+        syn::Data::Enum(_) => quote::quote! {
+            impl #impl_generics #wgsl_trait for #ident #ty_generics #where_generics {
+                fn to_ir() -> #ir_path::Type {
+                    #ir_path::Type::Scalar(#ir_path::ScalarType::U32)
+                }
+            }
+        }
+        .into(),
+        syn::Data::Union(_) => quote::quote! {
+            compile_error!("derive Wgsl doesn't support Unions")
+        }
+        .into(),
     }
-    rust_struct.into_token_stream().into()
 }

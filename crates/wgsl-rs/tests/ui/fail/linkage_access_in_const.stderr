@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       get!/get_mut! cannot be used in const initializers (WGSL const expressions cannot access storage/uniform buffers).'
+  --> tests/ui/fail/linkage_access_in_const.rs:10:29
+   |
+10 |         const X: f32 = get!(FRAME, f32);
+   |                             ^^^^^

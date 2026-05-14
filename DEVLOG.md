@@ -126,74 +126,6 @@ return type location or builtin, `wgsl-rs` will automatically insert an appropri
 I think most people who need to specify a return value other than the default `@builtin(position)` for
 vertex shaders or `@location(0)` for fragment shaders will use a struct, so this is fine.
 
-## features
-
-### wgpu linkage (`linkage-wgpu` feature)
-
-When the `linkage-wgpu` feature is enabled, the `#[wgsl]` macro generates additional wgpu-specific
-code to simplify integration with wgpu applications:
-
-**Buffer descriptors and creation functions** - For each `uniform!` and `storage!` declaration:
-- A `{NAME}_BUFFER_DESCRIPTOR: wgpu::BufferDescriptor<'static>` constant
-- A `create_{name}_buffer(device: &wgpu::Device) -> wgpu::Buffer` function
-
-**Bind group modules** - For each bind group, a `linkage::bind_group_{N}` module containing:
-- `LAYOUT_ENTRIES` and `LAYOUT_DESCRIPTOR` constants
-- `layout(device)` - creates the bind group layout
-- `create(device, layout, ...)` - type-safe bind group creation with named parameters
-- `create_dynamic(device, layout, entries)` - dynamic bind group creation with a slice
-
-**Shader entry point modules** - For vertex, fragment, and compute entry points:
-- Entry point name constants
-- Helper functions for creating pipeline states
-
-This feature adds `wgpu` as a dependency to `wgsl-rs`.
-
-### 2026-01-05: switch statement support (match → switch)
-
-Rust `match` statements transpile to WGSL `switch` statements:
-- `match x { 0 => {...}, 1 => {...}, _ => {...} }` → `switch x { case 0 {...} case 1 {...} default {...} }`
-- Or-patterns `1 | 2 | 3 => {...}` → `case 1, 2, 3 {...}`
-- Missing `_` arm auto-generates `default {}`
-- Non-literal patterns (constants, identifiers) emit a warning suppressed with `#[wgsl_allow(non_literal_match_statement_patterns)]`
-- Match expressions (in let bindings) are unsupported (WGSL switch is a statement)
-- Guard clauses, range patterns, struct/tuple patterns are unsupported
-- For future work regarding type checking, we may be able to get away with a trick. We _could_ alter the Rust code
-  to result in the pattern matched, then use that result in an empty function that takes an integer. This would
-  cause Rust to do the type checking for us, before WGSL validation. That would keep us from having to emit a warning. 
-
-  Example input Rust:
-  ```rust
-  match my_expr {
-    MyEnum::Variant1 => {
-      do_stuff();
-    }
-  }
-  ```
-
-  Output Rust:
-  ```rust
-  let __match_result = match my_expr {
-    input @ MyEnum::Variant1 => {
-      do_stuff();
-      input
-    }
-  };
-  __ensure_integer(__match_result);
-  ```
-
-  Output WGSL:
-  ```wgsl
-  switch my_expr {
-    case MyEnum_Variant1: {
-      do_stuff();
-    }
-    default: {}
-  }
-  ```
-
-  Maybe we should also look into what we can do with for-loop bounds and the `non_literal_loop_bounds` warning in this manner.
-
 ### 2026-01-03: for-loop support and warnings with #[wgsl_allow]
 
 `for i in 0..n` transpiles to `for (var i = 0; i < n; i++)` and `for i in 0..=n` transpiles to `for (var i = 0; i <= n; i++)`.
@@ -297,3 +229,234 @@ Added `RuntimeArray<T>` type for runtime-sized arrays (WGSL `array<T>` without s
 These are used in storage buffers, typically as the last field of a struct.
 On CPU, `RuntimeArray<T>` is backed by `Vec<T>` with full indexing support.
 Transpiles to `array<T>` in WGSL.
+
+### 2026-04-08: Generic function monomorphization
+
+Added support for generic free functions via macro-time monomorphization. Turbofish syntax
+required at call sites (e.g., `foo::<f32>(x)`). Trait bounds are Rust-only and stripped from
+WGSL output. Supports transitive generic calls, multiple type params, and deduplication.
+Generic impl methods and entry points are explicitly rejected (MVP scope).
+
+### 2026-04-17: Generic struct monomorphization
+
+Added same-module generic struct support. `pub struct Pair<T> { a: T, b: T }` used as
+`Pair<f32>` monomorphizes to `struct Pair_f32 { a: f32, b: f32 }` in WGSL. Generic impl
+blocks (`impl<T> Pair<T>`) produce concrete methods (`Pair_f32_first`, etc.). Struct
+construction `Pair::<f32> { a: 1.0, b: 2.0 }` becomes `Pair_f32(1.0, 2.0)` in WGSL.
+Cross-module generic structs are supported via the same template infrastructure
+used for generic functions — the struct definition and all its impl methods are
+combined into a single template with `__TP__` placeholders.
+
+### 2026-04-17: Removed `#[input]`/`#[output]` attributes
+
+Inter-stage IO structs no longer need `#[input]` or `#[output]` wrapper
+attributes. The `#[wgsl]` macro now strips IO field attributes (`#[builtin]`,
+`#[location]`, `#[interpolate]`, `#[blend_src]`, `#[invariant]`) directly from
+the emitted Rust output via a new `StripIoAttrs` visitor, following the same
+pattern as the existing `StripWgslAllowAttrs` visitor. The two attributes were
+semantically identical and only existed to clean up field attributes for Rust
+compilation. Removing them enables the natural pattern of using a single struct
+as both vertex output and fragment input, mirroring standard WGSL.
+
+### 2026-05-06: Generic linkages and shader entry points
+
+Shader entry points (`#[vertex]`, `#[fragment]`, `#[compute]`) and module
+linkages (`uniform!`, `storage!`, `workgroup!`) can now declare type
+parameters. A module containing such generics produces a *template* WGSL
+source with `__TP{name}__` placeholders; `Module::instantiate(&["f32"])`
+substitutes them at runtime to produce a concrete shader.
+*(The string-based `instantiate(&[&str])` API was superseded by
+`instantiate(&[ir::Type])` the next day — see the 2026-05-07 entry.)*
+Rust-side linkage statics use `Uniform`/`Storage`/`Workgroup` with a
+default `WgslTypeVariable` type parameter, backed by a `TypeId`-keyed
+map inside `ModuleVar`; access is via the new `get!(VAR, T)` /
+`get_mut!(VAR, T)` two-arg form. Per-entry-point type params are unioned
+into a single `module_type_params` slice on `Module`. Linkage-wgpu
+generation and WGSL validation are skipped for template modules —
+callers must instantiate first.
+
+### 2026-05-07: AST-at-runtime overhaul (`wgsl-rs-ir` crate)
+
+Replaced the string-based `__TP{name}__` placeholder system with an
+owned IR. New crate `wgsl-rs-ir` defines `Module`, `Type`, `Expr`,
+`Stmt`, `Item`, etc., with `String`/`Vec<T>` storage and no `syn`
+dependency, plus `render_module` (IR → WGSL) and `substitute_types`
+(walks the IR replacing `Type::TypeParam`). The proc-macro converts
+`parse::*` to `ir::*` and emits `fn() -> ir::Module` constructors;
+`Module::ir_constructor` replaces the `source: &[&str]` field, and
+`Module::wgsl_source()` now returns `String`. `instantiate(&[ir::Type])`
+performs IR-level substitution + `rename_items` to mangle generic
+template instances (e.g. `Pair` → `Pair_f32`). `GenericTemplate.ir_constructor`
+and `TemplateInstantiation.type_args_constructor` are also `fn` pointers.
+Compile-time WGSL validation has been dropped; runtime validation via
+`Module::validate()` and the auto-generated `__validate_wgsl` test cover
+the same ground. The legacy `code_gen::formatter` is kept around for
+internal `monomorphize.rs` tests but no longer drives production
+output. *(The formatter was removed entirely the next day — see the
+2026-05-08 entry below.)*
+
+### 2026-05-08: Removed legacy `code_gen::formatter`
+
+Migrated the last consumers of the legacy direct-to-WGSL formatter to
+the IR pipeline and deleted `code_gen.rs` and `code_gen/formatter.rs`
+(~2,165 lines). The `mono_wgsl` helper in `monomorphize.rs` tests now
+runs `ir_convert::items_from_parse` + `wgsl_rs_ir::render_items`. The
+~100 `to_wgsl()` test call sites in `parse.rs` are unchanged — a
+test-only `ToWgsl` trait now provides the same method via the IR
+pipeline. The IR crate exposes new public helpers `render_type`,
+`render_expr`, `render_stmt`, `render_block`, and `render_item` for
+rendering individual nodes. Test expected strings were updated where
+the IR renderer's format differs from the old formatter (binary ops
+gain spaces; `Vec4<f32>` renders as the WGSL shorthand `vec4f`).
+Several dead helpers in `monomorphize.rs` (the
+`flatten_struct_placeholder*` family and `type_to_wgsl`) were also
+deleted.
+
+### 2026-05-09: Visitor trait refactor of `monomorphize.rs`
+
+Replaced 7 hand-written recursive AST walkers in `monomorphize.rs`
+(~1,800 lines of structural traversal boilerplate) with a single
+`ParseVisitorMut` trait + family of `walk_*` functions in a new
+`parse_visitor` module (~400 lines). Each walker family is now a
+visitor struct that overrides only the `visit_*` methods relevant to
+its job; the structural recursion is shared via `walk_*` defaults.
+
+Walker conversions:
+* `SubstituteVisitor` — replaces every `Type::TypeParam` with a
+  concrete type from a `BTreeMap`, plus the equivalent rewrites in
+  `FnPath::TypeMethod` and `Expr::Struct` idents.
+* `RewriteNamesVisitor` — merges the previous `rewrite_calls_in_*`
+  and `rewrite_struct_types_in_*` walkers into one pass that mangles
+  both fn-template call sites and struct-type references.
+* `CheckUnresolvedVisitor` — errors if any call to a known generic
+  template lacks turbofish type args.
+* `CrossModuleVisitor` — collects cross-module instantiations and
+  rewrites the call sites' names.
+* `ScanDepsVisitor` — collects template→template dependency edges
+  with type-param index mappings.
+* `MonoCtx` itself implements `ParseVisitorMut` for the
+  instantiation-discovery walk.
+
+Three correctness bugs were also fixed: `check_unresolved_in_stmt`,
+`collect_cross_module_from_stmt`, and `scan_stmt_for_deps` previously
+inlined a one-level `else if` peel that failed to recurse through
+deeply-nested else-if chains. The visitor trait's shared `walk_if`
+recurses correctly, so the bug class is now structurally impossible.
+Two regression tests in `monomorphize::test` lock in the fix.
+
+Net change: `monomorphize.rs` shrunk from 3,453 → 2,289 lines (-1,164),
+plus 402 lines of new shared `parse_visitor` machinery — net **-762
+lines** with cleaner structure and better correctness.
+
+### 2026-05-10: Non-square matrices in IR + `Wgsl` impls for std types
+
+Extended `ir::Type::Matrix` from a single `size: u8` to separate
+`columns: u8, rows: u8`, enabling all 9 WGSL matrix shapes (`mat2x2`
+through `mat4x4`). Parse-side recognition added for `MatCxRf` shorthand
+(e.g. `Mat2x3f`, `Mat3x4f`). Added `Wgsl` impls for `bool`, all
+`Vec{2,3,4}<T>` over `WgslScalar`, blanket `[T; N]` and
+`RuntimeArray<T>`, all 9 matrix types, `Sampler`, `SamplerComparison`,
+all sampled and depth texture types. Fixed and hardened the
+`#[derive(Wgsl)]` macro: it now uses fully-qualified paths via a
+`#[wgsl_path(...)]` helper attribute (defaulting to `::wgsl_rs`) and
+correctly emits `Type::Scalar(...)` for enums.
+
+### 2026-05-11: Decoupled generic linkages + typestate builder
+
+Decoupled generic linkage variables from entry-point type parameters
+and added a typestate `ModuleBuilder` for ergonomic, compile-time-safe
+template instantiation.
+
+**Linkage variable syntax** is now `impl Trait`:
+`uniform!(group(0), binding(0), FRAME: impl Convert<f32>)`. The trait
+bounds are preserved on the parsed `ItemUniform`/`ItemStorage`/
+`ItemWorkgroup` (new `impl_bounds` field) and replayed on the builder's
+setter methods. Bare-ident generic linkages (`FRAME: T`) are no longer
+recognised; the previous module-level coupling between linkage and
+entry-point type params has been removed.
+
+**Module-level type parameters** in the IR now use distinct, unambiguous
+names. Linkage variables contribute their own identifier (e.g.
+`"FRAME"`); entry-point type parameters use a positional encoding
+(`"<fn_name>_<index>"`, e.g. `"frag_main_0"`, `"frag_main_1"`). This is
+implemented via a new `ParseContext::type_param_renames` map that's
+populated for entry-point function bodies but left empty for non-entry
+generic functions and structs, which still go through same-module
+monomorphization on source names.
+
+**Typestate builder** (`ModuleBuilder`) is generated next to
+`WGSL_MODULE` for any module with `impl Trait` linkage variables or
+generic entry points. One `Needs<X>` / `Has<X>` marker pair is emitted
+per slot; `set_<linkage>::<T>()` and
+`instantiate_<entry>::<T0, T1, ...>()` methods transition slots from
+"needs" to "has", and `build()` is only available when every slot is
+bound. Each method's bounds are the original user-written bounds from
+the source plus a synthetic `+ Wgsl` so the builder can call
+`<T as Wgsl>::to_ir()` to materialise the `ir::Type` at runtime. The
+existing `Module::instantiate(&[ir::Type])` API stays as the lower
+level escape hatch.
+
+`parse::ItemFn` gained a `syn_generics: Option<syn::Generics>` field
+that preserves the original signature generics on entry points so the
+builder codegen can replay them verbatim.
+
+#### Unified `instantiate` function replaces typestate builder
+
+The typestate `ModuleBuilder` was replaced by a unified `instantiate`
+function that uses `wgsl_rs::linkage::Type<Is = ...>` trait constraints
+to enforce type consistency across entry points at compile time. A `get!(VAR, T)`
+or `get_mut!(VAR, T)` call inside an entry point generates a constraint
+`VAR: Type<Is = T>` in the `where` clause, so conflicting types are
+caught by the Rust compiler.
+
+`Module::instantiate` and `Module::instantiate_scalar` were removed in
+favor of the generated `instantiate` function. The `Type` trait lives in
+`wgsl_rs::linkage`: `T: Type<Is = U>` is satisfied iff `T` and `U` are
+the same type.
+
+The type argument in `get!(VAR, TYPE)` / `get_mut!(VAR, TYPE)` is stored
+as a `syn::Type` (not `parse::Type`) since it represents a Rust-side type
+expression used for code generation, not a WGSL type. This allows type
+params inside built-in generic types like `Vec4<T>` which `Type::parse`
+rejects as requiring a concrete scalar. Entry-point type params with
+colliding names (e.g. `T` in two different functions) are disambiguated
+with a `_fnname` suffix (e.g. `T_main_zeroable`).
+
+#### Bug fixes
+
+Replaced the typestate builder with unified `instantiate` function using
+`Type<Is = ...>` trait constraints; added `#[allow(non_camel_case_types)]` to
+suppress warnings on suffixed type params like `T_frag_main`.
+
+#### Test validation
+
+- Replaced typestate builder with unified `instantiate` function using
+  `Type<Is = ...>` trait constraints; added `#[allow(non_camel_case_types)]` to
+  suppress warnings on suffixed type params like `T_frag_main`.
+
+- Added auto-generated WGSL validation tests for all modules (not just imports);
+  added `validate_with_instantiation_types(T1, T2, ...)` attribute for template
+  modules; removed dead `WgslValidate` variant and naga dep from proc-macro
+  crate; added `validate_wgsl_source()` free function; surfaced pre-existing
+  monomorphization bug in `generic_structs` example.
+
+### 2026-05-12: Address PR #101 review comments
+
+Fixed stale `FRAME: T` docs to use `impl Trait` syntax; added `Module.id`
+field (atomic counter) for diamond-import deduplication and module-identity-
+based instantiation dedupe; boxed large enum variants in `parse.rs` per
+clippy; added `WgslTextureScalar` trait (f32/i32/u32 only) to prevent
+`Texture2D<bool>`; added compile-time rejection of `get!`/`get_mut!` in
+const initializers with trybuild test.
+
+### 2026-05-13: PR #101 review round 2 — validation feature gating, README fix, doc cleanup
+
+- Fixed README validation table: all non-template modules get auto-generated
+  `__validate_wgsl` tests, not just modules with imports.
+- Added `validation` feature to `wgsl-rs-macros` Cargo.toml; `wgsl-rs`
+  propagates it. `gen_validation_test` and `gen_instantiated_validation_tests`
+  now check `cfg!(feature = "validation")` so no tests are generated when
+  the feature is off (avoids compile errors when `default-features = false`).
+- Removed stray doc comment above `collect_linkage_constraints` in builder.rs.
+- Replied to all Copilot review comments (validate Err, validation gating,
+  README correction, doc cleanup).

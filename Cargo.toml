@@ -5,6 +5,7 @@ members = [
   "crates/gpu-tests",
   "crates/roundtrip-tests",
   "crates/wgsl-rs",
+  "crates/wgsl-rs-ir",
   "crates/wgsl-rs-macros",
   "crates/xtask"
 ]

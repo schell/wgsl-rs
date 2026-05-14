@@ -18,7 +18,6 @@ pub mod tex2d_variants {
     texture!(group(0), binding(0), TEX: Texture2D<f32>);
     sampler!(group(0), binding(1), S: Sampler);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -56,7 +55,6 @@ pub mod tex2d_gather_variants {
     texture!(group(0), binding(0), TEX: Texture2D<f32>);
     sampler!(group(0), binding(1), S: Sampler);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -89,7 +87,6 @@ pub mod tex2d_array_variants {
     texture!(group(0), binding(0), TEX: Texture2DArray<f32>);
     sampler!(group(0), binding(1), S: Sampler);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -131,7 +128,6 @@ pub mod depth2d_compare_variants {
     texture!(group(0), binding(0), DEPTH_TEX: TextureDepth2D);
     sampler!(group(0), binding(1), DEPTH_SAMPLER: SamplerComparison);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,
@@ -167,7 +163,6 @@ pub mod depth2d_array_compare_variants {
     texture!(group(0), binding(0), DEPTH_TEX: TextureDepth2DArray);
     sampler!(group(0), binding(1), DEPTH_SAMPLER: SamplerComparison);
 
-    #[input]
     pub struct FragInput {
         #[builtin(position)]
         pub position: Vec4f,

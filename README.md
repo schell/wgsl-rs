@@ -41,33 +41,34 @@ Yes! See the [example](crates/example/src/main.rs), which transpiles the shader 
 
 ## Validation
 
-`wgsl-rs` validates your WGSL at compile-time using [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga).
-Validation errors are mapped back to Rust source spans, so they show up in your IDE via rust-analyzer.
+`wgsl-rs` validates WGSL using [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga).
+The `#[wgsl]` macro auto-generates `#[test] fn __validate_wgsl()` for every
+non-template module — running `cargo test` will surface any validation failures.
 
 ### Validation Strategy
 
-| Module Type | Validation |
-|-------------|------------|
-| Standalone (no imports) | Compile-time via naga |
-| With imports from other `#[wgsl]` modules | Test-time via auto-generated `#[test]` function |
-| `#[wgsl(skip_validation)]` | No validation |
+| Module Type | Auto-generated validation test? |
+|-------------|----------------------------------|
+| Non-template module (with or without imports) | Yes — `__validate_wgsl` |
+| Template module (with type parameters) | No — instantiate first, then validate |
+| `#[wgsl(skip_validation)]` | No |
 
-**Why test-time for modules with imports?**
-
-Modules that import from other `#[wgsl]` modules cannot be validated at compile-time because
-the imported symbols aren't available during macro expansion. Instead, `wgsl-rs` generates a
-`#[test] fn __validate_wgsl()` that validates the concatenated WGSL source at test-time.
+All non-template modules get an auto-generated validation test because their
+full WGSL source (including any imports) is assembled at runtime.
+Template modules contain unresolved placeholders and must be instantiated before
+they produce valid WGSL; use `validate_with_instantiation_types(T1, T2, ...)`
+to specify concrete types for validation.
 
 ### Example
 
 ```rust
-// Standalone module - validated at compile-time
+// Non-template module - auto-validated at test time.
 #[wgsl]
 pub mod constants {
     pub const PI: f32 = 3.14159;
 }
 
-// Module with imports - validated at test-time
+// Module with imports - also auto-validated at test time.
 #[wgsl]
 pub mod shader {
     use super::constants::*;
@@ -110,6 +111,10 @@ To disable validation entirely, disable the `validation` feature:
 [dependencies]
 wgsl-rs = { version = "...", default-features = false }
 ```
+
+When the `validation` feature is disabled, `Module::validate()` and
+`validate_wgsl_source()` are unavailable, and the `#[wgsl]` macro does not
+generate auto-validation tests.
 
 ---
 

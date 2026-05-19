@@ -4,11 +4,30 @@
 //! (`String`, `Vec<T>`, plain numeric/bool literals) so they can live at
 //! runtime without any dependency on `syn` or `proc-macro2`.
 
+/// An attribute preserved from Rust source on an IR item.
+///
+/// Not rendered in WGSL output — exists for extension inspection.
+/// E.g., `#[derive(SlabItem, Clone)]` → `Attribute { path: "derive", args:
+/// vec!["SlabItem", "Clone"] }` E.g., `#[repr(C)]` → `Attribute { path: "repr",
+/// args: vec!["C"] }` E.g., `#[inline]` → `Attribute { path: "inline", args:
+/// vec![] }`
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attribute {
+    /// The attribute path (e.g., "derive", "repr", "crabslab::slab_item").
+    pub path: String,
+    /// Arguments to the attribute, split on commas.
+    /// E.g., `["SlabItem", "Clone"]` for `#[derive(SlabItem, Clone)]`,
+    /// `["C"]` for `#[repr(C)]`, `[]` for `#[inline]`.
+    pub args: Vec<String>,
+}
+
 /// A complete WGSL module: a name and an ordered list of top-level items.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub name: String,
     pub items: Vec<Item>,
+    /// Attributes preserved from Rust source on the module itself.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A block of statements `{ ... }`.
@@ -486,6 +505,8 @@ pub struct FnArg {
     pub inter_stage_io: Vec<InterStageIo>,
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 // ===== Items =====
@@ -496,6 +517,8 @@ pub struct ItemConst {
     pub name: String,
     pub ty: Type,
     pub expr: Expr,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A `@group(N) @binding(M) var<uniform>` linkage.
@@ -505,6 +528,8 @@ pub struct ItemUniform {
     pub binding: u32,
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A `@group(N) @binding(M) var<storage, ...>` linkage.
@@ -515,6 +540,8 @@ pub struct ItemStorage {
     pub access: StorageAccess,
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A `var<workgroup>` declaration.
@@ -522,6 +549,8 @@ pub struct ItemStorage {
 pub struct ItemWorkgroup {
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A `@group(N) @binding(M) var ... : sampler[_comparison]` linkage.
@@ -531,6 +560,8 @@ pub struct ItemSampler {
     pub binding: u32,
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A `@group(N) @binding(M) var ... : texture_*` linkage.
@@ -540,6 +571,8 @@ pub struct ItemTexture {
     pub binding: u32,
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A function definition.
@@ -554,6 +587,8 @@ pub struct ItemFn {
     pub inputs: Vec<FnArg>,
     pub return_type: ReturnType,
     pub block: Block,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A struct field.
@@ -562,6 +597,8 @@ pub struct Field {
     pub inter_stage_io: Vec<InterStageIo>,
     pub name: String,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A struct definition.
@@ -570,6 +607,8 @@ pub struct ItemStruct {
     pub type_params: Vec<String>,
     pub name: String,
     pub fields: Vec<Field>,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// An item inside an `impl` block.
@@ -586,6 +625,8 @@ pub struct ItemImpl {
     pub type_params: Vec<String>,
     pub self_ty: String,
     pub items: Vec<ImplItem>,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// One variant of an enum.
@@ -602,6 +643,8 @@ pub struct EnumVariant {
 pub struct ItemEnum {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<Attribute>,
 }
 
 /// A top-level WGSL module item.

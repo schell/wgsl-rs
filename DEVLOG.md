@@ -195,10 +195,24 @@ the `where` clause of `instantiate`, so conflicting types are caught by the Rust
 at compile time. The `Type` trait lives in `wgsl_rs::linkage`: `T: Type<Is = U>` is
 satisfied iff `T` and `U` are the same type.
 
+### 2026-05-15: WgslExtension trait and IR attributes
+
+Downstream crates need to inspect and modify the IR before type instantiation
+(e.g., a `crabslab` extension adding `SlabItem`-aware field offsets).
+`ir::Attribute` stores Rust `#[...]` attributes as `(path: String, args:
+Vec<String>)` pairs on every IR item, `Field`, `FnArg`, and `Module`. Attributes
+are not rendered in WGSL output — they exist solely for extension inspection,
+intentionally duplicating some information already in dedicated fields like
+`fn_attrs` and `inter_stage_io`.
+The `WgslExtension` trait (`fn modify_ir(&mut Module)`) is called in the
+generated constructor via `#[wgsl(extensions = [path::Ext1, ...])]`, after IR
+construction but before type instantiation. `FnArgs` now accept multiple
+attributes, restricting only to one inter-stage IO annotation.
+
 ### 2026-05-18: Bijective name mangling
 
 Replaced ad-hoc `{a}_{b}` concatenation with a centralized `wgsl_rs_ir::mangle` module
-using a simplified subset of wesl-rs's `EscapeMangler`: each component containing `N>0`
+using a simplified subset of `wesl-rs`'s `EscapeMangler`: each component containing `N>0`
 underscores is rewritten as `_N{comp}` before components are joined with `_`, making
 mangling a bijection. This prevents collision bugs like `Foo_bar::baz` vs `Foo::bar_baz`.
 Entry-point type-param slot encoding `{fn}_{i}` is intentionally left raw — its collision

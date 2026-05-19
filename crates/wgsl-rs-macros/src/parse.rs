@@ -22,6 +22,99 @@ use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
 use syn::{Ident, Token, parenthesized, parse::Parse, spanned::Spanned};
+use wgsl_rs_ir as ir;
+
+/// Convert a slice of `syn::Attribute` to `Vec<ir::Attribute>`.
+///
+/// Preserves all attributes except `#[doc]` (which is auto-generated and
+/// adds no value for extension inspection) as IR attributes for downstream
+/// extension inspection. The `path` is the canonical `::`-joined attribute
+/// path (e.g., `derive`, `crabslab::slab_item`), and `args` are the
+/// comma-separated inner tokens as strings.
+pub(crate) fn syn_attrs_to_ir(attrs: &[syn::Attribute]) -> Vec<ir::Attribute> {
+    let mut result = Vec::new();
+    for attr in attrs {
+        let path = attr_to_path_string(attr.path());
+        // Skip doc comments — they add no value for extension inspection
+        // and are often auto-generated.
+        if path == "doc" {
+            continue;
+        }
+        let args = match &attr.meta {
+            syn::Meta::Path(_) => vec![],
+            syn::Meta::NameValue(nv) => {
+                vec![nv.value.to_token_stream().to_string()]
+            }
+            syn::Meta::List(list) => parse_meta_list_args(list),
+        };
+        result.push(ir::Attribute { path, args });
+    }
+    result
+}
+
+/// Build a canonical `::`-joined path string from a `syn::Path`.
+///
+/// Unlike `path.to_token_stream().to_string()` (which can insert
+/// unpredictable whitespace like `crabslab :: slab_item`), this
+/// produces a stable representation by joining segments with `::`
+/// and handling leading colons for absolute paths.
+fn attr_to_path_string(path: &syn::Path) -> String {
+    let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    let joined = segments.join("::");
+    if path.leading_colon.is_some() {
+        format!("::{joined}")
+    } else {
+        joined
+    }
+}
+
+/// Returns `true` if the attribute's path ident matches a known WGSL
+/// inter-stage IO attribute name (`builtin`, `location`, `blend_src`,
+/// `interpolate`, `invariant`).
+fn is_known_io_ident(attr: &syn::Attribute) -> bool {
+    let Some(ident) = attr.path().get_ident() else {
+        return false;
+    };
+    matches!(
+        ident.to_string().as_str(),
+        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+    )
+}
+
+/// Parse the comma-separated inner tokens of a `Meta::List` attribute
+/// (e.g., `SlabItem, Clone` from `#[derive(SlabItem, Clone)]`)
+/// into a list of string args.
+fn parse_meta_list_args(list: &syn::MetaList) -> Vec<String> {
+    list.parse_args_with(|stream: &syn::parse::ParseBuffer| {
+        let mut args = Vec::new();
+        while !stream.is_empty() {
+            if let Ok(meta) = stream.parse::<syn::Meta>() {
+                args.push(meta.to_token_stream().to_string());
+            } else if let Ok(tt) = stream.parse::<proc_macro2::TokenTree>() {
+                args.push(tt.to_string());
+            } else {
+                break;
+            }
+            if stream.parse::<syn::Token![,]>().is_err() {
+                break;
+            }
+        }
+        Ok(args)
+    })
+    .unwrap_or_else(|_| {
+        // Fallback: split on commas from the raw token stream
+        let tokens_str = list.tokens.to_string();
+        if tokens_str.is_empty() {
+            vec![]
+        } else {
+            tokens_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+    })
+}
 
 #[allow(unused_imports)]
 use crate::parse::util::in_progress;
@@ -3809,6 +3902,8 @@ pub struct FnArg {
     pub ident: Ident,
     pub colon_token: Token![:],
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::FnArg> for FnArg {
@@ -3850,17 +3945,30 @@ impl FnArg {
                         ty,
                     } = pat_type;
 
+                    let ir_attrs = syn_attrs_to_ir(attrs);
+
+                    let mut inter_stage_io = vec![];
+                    let mut io_count = 0;
+                    let mut second_io_span = None;
+                    for attr in attrs.iter() {
+                        if is_known_io_ident(attr) {
+                            let isio = InterStageIo::try_from(attr)?;
+                            io_count += 1;
+                            if io_count == 2 {
+                                second_io_span = Some(attr.span());
+                            }
+                            inter_stage_io.push(isio);
+                        }
+                    }
+
                     snafu::ensure!(
-                        attrs.len() <= 1,
+                        io_count <= 1,
                         UnsupportedSnafu {
-                            span: attrs[1].span(),
-                            note: "WGSL only supports a single annotation on function parameters."
+                            span: second_io_span.unwrap_or_else(|| attrs[0].span()),
+                            note: "WGSL only supports a single IO annotation on function \
+                                   parameters."
                         }
                     );
-                    let mut inter_stage_io = vec![];
-                    for attr in attrs.iter() {
-                        inter_stage_io.push(InterStageIo::try_from(attr)?);
-                    }
 
                     let ty = Type::parse(ty.as_ref(), ctx)?;
 
@@ -3869,6 +3977,7 @@ impl FnArg {
                         ident,
                         colon_token: pat_type.colon_token,
                         ty,
+                        attrs: ir_attrs,
                     })
                 }
                 other => UnsupportedSnafu {
@@ -4058,6 +4167,8 @@ pub struct ItemFn {
     pub inputs: syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
     pub return_type: ReturnType,
     pub block: Block,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::ItemFn> for ItemFn {
@@ -4105,6 +4216,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
         }
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
+        let ir_attrs = syn_attrs_to_ir(attrs);
 
         // Generic entry points are supported. Each entry point's type
         // parameters become module-level type parameters using a positional
@@ -4189,6 +4301,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             inputs,
             return_type,
             block: Block::parse(block.as_ref(), &ctx)?,
+            attrs: ir_attrs,
         })
     }
 }
@@ -4248,6 +4361,7 @@ impl ItemFn {
         }
 
         let fn_attrs = FnAttrs::try_from(attrs)?;
+        let ir_attrs = syn_attrs_to_ir(attrs);
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
             let input = pair.value();
@@ -4291,6 +4405,7 @@ impl ItemFn {
             inputs,
             return_type,
             block: Block::parse(block, ctx)?,
+            attrs: ir_attrs,
         })
     }
 }
@@ -4319,6 +4434,8 @@ pub struct ItemConst {
     pub eq_token: Token![=],
     pub expr: Expr,
     pub semi_token: Token![;],
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::ItemConst> for ItemConst {
@@ -4333,7 +4450,7 @@ impl ItemConst {
     /// Parse a constant with context for type parameter resolution.
     pub fn parse(value: &syn::ItemConst, ctx: &ParseContext) -> Result<Self, Error> {
         let syn::ItemConst {
-            attrs: _,
+            attrs,
             vis: _,
             const_token,
             ident,
@@ -4344,6 +4461,7 @@ impl ItemConst {
             expr,
             semi_token,
         } = value;
+        let ir_attrs = syn_attrs_to_ir(attrs);
         Ok(ItemConst {
             const_token: *const_token,
             ident: ident.clone(),
@@ -4352,6 +4470,7 @@ impl ItemConst {
             eq_token: *eq_token,
             expr: Expr::parse(expr.as_ref(), ctx)?,
             semi_token: *semi_token,
+            attrs: ir_attrs,
         })
     }
     /// Convert an impl item constant to an ItemConst.
@@ -4360,7 +4479,7 @@ impl ItemConst {
     /// different structure of `syn::ImplItemConst`.
     pub fn try_from_impl_const(value: &syn::ImplItemConst) -> Result<Self, Error> {
         let syn::ImplItemConst {
-            attrs: _,
+            attrs,
             vis,
             defaultness,
             const_token,
@@ -4372,6 +4491,8 @@ impl ItemConst {
             expr,
             semi_token,
         } = value;
+
+        let ir_attrs = syn_attrs_to_ir(attrs);
 
         util::some_is_unsupported(
             defaultness.as_ref(),
@@ -4403,6 +4524,7 @@ impl ItemConst {
             eq_token: *eq_token,
             expr: Expr::try_from(expr)?,
             semi_token: *semi_token,
+            attrs: ir_attrs,
         })
     }
 }
@@ -4438,6 +4560,8 @@ pub struct ItemMod {
     #[allow(dead_code)]
     pub ident: Ident,
     pub content: Vec<Item>,
+    /// Attributes preserved from the Rust source module.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::ItemMod> for ItemMod {
@@ -4472,7 +4596,11 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
             };
             content.push(parsed);
         }
-        Ok(ItemMod { ident, content })
+        Ok(ItemMod {
+            ident,
+            content,
+            attrs: syn_attrs_to_ir(&item_mod.attrs),
+        })
     }
 }
 
@@ -4667,6 +4795,8 @@ pub(crate) struct ItemUniform {
     /// preserved so the typestate builder can replay them on its setter
     /// methods.
     pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
+    /// Attributes preserved from Rust source on the macro item.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl syn::parse::Parse for ItemUniform {
@@ -4706,6 +4836,7 @@ impl syn::parse::Parse for ItemUniform {
             binding_ident,
             binding_paren_token,
             impl_bounds,
+            attrs: vec![],
         })
     }
 }
@@ -4744,10 +4875,14 @@ impl TryFrom<&syn::ItemMacro> for ItemUniform {
             .fail();
         }
 
-        syn::parse2::<ItemUniform>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
-            span: item_macro.span(),
-            note: format!("{e}"),
-        })
+        let mut item = syn::parse2::<ItemUniform>(item_macro.mac.tokens.clone()).map_err(|e| {
+            Error::Unsupported {
+                span: item_macro.span(),
+                note: format!("{e}"),
+            }
+        })?;
+        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
+        Ok(item)
     }
 }
 
@@ -4799,6 +4934,8 @@ pub(crate) struct ItemStorage {
     /// Trait bounds when the user wrote `impl Trait` syntax. See
     /// [`ItemUniform::impl_bounds`] for details.
     pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
+    /// Attributes preserved from Rust source on the macro item.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl syn::parse::Parse for ItemStorage {
@@ -4858,6 +4995,7 @@ impl syn::parse::Parse for ItemStorage {
             binding_ident,
             binding_paren_token,
             impl_bounds,
+            attrs: vec![],
         })
     }
 }
@@ -4896,10 +5034,14 @@ impl TryFrom<&syn::ItemMacro> for ItemStorage {
             .fail();
         }
 
-        syn::parse2::<ItemStorage>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
-            span: item_macro.span(),
-            note: format!("{e}"),
-        })
+        let mut item = syn::parse2::<ItemStorage>(item_macro.mac.tokens.clone()).map_err(|e| {
+            Error::Unsupported {
+                span: item_macro.span(),
+                note: format!("{e}"),
+            }
+        })?;
+        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
+        Ok(item)
     }
 }
 
@@ -4931,6 +5073,8 @@ pub(crate) struct ItemSampler {
     // We keep the Rust type around
     #[expect(dead_code, reason = "Will be used eventually")]
     pub rust_ty: syn::Type,
+    /// Attributes preserved from Rust source on the macro item.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl syn::parse::Parse for ItemSampler {
@@ -4976,6 +5120,7 @@ impl syn::parse::Parse for ItemSampler {
             group_paren_token,
             binding_ident,
             binding_paren_token,
+            attrs: vec![],
         })
     }
 }
@@ -4999,10 +5144,14 @@ impl TryFrom<&syn::ItemMacro> for ItemSampler {
             .fail();
         }
 
-        syn::parse2::<ItemSampler>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
-            span: item_macro.span(),
-            note: format!("{e}"),
-        })
+        let mut item = syn::parse2::<ItemSampler>(item_macro.mac.tokens.clone()).map_err(|e| {
+            Error::Unsupported {
+                span: item_macro.span(),
+                note: format!("{e}"),
+            }
+        })?;
+        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
+        Ok(item)
     }
 }
 
@@ -5036,6 +5185,8 @@ pub(crate) struct ItemTexture {
     // We keep the Rust type around
     #[expect(dead_code, reason = "Might be used later")]
     pub rust_ty: syn::Type,
+    /// Attributes preserved from Rust source on the macro item.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl syn::parse::Parse for ItemTexture {
@@ -5081,6 +5232,7 @@ impl syn::parse::Parse for ItemTexture {
             group_paren_token,
             binding_ident,
             binding_paren_token,
+            attrs: vec![],
         })
     }
 }
@@ -5104,10 +5256,14 @@ impl TryFrom<&syn::ItemMacro> for ItemTexture {
             .fail();
         }
 
-        syn::parse2::<ItemTexture>(item_macro.mac.tokens.clone()).map_err(|e| Error::Unsupported {
-            span: item_macro.span(),
-            note: format!("{e}"),
-        })
+        let mut item = syn::parse2::<ItemTexture>(item_macro.mac.tokens.clone()).map_err(|e| {
+            Error::Unsupported {
+                span: item_macro.span(),
+                note: format!("{e}"),
+            }
+        })?;
+        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
+        Ok(item)
     }
 }
 
@@ -5130,6 +5286,8 @@ pub(crate) struct ItemWorkgroup {
     /// Trait bounds when the user wrote `impl Trait` syntax. See
     /// [`ItemUniform::impl_bounds`] for details.
     pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
+    /// Attributes preserved from Rust source on the macro item.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl syn::parse::Parse for ItemWorkgroup {
@@ -5145,6 +5303,7 @@ impl syn::parse::Parse for ItemWorkgroup {
             ty,
             rust_ty,
             impl_bounds,
+            attrs: vec![],
         })
     }
 }
@@ -5183,12 +5342,15 @@ impl TryFrom<&syn::ItemMacro> for ItemWorkgroup {
             .fail();
         }
 
-        syn::parse2::<ItemWorkgroup>(item_macro.mac.tokens.clone()).map_err(|e| {
-            Error::Unsupported {
-                span: item_macro.span(),
-                note: format!("{e}"),
-            }
-        })
+        let mut item =
+            syn::parse2::<ItemWorkgroup>(item_macro.mac.tokens.clone()).map_err(|e| {
+                Error::Unsupported {
+                    span: item_macro.span(),
+                    note: format!("{e}"),
+                }
+            })?;
+        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
+        Ok(item)
     }
 }
 
@@ -5198,6 +5360,8 @@ pub struct Field {
     pub ident: Ident,
     pub colon_token: Option<Token![:]>,
     pub ty: Type,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl Field {
@@ -5209,15 +5373,19 @@ impl Field {
             .expect("only named fields are supported, and we checked for that before parsing this");
         let colon_token = value.colon_token;
         let ty = Type::parse(&value.ty, ctx)?;
+        let ir_attrs = syn_attrs_to_ir(&value.attrs);
         let mut inter_stage_io = vec![];
         for attr in value.attrs.iter() {
-            inter_stage_io.push(InterStageIo::try_from(attr)?);
+            if is_known_io_ident(attr) {
+                inter_stage_io.push(InterStageIo::try_from(attr)?);
+            }
         }
         Ok(Field {
             inter_stage_io,
             ident,
             colon_token,
             ty,
+            attrs: ir_attrs,
         })
     }
 }
@@ -5268,6 +5436,8 @@ pub struct ItemStruct {
     pub struct_token: Token![struct],
     pub ident: Ident,
     pub fields: FieldsNamed,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::ItemStruct> for ItemStruct {
@@ -5275,7 +5445,7 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
 
     fn try_from(value: &syn::ItemStruct) -> Result<Self, Self::Error> {
         let syn::ItemStruct {
-            attrs: _,
+            attrs,
             vis,
             struct_token,
             ident,
@@ -5283,6 +5453,8 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             fields,
             semi_token: _,
         } = value;
+
+        let ir_attrs = syn_attrs_to_ir(attrs);
 
         snafu::ensure!(
             matches!(vis, syn::Visibility::Public(_)),
@@ -5341,6 +5513,7 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             struct_token: *struct_token,
             ident: ident.clone(),
             fields,
+            attrs: ir_attrs,
         })
     }
 }
@@ -5384,6 +5557,8 @@ pub struct ItemEnum {
     pub ident: Ident,
     pub _brace_token: syn::token::Brace,
     pub variants: Vec<EnumVariant>,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::ItemEnum> for ItemEnum {
@@ -5489,6 +5664,7 @@ impl TryFrom<&syn::ItemEnum> for ItemEnum {
             ident: ident.clone(),
             _brace_token: *brace_token,
             variants: parsed_variants,
+            attrs: syn_attrs_to_ir(attrs),
         })
     }
 }
@@ -5539,6 +5715,8 @@ pub struct ItemImpl {
     pub self_ty: Ident,
     pub _brace_token: syn::token::Brace,
     pub items: Vec<ImplItem>,
+    /// Attributes preserved from Rust source.
+    pub attrs: Vec<ir::Attribute>,
 }
 
 impl TryFrom<&syn::ItemImpl> for ItemImpl {
@@ -5546,7 +5724,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
 
     fn try_from(value: &syn::ItemImpl) -> Result<Self, Self::Error> {
         let syn::ItemImpl {
-            attrs: _,
+            attrs,
             defaultness,
             unsafety,
             impl_token,
@@ -5556,6 +5734,8 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             brace_token,
             items,
         } = value;
+
+        let ir_attrs = syn_attrs_to_ir(attrs);
 
         // Reject unsupported syntax
         util::some_is_unsupported(
@@ -5649,6 +5829,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
             self_ty: self_ty_ident,
             _brace_token: *brace_token,
             items: parsed_items,
+            attrs: ir_attrs,
         };
         result.resolve_self();
         Ok(result)

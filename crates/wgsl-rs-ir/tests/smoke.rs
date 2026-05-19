@@ -23,7 +23,9 @@ fn renders_simple_const() {
             name: "MAX".to_string(),
             ty: Type::Scalar(ScalarType::U32),
             expr: lit_u(42),
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert_eq!(wgsl, "const MAX: u32 = 42u;\n");
@@ -41,6 +43,7 @@ fn renders_simple_function() {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
                 ty: Type::Scalar(ScalarType::F32),
+                attrs: vec![],
             }],
             return_type: ReturnType::Type {
                 annotation: ReturnTypeAnnotation::None,
@@ -58,7 +61,9 @@ fn renders_simple_function() {
                     has_semi: false,
                 }],
             },
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert!(wgsl.contains("fn double(x: f32) -> f32 {"), "got: {wgsl}");
@@ -82,7 +87,9 @@ fn renders_compute_entry_point() {
             inputs: vec![],
             return_type: ReturnType::Default,
             block: Block { stmts: vec![] },
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert!(
@@ -104,13 +111,16 @@ fn renders_struct_and_impl() {
                         inter_stage_io: vec![],
                         name: "x".to_string(),
                         ty: Type::Scalar(ScalarType::F32),
+                        attrs: vec![],
                     },
                     Field {
                         inter_stage_io: vec![],
                         name: "y".to_string(),
                         ty: Type::Scalar(ScalarType::F32),
+                        attrs: vec![],
                     },
                 ],
+                attrs: vec![],
             }),
             Item::Impl(ItemImpl {
                 type_params: vec![],
@@ -126,6 +136,7 @@ fn renders_struct_and_impl() {
                             name: "Point".to_string(),
                             type_args: vec![],
                         },
+                        attrs: vec![],
                     }],
                     return_type: ReturnType::Type {
                         annotation: ReturnTypeAnnotation::None,
@@ -140,9 +151,12 @@ fn renders_struct_and_impl() {
                             has_semi: false,
                         }],
                     },
+                    attrs: vec![],
                 })],
+                attrs: vec![],
             }),
         ],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert!(wgsl.contains("struct Point {"), "got: {wgsl}");
@@ -180,7 +194,9 @@ fn renders_struct_expr_positionally() {
                 type_args: vec![],
             },
             expr: e,
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let out = render_module(&m);
     assert!(out.contains("Point(1.0, 2.0)"), "got: {out}");
@@ -206,7 +222,9 @@ fn renders_enum_with_auto_discriminants() {
                     discriminant: None,
                 },
             ],
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert!(wgsl.contains("alias Color = u32;"), "got: {wgsl}");
@@ -229,6 +247,7 @@ fn substitute_replaces_type_params() {
                 ty: Type::TypeParam {
                     name: "T".to_string(),
                 },
+                attrs: vec![],
             }],
             return_type: ReturnType::Type {
                 annotation: ReturnTypeAnnotation::None,
@@ -242,7 +261,9 @@ fn substitute_replaces_type_params() {
                     has_semi: false,
                 }],
             },
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let mut subst = HashMap::new();
     subst.insert("T".to_string(), Type::Scalar(ScalarType::F32));
@@ -272,10 +293,13 @@ fn substitute_propagates_into_arrays_and_pointers() {
                         len: lit_u(4),
                     }),
                 },
+                attrs: vec![],
             }],
             return_type: ReturnType::Default,
             block: Block { stmts: vec![] },
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let mut subst = HashMap::new();
     subst.insert("T".to_string(), Type::Scalar(ScalarType::I32));
@@ -299,6 +323,7 @@ fn fn_call_translates_builtin_names() {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
                 ty: Type::Scalar(ScalarType::F32),
+                attrs: vec![],
             }],
             return_type: ReturnType::Type {
                 annotation: ReturnTypeAnnotation::None,
@@ -314,7 +339,9 @@ fn fn_call_translates_builtin_names() {
                     has_semi: false,
                 }],
             },
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert!(wgsl.contains("inverseSqrt(x)"), "got: {wgsl}");
@@ -338,7 +365,9 @@ fn slab_read_lowers_to_for_loop() {
                     size: lit_u(4),
                 }],
             },
+            attrs: vec![],
         })],
+        attrs: vec![],
     };
     let wgsl = render_module(&m);
     assert!(
@@ -346,4 +375,84 @@ fn slab_read_lowers_to_for_loop() {
         "got: {wgsl}"
     );
     assert!(wgsl.contains("d[_i] = slab[o + _i];"), "got: {wgsl}");
+}
+
+#[test]
+fn attrs_are_not_rendered_in_wgsl() {
+    let m = Module {
+        name: "test".to_string(),
+        items: vec![Item::Struct(ItemStruct {
+            type_params: vec![],
+            name: "Foo".to_string(),
+            fields: vec![Field {
+                inter_stage_io: vec![],
+                name: "bar".to_string(),
+                ty: Type::Scalar(ScalarType::F32),
+                attrs: vec![Attribute {
+                    path: "derive".to_string(),
+                    args: vec!["Clone".to_string()],
+                }],
+            }],
+            attrs: vec![Attribute {
+                path: "derive".to_string(),
+                args: vec!["SlabItem".to_string()],
+            }],
+        })],
+        attrs: vec![],
+    };
+    let wgsl = render_module(&m);
+    assert!(
+        !wgsl.contains("derive"),
+        "derive should not appear in WGSL, got: {wgsl}"
+    );
+    assert!(
+        !wgsl.contains("SlabItem"),
+        "SlabItem should not appear in WGSL, got: {wgsl}"
+    );
+    assert!(
+        wgsl.contains("struct Foo"),
+        "struct Foo should be in WGSL, got: {wgsl}"
+    );
+}
+
+#[test]
+fn substitute_preserves_attrs() {
+    let mut m = Module {
+        name: "t".to_string(),
+        items: vec![Item::Struct(ItemStruct {
+            type_params: vec![],
+            name: "Pair".to_string(),
+            fields: vec![Field {
+                inter_stage_io: vec![],
+                name: "x".to_string(),
+                ty: Type::TypeParam {
+                    name: "T".to_string(),
+                },
+                attrs: vec![Attribute {
+                    path: "my_attr".to_string(),
+                    args: vec!["arg1".to_string()],
+                }],
+            }],
+            attrs: vec![Attribute {
+                path: "another_attr".to_string(),
+                args: vec![],
+            }],
+        })],
+        attrs: vec![],
+    };
+    let mut subst = HashMap::new();
+    subst.insert("T".to_string(), Type::Scalar(ScalarType::F32));
+    substitute_types(&mut m, &subst);
+    // After substitution, attrs should still be present
+    match &m.items[0] {
+        Item::Struct(s) => {
+            assert_eq!(s.attrs.len(), 1);
+            assert_eq!(s.attrs[0].path, "another_attr");
+            assert_eq!(s.fields[0].attrs.len(), 1);
+            assert_eq!(s.fields[0].attrs[0].path, "my_attr");
+            // Type should be substituted
+            assert_eq!(s.fields[0].ty, Type::Scalar(ScalarType::F32));
+        }
+        _ => panic!("expected struct"),
+    }
 }

@@ -20,10 +20,12 @@ use wgsl_rs_ir as ir;
 pub fn emit_module(ir_path: &TokenStream, m: &ir::Module) -> TokenStream {
     let name = &m.name;
     let items = m.items.iter().map(|i| emit_item(ir_path, i));
+    let attrs = emit_attrs(ir_path, &m.attrs);
     quote! {
         #ir_path::Module {
             name: ::std::string::String::from(#name),
             items: ::std::vec![#(#items),*],
+            #attrs,
         }
     }
 }
@@ -55,12 +57,14 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = u.binding;
             let n = &u.name;
             let t = ty(p, &u.ty);
+            let attrs = emit_attrs(p, &u.attrs);
             quote! {
                 #p::Item::Uniform(#p::ItemUniform {
                     group: #group,
                     binding: #binding,
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    #attrs,
                 })
             }
         }
@@ -73,6 +77,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             };
             let n = &s.name;
             let t = ty(p, &s.ty);
+            let attrs = emit_attrs(p, &s.attrs);
             quote! {
                 #p::Item::Storage(#p::ItemStorage {
                     group: #group,
@@ -80,16 +85,19 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                     access: #acc,
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    #attrs,
                 })
             }
         }
         ir::Item::Workgroup(w) => {
             let n = &w.name;
             let t = ty(p, &w.ty);
+            let attrs = emit_attrs(p, &w.attrs);
             quote! {
                 #p::Item::Workgroup(#p::ItemWorkgroup {
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    #attrs,
                 })
             }
         }
@@ -98,12 +106,14 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = s.binding;
             let n = &s.name;
             let t = ty(p, &s.ty);
+            let attrs = emit_attrs(p, &s.attrs);
             quote! {
                 #p::Item::Sampler(#p::ItemSampler {
                     group: #group,
                     binding: #binding,
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    #attrs,
                 })
             }
         }
@@ -112,12 +122,14 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = t_.binding;
             let n = &t_.name;
             let t = ty(p, &t_.ty);
+            let attrs = emit_attrs(p, &t_.attrs);
             quote! {
                 #p::Item::Texture(#p::ItemTexture {
                     group: #group,
                     binding: #binding,
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    #attrs,
                 })
             }
         }
@@ -132,19 +144,23 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                 let isi = inter_stage_io_vec(p, &f.inter_stage_io);
                 let nm = &f.name;
                 let t = ty(p, &f.ty);
+                let field_attrs = emit_attrs(p, &f.attrs);
                 quote! {
                     #p::Field {
                         inter_stage_io: #isi,
                         name: ::std::string::String::from(#nm),
                         ty: #t,
+                        #field_attrs,
                     }
                 }
             });
+            let attrs = emit_attrs(p, &s.attrs);
             quote! {
                 #p::Item::Struct(#p::ItemStruct {
                     type_params: #type_params,
                     name: ::std::string::String::from(#n),
                     fields: ::std::vec![#(#fs),*],
+                    #attrs,
                 })
             }
         }
@@ -161,11 +177,13 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                     quote! { #p::ImplItem::Const(#inner) }
                 }
             });
+            let attrs = emit_attrs(p, &i.attrs);
             quote! {
                 #p::Item::Impl(#p::ItemImpl {
                     type_params: #type_params,
                     self_ty: ::std::string::String::from(#n),
                     items: ::std::vec![#(#xs),*],
+                    #attrs,
                 })
             }
         }
@@ -184,10 +202,12 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                     }
                 }
             });
+            let attrs = emit_attrs(p, &e.attrs);
             quote! {
                 #p::Item::Enum(#p::ItemEnum {
                     name: ::std::string::String::from(#n),
                     variants: ::std::vec![#(#vs),*],
+                    #attrs,
                 })
             }
         }
@@ -198,11 +218,13 @@ fn item_const(p: &TokenStream, c: &ir::ItemConst) -> TokenStream {
     let n = &c.name;
     let t = ty(p, &c.ty);
     let e = expr(p, &c.expr);
+    let attrs = emit_attrs(p, &c.attrs);
     quote! {
         #p::ItemConst {
             name: ::std::string::String::from(#n),
             ty: #t,
             expr: #e,
+            #attrs,
         }
     }
 }
@@ -211,15 +233,18 @@ fn item_fn(p: &TokenStream, f: &ir::ItemFn) -> TokenStream {
     let type_params = string_vec(&f.type_params);
     let attrs = fn_attrs(p, &f.fn_attrs);
     let n = &f.name;
+    let fn_item_attrs = emit_attrs(p, &f.attrs);
     let inputs = f.inputs.iter().map(|a| {
         let isi = inter_stage_io_vec(p, &a.inter_stage_io);
         let nm = &a.name;
         let t = ty(p, &a.ty);
+        let arg_attrs = emit_attrs(p, &a.attrs);
         quote! {
             #p::FnArg {
                 inter_stage_io: #isi,
                 name: ::std::string::String::from(#nm),
                 ty: #t,
+                #arg_attrs,
             }
         }
     });
@@ -233,6 +258,7 @@ fn item_fn(p: &TokenStream, f: &ir::ItemFn) -> TokenStream {
             inputs: ::std::vec![#(#inputs),*],
             return_type: #rt,
             block: #body,
+            #fn_item_attrs,
         }
     }
 }
@@ -366,6 +392,17 @@ fn string_vec(xs: &[String]) -> TokenStream {
         .iter()
         .map(|s| quote! { ::std::string::String::from(#s) });
     quote! { ::std::vec![#(#xs),*] }
+}
+
+fn emit_attribute(p: &TokenStream, a: &ir::Attribute) -> TokenStream {
+    let path = &a.path;
+    let args = string_vec(&a.args);
+    quote! { #p::Attribute { path: ::std::string::String::from(#path), args: #args } }
+}
+
+pub fn emit_attrs(p: &TokenStream, attrs: &[ir::Attribute]) -> TokenStream {
+    let attrs_ts = attrs.iter().map(|a| emit_attribute(p, a));
+    quote! { attrs: ::std::vec![#(#attrs_ts),*] }
 }
 
 // ===== Types =====

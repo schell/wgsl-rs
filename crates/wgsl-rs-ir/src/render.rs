@@ -261,6 +261,7 @@ fn write_item(w: &mut Writer, item: &Item) {
                             name: mangled,
                             ty: c.ty.clone(),
                             expr: c.expr.clone(),
+                            attrs: c.attrs.clone(),
                         };
                         w.start_line();
                         write_const(w, &mc);

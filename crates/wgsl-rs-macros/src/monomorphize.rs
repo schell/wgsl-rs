@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use proc_macro2::Span;
 use syn::Ident;
+use wgsl_rs_ir::mangle;
 
 use crate::{
     parse::{Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, ReturnType, Type},
@@ -236,7 +237,10 @@ impl MonoCtx {
                         for ii in &impl_item.items {
                             match ii {
                                 crate::parse::ImplItem::Fn(f) => {
-                                    let mangled = format!("{}_{}", impl_item.self_ty, f.ident);
+                                    let mangled = mangle(&[
+                                        &impl_item.self_ty.to_string(),
+                                        &f.ident.to_string(),
+                                    ]);
                                     if !reserved_names.insert(mangled.clone()) {
                                         return Err(crate::parse::Error::unsupported(
                                             f.ident.span(),
@@ -248,7 +252,10 @@ impl MonoCtx {
                                     }
                                 }
                                 crate::parse::ImplItem::Const(c) => {
-                                    let mangled = format!("{}_{}", impl_item.self_ty, c.ident);
+                                    let mangled = mangle(&[
+                                        &impl_item.self_ty.to_string(),
+                                        &c.ident.to_string(),
+                                    ]);
                                     if !reserved_names.insert(mangled.clone()) {
                                         return Err(crate::parse::Error::unsupported(
                                             c.ident.span(),
@@ -550,7 +557,8 @@ impl MonoCtx {
                 for ii in &impl_template.items {
                     match ii {
                         crate::parse::ImplItem::Fn(f) => {
-                            let method_mangled_name = format!("{}_{}", mangled_name, f.ident);
+                            let method_mangled_name =
+                                mangle(&[&mangled_name, &f.ident.to_string()]);
 
                             if self.reserved_names.contains(&method_mangled_name) {
                                 return Err(crate::parse::Error::unsupported(
@@ -583,7 +591,7 @@ impl MonoCtx {
                             self.generated.push(Item::Fn(Box::new(mono_fn)));
                         }
                         crate::parse::ImplItem::Const(c) => {
-                            let const_mangled_name = format!("{}_{}", mangled_name, c.ident);
+                            let const_mangled_name = mangle(&[&mangled_name, &c.ident.to_string()]);
 
                             let mut mono_const = (**c).clone();
                             mono_const.ident = Ident::new(&const_mangled_name, c.ident.span());
@@ -695,7 +703,9 @@ impl ParseVisitorMut for MonoCtx {
         {
             let fn_name = match path {
                 FnPath::Ident(id) => id.to_string(),
-                FnPath::TypeMethod { ty, method, .. } => format!("{}_{}", ty, method),
+                FnPath::TypeMethod { ty, method, .. } => {
+                    mangle(&[&ty.to_string(), &method.to_string()])
+                }
             };
             let span = match path {
                 FnPath::Ident(id) => id.span(),
@@ -942,7 +952,9 @@ impl ParseVisitorMut for RewriteNamesVisitor<'_> {
                 // where `Type::method` is a known template fn).
                 let fn_name = match &*path {
                     FnPath::Ident(id) => id.to_string(),
-                    FnPath::TypeMethod { ty, method, .. } => format!("{}_{}", ty, method),
+                    FnPath::TypeMethod { ty, method, .. } => {
+                        mangle(&[&ty.to_string(), &method.to_string()])
+                    }
                 };
                 if self.fn_templates.contains_key(&fn_name) {
                     let mangled = mangle_name(&fn_name, type_args)
@@ -960,7 +972,7 @@ impl ParseVisitorMut for RewriteNamesVisitor<'_> {
                     if self.struct_templates.contains_key(&ty_name) && !type_args.is_empty() {
                         let mangled_struct = mangle_name(&ty_name, type_args)
                             .expect("mangle_name should not fail for concrete types");
-                        let mangled_fn = format!("{}_{}", mangled_struct, method);
+                        let mangled_fn = mangle(&[&mangled_struct, &method.to_string()]);
                         let span = ty.span();
                         *path = FnPath::Ident(Ident::new(&mangled_fn, span));
                         type_args.clear();
@@ -1150,7 +1162,7 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                 // `OtherStruct` is a cross-module generic struct.
                 if let FnPath::TypeMethod { ty, method, .. } = &*path {
                     let ty_name = ty.to_string();
-                    let combined = format!("{ty_name}_{method}");
+                    let combined = mangle(&[&ty_name, &method.to_string()]);
                     if !self.local_struct_templates.contains_key(&ty_name)
                         && !self.local_templates.contains_key(&combined)
                     {
@@ -1160,7 +1172,7 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .collect::<Result<_, _>>()?;
                         let parse_type_args: Vec<Type> = type_args.clone();
                         let mangled_struct = mangle_name(&ty_name, type_args)?;
-                        let mangled_fn = format!("{}_{}", mangled_struct, method);
+                        let mangled_fn = mangle(&[&mangled_struct, &method.to_string()]);
                         let span = ty.span();
                         *path = FnPath::Ident(Ident::new(&mangled_fn, span));
                         type_args.clear();
@@ -1183,7 +1195,9 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                 if !type_args.is_empty() {
                     let fn_name = match &*path {
                         FnPath::Ident(id) => id.to_string(),
-                        FnPath::TypeMethod { ty, method, .. } => format!("{}_{}", ty, method),
+                        FnPath::TypeMethod { ty, method, .. } => {
+                            mangle(&[&ty.to_string(), &method.to_string()])
+                        }
                     };
                     if !self.local_templates.contains_key(&fn_name) {
                         if self.import_paths.is_empty() {
@@ -1413,16 +1427,33 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
 }
 
 // ===== Name mangling =====
+//
+// Uses [`wgsl_rs_ir::mangle`] to compose components. Each component that
+// contains underscores is escaped as `_N{comp}` so that mangled names are
+// unambiguous. See issue #112 for motivation.
 
+/// Mangle a generic instantiation name. The result is
+/// `mangle(&[base, &arg1_mangled, &arg2_mangled, ...])`. Each
+/// `argN_mangled` is itself the output of [`mangle_type`] and is treated
+/// here as a single opaque component (the outer [`mangle`] will re-escape
+/// any internal underscores).
 fn mangle_name(base: &str, type_args: &[Type]) -> Result<String, crate::parse::Error> {
-    let mut name = base.to_string();
-    for ty in type_args {
-        name.push('_');
-        name.push_str(&mangle_type(ty)?);
+    let mangled_args: Vec<String> = type_args
+        .iter()
+        .map(mangle_type)
+        .collect::<Result<_, _>>()?;
+    let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
+    components.push(base);
+    for s in &mangled_args {
+        components.push(s.as_str());
     }
-    Ok(name)
+    Ok(mangle(&components))
 }
 
+/// Mangle a [`Type`] to a single component string suitable for use as a
+/// component in [`mangle`]. Compound types (e.g. `array<f32, 3>`) are
+/// themselves composed via [`mangle`] so their structure is preserved
+/// unambiguously through nesting.
 fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
     Ok(match ty {
         Type::Scalar { ty: scalar, .. } => scalar.wgsl_name().to_string(),
@@ -1440,14 +1471,28 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
-                format!("{}_{}", ident, mangled_args.join("_"))
+                let ident_str = ident.to_string();
+                let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
+                components.push(&ident_str);
+                for s in &mangled_args {
+                    components.push(s.as_str());
+                }
+                mangle(&components)
             }
         }
         Type::Array { elem, len, .. } => {
-            format!("array_{}_{}", mangle_type(elem)?, len_to_string(len))
+            let elem_m = mangle_type(elem)?;
+            let len_s = len_to_string(len);
+            mangle(&["array", &elem_m, &len_s])
         }
-        Type::RuntimeArray { elem, .. } => format!("array_{}", mangle_type(elem)?),
-        Type::Atomic { elem, .. } => format!("atomic_{}", mangle_type(elem)?),
+        Type::RuntimeArray { elem, .. } => {
+            let elem_m = mangle_type(elem)?;
+            mangle(&["array", &elem_m])
+        }
+        Type::Atomic { elem, .. } => {
+            let elem_m = mangle_type(elem)?;
+            mangle(&["atomic", &elem_m])
+        }
         Type::Sampler { .. } => "sampler".to_string(),
         Type::SamplerComparison { .. } => "sampler_comparison".to_string(),
         Type::Texture { kind, .. } => kind.wgsl_name().replace("texture_", "tex_"),
@@ -1465,7 +1510,8 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
                 crate::parse::AddressSpace::Private => "private",
                 crate::parse::AddressSpace::Workgroup => "workgroup",
             };
-            format!("ptr_{}_{}", space, mangle_type(elem)?)
+            let elem_m = mangle_type(elem)?;
+            mangle(&["ptr", space, &elem_m])
         }
         Type::TypeParam { ident } => {
             // This shouldn't happen for fully resolved instantiations
@@ -1508,7 +1554,13 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
-                TypeKey::Struct(format!("{}_{}", ident, mangled_args.join("_")))
+                let ident_str = ident.to_string();
+                let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
+                components.push(&ident_str);
+                for s in &mangled_args {
+                    components.push(s.as_str());
+                }
+                TypeKey::Struct(mangle(&components))
             }
         }
         Type::Array { elem, len, .. } => {
@@ -2139,8 +2191,11 @@ mod test {
             wgsl.contains("struct Pair_f32"),
             "Expected monomorphized struct, got:\n{wgsl}"
         );
+        // The monomorphized struct name `Pair_f32` contains an
+        // underscore, so the method-mangling step (issue #112) escapes
+        // it to `_1Pair_f32_first`.
         assert!(
-            wgsl.contains("fn Pair_f32_first("),
+            wgsl.contains("fn _1Pair_f32_first("),
             "Expected monomorphized method, got:\n{wgsl}"
         );
         // The method should take Pair_f32 and return f32

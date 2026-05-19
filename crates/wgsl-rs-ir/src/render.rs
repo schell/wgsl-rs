@@ -11,7 +11,7 @@
 //!   [`builtin_lookup`]).
 //! * `Expr::Struct` field names are dropped and emitted positionally.
 //! * `Impl` blocks have their methods / constants name-mangled to
-//!   `StructName_member`.
+//!   `StructName_member` (via [`crate::mangle`], which escapes underscores).
 //! * Enum discriminants auto-increment starting from 0.
 //! * `let mut` (`Local::mutable == true`) renders as `var`; `let` renders as
 //!   `let`.
@@ -256,7 +256,7 @@ fn write_item(w: &mut Writer, item: &Item) {
             for ii in &i.items {
                 match ii {
                     ImplItem::Const(c) => {
-                        let mangled = format!("{}_{}", i.self_ty, c.name);
+                        let mangled = mangle(&[&i.self_ty, &c.name]);
                         let mc = ItemConst {
                             name: mangled,
                             ty: c.ty.clone(),
@@ -267,7 +267,7 @@ fn write_item(w: &mut Writer, item: &Item) {
                         w.newline();
                     }
                     ImplItem::Fn(f) => {
-                        let mangled = format!("{}_{}", i.self_ty, f.name);
+                        let mangled = mangle(&[&i.self_ty, &f.name]);
                         w.blank_line();
                         write_fn(w, f, Some(&mangled));
                     }
@@ -288,11 +288,10 @@ fn write_item(w: &mut Writer, item: &Item) {
                 } else {
                     next
                 };
+                let variant_name = mangle(&[&e.name, &v.name]);
                 w.start_line();
                 w.write("const ");
-                w.write(&e.name);
-                w.write("_");
-                w.write(&v.name);
+                w.write(&variant_name);
                 w.write(": u32 = ");
                 w.write(&format!("{value}u"));
                 w.write(";");
@@ -747,9 +746,7 @@ fn write_expr(w: &mut Writer, e: &Expr) {
             w.write(field);
         }
         Expr::TypePath { ty, member } => {
-            w.write(ty);
-            w.write("_");
-            w.write(member);
+            w.write(&mangle(&[ty, member]));
         }
         Expr::Reference(inner) => {
             w.write("&");
@@ -774,9 +771,7 @@ fn write_fn_path(w: &mut Writer, p: &FnPath) {
             w.write(translated);
         }
         FnPath::TypeMethod { ty, method } => {
-            w.write(ty);
-            w.write("_");
-            w.write(method);
+            w.write(&mangle(&[ty, method]));
         }
     }
 }

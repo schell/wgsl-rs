@@ -246,6 +246,9 @@ fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> 
         }
         let fn_name = f.ident.to_string();
         for (i, _tp) in f.type_params.iter().enumerate() {
+            // Entry-point slot encoding `{fn}_{i}` is intentionally not
+            // run through `wgsl_rs_ir::mangle`; see comment in
+            // `parse.rs` near the matching site and issue #112.
             let encoded = format!("{fn_name}_{i}");
             if seen.insert(encoded.clone()) {
                 params.push(encoded);

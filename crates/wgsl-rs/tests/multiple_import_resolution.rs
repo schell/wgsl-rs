@@ -30,8 +30,10 @@ mod consumer {
 fn resolves_template_instantiation_from_correct_import() {
     let _ = consumer::apply();
     let full_src = consumer::WGSL_MODULE.wgsl_source();
+    // Under the robust mangling scheme (issue #112) the underscore in
+    // `external_identity` causes it to be escaped to `_1external_identity`.
     assert!(
-        full_src.contains("fn external_identity_f32("),
-        "Expected instantiated external_identity_f32 in output, got:\n{full_src}"
+        full_src.contains("fn _1external_identity_f32("),
+        "Expected instantiated _1external_identity_f32 in output, got:\n{full_src}"
     );
 }

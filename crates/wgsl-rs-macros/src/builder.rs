@@ -121,6 +121,9 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         };
         let fn_name_str = f.ident.to_string();
         for (i, tp) in f.type_params.iter().enumerate() {
+            // Entry-point slot encoding `{fn}_{i}` is intentionally not
+            // run through `wgsl_rs_ir::mangle`; see comment in
+            // `parse.rs` near the matching site and issue #112.
             let encoded = format!("{fn_name_str}_{i}");
             let name = format_ident!("{}_{}", tp, fn_name_str);
             ep_slots.push(EntryPointSlot {

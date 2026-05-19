@@ -460,3 +460,22 @@ const initializers with trybuild test.
 - Removed stray doc comment above `collect_linkage_constraints` in builder.rs.
 - Replied to all Copilot review comments (validate Err, validation gating,
   README correction, doc cleanup).
+
+### 2026-05-18: Robust name mangling (issue #112)
+
+- Replaced ad-hoc `{a}_{b}` concatenation with a centralized
+  `wgsl_rs_ir::mangle` module that adopts a simplified subset of
+  wesl-rs's `EscapeMangler`: each component containing `N>0` underscores
+  is rewritten as `_N{comp}` before components are joined with `_`,
+  making mangling a bijection. Migrated all sites: `render.rs`
+  (impl-method/const, enum variant, `FnPath::TypeMethod`,
+  `Expr::TypePath`), `monomorphize.rs` (`mangle_name`, `mangle_type`,
+  `type_to_key`, all 9 duplicate `{self_ty}_{method}` sites), and the
+  runtime instance-name builder in `wgsl-rs/src/lib.rs`. Entry-point
+  type-param slot encoding `{fn}_{i}` is intentionally left raw — its
+  collision risk is already covered by the reserved-names check and
+  changing it would break the public dispatch API surface. Added 9
+  collision-pair regression tests covering the cases from the issue
+  (`Foo_bar::baz` vs `Foo::bar_baz`, `Color_Red::Hot` vs
+  `Color::Red_Hot`, underscored consts, underscored methods on
+  underscored types, etc.).

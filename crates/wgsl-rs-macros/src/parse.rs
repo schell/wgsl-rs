@@ -4123,6 +4123,11 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             ParseContext::from_type_params(type_params.iter().cloned())
         } else {
             let fn_name = sig.ident.to_string();
+            // Entry-point type-param slot encoding: `{fn}_{i}`. This is
+            // intentionally NOT routed through `wgsl_rs_ir::mangle` so that
+            // the public slot-name surface used by the dispatch APIs stays
+            // stable. Collisions with user identifiers are caught by the
+            // reserved-names check in `monomorphize`. See issue #112.
             let renamed = type_params.iter().enumerate().map(|(i, id)| {
                 let source = id.to_string();
                 let encoded = format!("{fn_name}_{i}");
@@ -6902,6 +6907,163 @@ mod test {
             wgsl.contains("fn Light_get"),
             "Expected 'fn Light_get' in WGSL output, got: {}",
             wgsl
+        );
+    }
+
+    // ===== Regression tests for issue #112 (robust mangling) =====
+    //
+    // These tests demonstrate that name pairs which would have collided
+    // under the old `{a}_{b}` scheme now produce distinct WGSL identifiers
+    // under the `wgsl_rs_ir::mangle` escape scheme.
+
+    #[test]
+    fn impl_method_on_underscored_type_is_escaped() {
+        // `impl My_Light { fn intensity() }` — `My_Light` contains an
+        // underscore, so the joined method name must be escaped.
+        let item: syn::Item = syn::parse_quote! {
+            impl My_Light {
+                pub fn intensity(l: My_Light) -> f32 { l.x }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn _1My_Light_intensity"),
+            "Expected escaped method name, got: {wgsl}"
+        );
+    }
+
+    #[test]
+    fn impl_method_with_underscored_name_is_escaped() {
+        // `impl Light { fn get_intensity() }` — the method name contains
+        // an underscore, so it must be escaped at the second position.
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub fn get_intensity(l: Light) -> f32 { l.x }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn Light__1get_intensity"),
+            "Expected escaped method name, got: {wgsl}"
+        );
+    }
+
+    /// The canonical collision case from issue #112:
+    /// `impl Foo_bar { fn baz() }` vs. `impl Foo { fn bar_baz() }`. Under
+    /// the old scheme both produced `Foo_bar_baz`; under the new scheme
+    /// they must differ.
+    #[test]
+    fn collision_pair_underscored_type_vs_underscored_method() {
+        let a_item: syn::Item = syn::parse_quote! {
+            impl Foo_bar {
+                pub fn baz(x: Foo_bar) -> f32 { x.v }
+            }
+        };
+        let b_item: syn::Item = syn::parse_quote! {
+            impl Foo {
+                pub fn bar_baz(x: Foo) -> f32 { x.v }
+            }
+        };
+        let a_wgsl = Item::try_from(&a_item).unwrap().to_wgsl();
+        let b_wgsl = Item::try_from(&b_item).unwrap().to_wgsl();
+
+        // Extract the function names.
+        let a_has = a_wgsl.contains("fn _1Foo_bar_baz");
+        let b_has = b_wgsl.contains("fn Foo__1bar_baz");
+        assert!(a_has, "a: {a_wgsl}");
+        assert!(b_has, "b: {b_wgsl}");
+
+        // And critically, neither produces the old colliding name.
+        assert!(
+            !a_wgsl.contains("fn Foo_bar_baz"),
+            "a should not emit the legacy colliding name: {a_wgsl}"
+        );
+        assert!(
+            !b_wgsl.contains("fn Foo_bar_baz"),
+            "b should not emit the legacy colliding name: {b_wgsl}"
+        );
+    }
+
+    #[test]
+    fn impl_const_with_underscored_name_is_escaped() {
+        // `impl Light { const DEFAULT_INTENSITY: f32 = ... }`.
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub const DEFAULT_INTENSITY: f32 = 1.0;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const Light__1DEFAULT_INTENSITY"),
+            "Expected escaped const name, got: {wgsl}"
+        );
+    }
+
+    #[test]
+    fn type_path_with_underscored_const_is_escaped() {
+        // A reference `Light::DEFAULT_INTENSITY` must also use the
+        // escaping rule so it matches its definition.
+        let expr: syn::Expr = syn::parse_quote! { Light::DEFAULT_INTENSITY };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert_eq!(wgsl, "Light__1DEFAULT_INTENSITY");
+    }
+
+    #[test]
+    fn type_method_call_with_underscored_method_is_escaped() {
+        // A reference `Light::get_intensity(...)` must match its def.
+        let expr: syn::Expr = syn::parse_quote! { Light::get_intensity(l) };
+        let expr = Expr::try_from(&expr).unwrap();
+        let wgsl = expr.to_wgsl();
+        assert!(
+            wgsl.starts_with("Light__1get_intensity("),
+            "Expected escaped method call, got: {wgsl}"
+        );
+    }
+
+    #[test]
+    fn enum_variant_with_underscore_is_escaped() {
+        // `enum Color { Red_Hot }` — variant name contains an underscore.
+        let item: syn::Item = syn::parse_quote! {
+            #[repr(u32)]
+            pub enum Color {
+                Red_Hot,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const Color__1Red_Hot"),
+            "Expected escaped enum variant, got: {wgsl}"
+        );
+    }
+
+    #[test]
+    fn collision_pair_enum_variant_vs_underscored_enum_name() {
+        // `enum Color { Red_Hot }` vs. `enum Color_Red { Hot }`.
+        // Old scheme: both produce `Color_Red_Hot`. New scheme: distinct.
+        let a: syn::Item = syn::parse_quote! {
+            #[repr(u32)] pub enum Color { Red_Hot, }
+        };
+        let b: syn::Item = syn::parse_quote! {
+            #[repr(u32)] pub enum Color_Red { Hot, }
+        };
+        let a_wgsl = Item::try_from(&a).unwrap().to_wgsl();
+        let b_wgsl = Item::try_from(&b).unwrap().to_wgsl();
+
+        assert!(a_wgsl.contains("const Color__1Red_Hot"), "a: {a_wgsl}");
+        assert!(b_wgsl.contains("const _1Color_Red_Hot"), "b: {b_wgsl}");
+
+        assert!(
+            !a_wgsl.contains("const Color_Red_Hot:"),
+            "a should not emit the legacy colliding name: {a_wgsl}"
+        );
+        assert!(
+            !b_wgsl.contains("const Color_Red_Hot:"),
+            "b should not emit the legacy colliding name: {b_wgsl}"
         );
     }
 

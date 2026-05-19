@@ -22,10 +22,12 @@
 //! args, impl method name mangling, builtin name translation, enum
 //! discriminant auto-increment) lives in the [`render`] module.
 
+pub mod mangle;
 mod render;
 mod substitute;
 mod types;
 
+pub use mangle::{mangle, unmangle};
 pub use render::{
     render_block, render_expr, render_item, render_items, render_module, render_stmt, render_type,
 };

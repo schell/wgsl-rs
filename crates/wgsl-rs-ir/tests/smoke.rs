@@ -146,7 +146,9 @@ fn renders_struct_and_impl() {
     };
     let wgsl = render_module(&m);
     assert!(wgsl.contains("struct Point {"), "got: {wgsl}");
-    assert!(wgsl.contains("fn Point_x_only(p: Point)"), "got: {wgsl}");
+    // `x_only` contains an underscore, so under the robust mangling
+    // scheme (issue #112) the joined impl-method name is escaped.
+    assert!(wgsl.contains("fn Point__1x_only(p: Point)"), "got: {wgsl}");
 }
 
 #[test]

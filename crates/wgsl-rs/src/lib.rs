@@ -296,15 +296,19 @@ fn instantiate_template_into(
     ir::substitute_items(&mut items, &subst);
 
     // Mangle the template's name to a concrete instance name so multiple
-    // monomorphizations can coexist. The new name is
-    // `{template_name}_{mangled_arg1}_{mangled_arg2}_...`. Rewrite that
-    // name everywhere it appears in the items (struct headers, impl
-    // self_ty, free fn names, references in expressions/types).
-    let mut instance_name = template.name.to_string();
-    for arg in mangled_type_args {
-        instance_name.push('_');
-        instance_name.push_str(arg);
-    }
+    // monomorphizations can coexist. Uses `ir::mangle` so that names with
+    // underscores in either the template name or the type-arg-mangled
+    // strings are escaped unambiguously (see issue #112).
+    let instance_name = if mangled_type_args.is_empty() {
+        template.name.to_string()
+    } else {
+        let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_type_args.len());
+        components.push(template.name);
+        for s in mangled_type_args {
+            components.push(s.as_str());
+        }
+        ir::mangle(&components)
+    };
     if instance_name != template.name {
         ir::rename_items(&mut items, template.name, &instance_name);
     }
@@ -470,15 +474,18 @@ mod test {
             "trait_provider should contain f32_scale, got:\n{provider_src}"
         );
 
-        // Verify consumer module generates apply_scale_f32 that calls f32_scale
+        // Verify consumer module generates the monomorphized `apply_scale<f32>`
+        // and that it calls `f32_scale`. Under the robust mangling scheme
+        // (issue #112), `apply_scale` has an underscore so the joined name
+        // is `_1apply_scale_f32`, not `apply_scale_f32`.
         let consumer_src = trait_consumer::WGSL_MODULE.wgsl_source();
         assert!(
-            consumer_src.contains("fn apply_scale_f32("),
-            "trait_consumer should contain apply_scale_f32, got:\n{consumer_src}"
+            consumer_src.contains("fn _1apply_scale_f32("),
+            "trait_consumer should contain _1apply_scale_f32, got:\n{consumer_src}"
         );
         assert!(
             consumer_src.contains("f32_scale("),
-            "apply_scale_f32 should call f32_scale, got:\n{consumer_src}"
+            "_1apply_scale_f32 should call f32_scale, got:\n{consumer_src}"
         );
         assert!(
             consumer_src.contains("fn f32_scale("),

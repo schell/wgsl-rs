@@ -2,6 +2,8 @@
 //!
 //! Tests: `dpdx`, `dpdy`, `fwidth` and fine/coarse variants.
 
+#![allow(dead_code)]
+
 use wgsl_rs::wgsl;
 
 use crate::harness::{self, ComparisonResult, RoundtripTest};

@@ -3,6 +3,8 @@
 //! Covers gradient/level/bias/offset sampling, gather, and depth compare
 //! variants for 2D and 2D-array textures.
 
+#![allow(dead_code)]
+
 use wgsl_rs::wgsl;
 
 use crate::harness::{self, ComparisonResult, RoundtripTest};

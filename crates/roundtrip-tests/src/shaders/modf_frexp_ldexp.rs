@@ -120,9 +120,9 @@ fn modf_frexp_ldexp_inputs() -> [f32; N] {
         }
     }
     // Fill remaining with interpolated values in [-100, 100]
-    for i in cases.len()..N {
+    for (i, val) in values.iter_mut().enumerate().skip(cases.len()) {
         let t = (i - cases.len()) as f32 / ((N - cases.len()) as f32);
-        values[i] = t * 200.0 - 100.0;
+        *val = t * 200.0 - 100.0;
     }
     values
 }
@@ -132,17 +132,17 @@ fn modf_frexp_ldexp_inputs() -> [f32; N] {
 fn frexp_ldexp_roundtrip_inputs() -> [f32; N] {
     let mut values = [0.0f32; N];
     // Use only finite, non-zero normal values for ldexp roundtrip testing
-    for i in 0..N {
+    for (i, val) in values.iter_mut().enumerate() {
         let t = (i as f32) / (N as f32);
         // Generate values in [-100, 100] avoiding zero and very small values
         if i == 0 {
-            values[i] = 0.5f32;
+            *val = 0.5f32;
         } else if i == 1 {
-            values[i] = -0.5f32;
+            *val = -0.5f32;
         } else if i < N / 2 {
-            values[i] = 0.1 + t * 50.0;
+            *val = 0.1 + t * 50.0;
         } else {
-            values[i] = -(0.1 + (t - 0.5) * 100.0);
+            *val = -(0.1 + (t - 0.5) * 100.0);
         }
     }
     values
@@ -174,7 +174,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
                 queue,
                 shader_source: modf_basic::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -191,8 +191,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let cpu_output: Vec<f32> = cpu_output_guard.to_vec();
 
             let mut labels: Vec<String> = Vec::new();
-            for i in 0..N {
-                let x = inputs[i];
+            for &x in inputs.iter() {
                 labels.push(format!("modf({x:.4}).fract"));
                 labels.push(format!("modf({x:.4}).whole"));
             }
@@ -219,7 +218,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
                 queue,
                 shader_source: frexp_basic::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -236,8 +235,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let cpu_output: Vec<f32> = cpu_output_guard.to_vec();
 
             let mut labels: Vec<String> = Vec::new();
-            for i in 0..N {
-                let x = inputs[i];
+            for &x in inputs.iter() {
                 labels.push(format!("frexp({x:.4}).fract"));
                 labels.push(format!("frexp({x:.4}).exp"));
             }
@@ -265,7 +263,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
                 queue,
                 shader_source: frexp_ldexp_roundtrip::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -282,11 +280,9 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let cpu_output_guard = frexp_ldexp_roundtrip::OUTPUT.get();
             let cpu_output: Vec<f32> = cpu_output_guard.to_vec();
 
-            let labels: Vec<String> = (0..N)
-                .map(|i| {
-                    let x = inputs[i];
-                    format!("ldexp(frexp({x:.4}).fract, frexp({x:.4}).exp)")
-                })
+            let labels: Vec<String> = inputs
+                .iter()
+                .map(|&x| format!("ldexp(frexp({x:.4}).fract, frexp({x:.4}).exp)"))
                 .collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
 

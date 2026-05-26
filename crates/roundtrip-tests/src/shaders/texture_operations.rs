@@ -2,6 +2,8 @@
 //!
 //! Tests: `texture_load` and `texture_sample` on `Texture2D<f32>`.
 
+#![allow(dead_code)]
+
 use wgsl_rs::wgsl;
 
 use crate::harness::{self, ComparisonResult, RoundtripTest};

@@ -203,3 +203,24 @@ underscores is rewritten as `_N{comp}` before components are joined with `_`, ma
 mangling a bijection. This prevents collision bugs like `Foo_bar::baz` vs `Foo::bar_baz`.
 Entry-point type-param slot encoding `{fn}_{i}` is intentionally left raw — its collision
 risk is covered by the reserved-names check and changing it would break the public API.
+
+### 2026-05-26: Doc-visible binding macros for runtime access
+
+`texture!` and `sampler!` declare a two-level binding pattern: a `#[doc(hidden)]`
+private backing `static __NAME` that owns the resource, and a `pub const NAME`
+reference for callers. Previously both items were `#[doc(hidden)]`, which hid
+bindings from downstream users who need to know what resources a module exposes.
+The `pub const NAME` binding is now doc-visible, consistent with `storage!`,
+`uniform!`, and `workgroup!` which all generate visible `pub static` bindings.
+Only the backing `static __NAME` remains `#[doc(hidden)]` — it exists solely so
+callers can pass the binding by value (without `&`) to texture/sampler functions.
+
+### 2026-05-26: Depth texture fill via `frag_depth` render pass
+
+Metal forbids uploading data to `Depth32Float` textures. Rather than gating
+depth tests per-platform, depth values are rendered using a fragment shader
+that outputs `#[builtin(frag_depth)]` with a deterministic position-based
+formula. The CPU path writes the same data directly via `TextureDepth2D::set()`.
+Both paths compute identical pixel values — only the delivery mechanism differs.
+This pattern is reusable for any future cross-platform test that needs
+pre-populated depth data.

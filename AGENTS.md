@@ -77,15 +77,11 @@ cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
 ## DEVLOG.md file
 
 The [DEVLOG](DEVLOG.md) is a set of long-lived development notes.
-It is a very informal change-log that also contains thoughts about this library's purpose, requirements, and challenges.
 
-Each day of work has an entry with the heading "### YYYY-MM-DD: {description}".
-If your session is the first of the day, create a new day entry, otherwise append the
-high-level description of your session to the current day's entry.
+Most importantly, it contains design decisions made during development.
+These decisions answer _why_ `wgsl-rs` is the way it is.
 
-## SESSION.md file
-
-An ephemeral session file is maintained at SESSION.md, which you can use as scratch space for your editing session.
-This file is not checked into git and should be used to persist context between editing sessions.
-Think of this file as a mini DEVLOG.md, and when the session has ended and goals have been accomplished,
-update the [DEVLOG](DEVLOG.md) with a brief, one line summary of the session, then remove the SESSION.md file.
+Each design decision should have an entry with the heading "### YYYY-MM-DD: {description}",
+followed by an explanation of the problem, the decision and justification, etc.
+Multiple decisions made on the same day should be separate entries — the date is metadata;
+what matters is that each entry captures one distinct decision.

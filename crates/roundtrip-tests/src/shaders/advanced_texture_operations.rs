@@ -203,6 +203,37 @@ pub mod depth2d_array_compare_variants {
     }
 }
 
+#[wgsl]
+pub mod fill_depth_2d {
+    use wgsl_rs::std::*;
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    pub struct FragOutput {
+        #[builtin(frag_depth)]
+        pub depth: f32,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> FragOutput {
+        let x = u32(input.position.x);
+        let y = u32(input.position.y);
+        FragOutput {
+            depth: clamp((x as f32 * 0.07 + y as f32 * 0.11) % 1.0, 0.0, 1.0),
+        }
+    }
+}
+
 fn build_rgba8_pixels(offset: u32) -> Vec<[u8; 4]> {
     let mut pixels = vec![[0u8; 4]; (WIDTH * HEIGHT) as usize];
     for y in 0..HEIGHT {
@@ -384,8 +415,11 @@ fn create_gpu_texture2d_array_rgba8(
     texture
 }
 
-fn create_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue, depth: &[f32]) -> wgpu::Texture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+/// Renders deterministic depth values into a `Depth32Float` texture using the
+/// `fill_depth_2d` shader. Works on all platforms including Metal (which
+/// forbids uploading data to depth textures).
+fn fill_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
+    let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("advanced_depth2d_source"),
         size: wgpu::Extent3d {
             width: WIDTH,
@@ -396,60 +430,68 @@ fn create_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue, depth: &[f32])
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
-    let bytes_per_row = (WIDTH * 4).next_multiple_of(256);
-    let mut padded = vec![0u8; (bytes_per_row * HEIGHT) as usize];
-    for y in 0..HEIGHT {
-        let src = &depth[(y * WIDTH) as usize..((y + 1) * WIDTH) as usize];
-        let dst_offset = (y * bytes_per_row) as usize;
-        let dst = &mut padded[dst_offset..dst_offset + (WIDTH * 4) as usize];
-        dst.copy_from_slice(bytemuck::cast_slice(src));
-    }
+    let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("advanced_depth2d_staging"),
-        size: padded.len() as u64,
-        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
+    let module = fill_depth_2d::linkage::shader_module(device);
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("fill_depth_layout"),
+        bind_group_layouts: &[],
+        immediate_size: 0,
     });
-    queue.write_buffer(&staging, 0, &padded);
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("fill_depth_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: fill_depth_2d::linkage::vtx_main::vertex_state(&module),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(fill_depth_2d::linkage::frag_main::fragment_state(
+            &module,
+            &[],
+        )),
+        multiview_mask: None,
+        cache: None,
+    });
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("advanced_depth2d_upload"),
+        label: Some("fill_depth"),
     });
-    encoder.copy_buffer_to_texture(
-        wgpu::TexelCopyBufferInfo {
-            buffer: &staging,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(HEIGHT),
-            },
-        },
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::DepthOnly,
-        },
-        wgpu::Extent3d {
-            width: WIDTH,
-            height: HEIGHT,
-            depth_or_array_layers: 1,
-        },
-    );
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("fill_depth_pass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipeline);
+        pass.draw(0..3, 0..1);
+    }
     queue.submit(Some(encoder.finish()));
-    texture
+    depth_tex
 }
 
-fn create_gpu_depth2d_array(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layers: &[Vec<f32>],
-) -> wgpu::Texture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+/// Renders deterministic depth values into each layer of a `Depth32Float` 2D
+/// array texture using the `fill_depth_2d` shader.
+fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
+    let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("advanced_depth2d_array_source"),
         size: wgpu::Extent3d {
             width: WIDTH,
@@ -460,59 +502,73 @@ fn create_gpu_depth2d_array(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
 
-    let bytes_per_row = (WIDTH * 4).next_multiple_of(256);
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("advanced_depth2d_array_upload"),
-    });
-    for layer in 0..LAYERS {
-        let mut padded = vec![0u8; (bytes_per_row * HEIGHT) as usize];
-        let src_layer = &layers[layer as usize];
-        for y in 0..HEIGHT {
-            let src = &src_layer[(y * WIDTH) as usize..((y + 1) * WIDTH) as usize];
-            let dst_offset = (y * bytes_per_row) as usize;
-            let dst = &mut padded[dst_offset..dst_offset + (WIDTH * 4) as usize];
-            dst.copy_from_slice(bytemuck::cast_slice(src));
-        }
+    let module = fill_depth_2d::linkage::shader_module(device);
 
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("advanced_depth2d_array_staging"),
-            size: padded.len() as u64,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("fill_depth_array_layout"),
+        bind_group_layouts: &[],
+        immediate_size: 0,
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("fill_depth_array_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: fill_depth_2d::linkage::vtx_main::vertex_state(&module),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(fill_depth_2d::linkage::frag_main::fragment_state(
+            &module,
+            &[],
+        )),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("fill_depth_array"),
+    });
+
+    for layer in 0..LAYERS {
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("fill_depth_array_layer_view"),
+            format: Some(wgpu::TextureFormat::Depth32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            ..Default::default()
         });
-        queue.write_buffer(&staging, 0, &padded);
-        encoder.copy_buffer_to_texture(
-            wgpu::TexelCopyBufferInfo {
-                buffer: &staging,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: Some(HEIGHT),
-                },
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: layer,
-                },
-                aspect: wgpu::TextureAspect::DepthOnly,
-            },
-            wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
-                depth_or_array_layers: 1,
-            },
-        );
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fill_depth_array_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.draw(0..3, 0..1);
+        }
     }
     queue.submit(Some(encoder.finish()));
-    texture
+    depth_tex
 }
 
 fn render_one_target(
@@ -620,7 +676,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
     }
 
     fn description(&self) -> &str {
-        "sample_grad/level/bias/offset and gather variants for 2D/2D-array textures"
+        "sample_grad/level/bias/offset, gather, and compare variants for 2D/2D-array textures"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -875,6 +931,179 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 },
             );
             results.push(compare_rgba("advanced_tex2d_array_variants", &gpu, &cpu));
+        }
+
+        {
+            let depth0 = build_depth_pixels(0.0);
+            let gpu_depth2d = fill_gpu_depth2d(device, queue);
+
+            let source_view = gpu_depth2d.create_view(&wgpu::TextureViewDescriptor::default());
+            let cmp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_depth2d_cmp_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                ..Default::default()
+            });
+            let module = depth2d_compare_variants::linkage::shader_module(device);
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("advanced_depth2d_cmp_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                ],
+            });
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("advanced_depth2d_cmp_bg"),
+                layout: &bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&source_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&cmp_sampler),
+                    },
+                ],
+            });
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_depth2d_compare",
+                &bgl,
+                &bg,
+                depth2d_compare_variants::linkage::vtx_main::vertex_state(&module),
+                depth2d_compare_variants::linkage::frag_main::fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+            );
+
+            write_cpu_depth2d(depth2d_compare_variants::DEPTH_TEX, &depth0);
+            depth2d_compare_variants::DEPTH_SAMPLER.set(SamplerComparisonState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result =
+                        depth2d_compare_variants::frag_main(depth2d_compare_variants::FragInput {
+                            position: builtins.position,
+                        });
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_depth2d_compare", &gpu, &cpu));
+        }
+
+        {
+            let depth0 = build_depth_pixels(0.0);
+            let depth_layers = vec![depth0.clone(), depth0.clone()];
+            let gpu_depth2d_array = fill_gpu_depth2d_array(device, queue);
+
+            let source_view = gpu_depth2d_array.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+            let cmp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_depth2d_array_cmp_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                ..Default::default()
+            });
+            let module = depth2d_array_compare_variants::linkage::shader_module(device);
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("advanced_depth2d_array_cmp_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                ],
+            });
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("advanced_depth2d_array_cmp_bg"),
+                layout: &bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&source_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&cmp_sampler),
+                    },
+                ],
+            });
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_depth2d_array_compare",
+                &bgl,
+                &bg,
+                depth2d_array_compare_variants::linkage::vtx_main::vertex_state(&module),
+                depth2d_array_compare_variants::linkage::frag_main::fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+            );
+
+            write_cpu_depth2d_array(depth2d_array_compare_variants::DEPTH_TEX, &depth_layers);
+            depth2d_array_compare_variants::DEPTH_SAMPLER.set(SamplerComparisonState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result = depth2d_array_compare_variants::frag_main(
+                        depth2d_array_compare_variants::FragInput {
+                            position: builtins.position,
+                        },
+                    );
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_depth2d_array_compare", &gpu, &cpu));
         }
 
         results

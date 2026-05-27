@@ -2,6 +2,8 @@
 //!
 //! Tests: `dpdx`, `dpdy`, `fwidth` and fine/coarse variants.
 
+#![allow(dead_code)]
+
 use wgsl_rs::wgsl;
 
 use crate::harness::{self, ComparisonResult, RoundtripTest};
@@ -273,8 +275,10 @@ impl RoundtripTest for DerivativeOperationsTest {
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let p = builtins.position;
-                [dpdx(p.x), dpdy(p.y), fwidth(p.x), fwidth(p.y)]
+                let result = derivative_basic::frag_main(derivative_basic::FragInput {
+                    position: builtins.position,
+                });
+                [result.x, result.y, result.z, result.w]
             },
         );
 
@@ -313,13 +317,10 @@ impl RoundtripTest for DerivativeOperationsTest {
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let p = builtins.position;
-                [
-                    dpdx_fine(p.x),
-                    dpdy_fine(p.y),
-                    fwidth_fine(p.x),
-                    fwidth_fine(p.y),
-                ]
+                let out = derivative_variants::frag_main(derivative_variants::FragInput {
+                    position: builtins.position,
+                });
+                [out.fine.x, out.fine.y, out.fine.z, out.fine.w]
             },
         );
         let cpu_coarse = dispatch_fragments(
@@ -327,13 +328,10 @@ impl RoundtripTest for DerivativeOperationsTest {
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let p = builtins.position;
-                [
-                    dpdx_coarse(p.x),
-                    dpdy_coarse(p.y),
-                    fwidth_coarse(p.x),
-                    fwidth_coarse(p.y),
-                ]
+                let out = derivative_variants::frag_main(derivative_variants::FragInput {
+                    position: builtins.position,
+                });
+                [out.coarse.x, out.coarse.y, out.coarse.z, out.coarse.w]
             },
         );
 

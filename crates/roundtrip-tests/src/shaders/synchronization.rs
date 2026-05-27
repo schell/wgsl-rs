@@ -119,7 +119,7 @@ fn run_gpu_u32_shader(
         queue,
         shader_source,
         entry_point: "main",
-        bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+        bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
         input_data: input_bytes,
         output_size,
         workgroup_count: (WG_COUNT as u32, 1, 1),

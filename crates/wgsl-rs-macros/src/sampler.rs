@@ -34,7 +34,7 @@ pub fn sampler(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         #[doc(hidden)]
         static #inner_name: #sampler_type = #sampler_type::new(#group, #binding);
-        const #name: &'static #sampler_type = &#inner_name;
+        pub const #name: &'static #sampler_type = &#inner_name;
     };
 
     expanded.into()

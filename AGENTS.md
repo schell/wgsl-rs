@@ -38,6 +38,7 @@ cargo run -p example                        # Run the example, showing help text
 cargo run -p example -- show                # Show the names of available example modules
 cargo run -p example -- source {name}       # Validate and print a single example module's WGSL source
 cargo expand -p example -- examples::{name} # Expand the example which uses the `wgsl` macro, showing the generated WGSL_MODULE
+cargo clippy --all-features                 # Show all clippy lints
 ```
 
 Always remember to run `cargo fmt` after making changes.

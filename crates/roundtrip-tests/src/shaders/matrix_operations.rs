@@ -1142,7 +1142,7 @@ fn run_gpu_f32_shader(
         queue,
         shader_source,
         entry_point: "main",
-        bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+        bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
         input_data: input_bytes,
         output_size,
         workgroup_count: (1, 1, 1),

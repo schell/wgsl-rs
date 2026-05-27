@@ -421,15 +421,13 @@ impl RoundtripTest for BasicNumericTest {
             let mut flattened = [0.0f32; 320];
 
             // Pack: first 64 scalars, then 64 vec4s
-            for i in 0..N {
-                flattened[i] = scalars[i];
-            }
-            for i in 0..N {
+            flattened[..N].copy_from_slice(&scalars);
+            for (i, v) in vectors.iter().enumerate() {
                 let base = 64 + i * 4;
-                flattened[base] = vectors[i].x;
-                flattened[base + 1] = vectors[i].y;
-                flattened[base + 2] = vectors[i].z;
-                flattened[base + 3] = vectors[i].w;
+                flattened[base] = v.x;
+                flattened[base + 1] = v.y;
+                flattened[base + 2] = v.z;
+                flattened[base + 3] = v.w;
             }
 
             let input_bytes = bytemuck::cast_slice(&flattened);
@@ -440,7 +438,7 @@ impl RoundtripTest for BasicNumericTest {
                 queue,
                 shader_source: abs_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -473,15 +471,13 @@ impl RoundtripTest for BasicNumericTest {
             let (scalars, vectors) = abs_i32_inputs();
             let mut flattened = [0i32; 320];
 
-            for i in 0..N {
-                flattened[i] = scalars[i];
-            }
-            for i in 0..N {
+            flattened[..N].copy_from_slice(&scalars);
+            for (i, v) in vectors.iter().enumerate() {
                 let base = 64 + i * 4;
-                flattened[base] = vectors[i].x;
-                flattened[base + 1] = vectors[i].y;
-                flattened[base + 2] = vectors[i].z;
-                flattened[base + 3] = vectors[i].w;
+                flattened[base] = v.x;
+                flattened[base + 1] = v.y;
+                flattened[base + 2] = v.z;
+                flattened[base + 3] = v.w;
             }
 
             let input_bytes = bytemuck::cast_slice(&flattened);
@@ -492,7 +488,7 @@ impl RoundtripTest for BasicNumericTest {
                 queue,
                 shader_source: abs_i32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -528,15 +524,13 @@ impl RoundtripTest for BasicNumericTest {
             let (scalars, vectors) = sign_f32_inputs();
             let mut flattened = [0.0f32; 320];
 
-            for i in 0..N {
-                flattened[i] = scalars[i];
-            }
-            for i in 0..N {
+            flattened[..N].copy_from_slice(&scalars);
+            for (i, v) in vectors.iter().enumerate() {
                 let base = 64 + i * 4;
-                flattened[base] = vectors[i].x;
-                flattened[base + 1] = vectors[i].y;
-                flattened[base + 2] = vectors[i].z;
-                flattened[base + 3] = vectors[i].w;
+                flattened[base] = v.x;
+                flattened[base + 1] = v.y;
+                flattened[base + 2] = v.z;
+                flattened[base + 3] = v.w;
             }
 
             let input_bytes = bytemuck::cast_slice(&flattened);
@@ -547,7 +541,7 @@ impl RoundtripTest for BasicNumericTest {
                 queue,
                 shader_source: sign_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -582,15 +576,13 @@ impl RoundtripTest for BasicNumericTest {
             let (scalars, vectors) = degrees_inputs();
             let mut flattened = [0.0f32; 320];
 
-            for i in 0..N {
-                flattened[i] = scalars[i];
-            }
-            for i in 0..N {
+            flattened[..N].copy_from_slice(&scalars);
+            for (i, v) in vectors.iter().enumerate() {
                 let base = 64 + i * 4;
-                flattened[base] = vectors[i].x;
-                flattened[base + 1] = vectors[i].y;
-                flattened[base + 2] = vectors[i].z;
-                flattened[base + 3] = vectors[i].w;
+                flattened[base] = v.x;
+                flattened[base + 1] = v.y;
+                flattened[base + 2] = v.z;
+                flattened[base + 3] = v.w;
             }
 
             let input_bytes = bytemuck::cast_slice(&flattened);
@@ -601,7 +593,7 @@ impl RoundtripTest for BasicNumericTest {
                 queue,
                 shader_source: degrees_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -634,15 +626,13 @@ impl RoundtripTest for BasicNumericTest {
             let (scalars, vectors) = radians_inputs();
             let mut flattened = [0.0f32; 320];
 
-            for i in 0..N {
-                flattened[i] = scalars[i];
-            }
-            for i in 0..N {
+            flattened[..N].copy_from_slice(&scalars);
+            for (i, v) in vectors.iter().enumerate() {
                 let base = 64 + i * 4;
-                flattened[base] = vectors[i].x;
-                flattened[base + 1] = vectors[i].y;
-                flattened[base + 2] = vectors[i].z;
-                flattened[base + 3] = vectors[i].w;
+                flattened[base] = v.x;
+                flattened[base + 1] = v.y;
+                flattened[base + 2] = v.z;
+                flattened[base + 3] = v.w;
             }
 
             let input_bytes = bytemuck::cast_slice(&flattened);
@@ -653,7 +643,7 @@ impl RoundtripTest for BasicNumericTest {
                 queue,
                 shader_source: radians_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

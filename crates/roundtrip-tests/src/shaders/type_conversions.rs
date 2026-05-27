@@ -137,9 +137,10 @@ fn f32_conversion_inputs() -> [f32; N] {
         }
     }
     // Fill remaining with interpolated values in safe range
-    for i in cases.len()..N {
-        let t = (i - cases.len()) as f32 / ((N - cases.len()) as f32);
-        values[i] = (t - 0.5) * 1000.0; // range [-500, 500]
+    let remaining_count = N - cases.len();
+    for (j, val) in values.iter_mut().skip(cases.len()).enumerate() {
+        let t = j as f32 / remaining_count as f32;
+        *val = (t - 0.5) * 1000.0;
     }
     values
 }
@@ -173,9 +174,9 @@ fn u32_conversion_inputs() -> [u32; N] {
     }
     // Fill remaining with distributed values in safe range
     let max_safe = (1u32 << 30) - 1;
-    for i in cases.len()..N {
-        let step = max_safe / (N - cases.len()) as u32;
-        values[i] = step.wrapping_mul((i - cases.len()) as u32);
+    let step = max_safe / (N - cases.len()) as u32;
+    for (j, val) in values.iter_mut().skip(cases.len()).enumerate() {
+        *val = step.wrapping_mul(j as u32);
     }
     values
 }
@@ -207,9 +208,10 @@ fn i32_conversion_inputs() -> [i32; N] {
         }
     }
     // Fill remaining with interpolated values
-    for i in cases.len()..N {
-        let t = (i - cases.len()) as f32 / ((N - cases.len()) as f32);
-        values[i] = ((t - 0.5) * 2e9) as i32;
+    let remaining_count = N - cases.len();
+    for (j, val) in values.iter_mut().skip(cases.len()).enumerate() {
+        let t = j as f32 / remaining_count as f32;
+        *val = ((t - 0.5) * 2e9) as i32;
     }
     values
 }
@@ -240,7 +242,7 @@ impl RoundtripTest for TypeConversionsTest {
                 queue,
                 shader_source: convert_f32_to_u32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -278,7 +280,7 @@ impl RoundtripTest for TypeConversionsTest {
                 queue,
                 shader_source: convert_f32_to_i32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -316,7 +318,7 @@ impl RoundtripTest for TypeConversionsTest {
                 queue,
                 shader_source: convert_u32_to_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -326,9 +328,8 @@ impl RoundtripTest for TypeConversionsTest {
             use wgsl_rs::std::*;
             convert_u32_to_f32::INPUT.set({
                 let mut as_f32 = [0.0f32; 64];
-                for i in 0..N {
-                    // Store u32 bits as f32 bits for buffer compatibility
-                    as_f32[i] = f32::from_bits(inputs[i]);
+                for (i, &val) in inputs.iter().enumerate() {
+                    as_f32[i] = f32::from_bits(val);
                 }
                 as_f32
             });
@@ -363,7 +364,7 @@ impl RoundtripTest for TypeConversionsTest {
                 queue,
                 shader_source: convert_i32_to_f32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -373,9 +374,8 @@ impl RoundtripTest for TypeConversionsTest {
             use wgsl_rs::std::*;
             convert_i32_to_f32::INPUT.set({
                 let mut as_f32 = [0.0f32; 64];
-                for i in 0..N {
-                    // Store i32 bits as f32 bits for buffer compatibility
-                    as_f32[i] = f32::from_ne_bytes(inputs[i].to_ne_bytes());
+                for (i, &val) in inputs.iter().enumerate() {
+                    as_f32[i] = f32::from_ne_bytes(val.to_ne_bytes());
                 }
                 as_f32
             });
@@ -410,7 +410,7 @@ impl RoundtripTest for TypeConversionsTest {
                 queue,
                 shader_source: convert_u32_to_i32::linkage::shader_source(),
                 entry_point: "main",
-                bind_group_layout_entries: &harness::STANDARD_LAYOUT_ENTRIES,
+                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -420,9 +420,8 @@ impl RoundtripTest for TypeConversionsTest {
             use wgsl_rs::std::*;
             convert_u32_to_i32::INPUT.set({
                 let mut as_f32 = [0.0f32; 64];
-                for i in 0..N {
-                    // Store u32 bits as f32 bits for buffer compatibility
-                    as_f32[i] = f32::from_bits(inputs[i]);
+                for (i, &val) in inputs.iter().enumerate() {
+                    as_f32[i] = f32::from_bits(val);
                 }
                 as_f32
             });

@@ -74,6 +74,7 @@ fn item_const(c: &parse::ItemConst) -> Result<ir::ItemConst> {
         name: c.ident.to_string(),
         ty: ty_from_parse(&c.ty)?,
         expr: expr_from_parse(&c.expr)?,
+        attrs: c.attrs.clone(),
     })
 }
 
@@ -90,6 +91,7 @@ fn item_uniform(u: &parse::ItemUniform) -> Result<ir::ItemUniform> {
         binding: lit_int_to_u32(&u.binding)?,
         name: u.name.to_string(),
         ty: ty_from_parse(&u.ty)?,
+        attrs: u.attrs.clone(),
     })
 }
 
@@ -103,6 +105,7 @@ fn item_storage(s: &parse::ItemStorage) -> Result<ir::ItemStorage> {
         },
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
+        attrs: s.attrs.clone(),
     })
 }
 
@@ -110,6 +113,7 @@ fn item_workgroup(w: &parse::ItemWorkgroup) -> Result<ir::ItemWorkgroup> {
     Ok(ir::ItemWorkgroup {
         name: w.name.to_string(),
         ty: ty_from_parse(&w.ty)?,
+        attrs: w.attrs.clone(),
     })
 }
 
@@ -119,6 +123,7 @@ fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
         binding: lit_int_to_u32(&s.binding)?,
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
+        attrs: s.attrs.clone(),
     })
 }
 
@@ -128,6 +133,7 @@ fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
         binding: lit_int_to_u32(&t.binding)?,
         name: t.name.to_string(),
         ty: ty_from_parse(&t.ty)?,
+        attrs: t.attrs.clone(),
     })
 }
 
@@ -139,6 +145,7 @@ fn item_fn(f: &parse::ItemFn) -> Result<ir::ItemFn> {
         inputs: f.inputs.iter().map(fn_arg).collect::<Result<Vec<_>>>()?,
         return_type: return_type(&f.return_type)?,
         block: block_from_parse(&f.block)?,
+        attrs: f.attrs.clone(),
     })
 }
 
@@ -152,6 +159,7 @@ fn item_struct(s: &parse::ItemStruct) -> Result<ir::ItemStruct> {
             .iter()
             .map(field_from_parse)
             .collect::<Result<Vec<_>>>()?,
+        attrs: s.attrs.clone(),
     })
 }
 
@@ -169,6 +177,7 @@ fn item_impl(i: &parse::ItemImpl) -> Result<ir::ItemImpl> {
                 })
             })
             .collect::<Result<Vec<_>>>()?,
+        attrs: i.attrs.clone(),
     })
 }
 
@@ -186,6 +195,7 @@ fn item_enum(e: &parse::ItemEnum) -> ir::ItemEnum {
                     .and_then(|(_, lit)| lit.base10_parse::<u32>().ok()),
             })
             .collect(),
+        attrs: e.attrs.clone(),
     }
 }
 
@@ -198,6 +208,7 @@ fn field_from_parse(f: &parse::Field) -> Result<ir::Field> {
             .collect::<Result<Vec<_>>>()?,
         name: f.ident.to_string(),
         ty: ty_from_parse(&f.ty)?,
+        attrs: f.attrs.clone(),
     })
 }
 
@@ -210,6 +221,7 @@ fn fn_arg(a: &parse::FnArg) -> Result<ir::FnArg> {
             .collect::<Result<Vec<_>>>()?,
         name: a.ident.to_string(),
         ty: ty_from_parse(&a.ty)?,
+        attrs: a.attrs.clone(),
     })
 }
 

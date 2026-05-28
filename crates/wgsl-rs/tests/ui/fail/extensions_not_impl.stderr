@@ -1,0 +1,11 @@
+error[E0277]: the trait bound `NotAnExtension: WgslExtension` is not satisfied
+ --> tests/ui/fail/extensions_not_impl.rs:5:44
+  |
+5 | #[wgsl(crate_path = wgsl_rs, extensions = [super::NotAnExtension])]
+  |                                            ^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `WgslExtension` is not implemented for `NotAnExtension`
+ --> tests/ui/fail/extensions_not_impl.rs:3:1
+  |
+3 | pub struct NotAnExtension;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^

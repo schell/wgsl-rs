@@ -101,10 +101,33 @@ struct Attrs {
     /// For non-template modules, this has no effect (they are always
     /// validated via `WGSL_MODULE.validate()`).
     validate_instantiations: Vec<Vec<syn::Type>>,
+
+    /// Extension types that implement `WgslExtension`.
+    ///
+    /// Each path must refer to a type that implements the
+    /// `wgsl_rs::WgslExtension` trait. The `modify_ir` method of each
+    /// extension will be called on the IR module after construction
+    /// but before type instantiation.
+    ///
+    /// Syntax: `extensions = [path1::Ext1, path2::Ext2]`
+    extensions: Vec<syn::Path>,
 }
 
 struct InstantiationTypes {
     types: syn::punctuated::Punctuated<syn::Type, syn::Token![,]>,
+}
+
+struct ExtensionsList {
+    paths: syn::punctuated::Punctuated<syn::Path, syn::Token![,]>,
+}
+
+impl syn::parse::Parse for ExtensionsList {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let content;
+        syn::bracketed!(content in input);
+        let paths = content.parse_terminated(syn::Path::parse, syn::Token![,])?;
+        Ok(Self { paths })
+    }
 }
 
 impl syn::parse::Parse for InstantiationTypes {
@@ -141,12 +164,18 @@ impl syn::parse::Parse for Attrs {
                         .validate_instantiations
                         .push(types.types.into_iter().collect());
                 }
+                "extensions" => {
+                    let _eq: syn::Token![=] = input.parse()?;
+                    let ext: ExtensionsList = input.parse()?;
+                    attrs.extensions.extend(ext.paths);
+                }
                 other => {
                     return Err(syn::Error::new(
                         ident.span(),
                         format!(
                             "Unknown attribute '{other}', expected 'crate_path', \
-                             'skip_validation', or 'validate_with_instantiation_types'"
+                             'skip_validation', 'validate_with_instantiation_types', or \
+                             'extensions'"
                         ),
                     ));
                 }
@@ -407,6 +436,7 @@ fn gen_wgsl_module(
     wgsl_module: &parse::ItemMod,
     mono_result: &monomorphize::MonoResult,
     module_type_params: &[String],
+    extensions: &[syn::Path],
 ) -> Result<proc_macro2::TokenStream, WgslGenError> {
     fn is_wgsl_std_import(crate_path: &syn::Path, path: &syn::Path) -> bool {
         let wgsl_std = {
@@ -438,10 +468,29 @@ fn gen_wgsl_module(
             .iter()
             .map(|i| ir_emit::emit_item(&ir_p, i))
             .collect();
-        quote! {
+        let module_attrs = ir_emit::emit_attrs(&ir_p, &wgsl_module.attrs);
+        let module_struct = quote! {
             #ir_p::Module {
                 name: ::std::string::String::from(#module_name_lit),
                 items: ::std::vec![#(#item_exprs),*],
+                #module_attrs,
+            }
+        };
+        if extensions.is_empty() {
+            module_struct
+        } else {
+            let extension_calls: Vec<proc_macro2::TokenStream> = extensions
+                .iter()
+                .map(|ext_path| {
+                    quote! {
+                        <#ext_path as #crate_path::WgslExtension>::modify_ir(&mut m);
+                    }
+                })
+                .collect();
+            quote! {
+                let mut m = #module_struct;
+                #(#extension_calls)*
+                m
             }
         }
     };
@@ -681,6 +730,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         &wgsl_module,
         &mono_result,
         &module_type_params,
+        &attrs.extensions,
     )?;
 
     // Generate validation tests.
@@ -833,6 +883,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// | `#[wgsl(skip_validation)]` | Skip the auto-generated `__validate_wgsl` test. |
 /// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
 /// | `#[wgsl(validate_with_instantiation_types(T1, T2, ...))]` | For template (generic) modules: validate WGSL output after instantiating with the given concrete types. Can be repeated. |
+/// | `#[wgsl(extensions = [path1::Ext1, path2::Ext2])]` | Call `Ext1::modify_ir(&mut module)` etc. on the IR after construction. Each path must implement `wgsl_rs::WgslExtension`. |
 ///
 /// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs,
 /// skip_validation)]`.

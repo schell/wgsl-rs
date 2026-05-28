@@ -3,7 +3,10 @@ use ::std::collections::{HashMap, HashSet};
 
 pub use wgsl_rs_macros::{wgsl, wgsl_allow, wgsl_ignore};
 
+pub mod extension;
 pub mod linkage;
+
+pub use extension::WgslExtension;
 
 /// Re-export of the IR crate so the proc-macro and consuming crates can
 /// reference IR types via `wgsl_rs::ir::...` without needing to depend on
@@ -558,6 +561,7 @@ mod test {
             ir::Module {
                 name: "stub".to_string(),
                 items: vec![],
+                attrs: vec![],
             }
         }
         fn shared_template_items() -> Vec<ir::Item> {
@@ -571,6 +575,7 @@ mod test {
                     ty: ir::Type::TypeParam {
                         name: "T".to_string(),
                     },
+                    attrs: vec![],
                 }],
                 return_type: ir::ReturnType::Type {
                     annotation: ir::ReturnTypeAnnotation::None,
@@ -581,6 +586,7 @@ mod test {
                 block: ir::Block {
                     stmts: vec![ir::Stmt::Return(Some(ir::Expr::Ident("x".to_string())))],
                 },
+                attrs: vec![],
             })]
         }
         fn f32_args() -> Vec<ir::Type> {

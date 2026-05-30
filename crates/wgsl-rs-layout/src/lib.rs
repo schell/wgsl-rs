@@ -48,6 +48,19 @@ mod types;
 
 pub use field::FieldLayout;
 
+/// Error returned by [`WgslLayout::write_layout_bytes`] when the destination
+/// buffer is too small.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// The buffer is too small for the type's size.
+    BufferTooSmall {
+        /// The number of bytes needed.
+        needed: usize,
+        /// The number of bytes available.
+        actual: usize,
+    },
+}
+
 /// A type with a known WGSL memory layout.
 ///
 /// Each type that can appear as a field in a host-shareable WGSL struct
@@ -63,6 +76,14 @@ pub trait WgslLayout {
     /// The alignment in bytes of this type per WGSL layout rules.
     /// Must be a power of two.
     const ALIGN: usize;
+
+    /// Write this value's bytes into `buf` at offset 0, using WGSL layout
+    /// rules (little-endian scalars, alignment-padded fields).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::BufferTooSmall`] if `buf.len() < Self::SIZE`.
+    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error>;
 }
 
 /// A struct whose field layout has been computed per WGSL rules.
@@ -74,6 +95,17 @@ pub trait Layout: WgslLayout {
     const FIELDS: &'static [FieldLayout];
 }
 
+/// Write `t`'s bytes into `bytes` at offset 0 per WGSL layout rules.
+///
+/// Convenience wrapper around [`WgslLayout::write_layout_bytes`].
+///
+/// # Errors
+///
+/// Returns [`Error::BufferTooSmall`] if `bytes.len() < T::SIZE`.
+pub fn write_layout_bytes<T: WgslLayout>(bytes: &mut [u8], t: &T) -> Result<(), Error> {
+    t.write_layout_bytes(bytes)
+}
+
 /// Round `val` up to the next multiple of `align`.
 ///
 /// `align` must be a power of two.
@@ -82,9 +114,19 @@ pub const fn round_up(val: usize, align: usize) -> usize {
     (val + (align - 1)) & !(align - 1)
 }
 
+/// Zero the first `len` bytes of `buf`.
+///
+/// Internal helper used by `#[derive(Layout)]` to zero padding bytes before
+/// writing field data.
+#[doc(hidden)]
+pub fn zero_buffer(buf: &mut [u8], len: usize) {
+    buf[..len].fill(0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::write_layout_bytes;
 
     // ===== Scalar tests =====
 
@@ -424,5 +466,171 @@ mod tests {
         assert_eq!(<MixedAlign>::FIELDS[1].offset, 16);
         assert_eq!(<MixedAlign>::FIELDS[1].pad_before, 12);
         assert_eq!(<MixedAlign>::FIELDS[2].pad_before, 0);
+    }
+
+    // ===== write_layout_bytes tests =====
+
+    fn read_f32_le(buf: &[u8]) -> f32 {
+        f32::from_le_bytes(buf[..4].try_into().unwrap())
+    }
+
+    fn read_u32_le(buf: &[u8]) -> u32 {
+        u32::from_le_bytes(buf[..4].try_into().unwrap())
+    }
+
+    #[test]
+    fn write_scalars() {
+        let mut buf = [0u8; 4];
+        let v = 1.25f32;
+        write_layout_bytes(&mut buf, &v).unwrap();
+        assert_eq!(read_f32_le(&buf), 1.25);
+
+        let v = -42i32;
+        write_layout_bytes(&mut buf, &v).unwrap();
+        assert_eq!(i32::from_le_bytes(buf[..4].try_into().unwrap()), -42);
+
+        let v = true;
+        write_layout_bytes(&mut buf, &v).unwrap();
+        assert_eq!(read_u32_le(&buf), 1);
+
+        let v = false;
+        write_layout_bytes(&mut buf, &v).unwrap();
+        assert_eq!(read_u32_le(&buf), 0);
+    }
+
+    #[test]
+    fn write_buffer_too_small() {
+        let mut buf = [0u8; 3];
+        let err = write_layout_bytes(&mut buf, &42.0f32).unwrap_err();
+        assert_eq!(
+            err,
+            Error::BufferTooSmall {
+                needed: 4,
+                actual: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn write_vec3f() {
+        let v = wgsl_rs::std::vec3f(1.0, 2.0, 3.0);
+        let mut buf = vec![0u8; 12];
+        write_layout_bytes(&mut buf, &v).unwrap();
+        assert_eq!(read_f32_le(&buf[0..4]), 1.0);
+        assert_eq!(read_f32_le(&buf[4..8]), 2.0);
+        assert_eq!(read_f32_le(&buf[8..12]), 3.0);
+    }
+
+    #[test]
+    fn write_single_scalar_struct() {
+        let s = SingleScalar { value: 3.5 };
+        let mut buf = vec![0u8; <SingleScalar>::SIZE];
+        write_layout_bytes(&mut buf, &s).unwrap();
+        assert_eq!(read_f32_le(&buf), 3.5);
+    }
+
+    #[test]
+    fn write_tight_layout_padding() {
+        let s = TightLayout {
+            velocity: wgsl_rs::std::vec3f(1.0, 0.0, -1.0),
+            acceleration: wgsl_rs::std::vec3f(0.0, -9.8, 0.0),
+            frame_count: 42,
+        };
+        // SIZE = 32, with padding at bytes 12-15 and 28-31
+        let mut buf = vec![0u8; 32];
+        write_layout_bytes(&mut buf, &s).unwrap();
+
+        // velocity at offset 0-11
+        assert_eq!(read_f32_le(&buf[0..4]), 1.0);
+        assert_eq!(read_f32_le(&buf[4..8]), 0.0);
+        assert_eq!(read_f32_le(&buf[8..12]), -1.0);
+        // padding at 12-15 should be zero
+        assert_eq!(&buf[12..16], &[0u8; 4]);
+        // acceleration at offset 16-27
+        assert_eq!(read_f32_le(&buf[16..20]), 0.0);
+        assert_eq!(read_f32_le(&buf[20..24]), -9.8);
+        assert_eq!(read_f32_le(&buf[24..28]), 0.0);
+        // frame_count at offset 28-31 (offset 28 is NOT padding — it's field data)
+        assert_eq!(read_u32_le(&buf[28..32]), 42);
+    }
+
+    #[test]
+    fn write_nested_struct() {
+        let info = Vec3Struct {
+            velocity: wgsl_rs::std::vec3f(1.0, 2.0, 3.0),
+        };
+        let s = NestedPadded {
+            orientation: wgsl_rs::std::vec3f(0.0, 1.0, 0.0),
+            size: 2.5,
+            direction: [wgsl_rs::std::vec3f(4.0, 5.0, 6.0)],
+            scale: 0.1,
+            info,
+            friction: 0.05,
+        };
+        let mut buf = vec![0u8; <NestedPadded>::SIZE];
+        write_layout_bytes(&mut buf, &s).unwrap();
+
+        // orientation at 0-11
+        assert_eq!(read_f32_le(&buf[0..4]), 0.0);
+        assert_eq!(read_f32_le(&buf[4..8]), 1.0);
+        assert_eq!(read_f32_le(&buf[8..12]), 0.0);
+        // size at 12-15
+        assert_eq!(read_f32_le(&buf[12..16]), 2.5);
+        // direction at 16-31
+        assert_eq!(read_f32_le(&buf[16..20]), 4.0);
+        assert_eq!(read_f32_le(&buf[20..24]), 5.0);
+        assert_eq!(read_f32_le(&buf[24..28]), 6.0);
+        // padding at 28-31 zero
+        assert_eq!(&buf[28..32], &[0u8; 4]);
+        // scale at 32-35
+        assert_eq!(read_f32_le(&buf[32..36]), 0.1);
+        // padding at 36-47 zero (12 bytes before info)
+        assert_eq!(&buf[36..48], &[0u8; 12]);
+        // info at 48-63
+        assert_eq!(read_f32_le(&buf[48..52]), 1.0);
+        assert_eq!(read_f32_le(&buf[52..56]), 2.0);
+        assert_eq!(read_f32_le(&buf[56..60]), 3.0);
+        // padding at 60-63 zero
+        assert_eq!(&buf[60..64], &[0u8; 4]);
+        // friction at 64-67
+        assert_eq!(read_f32_le(&buf[64..68]), 0.05);
+    }
+
+    #[test]
+    fn write_generic_struct() {
+        let p = GenericPair::<f32> { a: 1.0, b: 2.0 };
+        let mut buf = vec![0u8; 8];
+        write_layout_bytes(&mut buf, &p).unwrap();
+        assert_eq!(read_f32_le(&buf[0..4]), 1.0);
+        assert_eq!(read_f32_le(&buf[4..8]), 2.0);
+    }
+
+    #[test]
+    fn write_zero_size_empty_struct() {
+        let s = Empty {};
+        let mut buf = [];
+        write_layout_bytes(&mut buf, &s).unwrap();
+    }
+
+    #[test]
+    fn write_mixed_align_padding() {
+        let s = MixedAlign {
+            a: 1.0,
+            b: wgsl_rs::std::Mat4x4f::default(),
+            c: 2.0,
+        };
+        let mut buf = vec![0xAAu8; 96]; // fill with non-zero to verify zeroing
+        write_layout_bytes(&mut buf, &s).unwrap();
+
+        // a at 0-3
+        assert_eq!(read_f32_le(&buf[0..4]), 1.0);
+        // padding at 4-15 should be zero
+        assert_eq!(&buf[4..16], &[0u8; 12]);
+        // b at 16-79 (mat4x4f)
+        assert_eq!(read_f32_le(&buf[16..20]), 0.0); // default Mat4x4f is identity
+        // c at 80-83
+        assert_eq!(read_f32_le(&buf[80..84]), 2.0);
+        // trailing padding at 84-95 zero
+        assert_eq!(&buf[84..96], &[0u8; 12]);
     }
 }

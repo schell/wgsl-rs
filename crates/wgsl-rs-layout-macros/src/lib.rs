@@ -55,6 +55,10 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             impl #impl_generics ::wgsl_rs_layout::WgslLayout for #struct_name #ty_generics {
                 const SIZE: usize = 0;
                 const ALIGN: usize = 1;
+
+                fn write_layout_bytes(&self, _buf: &mut [u8]) -> ::std::result::Result<(), ::wgsl_rs_layout::Error> {
+                    ::std::result::Result::Ok(())
+                }
             }
         };
 
@@ -149,11 +153,13 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
     // Build FIELDS array entries
     let mut field_entry_tokens = Vec::new();
+    let mut field_write_tokens = Vec::new();
     for (i, name) in field_names.iter().enumerate() {
         let offset_name =
             syn::Ident::new(&format!("__OFFSET_{}", i), proc_macro2::Span::call_site());
         let size_name = syn::Ident::new(&format!("__SIZE_{}", i), proc_macro2::Span::call_site());
         let align_name = syn::Ident::new(&format!("__ALIGN_{}", i), proc_macro2::Span::call_site());
+        let field_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
 
         let pad_before = if i == 0 {
             quote! { 0usize }
@@ -176,6 +182,13 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 pad_before: #pad_before,
             }
         });
+
+        field_write_tokens.push(quote! {
+            ::wgsl_rs_layout::WgslLayout::write_layout_bytes(
+                &self.#field_ident,
+                &mut buf[Self::#offset_name..],
+            )?;
+        });
     }
 
     // Inherent impl to hold the helper consts (accessible from trait impls via
@@ -190,6 +203,18 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         impl #impl_generics ::wgsl_rs_layout::WgslLayout for #struct_name #ty_generics #where_clause {
             const SIZE: usize = #size_expr;
             const ALIGN: usize = #self_align;
+
+            fn write_layout_bytes(&self, buf: &mut [u8]) -> ::std::result::Result<(), ::wgsl_rs_layout::Error> {
+                if buf.len() < Self::SIZE {
+                    return ::std::result::Result::Err(::wgsl_rs_layout::Error::BufferTooSmall {
+                        needed: Self::SIZE,
+                        actual: buf.len(),
+                    });
+                }
+                ::wgsl_rs_layout::zero_buffer(buf, Self::SIZE);
+                #(#field_write_tokens)*
+                ::std::result::Result::Ok(())
+            }
         }
     };
 

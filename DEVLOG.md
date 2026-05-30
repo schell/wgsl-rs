@@ -238,3 +238,57 @@ formula. The CPU path writes the same data directly via `TextureDepth2D::set()`.
 Both paths compute identical pixel values — only the delivery mechanism differs.
 This pattern is reusable for any future cross-platform test that needs
 pre-populated depth data.
+
+### 2026-05-29: `wgsl-rs-layout` — a standalone extension crate
+
+`wgsl-rs` needs to inform tools of how to marshal data to/from the GPU. The
+WGSL spec §14.4.1 defines strict alignment, size, and offset rules for all
+types, and getting these wrong silently produces bad data. A `#[derive(Layout)]`
+macro computes these values at compile time.
+
+The extension lives in two new crates:
+- `wgsl-rs-layout` (regular lib): `WgslLayout` and `Layout` traits, `FieldLayout`
+  struct, and `WgslLayout` impls for all WGSL scalar/vector/matrix/array types.
+- `wgsl-rs-layout-macros` (proc-macro): `#[derive(Layout)]` for structs.
+
+This is the first extension that dogfoods `wgsl-rs` as a dependency — it depends
+on `wgsl-rs` for concrete type definitions (`Vec3f`, `Mat4x4f`, `Atomic<u32>`,
+etc.) but is otherwise self-contained. It demonstrates the extension pattern
+where downstream crates consume `wgsl-rs` types directly.
+
+**How it works:**
+1. The derive macro generates an inherent `impl` with private associated constants
+   (`__OFFSET_0`, `__SIZE_0`, `__ALIGN_0`, ...) for each field, computed via
+   `roundUp` per the spec's recursive definition. These are accessible from both
+   the `WgslLayout` and `Layout` trait impls through `Self::`.
+2. `WgslLayout` is implemented for all built-in types (scalars, vectors, matrices,
+   arrays). Each type is a simple const mapping per the spec table.
+3. `Layout` extends `WgslLayout` with `FIELDS: &'static [FieldLayout]` for
+   per-field offset/size/align/pad_before info.
+4. Generic structs are supported — type parameters receive a `T: WgslLayout` bound.
+
+**`FieldLayout::pad_before`:**
+Inter-field padding is the gap between successive fields caused by alignment
+requirements. `pad_before` on field `i` is the dead bytes between the end of
+field `i-1` and the start of field `i`. It is always 0 for the first field.
+Tools *must* write zero bytes into these gaps when marshalling data. The
+`FieldLayout` struct documents this prominently with concrete examples.
+
+**Runtime arrays:** `RuntimeArray<T>::SIZE` is 0 (runtime-dependent).
+
+**Empty structs:** `SIZE = 0, ALIGN = 1, FIELDS = &[]` (identity element,
+consistent with common practice; WGSL spec does not define this case).
+
+**What this is NOT:** The derive only computes WGSL memory layout — it does not
+attempt to align Rust CPU-side layout to match. `#[repr(C)]` on a struct with a
+`Vec3f` field gives Rust align 4, but WGSL `vec3<f32>` has align 16. The crate
+stays focused on answering "where do bytes go in the GPU buffer?"
+
+### 2026-05-29: Inherent consts over deeply nested inline expressions
+
+The initial inline expression approach (`roundUp(roundUp(0 + s0,a1) + s1,a2)`)
+broke on structs with 3+ fields because Rust's const evaluator hits complexity
+limits. The fix uses inherent associated constants (`Self::__OFFSET_0`,
+`Self::__SIZE_0`, etc.) to break the recursive computation into individually
+evaluable steps. These consts live on the struct (not any trait impl) so they're
+visible from both the `WgslLayout` and `Layout` trait impls.

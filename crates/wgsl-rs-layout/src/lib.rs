@@ -70,7 +70,7 @@ pub enum Error {
 /// Built-in scalar, vector, matrix, array, and atomic types have
 /// predefined impls. User-defined structs receive impls via
 /// `#[derive(Layout)]`.
-pub trait WgslLayout {
+pub trait WgslLayout: Sized {
     /// The size in bytes of this type per WGSL layout rules.
     const SIZE: usize;
     /// The alignment in bytes of this type per WGSL layout rules.
@@ -84,6 +84,14 @@ pub trait WgslLayout {
     ///
     /// Returns [`Error::BufferTooSmall`] if `buf.len() < Self::SIZE`.
     fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error>;
+
+    /// Read a value of this type from `buf` at offset 0, using WGSL layout
+    /// rules (little-endian scalars, alignment-padded fields).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::BufferTooSmall`] if `buf.len() < Self::SIZE`.
+    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error>;
 }
 
 /// A struct whose field layout has been computed per WGSL rules.
@@ -106,6 +114,17 @@ pub fn write_layout_bytes<T: WgslLayout>(bytes: &mut [u8], t: &T) -> Result<(), 
     t.write_layout_bytes(bytes)
 }
 
+/// Read a value of type `T` from `bytes` at offset 0 per WGSL layout rules.
+///
+/// Convenience wrapper around [`WgslLayout::read_layout_bytes`].
+///
+/// # Errors
+///
+/// Returns [`Error::BufferTooSmall`] if `bytes.len() < T::SIZE`.
+pub fn read_layout_bytes<T: WgslLayout>(bytes: &[u8]) -> Result<T, Error> {
+    T::read_layout_bytes(bytes)
+}
+
 /// Round `val` up to the next multiple of `align`.
 ///
 /// `align` must be a power of two.
@@ -126,7 +145,7 @@ pub fn zero_buffer(buf: &mut [u8], len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::write_layout_bytes;
+    use crate::{read_layout_bytes, write_layout_bytes};
 
     // ===== Scalar tests =====
 
@@ -249,7 +268,7 @@ mod tests {
         assert_eq!(<SingleScalar>::FIELDS[0].pad_before, 0);
     }
 
-    #[derive(Layout)]
+    #[derive(Layout, Debug, PartialEq)]
     struct TightLayout {
         velocity: wgsl_rs::std::Vec3f,
         acceleration: wgsl_rs::std::Vec3f,
@@ -336,8 +355,8 @@ mod tests {
         assert_eq!(<ComplexEx4>::FIELDS[4].pad_before, 0);
     }
 
-    #[derive(Layout)]
-    struct NestedPadded {
+    #[derive(Layout, Debug, PartialEq)]
+    pub struct NestedPadded {
         orientation: wgsl_rs::std::Vec3f,
         size: f32,
         direction: [wgsl_rs::std::Vec3f; 1],
@@ -346,7 +365,7 @@ mod tests {
         friction: f32,
     }
 
-    #[derive(Layout)]
+    #[derive(Layout, Debug, PartialEq)]
     struct Vec3Struct {
         velocity: wgsl_rs::std::Vec3f,
     }
@@ -407,7 +426,7 @@ mod tests {
     }
 
     #[derive(Layout)]
-    struct GenericPair<T> {
+    struct GenericPair<T: PartialEq> {
         a: T,
         b: T,
     }
@@ -632,5 +651,121 @@ mod tests {
         assert_eq!(read_f32_le(&buf[80..84]), 2.0);
         // trailing padding at 84-95 zero
         assert_eq!(&buf[84..96], &[0u8; 12]);
+    }
+
+    // ===== read_layout_bytes tests =====
+
+    #[test]
+    fn read_scalars() {
+        let buf = 1.25f32.to_le_bytes();
+        let v: f32 = read_layout_bytes(&buf).unwrap();
+        assert_eq!(v, 1.25);
+
+        let buf = (-42i32).to_le_bytes();
+        let v: i32 = read_layout_bytes(&buf).unwrap();
+        assert_eq!(v, -42);
+
+        let buf = 42u32.to_le_bytes();
+        let v: u32 = read_layout_bytes(&buf).unwrap();
+        assert_eq!(v, 42);
+
+        let buf = 0u32.to_le_bytes();
+        let v: bool = read_layout_bytes(&buf).unwrap();
+        assert!(!v);
+
+        let buf = 1u32.to_le_bytes();
+        let v: bool = read_layout_bytes(&buf).unwrap();
+        assert!(v);
+    }
+
+    #[test]
+    fn read_buffer_too_small() {
+        let buf = [0u8; 3];
+        let err = read_layout_bytes::<f32>(&buf).unwrap_err();
+        assert_eq!(
+            err,
+            Error::BufferTooSmall {
+                needed: 4,
+                actual: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn read_vec3f() {
+        let original = wgsl_rs::std::vec3f(1.0, 2.0, 3.0);
+        let mut buf = vec![0u8; 12];
+        write_layout_bytes(&mut buf, &original).unwrap();
+        let restored: wgsl_rs::std::Vec3f = read_layout_bytes(&buf).unwrap();
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn read_write_roundtrip_struct() {
+        let s = TightLayout {
+            velocity: wgsl_rs::std::vec3f(1.0, 0.0, -1.0),
+            acceleration: wgsl_rs::std::vec3f(0.0, -9.8, 0.0),
+            frame_count: 42,
+        };
+        let mut buf = vec![0u8; <TightLayout>::SIZE];
+        write_layout_bytes(&mut buf, &s).unwrap();
+        let restored: TightLayout = read_layout_bytes(&buf).unwrap();
+        assert_eq!(restored, s);
+    }
+
+    #[test]
+    fn read_write_roundtrip_nested() {
+        let info = Vec3Struct {
+            velocity: wgsl_rs::std::vec3f(1.0, 2.0, 3.0),
+        };
+        let s = NestedPadded {
+            orientation: wgsl_rs::std::vec3f(0.0, 1.0, 0.0),
+            size: 2.5,
+            direction: [wgsl_rs::std::vec3f(4.0, 5.0, 6.0)],
+            scale: 0.1,
+            info,
+            friction: 0.05,
+        };
+        let mut buf = vec![0u8; <NestedPadded>::SIZE];
+        write_layout_bytes(&mut buf, &s).unwrap();
+        let restored: NestedPadded = read_layout_bytes(&buf).unwrap();
+        assert_eq!(restored, s);
+    }
+
+    #[test]
+    fn read_write_roundtrip_generic() {
+        let p = GenericPair::<f32> { a: 1.0, b: 2.0 };
+        let mut buf = vec![0u8; <GenericPair<f32>>::SIZE];
+        write_layout_bytes(&mut buf, &p).unwrap();
+        let restored: GenericPair<f32> = read_layout_bytes(&buf).unwrap();
+        assert_eq!(restored.a, p.a);
+        assert_eq!(restored.b, p.b);
+    }
+
+    #[test]
+    fn read_zero_size_empty_struct() {
+        let s: Empty = read_layout_bytes(&[]).unwrap();
+        // An empty struct has no fields to compare, so we just verify it returns Ok.
+        let _ = s;
+    }
+
+    #[test]
+    fn read_write_mixed_align_roundtrip() {
+        let s = MixedAlign {
+            a: 1.0,
+            b: wgsl_rs::std::Mat4x4f::default(),
+            c: 2.0,
+        };
+        let mut buf = vec![0u8; <MixedAlign>::SIZE];
+        write_layout_bytes(&mut buf, &s).unwrap();
+        let restored: MixedAlign = read_layout_bytes(&buf).unwrap();
+        assert_eq!(restored.a, s.a);
+        // Mat4x4f only implements Default (not Debug/PartialEq easily), so check
+        // columns
+        assert_eq!(restored.b[0u32], s.b[0u32]);
+        assert_eq!(restored.b[1u32], s.b[1u32]);
+        assert_eq!(restored.b[2u32], s.b[2u32]);
+        assert_eq!(restored.b[3u32], s.b[3u32]);
+        assert_eq!(restored.c, s.c);
     }
 }

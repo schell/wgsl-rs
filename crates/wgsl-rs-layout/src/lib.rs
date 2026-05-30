@@ -48,7 +48,7 @@ mod types;
 
 pub use field::FieldLayout;
 
-/// Error returned by [`WgslLayout::write_layout_bytes`] when the destination
+/// Error returned by [`WgslLayout::layout_write_bytes`] when the destination
 /// buffer is too small.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -83,7 +83,7 @@ pub trait WgslLayout: Sized {
     /// # Errors
     ///
     /// Returns [`Error::BufferTooSmall`] if `buf.len() < Self::SIZE`.
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error>;
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error>;
 
     /// Read a value of this type from `buf` at offset 0, using WGSL layout
     /// rules (little-endian scalars, alignment-padded fields).
@@ -91,7 +91,7 @@ pub trait WgslLayout: Sized {
     /// # Errors
     ///
     /// Returns [`Error::BufferTooSmall`] if `buf.len() < Self::SIZE`.
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error>;
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error>;
 }
 
 /// A struct whose field layout has been computed per WGSL rules.
@@ -105,24 +105,24 @@ pub trait Layout: WgslLayout {
 
 /// Write `t`'s bytes into `bytes` at offset 0 per WGSL layout rules.
 ///
-/// Convenience wrapper around [`WgslLayout::write_layout_bytes`].
+/// Convenience wrapper around [`WgslLayout::layout_write_bytes`].
 ///
 /// # Errors
 ///
 /// Returns [`Error::BufferTooSmall`] if `bytes.len() < T::SIZE`.
-pub fn write_layout_bytes<T: WgslLayout>(bytes: &mut [u8], t: &T) -> Result<(), Error> {
-    t.write_layout_bytes(bytes)
+pub fn layout_write_bytes<T: WgslLayout>(bytes: &mut [u8], t: &T) -> Result<(), Error> {
+    t.layout_write_bytes(bytes)
 }
 
 /// Read a value of type `T` from `bytes` at offset 0 per WGSL layout rules.
 ///
-/// Convenience wrapper around [`WgslLayout::read_layout_bytes`].
+/// Convenience wrapper around [`WgslLayout::layout_read_bytes`].
 ///
 /// # Errors
 ///
 /// Returns [`Error::BufferTooSmall`] if `bytes.len() < T::SIZE`.
-pub fn read_layout_bytes<T: WgslLayout>(bytes: &[u8]) -> Result<T, Error> {
-    T::read_layout_bytes(bytes)
+pub fn layout_read_bytes<T: WgslLayout>(bytes: &[u8]) -> Result<T, Error> {
+    T::layout_read_bytes(bytes)
 }
 
 /// Round `val` up to the next multiple of `align`.
@@ -145,7 +145,7 @@ pub fn zero_buffer(buf: &mut [u8], len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{read_layout_bytes, write_layout_bytes};
+    use crate::{layout_read_bytes, layout_write_bytes};
 
     // ===== Scalar tests =====
 
@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(<MixedAlign>::FIELDS[2].pad_before, 0);
     }
 
-    // ===== write_layout_bytes tests =====
+    // ===== layout_write_bytes tests =====
 
     fn read_f32_le(buf: &[u8]) -> f32 {
         f32::from_le_bytes(buf[..4].try_into().unwrap())
@@ -501,26 +501,26 @@ mod tests {
     fn write_scalars() {
         let mut buf = [0u8; 4];
         let v = 1.25f32;
-        write_layout_bytes(&mut buf, &v).unwrap();
+        layout_write_bytes(&mut buf, &v).unwrap();
         assert_eq!(read_f32_le(&buf), 1.25);
 
         let v = -42i32;
-        write_layout_bytes(&mut buf, &v).unwrap();
+        layout_write_bytes(&mut buf, &v).unwrap();
         assert_eq!(i32::from_le_bytes(buf[..4].try_into().unwrap()), -42);
 
         let v = true;
-        write_layout_bytes(&mut buf, &v).unwrap();
+        layout_write_bytes(&mut buf, &v).unwrap();
         assert_eq!(read_u32_le(&buf), 1);
 
         let v = false;
-        write_layout_bytes(&mut buf, &v).unwrap();
+        layout_write_bytes(&mut buf, &v).unwrap();
         assert_eq!(read_u32_le(&buf), 0);
     }
 
     #[test]
     fn write_buffer_too_small() {
         let mut buf = [0u8; 3];
-        let err = write_layout_bytes(&mut buf, &42.0f32).unwrap_err();
+        let err = layout_write_bytes(&mut buf, &42.0f32).unwrap_err();
         assert_eq!(
             err,
             Error::BufferTooSmall {
@@ -534,7 +534,7 @@ mod tests {
     fn write_vec3f() {
         let v = wgsl_rs::std::vec3f(1.0, 2.0, 3.0);
         let mut buf = vec![0u8; 12];
-        write_layout_bytes(&mut buf, &v).unwrap();
+        layout_write_bytes(&mut buf, &v).unwrap();
         assert_eq!(read_f32_le(&buf[0..4]), 1.0);
         assert_eq!(read_f32_le(&buf[4..8]), 2.0);
         assert_eq!(read_f32_le(&buf[8..12]), 3.0);
@@ -544,7 +544,7 @@ mod tests {
     fn write_single_scalar_struct() {
         let s = SingleScalar { value: 3.5 };
         let mut buf = vec![0u8; <SingleScalar>::SIZE];
-        write_layout_bytes(&mut buf, &s).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
         assert_eq!(read_f32_le(&buf), 3.5);
     }
 
@@ -557,7 +557,7 @@ mod tests {
         };
         // SIZE = 32, with padding at bytes 12-15 and 28-31
         let mut buf = vec![0u8; 32];
-        write_layout_bytes(&mut buf, &s).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
 
         // velocity at offset 0-11
         assert_eq!(read_f32_le(&buf[0..4]), 1.0);
@@ -587,7 +587,7 @@ mod tests {
             friction: 0.05,
         };
         let mut buf = vec![0u8; <NestedPadded>::SIZE];
-        write_layout_bytes(&mut buf, &s).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
 
         // orientation at 0-11
         assert_eq!(read_f32_le(&buf[0..4]), 0.0);
@@ -619,7 +619,7 @@ mod tests {
     fn write_generic_struct() {
         let p = GenericPair::<f32> { a: 1.0, b: 2.0 };
         let mut buf = vec![0u8; 8];
-        write_layout_bytes(&mut buf, &p).unwrap();
+        layout_write_bytes(&mut buf, &p).unwrap();
         assert_eq!(read_f32_le(&buf[0..4]), 1.0);
         assert_eq!(read_f32_le(&buf[4..8]), 2.0);
     }
@@ -628,7 +628,7 @@ mod tests {
     fn write_zero_size_empty_struct() {
         let s = Empty {};
         let mut buf = [];
-        write_layout_bytes(&mut buf, &s).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
     }
 
     #[test]
@@ -639,7 +639,7 @@ mod tests {
             c: 2.0,
         };
         let mut buf = vec![0xAAu8; 96]; // fill with non-zero to verify zeroing
-        write_layout_bytes(&mut buf, &s).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
 
         // a at 0-3
         assert_eq!(read_f32_le(&buf[0..4]), 1.0);
@@ -653,35 +653,35 @@ mod tests {
         assert_eq!(&buf[84..96], &[0u8; 12]);
     }
 
-    // ===== read_layout_bytes tests =====
+    // ===== layout_read_bytes tests =====
 
     #[test]
     fn read_scalars() {
         let buf = 1.25f32.to_le_bytes();
-        let v: f32 = read_layout_bytes(&buf).unwrap();
+        let v: f32 = layout_read_bytes(&buf).unwrap();
         assert_eq!(v, 1.25);
 
         let buf = (-42i32).to_le_bytes();
-        let v: i32 = read_layout_bytes(&buf).unwrap();
+        let v: i32 = layout_read_bytes(&buf).unwrap();
         assert_eq!(v, -42);
 
         let buf = 42u32.to_le_bytes();
-        let v: u32 = read_layout_bytes(&buf).unwrap();
+        let v: u32 = layout_read_bytes(&buf).unwrap();
         assert_eq!(v, 42);
 
         let buf = 0u32.to_le_bytes();
-        let v: bool = read_layout_bytes(&buf).unwrap();
+        let v: bool = layout_read_bytes(&buf).unwrap();
         assert!(!v);
 
         let buf = 1u32.to_le_bytes();
-        let v: bool = read_layout_bytes(&buf).unwrap();
+        let v: bool = layout_read_bytes(&buf).unwrap();
         assert!(v);
     }
 
     #[test]
     fn read_buffer_too_small() {
         let buf = [0u8; 3];
-        let err = read_layout_bytes::<f32>(&buf).unwrap_err();
+        let err = layout_read_bytes::<f32>(&buf).unwrap_err();
         assert_eq!(
             err,
             Error::BufferTooSmall {
@@ -695,8 +695,8 @@ mod tests {
     fn read_vec3f() {
         let original = wgsl_rs::std::vec3f(1.0, 2.0, 3.0);
         let mut buf = vec![0u8; 12];
-        write_layout_bytes(&mut buf, &original).unwrap();
-        let restored: wgsl_rs::std::Vec3f = read_layout_bytes(&buf).unwrap();
+        layout_write_bytes(&mut buf, &original).unwrap();
+        let restored: wgsl_rs::std::Vec3f = layout_read_bytes(&buf).unwrap();
         assert_eq!(restored, original);
     }
 
@@ -708,8 +708,8 @@ mod tests {
             frame_count: 42,
         };
         let mut buf = vec![0u8; <TightLayout>::SIZE];
-        write_layout_bytes(&mut buf, &s).unwrap();
-        let restored: TightLayout = read_layout_bytes(&buf).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
+        let restored: TightLayout = layout_read_bytes(&buf).unwrap();
         assert_eq!(restored, s);
     }
 
@@ -727,8 +727,8 @@ mod tests {
             friction: 0.05,
         };
         let mut buf = vec![0u8; <NestedPadded>::SIZE];
-        write_layout_bytes(&mut buf, &s).unwrap();
-        let restored: NestedPadded = read_layout_bytes(&buf).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
+        let restored: NestedPadded = layout_read_bytes(&buf).unwrap();
         assert_eq!(restored, s);
     }
 
@@ -736,15 +736,15 @@ mod tests {
     fn read_write_roundtrip_generic() {
         let p = GenericPair::<f32> { a: 1.0, b: 2.0 };
         let mut buf = vec![0u8; <GenericPair<f32>>::SIZE];
-        write_layout_bytes(&mut buf, &p).unwrap();
-        let restored: GenericPair<f32> = read_layout_bytes(&buf).unwrap();
+        layout_write_bytes(&mut buf, &p).unwrap();
+        let restored: GenericPair<f32> = layout_read_bytes(&buf).unwrap();
         assert_eq!(restored.a, p.a);
         assert_eq!(restored.b, p.b);
     }
 
     #[test]
     fn read_zero_size_empty_struct() {
-        let s: Empty = read_layout_bytes(&[]).unwrap();
+        let s: Empty = layout_read_bytes(&[]).unwrap();
         // An empty struct has no fields to compare, so we just verify it returns Ok.
         let _ = s;
     }
@@ -757,8 +757,8 @@ mod tests {
             c: 2.0,
         };
         let mut buf = vec![0u8; <MixedAlign>::SIZE];
-        write_layout_bytes(&mut buf, &s).unwrap();
-        let restored: MixedAlign = read_layout_bytes(&buf).unwrap();
+        layout_write_bytes(&mut buf, &s).unwrap();
+        let restored: MixedAlign = layout_read_bytes(&buf).unwrap();
         assert_eq!(restored.a, s.a);
         // Mat4x4f only implements Default (not Debug/PartialEq easily), so check
         // columns

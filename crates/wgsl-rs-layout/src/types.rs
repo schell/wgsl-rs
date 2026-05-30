@@ -6,7 +6,7 @@ impl WgslLayout for f32 {
     const SIZE: usize = 4;
     const ALIGN: usize = 4;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -16,7 +16,7 @@ impl WgslLayout for f32 {
         Ok(f32::from_le_bytes(buf[..4].try_into().unwrap()))
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -32,7 +32,7 @@ impl WgslLayout for i32 {
     const SIZE: usize = 4;
     const ALIGN: usize = 4;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -42,7 +42,7 @@ impl WgslLayout for i32 {
         Ok(i32::from_le_bytes(buf[..4].try_into().unwrap()))
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -58,7 +58,7 @@ impl WgslLayout for u32 {
     const SIZE: usize = 4;
     const ALIGN: usize = 4;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -68,7 +68,7 @@ impl WgslLayout for u32 {
         Ok(u32::from_le_bytes(buf[..4].try_into().unwrap()))
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -84,7 +84,7 @@ impl WgslLayout for bool {
     const SIZE: usize = 4;
     const ALIGN: usize = 4;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -95,7 +95,7 @@ impl WgslLayout for bool {
         Ok(val != 0)
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -114,7 +114,7 @@ impl WgslLayout for wgsl_rs::std::Atomic<u32> {
     const SIZE: usize = 4;
     const ALIGN: usize = 4;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -127,7 +127,7 @@ impl WgslLayout for wgsl_rs::std::Atomic<u32> {
         Ok(a)
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -144,7 +144,7 @@ impl WgslLayout for wgsl_rs::std::Atomic<i32> {
     const SIZE: usize = 4;
     const ALIGN: usize = 4;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -157,7 +157,7 @@ impl WgslLayout for wgsl_rs::std::Atomic<i32> {
         Ok(a)
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 4 {
             return Err(Error::BufferTooSmall {
                 needed: 4,
@@ -176,7 +176,7 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec2
     const SIZE: usize = 8;
     const ALIGN: usize = 8;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 8 {
             return Err(Error::BufferTooSmall {
                 needed: 8,
@@ -184,12 +184,12 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec2
             });
         }
         let stride = T::SIZE;
-        let x = T::read_layout_bytes(&buf[0..stride])?;
-        let y = T::read_layout_bytes(&buf[stride..stride * 2])?;
+        let x = T::layout_read_bytes(&buf[0..stride])?;
+        let y = T::layout_read_bytes(&buf[stride..stride * 2])?;
         Ok(wgsl_rs::std::Vec2 { x, y })
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 8 {
             return Err(Error::BufferTooSmall {
                 needed: 8,
@@ -197,8 +197,8 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec2
             });
         }
         let stride = T::SIZE;
-        T::write_layout_bytes(&self.x, &mut buf[0..stride])?;
-        T::write_layout_bytes(&self.y, &mut buf[stride..stride * 2])?;
+        T::layout_write_bytes(&self.x, &mut buf[0..stride])?;
+        T::layout_write_bytes(&self.y, &mut buf[stride..stride * 2])?;
         Ok(())
     }
 }
@@ -207,7 +207,7 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec3
     const SIZE: usize = 12;
     const ALIGN: usize = 16;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 12 {
             return Err(Error::BufferTooSmall {
                 needed: 12,
@@ -215,13 +215,13 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec3
             });
         }
         let stride = T::SIZE;
-        let x = T::read_layout_bytes(&buf[0..stride])?;
-        let y = T::read_layout_bytes(&buf[stride..stride * 2])?;
-        let z = T::read_layout_bytes(&buf[stride * 2..stride * 3])?;
+        let x = T::layout_read_bytes(&buf[0..stride])?;
+        let y = T::layout_read_bytes(&buf[stride..stride * 2])?;
+        let z = T::layout_read_bytes(&buf[stride * 2..stride * 3])?;
         Ok(wgsl_rs::std::Vec3 { x, y, z })
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 12 {
             return Err(Error::BufferTooSmall {
                 needed: 12,
@@ -229,9 +229,9 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec3
             });
         }
         let stride = T::SIZE;
-        T::write_layout_bytes(&self.x, &mut buf[0..stride])?;
-        T::write_layout_bytes(&self.y, &mut buf[stride..stride * 2])?;
-        T::write_layout_bytes(&self.z, &mut buf[stride * 2..stride * 3])?;
+        T::layout_write_bytes(&self.x, &mut buf[0..stride])?;
+        T::layout_write_bytes(&self.y, &mut buf[stride..stride * 2])?;
+        T::layout_write_bytes(&self.z, &mut buf[stride * 2..stride * 3])?;
         Ok(())
     }
 }
@@ -240,7 +240,7 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec4
     const SIZE: usize = 16;
     const ALIGN: usize = 16;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         if buf.len() < 16 {
             return Err(Error::BufferTooSmall {
                 needed: 16,
@@ -248,14 +248,14 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec4
             });
         }
         let stride = T::SIZE;
-        let x = T::read_layout_bytes(&buf[0..stride])?;
-        let y = T::read_layout_bytes(&buf[stride..stride * 2])?;
-        let z = T::read_layout_bytes(&buf[stride * 2..stride * 3])?;
-        let w = T::read_layout_bytes(&buf[stride * 3..stride * 4])?;
+        let x = T::layout_read_bytes(&buf[0..stride])?;
+        let y = T::layout_read_bytes(&buf[stride..stride * 2])?;
+        let z = T::layout_read_bytes(&buf[stride * 2..stride * 3])?;
+        let w = T::layout_read_bytes(&buf[stride * 3..stride * 4])?;
         Ok(wgsl_rs::std::Vec4 { x, y, z, w })
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         if buf.len() < 16 {
             return Err(Error::BufferTooSmall {
                 needed: 16,
@@ -263,10 +263,10 @@ impl<T: WgslLayout + wgsl_rs::std::WgslScalar> WgslLayout for wgsl_rs::std::Vec4
             });
         }
         let stride = T::SIZE;
-        T::write_layout_bytes(&self.x, &mut buf[0..stride])?;
-        T::write_layout_bytes(&self.y, &mut buf[stride..stride * 2])?;
-        T::write_layout_bytes(&self.z, &mut buf[stride * 2..stride * 3])?;
-        T::write_layout_bytes(&self.w, &mut buf[stride * 3..stride * 4])?;
+        T::layout_write_bytes(&self.x, &mut buf[0..stride])?;
+        T::layout_write_bytes(&self.y, &mut buf[stride..stride * 2])?;
+        T::layout_write_bytes(&self.z, &mut buf[stride * 2..stride * 3])?;
+        T::layout_write_bytes(&self.w, &mut buf[stride * 3..stride * 4])?;
         Ok(())
     }
 }
@@ -279,7 +279,7 @@ macro_rules! impl_mat_layout {
             const SIZE: usize = $size;
             const ALIGN: usize = $align;
 
-            fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+            fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
                 if buf.len() < $size {
                     return Err(Error::BufferTooSmall {
                         needed: $size,
@@ -289,12 +289,12 @@ macro_rules! impl_mat_layout {
                 let mut mat = Self::default();
                 for i in 0..$cols {
                     let col_offset = i * $stride;
-                    mat[i] = <$row_vec>::read_layout_bytes(&buf[col_offset..])?;
+                    mat[i] = <$row_vec>::layout_read_bytes(&buf[col_offset..])?;
                 }
                 Ok(mat)
             }
 
-            fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+            fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
                 if buf.len() < $size {
                     return Err(Error::BufferTooSmall {
                         needed: $size,
@@ -304,7 +304,7 @@ macro_rules! impl_mat_layout {
                 for i in 0..$cols {
                     let col_offset = i * $stride;
                     let col: &$row_vec = &self[i];
-                    col.write_layout_bytes(&mut buf[col_offset..])?;
+                    col.layout_write_bytes(&mut buf[col_offset..])?;
                 }
                 Ok(())
             }
@@ -328,7 +328,7 @@ impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
     const SIZE: usize = N * crate::round_up(T::ALIGN, T::SIZE);
     const ALIGN: usize = T::ALIGN;
 
-    fn read_layout_bytes(buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
         let stride = crate::round_up(T::ALIGN, T::SIZE);
         if buf.len() < N * stride {
             return Err(Error::BufferTooSmall {
@@ -339,13 +339,13 @@ impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
         // Initialize with default values then overwrite
         let mut arr: [T; N] = unsafe { std::mem::zeroed() };
         for (i, slot) in arr.iter_mut().enumerate() {
-            let elem = T::read_layout_bytes(&buf[i * stride..])?;
+            let elem = T::layout_read_bytes(&buf[i * stride..])?;
             *slot = elem;
         }
         Ok(arr)
     }
 
-    fn write_layout_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
         let stride = crate::round_up(T::ALIGN, T::SIZE);
         if buf.len() < N * stride {
             return Err(Error::BufferTooSmall {
@@ -354,7 +354,7 @@ impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
             });
         }
         for (i, elem) in self.iter().enumerate() {
-            elem.write_layout_bytes(&mut buf[i * stride..])?;
+            elem.layout_write_bytes(&mut buf[i * stride..])?;
         }
         Ok(())
     }
@@ -366,11 +366,11 @@ impl<T: WgslLayout> WgslLayout for wgsl_rs::std::RuntimeArray<T> {
     const SIZE: usize = 0;
     const ALIGN: usize = T::ALIGN;
 
-    fn read_layout_bytes(_buf: &[u8]) -> Result<Self, Error> {
+    fn layout_read_bytes(_buf: &[u8]) -> Result<Self, Error> {
         Ok(wgsl_rs::std::RuntimeArray::new())
     }
 
-    fn write_layout_bytes(&self, _buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, _buf: &mut [u8]) -> Result<(), Error> {
         Ok(())
     }
 }

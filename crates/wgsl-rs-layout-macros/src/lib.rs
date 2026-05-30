@@ -56,11 +56,11 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 const SIZE: usize = 0;
                 const ALIGN: usize = 1;
 
-                fn read_layout_bytes(_buf: &[u8]) -> ::std::result::Result<Self, ::wgsl_rs_layout::Error> {
+                fn layout_read_bytes(_buf: &[u8]) -> ::std::result::Result<Self, ::wgsl_rs_layout::Error> {
                     ::std::result::Result::Ok(#struct_name {})
                 }
 
-                fn write_layout_bytes(&self, _buf: &mut [u8]) -> ::std::result::Result<(), ::wgsl_rs_layout::Error> {
+                fn layout_write_bytes(&self, _buf: &mut [u8]) -> ::std::result::Result<(), ::wgsl_rs_layout::Error> {
                     ::std::result::Result::Ok(())
                 }
             }
@@ -190,7 +190,7 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         });
 
         field_write_tokens.push(quote! {
-            ::wgsl_rs_layout::WgslLayout::write_layout_bytes(
+            ::wgsl_rs_layout::WgslLayout::layout_write_bytes(
                 &self.#field_ident,
                 &mut buf[Self::#offset_name..],
             )?;
@@ -199,7 +199,7 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         field_read_tokens.push({
             let ty = field_types[i]; // Type is Clone
             quote! {
-                let #field_ident = <#ty as ::wgsl_rs_layout::WgslLayout>::read_layout_bytes(
+                let #field_ident = <#ty as ::wgsl_rs_layout::WgslLayout>::layout_read_bytes(
                     &buf[Self::#offset_name..],
                 )?;
             }
@@ -221,7 +221,7 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             const SIZE: usize = #size_expr;
             const ALIGN: usize = #self_align;
 
-            fn read_layout_bytes(buf: &[u8]) -> ::std::result::Result<Self, ::wgsl_rs_layout::Error> {
+            fn layout_read_bytes(buf: &[u8]) -> ::std::result::Result<Self, ::wgsl_rs_layout::Error> {
                 if buf.len() < Self::SIZE {
                     return ::std::result::Result::Err(::wgsl_rs_layout::Error::BufferTooSmall {
                         needed: Self::SIZE,
@@ -234,7 +234,7 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 })
             }
 
-            fn write_layout_bytes(&self, buf: &mut [u8]) -> ::std::result::Result<(), ::wgsl_rs_layout::Error> {
+            fn layout_write_bytes(&self, buf: &mut [u8]) -> ::std::result::Result<(), ::wgsl_rs_layout::Error> {
                 if buf.len() < Self::SIZE {
                     return ::std::result::Result::Err(::wgsl_rs_layout::Error::BufferTooSmall {
                         needed: Self::SIZE,

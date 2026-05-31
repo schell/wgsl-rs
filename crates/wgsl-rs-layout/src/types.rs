@@ -303,6 +303,7 @@ macro_rules! impl_mat_layout {
                 }
                 for i in 0..$cols {
                     let col_offset = i * $stride;
+                    buf[col_offset..][..$stride].fill(0);
                     let col: &$row_vec = &self[i];
                     col.layout_write_bytes(&mut buf[col_offset..])?;
                 }
@@ -354,7 +355,9 @@ impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
             });
         }
         for (i, elem) in self.iter().enumerate() {
-            elem.layout_write_bytes(&mut buf[i * stride..])?;
+            let start = i * stride;
+            buf[start..][..stride].fill(0);
+            elem.layout_write_bytes(&mut buf[start..])?;
         }
         Ok(())
     }

@@ -23,19 +23,19 @@
 //!
 //! for f in Uniforms::FIELDS {
 //!     println!(
-//!         "{}: offset={}, size={}, align={}, pad_before={}",
-//!         f.name, f.offset, f.size, f.alignment, f.pad_before,
+//!         "{}: offset={}, size={}, align={}, pad_after={}",
+//!         f.name, f.offset, f.size, f.alignment, f.pad_after,
 //!     );
 //! }
 //! ```
 //!
-//! # The `pad_before` Field
+//! # The `pad_after` Field
 //!
-//! [`FieldLayout::pad_before`] is the number of dead bytes between the
-//! end of the previous field and the start of the current field. It is
-//! always 0 for the first field. **You must account for these padding
-//! bytes when marshalling data into GPU buffers** — write zero bytes to
-//! fill gaps before writing the next field's data.
+//! [`FieldLayout::pad_after`] is the number of padding bytes after this
+//! field's data before the next field begins (or before the struct's end
+//! for the last field). When writing data into a GPU buffer, you write
+//! this field's bytes followed by `pad_after` zero bytes to fill any
+//! alignment gaps.
 
 pub use wgsl_rs_layout_macros::Layout;
 
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(<SingleScalar>::FIELDS[0].offset, 0);
         assert_eq!(<SingleScalar>::FIELDS[0].size, 4);
         assert_eq!(<SingleScalar>::FIELDS[0].alignment, 4);
-        assert_eq!(<SingleScalar>::FIELDS[0].pad_before, 0);
+        assert_eq!(<SingleScalar>::FIELDS[0].pad_after, 0);
     }
 
     #[derive(Layout, Debug, PartialEq)]
@@ -282,21 +282,21 @@ mod tests {
         assert_eq!(<TightLayout>::FIELDS[0].offset, 0);
         assert_eq!(<TightLayout>::FIELDS[0].size, 12);
         assert_eq!(<TightLayout>::FIELDS[0].alignment, 16);
-        assert_eq!(<TightLayout>::FIELDS[0].pad_before, 0);
+        assert_eq!(<TightLayout>::FIELDS[0].pad_after, 4);
 
         // acceleration: roundUp(0+12, 16) = 16, size 12
         assert_eq!(<TightLayout>::FIELDS[1].name, "acceleration");
         assert_eq!(<TightLayout>::FIELDS[1].offset, 16);
         assert_eq!(<TightLayout>::FIELDS[1].size, 12);
         assert_eq!(<TightLayout>::FIELDS[1].alignment, 16);
-        assert_eq!(<TightLayout>::FIELDS[1].pad_before, 4);
+        assert_eq!(<TightLayout>::FIELDS[1].pad_after, 0);
 
         // frame_count: roundUp(16+12, 4) = 28, u32=4
         assert_eq!(<TightLayout>::FIELDS[2].name, "frame_count");
         assert_eq!(<TightLayout>::FIELDS[2].offset, 28);
         assert_eq!(<TightLayout>::FIELDS[2].size, 4);
         assert_eq!(<TightLayout>::FIELDS[2].alignment, 4);
-        assert_eq!(<TightLayout>::FIELDS[2].pad_before, 0);
+        assert_eq!(<TightLayout>::FIELDS[2].pad_after, 0);
 
         // struct size = roundUp(max(16,16,4)=16, 28+4=32) = 32
         assert_eq!(<TightLayout>::SIZE, 32);
@@ -315,10 +315,10 @@ mod tests {
     #[test]
     fn complex_ex4() {
         // velocity: offset 0,  size 12, align 16
-        // size:     roundUp(12, 4) = 12, size 4, align 4, pad_before 0
+        // size:     roundUp(12, 4) = 12, size 4, align 4
         // direction: roundUp(16, 16) = 16, [Vec3f;1] = 1*roundUp(16,12)=16, align 16
-        // scale:    roundUp(32, 4) = 32, size 4, align 4, pad_before 0
-        // friction: roundUp(36, 4) = 36, size 4, align 4, pad_before 0
+        // scale:    roundUp(32, 4) = 32, size 4, align 4
+        // friction: roundUp(36, 4) = 36, size 4, align 4
         // SIZE = roundUp(16, 36+4=40) = 48
         assert_eq!(<ComplexEx4>::SIZE, 48);
         assert_eq!(<ComplexEx4>::ALIGN, 16);
@@ -327,32 +327,32 @@ mod tests {
         assert_eq!(<ComplexEx4>::FIELDS[0].offset, 0);
         assert_eq!(<ComplexEx4>::FIELDS[0].size, 12);
         assert_eq!(<ComplexEx4>::FIELDS[0].alignment, 16);
-        assert_eq!(<ComplexEx4>::FIELDS[0].pad_before, 0);
+        assert_eq!(<ComplexEx4>::FIELDS[0].pad_after, 0);
 
         assert_eq!(<ComplexEx4>::FIELDS[1].name, "size");
         assert_eq!(<ComplexEx4>::FIELDS[1].offset, 12);
         assert_eq!(<ComplexEx4>::FIELDS[1].size, 4);
         assert_eq!(<ComplexEx4>::FIELDS[1].alignment, 4);
-        assert_eq!(<ComplexEx4>::FIELDS[1].pad_before, 0);
+        assert_eq!(<ComplexEx4>::FIELDS[1].pad_after, 0);
 
-        // direction: [Vec3f;1] → align 16, size 16. roundUp(12+4=16, 16) = 16
+        // direction: [Vec3f;1] → align 16, size 16. pad_after = 0 (next field at 32)
         assert_eq!(<ComplexEx4>::FIELDS[2].name, "direction");
         assert_eq!(<ComplexEx4>::FIELDS[2].offset, 16);
         assert_eq!(<ComplexEx4>::FIELDS[2].size, 16);
         assert_eq!(<ComplexEx4>::FIELDS[2].alignment, 16);
-        assert_eq!(<ComplexEx4>::FIELDS[2].pad_before, 0);
+        assert_eq!(<ComplexEx4>::FIELDS[2].pad_after, 0);
 
         assert_eq!(<ComplexEx4>::FIELDS[3].name, "scale");
         assert_eq!(<ComplexEx4>::FIELDS[3].offset, 32);
         assert_eq!(<ComplexEx4>::FIELDS[3].size, 4);
         assert_eq!(<ComplexEx4>::FIELDS[3].alignment, 4);
-        assert_eq!(<ComplexEx4>::FIELDS[3].pad_before, 0);
+        assert_eq!(<ComplexEx4>::FIELDS[3].pad_after, 0);
 
         assert_eq!(<ComplexEx4>::FIELDS[4].name, "friction");
         assert_eq!(<ComplexEx4>::FIELDS[4].offset, 36);
         assert_eq!(<ComplexEx4>::FIELDS[4].size, 4);
         assert_eq!(<ComplexEx4>::FIELDS[4].alignment, 4);
-        assert_eq!(<ComplexEx4>::FIELDS[4].pad_before, 0);
+        assert_eq!(<ComplexEx4>::FIELDS[4].pad_after, 8);
     }
 
     #[derive(Layout, Debug, PartialEq)]
@@ -376,12 +376,12 @@ mod tests {
         assert_eq!(<Vec3Struct>::SIZE, 16);
         assert_eq!(<Vec3Struct>::ALIGN, 16);
 
-        // orientation: offset 0, size 12, align 16
-        // size:        roundUp(12, 4) = 12, size 4, align 4
-        // direction:   roundUp(16, 16) = 16, [Vec3f;1]=16, align 16
-        // scale:       roundUp(32, 4) = 32, size 4, align 4
-        // info:        roundUp(36, 16) = 48, size 16, align 16 → pad_before = 12
-        // friction:    roundUp(64, 4) = 64, size 4, align 4
+        // orientation: offset 0, size 12, align 16, pad_after = 0
+        // size:        roundUp(12, 4) = 12, size 4, align 4, pad_after = 0
+        // direction:   roundUp(16, 16) = 16, [Vec3f;1]=16, align 16, pad_after = 4
+        // scale:       roundUp(32, 4) = 32, size 4, align 4, pad_after = 12
+        // info:        roundUp(36, 16) = 48, size 16, align 16, pad_after = 0
+        // friction:    roundUp(64, 4) = 64, size 4, align 4, pad_after = 12
         // SIZE = roundUp(16, 64+4=68) = 80
 
         assert_eq!(<NestedPadded>::SIZE, 80);
@@ -391,38 +391,38 @@ mod tests {
         assert_eq!(<NestedPadded>::FIELDS[0].offset, 0);
         assert_eq!(<NestedPadded>::FIELDS[0].size, 12);
         assert_eq!(<NestedPadded>::FIELDS[0].alignment, 16);
-        assert_eq!(<NestedPadded>::FIELDS[0].pad_before, 0);
+        assert_eq!(<NestedPadded>::FIELDS[0].pad_after, 0);
 
         assert_eq!(<NestedPadded>::FIELDS[1].name, "size");
         assert_eq!(<NestedPadded>::FIELDS[1].offset, 12);
         assert_eq!(<NestedPadded>::FIELDS[1].size, 4);
         assert_eq!(<NestedPadded>::FIELDS[1].alignment, 4);
-        assert_eq!(<NestedPadded>::FIELDS[1].pad_before, 0);
+        assert_eq!(<NestedPadded>::FIELDS[1].pad_after, 0);
 
         assert_eq!(<NestedPadded>::FIELDS[2].name, "direction");
         assert_eq!(<NestedPadded>::FIELDS[2].offset, 16);
         assert_eq!(<NestedPadded>::FIELDS[2].size, 16);
         assert_eq!(<NestedPadded>::FIELDS[2].alignment, 16);
-        assert_eq!(<NestedPadded>::FIELDS[2].pad_before, 0);
+        assert_eq!(<NestedPadded>::FIELDS[2].pad_after, 0);
 
         assert_eq!(<NestedPadded>::FIELDS[3].name, "scale");
         assert_eq!(<NestedPadded>::FIELDS[3].offset, 32);
         assert_eq!(<NestedPadded>::FIELDS[3].size, 4);
         assert_eq!(<NestedPadded>::FIELDS[3].alignment, 4);
-        assert_eq!(<NestedPadded>::FIELDS[3].pad_before, 0);
+        assert_eq!(<NestedPadded>::FIELDS[3].pad_after, 12);
 
-        // info: roundUp(32+4=36, 16) = 48, size 16, pad_before = 48 - 36 = 12
+        // info: roundUp(32+4=36, 16) = 48, size 16, pad_after = 0
         assert_eq!(<NestedPadded>::FIELDS[4].name, "info");
         assert_eq!(<NestedPadded>::FIELDS[4].offset, 48);
         assert_eq!(<NestedPadded>::FIELDS[4].size, 16);
         assert_eq!(<NestedPadded>::FIELDS[4].alignment, 16);
-        assert_eq!(<NestedPadded>::FIELDS[4].pad_before, 12);
+        assert_eq!(<NestedPadded>::FIELDS[4].pad_after, 0);
 
         assert_eq!(<NestedPadded>::FIELDS[5].name, "friction");
         assert_eq!(<NestedPadded>::FIELDS[5].offset, 64);
         assert_eq!(<NestedPadded>::FIELDS[5].size, 4);
         assert_eq!(<NestedPadded>::FIELDS[5].alignment, 4);
-        assert_eq!(<NestedPadded>::FIELDS[5].pad_before, 0);
+        assert_eq!(<NestedPadded>::FIELDS[5].pad_after, 12);
     }
 
     #[derive(Layout)]
@@ -441,13 +441,13 @@ mod tests {
         assert_eq!(layout_pair_f32[0].offset, 0);
         assert_eq!(layout_pair_f32[0].size, 4);
         assert_eq!(layout_pair_f32[0].alignment, 4);
-        assert_eq!(layout_pair_f32[0].pad_before, 0);
+        assert_eq!(layout_pair_f32[0].pad_after, 0);
 
         assert_eq!(layout_pair_f32[1].name, "b");
         assert_eq!(layout_pair_f32[1].offset, 4);
         assert_eq!(layout_pair_f32[1].size, 4);
         assert_eq!(layout_pair_f32[1].alignment, 4);
-        assert_eq!(layout_pair_f32[1].pad_before, 0);
+        assert_eq!(layout_pair_f32[1].pad_after, 0);
 
         // Generic with Vec3f (align 16, size 12)
         let layout_pair_vec3 = GenericPair::<wgsl_rs::std::Vec3f>::FIELDS;
@@ -456,12 +456,12 @@ mod tests {
 
         assert_eq!(layout_pair_vec3[0].offset, 0);
         assert_eq!(layout_pair_vec3[0].size, 12);
-        assert_eq!(layout_pair_vec3[0].pad_before, 0);
+        assert_eq!(layout_pair_vec3[0].pad_after, 4);
 
         // b: roundUp(12, 16) = 16
         assert_eq!(layout_pair_vec3[1].offset, 16);
         assert_eq!(layout_pair_vec3[1].size, 12);
-        assert_eq!(layout_pair_vec3[1].pad_before, 4);
+        assert_eq!(layout_pair_vec3[1].pad_after, 4);
     }
 
     // Verify pad_before with mixed alignments
@@ -473,18 +473,18 @@ mod tests {
     }
 
     #[test]
-    fn mixed_align_pad_before() {
-        // a: offset 0, size 4, align 4
-        // b: roundUp(4, 16) = 16, size 64, align 16, pad_before = 12
-        // c: roundUp(80, 4) = 80, size 4, align 4, pad_before = 0
+    fn mixed_align_pad_after() {
+        // a: offset 0, size 4, align 4, pad_after = 12
+        // b: roundUp(4, 16) = 16, size 64, align 16, pad_after = 0
+        // c: roundUp(80, 4) = 80, size 4, align 4, pad_after = 12
         // SIZE = roundUp(16, 84) = 96
         assert_eq!(<MixedAlign>::SIZE, 96);
         assert_eq!(<MixedAlign>::ALIGN, 16);
 
-        assert_eq!(<MixedAlign>::FIELDS[0].pad_before, 0);
+        assert_eq!(<MixedAlign>::FIELDS[0].pad_after, 12);
         assert_eq!(<MixedAlign>::FIELDS[1].offset, 16);
-        assert_eq!(<MixedAlign>::FIELDS[1].pad_before, 12);
-        assert_eq!(<MixedAlign>::FIELDS[2].pad_before, 0);
+        assert_eq!(<MixedAlign>::FIELDS[1].pad_after, 0);
+        assert_eq!(<MixedAlign>::FIELDS[2].pad_after, 12);
     }
 
     // ===== layout_write_bytes tests =====

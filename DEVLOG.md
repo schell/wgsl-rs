@@ -264,15 +264,14 @@ where downstream crates consume `wgsl-rs` types directly.
 2. `WgslLayout` is implemented for all built-in types (scalars, vectors, matrices,
    arrays). Each type is a simple const mapping per the spec table.
 3. `Layout` extends `WgslLayout` with `FIELDS: &'static [FieldLayout]` for
-   per-field offset/size/align/pad_before info.
+   per-field offset/size/align/pad_after info.
 4. Generic structs are supported — type parameters receive a `T: WgslLayout` bound.
 
-**`FieldLayout::pad_before`:**
-Inter-field padding is the gap between successive fields caused by alignment
-requirements. `pad_before` on field `i` is the dead bytes between the end of
-field `i-1` and the start of field `i`. It is always 0 for the first field.
-Tools *must* write zero bytes into these gaps when marshalling data. The
-`FieldLayout` struct documents this prominently with concrete examples.
+**`FieldLayout::pad_after`:**
+Inter-field padding is expressed as bytes after each field's data: `pad_after`
+on field `i` is the gap between the end of field `i` and the start of the next
+field (or the struct end for the last field). This is intuitive for
+sequential marshalling — write the field, then write `pad_after` zero bytes.
 
 **Runtime arrays:** `RuntimeArray<T>::SIZE` is 0 (runtime-dependent).
 

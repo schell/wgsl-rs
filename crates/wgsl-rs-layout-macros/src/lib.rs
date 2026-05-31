@@ -167,16 +167,14 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         let align_name = syn::Ident::new(&format!("__ALIGN_{}", i), proc_macro2::Span::call_site());
         let field_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
 
-        let pad_before = if i == 0 {
-            quote! { 0usize }
+        let pad_after = if i == field_count - 1 {
+            quote! { Self::SIZE - (Self::#offset_name + Self::#size_name) }
         } else {
-            let prev_offset_name = syn::Ident::new(
-                &format!("__OFFSET_{}", i - 1),
+            let next_offset_name = syn::Ident::new(
+                &format!("__OFFSET_{}", i + 1),
                 proc_macro2::Span::call_site(),
             );
-            let prev_size_name =
-                syn::Ident::new(&format!("__SIZE_{}", i - 1), proc_macro2::Span::call_site());
-            quote! { Self::#offset_name - (Self::#prev_offset_name + Self::#prev_size_name) }
+            quote! { Self::#next_offset_name - (Self::#offset_name + Self::#size_name) }
         };
 
         field_entry_tokens.push(quote! {
@@ -185,7 +183,7 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 offset: Self::#offset_name,
                 size: Self::#size_name,
                 alignment: Self::#align_name,
-                pad_before: #pad_before,
+                pad_after: #pad_after,
             }
         });
 
@@ -194,6 +192,9 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 &self.#field_ident,
                 &mut buf[Self::#offset_name..],
             )?;
+            let _pad_start = Self::#offset_name + Self::#size_name;
+            let _pad_end = _pad_start + #pad_after;
+            ::wgsl_rs_layout::zero_buffer(&mut buf[_pad_start.._pad_end], #pad_after);
         });
 
         field_read_tokens.push({
@@ -241,7 +242,6 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                         actual: buf.len(),
                     });
                 }
-                ::wgsl_rs_layout::zero_buffer(buf, Self::SIZE);
                 #(#field_write_tokens)*
                 ::std::result::Result::Ok(())
             }

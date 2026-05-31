@@ -6,52 +6,61 @@
 /// tightly — every field starts at a byte offset that is a multiple of
 /// its alignment requirement.
 ///
-/// # Understanding `pad_before`
+/// # Understanding `pad_after`
 ///
-/// `pad_before` is the number of **padding bytes between the end of the
-/// previous field and the start of this field**. It is always 0 for the
-/// first field in a struct. When `pad_before` is non-zero, this means
-/// the previous field's end did not satisfy this field's alignment
-/// requirement, and the GPU will insert dead bytes there.
+/// `pad_after` is the number of **padding bytes after this field's data
+/// before the next field begins** (or before the end of the struct for
+/// the last field). It is the gap created when the next field's alignment
+/// requires a larger offset than where this field's data naturally ends.
 ///
-/// **When marshalling data to/from GPU buffers, you must account for
-/// these padding bytes.** They are NOT part of any field's data. If you
-/// are writing raw bytes into a buffer, you need to insert `pad_before`
-/// zero bytes before writing this field's data.
+/// When writing data sequentially, you write this field's bytes, then
+/// write `pad_after` zero bytes to fill the gap before the next field.
+/// The last field's `pad_after` covers trailing padding to the struct's
+/// total size.
 ///
 /// ## Concrete Example
 ///
 /// ```ignore
 /// struct Ex4 {
-///     velocity: Vec3f,      // offset 0,  size 12, align 16
-///     size: f32,            // offset 12, size 4,  align 4,  pad_before = 0
-///     direction: [Vec3f; 1],// offset 16, size 12, align 16, pad_before = 0
-///     scale: f32,           // offset 32, size 4,  align 4,  pad_before = 4
-///     info: Ex4a,           // offset 48, size 12, align 16, pad_before = 12
-///     friction: f32,        // offset 64, size 4,  align 4,  pad_before = 4
+///     velocity: Vec3f,     // offset 0,  size 12, align 16, pad_after = 0
+///     size: f32,           // offset 12, size 4,  align 4,  pad_after = 0
+///     direction: Vec3f,    // offset 16, size 12, align 16, pad_after = 4
+///     scale: f32,          // offset 32, size 4,  align 4,  pad_after = 12
+///     info: Ex4a,          // offset 48, size 16, align 16, pad_after = 0
+///     friction: f32,       // offset 64, size 4,  align 4,  pad_after = 12
 /// }
 /// ```
 ///
-/// Notice how `scale` has `pad_before = 4` — this is the gap between the
-/// end of `direction` (offset 16 + size 12 = 28) and `scale`'s required
-/// 16-byte-aligned start (offset 32). When writing `scale` to a buffer,
-/// you must write 4 zero bytes at offset 28, then `scale`'s data at
-/// offset 32.
+/// - `velocity` has `pad_after = 0`: `size`'s alignment (4) fits at offset 12
+///   (12 + 0 = 12 which is already 4-aligned).
+/// - `direction` has `pad_after = 4`: the next field `scale` has alignment 4,
+///   but `direction` ends at offset 28. To reach the next 16-byte-aligned
+///   position (32), 4 bytes of padding are needed. So you write `direction`'s
+///   data at offset 16..28, then 4 zero bytes at 28..32 before `scale`.
+/// - `scale` has `pad_after = 12`: `info` has align 16, so `scale`'s end at
+///   offset 36 needs 12 zero bytes to reach offset 48.
+/// - `info` has `pad_after = 0`: `friction`'s alignment (4) fits at offset 64
+///   (48 + 16 = 64, already 4-aligned).
+/// - `friction` has `pad_after = 12`: the struct ends at offset 68, but its
+///   alignment is 16, so the total size rounds up to 80 — 12 trailing zero
+///   bytes.
 ///
-/// Another large gap appears before `info`: the `Ex4a` struct has align
-/// 16 (from its `Vec3f` field), so `info` starts at offset 48, leaving
-/// 12 bytes of padding between `scale` (ends at 32 + 4 = 36) and `info`.
+/// Note: this example uses `Vec3f` for `direction` rather than `[Vec3f; 1]`
+/// to keep the focus on inter-field padding. Arrays have their own internal
+/// stride padding (each element occupies `roundUp(align, size)` bytes),
+/// visible via the array's `SIZE`, and that internal padding is handled by
+/// the array's own write/read impls, not by `pad_after` on the parent field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldLayout {
     /// The field name as declared in the Rust struct.
     pub name: &'static str,
     /// Byte offset from the start of the struct.
     pub offset: usize,
-    /// Byte size of the field's data (not including padding).
+    /// Byte size of the field's data per WGSL layout rules.
     pub size: usize,
     /// Alignment requirement of the field's type.
     pub alignment: usize,
-    /// Bytes of padding BEFORE this field (gap from previous field's end).
-    /// Always 0 for the first field.
-    pub pad_before: usize,
+    /// Bytes of padding AFTER this field (gap to the next field, or to the
+    /// struct end for the last field).
+    pub pad_after: usize,
 }

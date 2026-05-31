@@ -20,36 +20,36 @@
 ///
 /// ## Concrete Example
 ///
-/// ```ignore
+/// ```rust
+/// use wgsl_rs::std::Vec3f;
+/// use wgsl_rs_layout::{Layout, WgslLayout};
+///
+/// #[derive(wgsl_rs_layout::Layout)]
 /// struct Ex4 {
-///     velocity: Vec3f,     // offset 0,  size 12, align 16, pad_after = 0
-///     size: f32,           // offset 12, size 4,  align 4,  pad_after = 0
-///     direction: Vec3f,    // offset 16, size 12, align 16, pad_after = 4
-///     scale: f32,          // offset 32, size 4,  align 4,  pad_after = 12
-///     info: Ex4a,          // offset 48, size 16, align 16, pad_after = 0
-///     friction: f32,       // offset 64, size 4,  align 4,  pad_after = 12
+///     velocity: Vec3f,  // offset 0,  size 12, align 16, pad_after = 0
+///     size: f32,        // offset 12, size 4,  align 4,  pad_after = 0
+///     direction: Vec3f, // offset 16, size 12, align 16, pad_after = 0
+///     scale: f32,       // offset 28, size 4,  align 4,  pad_after = 0
 /// }
+///
+/// // Verify the layout:
+/// assert_eq!(Ex4::FIELDS[0].offset, 0);
+/// assert_eq!(Ex4::FIELDS[0].pad_after, 0); // size fits at 12 (4-aligned)
+/// assert_eq!(Ex4::FIELDS[1].offset, 12);
+/// assert_eq!(Ex4::FIELDS[1].pad_after, 0); // 12+4=16 is 16-aligned for direction
+/// assert_eq!(Ex4::FIELDS[2].offset, 16);
+/// assert_eq!(Ex4::FIELDS[2].pad_after, 0); // 16+12=28 is 4-aligned for scale
+/// assert_eq!(Ex4::FIELDS[3].offset, 28);
+/// assert_eq!(Ex4::FIELDS[3].pad_after, 0); // 28+4=32, struct size is 32
+/// assert_eq!(<Ex4 as WgslLayout>::SIZE, 32);
+/// assert_eq!(<Ex4 as WgslLayout>::ALIGN, 16);
 /// ```
 ///
-/// - `velocity` has `pad_after = 0`: `size`'s alignment (4) fits at offset 12
-///   (12 + 0 = 12 which is already 4-aligned).
-/// - `direction` has `pad_after = 4`: the next field `scale` has alignment 4,
-///   but `direction` ends at offset 28. To reach the next 16-byte-aligned
-///   position (32), 4 bytes of padding are needed. So you write `direction`'s
-///   data at offset 16..28, then 4 zero bytes at 28..32 before `scale`.
-/// - `scale` has `pad_after = 12`: `info` has align 16, so `scale`'s end at
-///   offset 36 needs 12 zero bytes to reach offset 48.
-/// - `info` has `pad_after = 0`: `friction`'s alignment (4) fits at offset 64
-///   (48 + 16 = 64, already 4-aligned).
-/// - `friction` has `pad_after = 12`: the struct ends at offset 68, but its
-///   alignment is 16, so the total size rounds up to 80 — 12 trailing zero
-///   bytes.
-///
-/// Note: this example uses `Vec3f` for `direction` rather than `[Vec3f; 1]`
-/// to keep the focus on inter-field padding. Arrays have their own internal
-/// stride padding (each element occupies `roundUp(align, size)` bytes),
-/// visible via the array's `SIZE`, and that internal padding is handled by
-/// the array's own write/read impls, not by `pad_after` on the parent field.
+/// Note: this example uses `Vec3f` rather than `[Vec3f; 1]` to keep the
+/// focus on inter-field padding. Arrays have their own internal stride
+/// padding (each element occupies `roundUp(align, size)` bytes), visible
+/// via the array's `SIZE`, and that internal padding is handled by the
+/// array's own write/read impls, not by `pad_after` on the parent field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldLayout {
     /// The field name as declared in the Rust struct.

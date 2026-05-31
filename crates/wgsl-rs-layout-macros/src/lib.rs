@@ -49,10 +49,10 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let field_count = named_fields.named.len();
 
     if field_count == 0 {
-        let (impl_generics, ty_generics, _where_clause) = generics.split_for_impl();
+        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
         let wgsl_layout_impl = quote! {
-            impl #impl_generics ::wgsl_rs_layout::WgslLayout for #struct_name #ty_generics {
+            impl #impl_generics ::wgsl_rs_layout::WgslLayout for #struct_name #ty_generics #where_clause {
                 const SIZE: usize = 0;
                 const ALIGN: usize = 1;
 
@@ -67,7 +67,7 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         };
 
         let layout_impl = quote! {
-            impl #impl_generics ::wgsl_rs_layout::Layout for #struct_name #ty_generics {
+            impl #impl_generics ::wgsl_rs_layout::Layout for #struct_name #ty_generics #where_clause {
                 const FIELDS: &'static [::wgsl_rs_layout::FieldLayout] = &[];
             }
         };

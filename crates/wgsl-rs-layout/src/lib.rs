@@ -7,9 +7,9 @@
 //!
 //! # Quick Start
 //!
-//! ```ignore
-//! use wgsl_rs_layout::{Layout, WgslLayout, FieldLayout};
-//! use wgsl_rs::{Mat4x4f, Vec4f};
+//! ```rust
+//! use wgsl_rs::std::*;
+//! use wgsl_rs_layout::{FieldLayout, Layout, WgslLayout};
 //!
 //! #[derive(Layout)]
 //! struct Uniforms {

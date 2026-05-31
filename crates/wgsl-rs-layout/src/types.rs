@@ -326,28 +326,30 @@ impl_mat_layout!(wgsl_rs::std::Mat4x4f, wgsl_rs::std::Vec4f, 4, 16, 16, 64);
 // ===== Fixed-size arrays =====
 
 impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
-    const SIZE: usize = N * crate::round_up(T::ALIGN, T::SIZE);
+    const SIZE: usize = N * crate::round_up(T::SIZE, T::ALIGN);
     const ALIGN: usize = T::ALIGN;
 
     fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
-        let stride = crate::round_up(T::ALIGN, T::SIZE);
+        let stride = crate::round_up(T::SIZE, T::ALIGN);
         if buf.len() < N * stride {
             return Err(Error::BufferTooSmall {
                 needed: N * stride,
                 actual: buf.len(),
             });
         }
-        // Initialize with default values then overwrite
-        let mut arr: [T; N] = unsafe { std::mem::zeroed() };
-        for (i, slot) in arr.iter_mut().enumerate() {
+        let mut arr = std::mem::MaybeUninit::<[T; N]>::uninit();
+        let arr_ptr = arr.as_mut_ptr() as *mut T;
+        for i in 0..N {
             let elem = T::layout_read_bytes(&buf[i * stride..])?;
-            *slot = elem;
+            unsafe {
+                arr_ptr.add(i).write(elem);
+            }
         }
-        Ok(arr)
+        Ok(unsafe { arr.assume_init() })
     }
 
     fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
-        let stride = crate::round_up(T::ALIGN, T::SIZE);
+        let stride = crate::round_up(T::SIZE, T::ALIGN);
         if buf.len() < N * stride {
             return Err(Error::BufferTooSmall {
                 needed: N * stride,

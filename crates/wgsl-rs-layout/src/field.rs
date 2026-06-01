@@ -47,7 +47,7 @@
 ///
 /// Note: this example uses `Vec3f` rather than `[Vec3f; 1]` to keep the
 /// focus on inter-field padding. Arrays have their own internal stride
-/// padding (each element occupies `roundUp(align, size)` bytes), visible
+/// padding (each element occupies `roundUp(size, align)` bytes), visible
 /// via the array's `SIZE`, and that internal padding is handled by the
 /// array's own write/read impls, not by `pad_after` on the parent field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

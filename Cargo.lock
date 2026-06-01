@@ -3765,6 +3765,7 @@ version = "0.1.0"
 name = "wgsl-rs-layout"
 version = "0.1.0"
 dependencies = [
+ "snafu",
  "wgsl-rs",
  "wgsl-rs-layout-macros",
 ]

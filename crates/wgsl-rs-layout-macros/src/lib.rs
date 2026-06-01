@@ -100,10 +100,44 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         quote! { <#ty as #layout_trait_path>::ALIGN }
     };
 
-    // Build inherent consts to hold offset/size/align for each field.
-    // These are accessible from both trait impls via Self::.
+    // Detect runtime array fields. Per the WGSL spec §6.2.10, a
+    // runtime-sized array may only appear as the last member of a
+    // struct. We detect by inspecting the type's last path segment
+    // and a single generic argument.
+    //
+    // The heuristic is: the type is a path that ends in
+    // `RuntimeArray` and has exactly one generic type argument.
+    let runtime_array_indices: Vec<usize> = field_types
+        .iter()
+        .enumerate()
+        .filter_map(|(i, ty)| if is_runtime_array(ty) { Some(i) } else { None })
+        .collect();
+
+    // Reject any runtime array that isn't the last field.
+    for &i in &runtime_array_indices {
+        if i != field_count - 1 {
+            return Err(syn::Error::new_spanned(
+                &named_fields.named[i],
+                "runtime-sized array must be the last member of the struct (WGSL spec §6.2.10)",
+            ));
+        }
+    }
+
+    let has_runtime_array = !runtime_array_indices.is_empty();
+    // If the last field is a runtime array, we exclude it from the
+    // per-field FIELDS array and treat the remaining fields as the
+    // struct's "prefix".
+    let prefix_count = if has_runtime_array {
+        field_count - 1
+    } else {
+        field_count
+    };
+
+    // Build inherent consts to hold offset/size/align for each
+    // *prefix* field. The runtime array (if any) is handled
+    // separately.
     let mut inherent_consts = Vec::new();
-    for (i, ty) in field_types.iter().enumerate() {
+    for (i, ty) in field_types.iter().enumerate().take(prefix_count) {
         let offset_name =
             syn::Ident::new(&format!("__OFFSET_{}", i), proc_macro2::Span::call_site());
         let size_name = syn::Ident::new(&format!("__SIZE_{}", i), proc_macro2::Span::call_site());
@@ -137,10 +171,63 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         }
     }
 
-    // Build ALIGN: max of all field alignments
-    let self_align = build_max_align_from_consts(field_count);
+    // If there's a runtime array, emit its offset and stride consts.
+    if has_runtime_array {
+        let rt_i = field_count - 1;
+        let rt_offset_name = syn::Ident::new(
+            &format!("__OFFSET_{}", rt_i),
+            proc_macro2::Span::call_site(),
+        );
+        let rt_size_name =
+            syn::Ident::new(&format!("__SIZE_{}", rt_i), proc_macro2::Span::call_site());
+        let rt_align_name =
+            syn::Ident::new(&format!("__ALIGN_{}", rt_i), proc_macro2::Span::call_site());
+        let rt_type = field_types[rt_i];
+        let elem_type = runtime_array_elem(rt_type)
+            .expect("detected as runtime array but couldn't extract element type");
 
-    // SIZE = roundUp(AlignOf(S), lastOffset + lastSize)
+        // The runtime array sits at the next aligned offset after the
+        // last prefix field.
+        let prev_offset = if prefix_count > 0 {
+            let name = syn::Ident::new(
+                &format!("__OFFSET_{}", prefix_count - 1),
+                proc_macro2::Span::call_site(),
+            );
+            quote! { Self::#name }
+        } else {
+            quote! { 0 }
+        };
+        let prev_size = if prefix_count > 0 {
+            size_of(field_types[prefix_count - 1])
+        } else {
+            quote! { 0 }
+        };
+        let cur_align = align_of(rt_type);
+
+        inherent_consts.push(quote! {
+            const #rt_size_name: usize = 0;
+            const #rt_align_name: usize = #cur_align;
+            const #rt_offset_name: usize = #round_up_path(
+                #prev_offset + #prev_size,
+                #cur_align,
+            );
+            const __RUNTIME_ARRAY_STRIDE: usize = #round_up_path(
+                <#elem_type as #layout_trait_path>::SIZE,
+                <#elem_type as #layout_trait_path>::ALIGN,
+            );
+        });
+    }
+
+    // Build ALIGN: max of all *prefix* field alignments. If there's a
+    // runtime array, its alignment is already included since the
+    // prefix's `__ALIGN_N-1` is the last prefix field and the runtime
+    // array's `__ALIGN_N` is in inherent_consts above.
+    let self_align = build_max_align_from_consts(field_count, has_runtime_array);
+
+    // SIZE = roundUp(AlignOf(S), lastOffset + lastSize). For a struct
+    // with a runtime array, `lastSize` is 0 (the array's SIZE), so
+    // SIZE = roundUp(AlignOf(S), runtime_array_offset) — i.e. the
+    // size with N=0 elements.
     let last_i = field_count - 1;
     let last_offset = syn::Ident::new(
         &format!("__OFFSET_{}", last_i),
@@ -155,12 +242,13 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         #round_up_path(Self::#last_offset + Self::#last_size, Self::ALIGN)
     };
 
-    // Build FIELDS array entries
+    // Build FIELDS array entries. Skip the runtime array field (if
+    // any) so it's not represented as a 0-byte data field.
     let mut field_entry_tokens = Vec::new();
     let mut field_write_tokens = Vec::new();
     let mut field_read_tokens = Vec::new();
     let mut field_init_tokens = Vec::new();
-    for (i, name) in field_names.iter().enumerate() {
+    for (i, name) in field_names.iter().enumerate().take(prefix_count) {
         let offset_name =
             syn::Ident::new(&format!("__OFFSET_{}", i), proc_macro2::Span::call_site());
         let size_name = syn::Ident::new(&format!("__SIZE_{}", i), proc_macro2::Span::call_site());
@@ -168,6 +256,8 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         let field_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
 
         let pad_after = if i == field_count - 1 {
+            // For a non-runtime-array struct, pad_after for the last
+            // field is the trailing struct padding.
             quote! { Self::SIZE - (Self::#offset_name + Self::#size_name) }
         } else {
             let next_offset_name = syn::Ident::new(
@@ -204,6 +294,45 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     &buf[Self::#offset_name..],
                 )?;
             }
+        });
+
+        field_init_tokens.push(field_ident);
+    }
+
+    // If there's a runtime array, also emit a read/write/init for it
+    // using the existing `WgslLayout` impl on `RuntimeArray<T>`. The
+    // buffer for read/write must be sized appropriately by the
+    // caller, so this is best-effort: the read/write paths use the
+    // struct's `SIZE` (which is the prefix size with N=0) for the
+    // check, and skip the runtime-array portion.
+    if has_runtime_array {
+        let rt_i = field_count - 1;
+        let field_ident = syn::Ident::new(&field_names[rt_i], proc_macro2::Span::call_site());
+        let rt_offset = syn::Ident::new(
+            &format!("__OFFSET_{}", rt_i),
+            proc_macro2::Span::call_site(),
+        );
+        let rt_type = field_types[rt_i];
+
+        // The runtime array's `layout_read_bytes` reads as many
+        // elements as fit in the remaining buffer; we don't need to
+        // verify that the buffer extends beyond `SIZE` (which is the
+        // prefix size).
+        field_read_tokens.push(quote! {
+            let #field_ident = <#rt_type as ::wgsl_rs_layout::WgslLayout>::layout_read_bytes(
+                &buf[Self::#rt_offset..],
+            )?;
+        });
+
+        // Writing the runtime array uses the buffer beyond `SIZE`.
+        // The array's `layout_write_bytes` iterates the elements and
+        // writes each element's bytes. The caller is responsible for
+        // sizing `buf` to hold the prefix + the array's element bytes.
+        field_write_tokens.push(quote! {
+            ::wgsl_rs_layout::WgslLayout::layout_write_bytes(
+                &self.#field_ident,
+                &mut buf[Self::#rt_offset..],
+            )?;
         });
 
         field_init_tokens.push(field_ident);
@@ -248,11 +377,40 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         }
     };
 
+    let runtime_array_impls = if has_runtime_array {
+        let rt_i = field_count - 1;
+        let rt_field_name = &field_names[rt_i];
+        let rt_offset_name = syn::Ident::new(
+            &format!("__OFFSET_{}", rt_i),
+            proc_macro2::Span::call_site(),
+        );
+        let rt_align_name =
+            syn::Ident::new(&format!("__ALIGN_{}", rt_i), proc_macro2::Span::call_site());
+        quote! {
+            const RUNTIME_ARRAY_STRIDE: Option<usize> = Some(Self::__RUNTIME_ARRAY_STRIDE);
+            const RUNTIME_ARRAY_FIELD: ::std::option::Option<::wgsl_rs_layout::FieldLayout> =
+                ::std::option::Option::Some(::wgsl_rs_layout::FieldLayout {
+                    name: #rt_field_name,
+                    offset: Self::#rt_offset_name,
+                    size: 0,
+                    alignment: Self::#rt_align_name,
+                    pad_after: Self::__RUNTIME_ARRAY_STRIDE,
+                });
+        }
+    } else {
+        quote! {
+            const RUNTIME_ARRAY_STRIDE: Option<usize> = ::std::option::Option::None;
+            const RUNTIME_ARRAY_FIELD: ::std::option::Option<::wgsl_rs_layout::FieldLayout> =
+                ::std::option::Option::None;
+        }
+    };
+
     let layout_impl = quote! {
         impl #impl_generics ::wgsl_rs_layout::Layout for #struct_name #ty_generics #where_clause {
             const FIELDS: &'static [::wgsl_rs_layout::FieldLayout] = &[
                 #(#field_entry_tokens),*
             ];
+            #runtime_array_impls
         }
     };
 
@@ -263,9 +421,44 @@ fn derive_layout(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     })
 }
 
+/// Heuristic check for "this type is `RuntimeArray<...>`". Matches
+/// any path whose last segment is `RuntimeArray` and has exactly one
+/// generic type argument.
+fn is_runtime_array(ty: &Type) -> bool {
+    runtime_array_elem(ty).is_some()
+}
+
+/// If `ty` looks like a runtime array (`Path` ending in
+/// `RuntimeArray<...>` with one type arg), return the inner element
+/// type.
+fn runtime_array_elem(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let last_seg = type_path.path.segments.last()?;
+    if last_seg.ident != "RuntimeArray" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last_seg.arguments else {
+        return None;
+    };
+    if args.args.len() != 1 {
+        return None;
+    }
+    let arg = args.args.first()?;
+    if let syn::GenericArgument::Type(elem_ty) = arg {
+        Some(elem_ty)
+    } else {
+        None
+    }
+}
+
 /// Build a const expression computing max of all field alignments,
 /// referencing inherent consts __ALIGN_0..__ALIGN_N.
-fn build_max_align_from_consts(field_count: usize) -> proc_macro2::TokenStream {
+fn build_max_align_from_consts(
+    field_count: usize,
+    _has_runtime_array: bool,
+) -> proc_macro2::TokenStream {
     if field_count == 0 {
         return quote! { 1usize };
     }

@@ -36,6 +36,16 @@
 //! for the last field). When writing data into a GPU buffer, you write
 //! this field's bytes followed by `pad_after` zero bytes to fill any
 //! alignment gaps.
+//!
+//! # SVG diagrams for `cargo doc` (optional)
+//!
+//! Enable the `doc-diagrams` feature to generate per-byte SVG diagrams
+//! from any `T: WgslLayout + Layout` (i.e. any type annotated with
+//! `#[derive(Layout)]` or any of the built-in WGSL types). The
+//! diagrams are sourced directly from the trait constants — no source
+//! parsing, no separate layout table. See the `diagrams` module for
+//! the API and an end-to-end workflow that hooks the output into
+//! `cargo doc` via `rustdoc`'s `--resource-files` flag.
 
 pub use wgsl_rs_layout_macros::Layout;
 
@@ -101,6 +111,28 @@ pub trait WgslLayout: Sized {
 pub trait Layout: WgslLayout {
     /// Per-field layout information in declaration order.
     const FIELDS: &'static [FieldLayout];
+
+    /// If the struct's last field is a runtime array, the byte stride
+    /// of one element: `roundUp(AlignOf(E), SizeOf(E))` where `E` is
+    /// the array's element type.
+    ///
+    /// When `Some(_)`, the struct's `WgslLayout::SIZE` reports the
+    /// size with **zero** elements; the actual runtime size is
+    /// `offset_of_runtime_array + N * stride`, rounded up to
+    /// `ALIGN`, for any runtime-determined `N`.
+    ///
+    /// Per the WGSL spec §6.2.10, a runtime-sized array may only
+    /// appear as the last member of a struct. `#[derive(Layout)]`
+    /// rejects a runtime array field that is not in the last
+    /// position.
+    const RUNTIME_ARRAY_STRIDE: Option<usize> = None;
+
+    /// If the struct's last field is a runtime array, the layout of
+    /// that field. Contains the field's name, offset, alignment, and
+    /// the element type's stride (in `pad_after`, repurposed as
+    /// stride to avoid adding another associated constant).
+    /// `None` if there is no runtime-array field.
+    const RUNTIME_ARRAY_FIELD: Option<FieldLayout> = None;
 }
 
 /// Write `t`'s bytes into `bytes` at offset 0 per WGSL layout rules.
@@ -141,6 +173,9 @@ pub const fn round_up(val: usize, align: usize) -> usize {
 pub fn zero_buffer(buf: &mut [u8], len: usize) {
     buf[..len].fill(0);
 }
+
+#[cfg(feature = "doc-diagrams")]
+pub mod diagrams;
 
 #[cfg(test)]
 mod tests {
@@ -780,5 +815,101 @@ mod tests {
             u: u32,
             mat: Mat4f,
         }
+    }
+
+    // ===== Runtime-array tests =====
+
+    use wgsl_rs::std::RuntimeArray;
+
+    #[derive(Layout, Debug, PartialEq)]
+    struct Ex4ForRuntime {
+        velocity: wgsl_rs::std::Vec3f,
+    }
+
+    #[derive(Layout)]
+    #[allow(dead_code)]
+    struct WithRuntimeArray {
+        descriptor: wgsl_rs::std::Vec4f,
+        count: u32,
+        data: RuntimeArray<Ex4ForRuntime>,
+    }
+
+    #[test]
+    fn runtime_array_size_is_prefix() {
+        // MyStorageType prefix: descriptor (16B) + count (4B) + 12B pad
+        // to align runtime array to 16. With zero array elements, the
+        // struct's SIZE is just the prefix size: 32.
+        assert_eq!(<WithRuntimeArray as WgslLayout>::SIZE, 32);
+        assert_eq!(<WithRuntimeArray as WgslLayout>::ALIGN, 16);
+    }
+
+    #[test]
+    fn runtime_array_stride_is_element_stride() {
+        // Ex4ForRuntime: size = roundUp(AlignOf(Vec3f), SizeOf(Vec3f)) = 16.
+        assert_eq!(<WithRuntimeArray as Layout>::RUNTIME_ARRAY_STRIDE, Some(16));
+    }
+
+    #[test]
+    fn runtime_array_field_layout() {
+        // The RUNTIME_ARRAY_FIELD carries the field name, offset,
+        // alignment, and stride.
+        let f = <WithRuntimeArray as Layout>::RUNTIME_ARRAY_FIELD.unwrap();
+        assert_eq!(f.name, "data");
+        assert_eq!(f.offset, 32);
+        assert_eq!(f.alignment, 16);
+        assert_eq!(f.pad_after, 16);
+    }
+
+    #[test]
+    fn runtime_array_excluded_from_fields() {
+        // The runtime array field is NOT in FIELDS — it's reported
+        // separately via RUNTIME_ARRAY_FIELD.
+        assert_eq!(<WithRuntimeArray as Layout>::FIELDS.len(), 2);
+        assert_eq!(<WithRuntimeArray as Layout>::FIELDS[0].name, "descriptor");
+        assert_eq!(<WithRuntimeArray as Layout>::FIELDS[1].name, "count");
+    }
+
+    #[test]
+    fn runtime_array_write_read_roundtrip() {
+        // Verify the macro emits a layout_write_bytes for the trailing
+        // RuntimeArray so that write/read are symmetric: a value
+        // written with layout_write_bytes can be read back with
+        // layout_read_bytes, including the array's element bytes.
+        use crate::layout_write_bytes;
+
+        let prefix_size = <WithRuntimeArray as WgslLayout>::SIZE;
+        let stride = <WithRuntimeArray as Layout>::RUNTIME_ARRAY_STRIDE.unwrap();
+        // Two array elements: descriptor (16B) + count (4B) + 12B pad +
+        // 2 * 16B array = 64B total.
+        let total_size = prefix_size + 2 * stride;
+        let mut buf = vec![0u8; total_size];
+
+        let mut data = wgsl_rs::std::RuntimeArray::new();
+        data.push(Ex4ForRuntime {
+            velocity: wgsl_rs::std::vec3f(1.0, 0.0, 0.0),
+        });
+        data.push(Ex4ForRuntime {
+            velocity: wgsl_rs::std::vec3f(0.0, 1.0, 0.0),
+        });
+        let original = WithRuntimeArray {
+            descriptor: wgsl_rs::std::vec4f(1.0, 2.0, 3.0, 4.0),
+            count: 42,
+            data,
+        };
+
+        layout_write_bytes(&mut buf, &original).unwrap();
+        // The prefix bytes were written.
+        assert_ne!(&buf[0..16], &vec![0u8; 16][..]);
+        // The array's element bytes were written (zeroed padding
+        // around each element per the WgslLayout impl).
+        assert_ne!(
+            &buf[prefix_size..prefix_size + stride],
+            &vec![0u8; stride][..]
+        );
+
+        let restored: WithRuntimeArray = layout_read_bytes(&buf).unwrap();
+        assert_eq!(restored.descriptor, original.descriptor);
+        assert_eq!(restored.count, original.count);
+        assert_eq!(restored.data.len(), original.data.len());
     }
 }

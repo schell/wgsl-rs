@@ -3,6 +3,11 @@ name = "wgsl-rs-layout"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+doc-diagrams = ["dep:snafu"]
+
 [dependencies]
 wgsl-rs = { path = "../wgsl-rs" }
 wgsl-rs-layout-macros = { path = "../wgsl-rs-layout-macros" }
+snafu = { workspace = true, optional = true }

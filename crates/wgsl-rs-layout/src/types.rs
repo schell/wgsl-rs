@@ -325,7 +325,7 @@ impl_mat_layout!(wgsl_rs::std::Mat4x4f, wgsl_rs::std::Vec4f, 4, 16, 16, 64);
 
 // ===== Fixed-size arrays =====
 
-impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
+impl<T: WgslLayout + Default, const N: usize> WgslLayout for [T; N] {
     const SIZE: usize = N * crate::round_up(T::SIZE, T::ALIGN);
     const ALIGN: usize = T::ALIGN;
 
@@ -337,15 +337,10 @@ impl<T: WgslLayout, const N: usize> WgslLayout for [T; N] {
                 actual: buf.len(),
             });
         }
-        let mut arr = std::mem::MaybeUninit::<[T; N]>::uninit();
-        let arr_ptr = arr.as_mut_ptr() as *mut T;
-        for i in 0..N {
-            let elem = T::layout_read_bytes(&buf[i * stride..])?;
-            unsafe {
-                arr_ptr.add(i).write(elem);
-            }
-        }
-        Ok(unsafe { arr.assume_init() })
+        let arr = std::array::from_fn(|i| {
+            T::layout_read_bytes(&buf[i * stride..]).expect("already checked the size")
+        });
+        Ok(arr)
     }
 
     fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
@@ -371,11 +366,38 @@ impl<T: WgslLayout> WgslLayout for wgsl_rs::std::RuntimeArray<T> {
     const SIZE: usize = 0;
     const ALIGN: usize = T::ALIGN;
 
-    fn layout_read_bytes(_buf: &[u8]) -> Result<Self, Error> {
-        Ok(wgsl_rs::std::RuntimeArray::new())
+    fn layout_read_bytes(buf: &[u8]) -> Result<Self, Error> {
+        let stride = crate::round_up(T::SIZE, T::ALIGN);
+        let len = buf.len() / stride;
+
+        if buf.len() < len * stride {
+            return Err(Error::BufferTooSmall {
+                needed: len * stride,
+                actual: buf.len(),
+            });
+        }
+        let mut arr = wgsl_rs::std::RuntimeArray::with_capacity(len);
+        for i in 0..len {
+            let elem = T::layout_read_bytes(&buf[i * stride..])?;
+            arr.push(elem);
+        }
+        Ok(arr)
     }
 
-    fn layout_write_bytes(&self, _buf: &mut [u8]) -> Result<(), Error> {
+    fn layout_write_bytes(&self, buf: &mut [u8]) -> Result<(), Error> {
+        let stride = crate::round_up(T::SIZE, T::ALIGN);
+        let len = buf.len() / stride;
+        if buf.len() < len * stride {
+            return Err(Error::BufferTooSmall {
+                needed: len * stride,
+                actual: buf.len(),
+            });
+        }
+        for (i, elem) in self.data.iter().enumerate() {
+            let start = i * stride;
+            buf[start..][..stride].fill(0);
+            elem.layout_write_bytes(&mut buf[start..])?;
+        }
         Ok(())
     }
 }

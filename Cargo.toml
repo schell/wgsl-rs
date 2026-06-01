@@ -6,6 +6,8 @@ members = [
   "crates/roundtrip-tests",
   "crates/wgsl-rs",
   "crates/wgsl-rs-ir",
+  "crates/wgsl-rs-layout",
+  "crates/wgsl-rs-layout-macros",
   "crates/wgsl-rs-macros",
   "crates/xtask"
 ]

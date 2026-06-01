@@ -3762,6 +3762,23 @@ name = "wgsl-rs-ir"
 version = "0.1.0"
 
 [[package]]
+name = "wgsl-rs-layout"
+version = "0.1.0"
+dependencies = [
+ "wgsl-rs",
+ "wgsl-rs-layout-macros",
+]
+
+[[package]]
+name = "wgsl-rs-layout-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "wgsl-rs-macros"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,8 @@
+[package]
+name = "wgsl-rs-layout"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgsl-rs = { path = "../wgsl-rs" }
+wgsl-rs-layout-macros = { path = "../wgsl-rs-layout-macros" }

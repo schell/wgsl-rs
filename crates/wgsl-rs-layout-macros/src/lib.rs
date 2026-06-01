@@ -273,12 +273,16 @@ fn build_max_align_from_consts(field_count: usize) -> proc_macro2::TokenStream {
     if field_count == 1 {
         return quote! { Self::#a0 };
     }
-    let mut max_expr = quote! { Self::#a0 };
+    let mut max_exprs = vec![];
     for i in 1..field_count {
         let a = syn::Ident::new(&format!("__ALIGN_{}", i), proc_macro2::Span::call_site());
-        max_expr = quote! { (if (#max_expr > Self::#a) { #max_expr } else { Self::#a }) };
+        max_exprs.push(a);
     }
-    max_expr
+    quote! {{
+        let mut max = Self::#a0;
+        #(if Self::#max_exprs > max { max = Self::#max_exprs; })*
+        max
+    }}
 }
 
 fn add_trait_bound(generics: &syn::Generics, bound: &syn::TypeParamBound) -> syn::Generics {

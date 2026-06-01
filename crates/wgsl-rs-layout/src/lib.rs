@@ -768,4 +768,17 @@ mod tests {
         assert_eq!(restored.b[3u32], s.b[3u32]);
         assert_eq!(restored.c, s.c);
     }
+
+    #[test]
+    fn expansion() {
+        use wgsl_rs::std::*;
+
+        #[derive(Layout)]
+        struct _MyType {
+            vec: Vec3f,
+            float: f32,
+            u: u32,
+            mat: Mat4f,
+        }
+    }
 }

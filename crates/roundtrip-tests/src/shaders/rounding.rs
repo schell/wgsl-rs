@@ -114,7 +114,7 @@ impl RoundtripTest for RoundingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: rounding_basic::linkage::shader_source(),
+                shader_source: &rounding_basic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -158,7 +158,7 @@ impl RoundtripTest for RoundingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: rounding_fract::linkage::shader_source(),
+                shader_source: &rounding_fract::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,

@@ -127,7 +127,7 @@ impl RoundtripTest for BitcastTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: bitcast_scalar_roundtrip::linkage::shader_source(),
+                shader_source: &bitcast_scalar_roundtrip::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -172,7 +172,7 @@ impl RoundtripTest for BitcastTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: bitcast_vec4_roundtrip::linkage::shader_source(),
+                shader_source: &bitcast_vec4_roundtrip::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,

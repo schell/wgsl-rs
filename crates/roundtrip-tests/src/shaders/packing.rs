@@ -177,7 +177,7 @@ impl RoundtripTest for PackingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: pack_unpack_4x8::linkage::shader_source(),
+                shader_source: &pack_unpack_4x8::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -228,7 +228,7 @@ impl RoundtripTest for PackingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: pack_unpack_2x16_norm::linkage::shader_source(),
+                shader_source: &pack_unpack_2x16_norm::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -274,7 +274,7 @@ impl RoundtripTest for PackingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: pack_unpack_2x16_float::linkage::shader_source(),
+                shader_source: &pack_unpack_2x16_float::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -320,7 +320,7 @@ impl RoundtripTest for PackingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: pack_raw_u32::linkage::shader_source(),
+                shader_source: &pack_raw_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,

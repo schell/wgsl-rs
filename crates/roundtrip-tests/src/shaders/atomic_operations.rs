@@ -212,7 +212,7 @@ impl RoundtripTest for AtomicOperationsTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                atomic_u32_scalar_ops::linkage::shader_source(),
+                &atomic_u32_scalar_ops::WGSL_MODULE.wgsl_source(),
                 &input,
                 16,
                 (1, 1, 1),
@@ -233,7 +233,7 @@ impl RoundtripTest for AtomicOperationsTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                atomic_i32_scalar_ops::linkage::shader_source(),
+                &atomic_i32_scalar_ops::WGSL_MODULE.wgsl_source(),
                 &input,
                 16,
                 (1, 1, 1),
@@ -254,7 +254,7 @@ impl RoundtripTest for AtomicOperationsTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                atomic_u32_contended_add::linkage::shader_source(),
+                &atomic_u32_contended_add::WGSL_MODULE.wgsl_source(),
                 &input,
                 WG_SIZE,
                 (1, 1, 1),
@@ -275,7 +275,7 @@ impl RoundtripTest for AtomicOperationsTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                atomic_i32_contended_add::linkage::shader_source(),
+                &atomic_i32_contended_add::WGSL_MODULE.wgsl_source(),
                 &input,
                 WG_SIZE,
                 (1, 1, 1),

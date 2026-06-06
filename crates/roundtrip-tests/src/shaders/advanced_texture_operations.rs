@@ -437,7 +437,8 @@ fn fill_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture
     });
     let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let module = fill_depth_2d::linkage::shader_module(device);
+    let module = wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_MODULE)
+        .shader_module(device, &fill_depth_2d::WGSL_MODULE.wgsl_source());
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("fill_depth_layout"),
@@ -448,7 +449,10 @@ fn fill_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("fill_depth_pipeline"),
         layout: Some(&pipeline_layout),
-        vertex: fill_depth_2d::linkage::vtx_main::vertex_state(&module),
+        vertex: wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_MODULE)
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -458,10 +462,12 @@ fn fill_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(fill_depth_2d::linkage::frag_main::fragment_state(
-            &module,
-            &[],
-        )),
+        fragment: Some(
+            wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_MODULE)
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(&module, &[]),
+        ),
         multiview_mask: None,
         cache: None,
     });
@@ -508,7 +514,8 @@ fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::T
         view_formats: &[],
     });
 
-    let module = fill_depth_2d::linkage::shader_module(device);
+    let module = wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_MODULE)
+        .shader_module(device, &fill_depth_2d::WGSL_MODULE.wgsl_source());
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("fill_depth_array_layout"),
@@ -519,7 +526,10 @@ fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::T
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("fill_depth_array_pipeline"),
         layout: Some(&pipeline_layout),
-        vertex: fill_depth_2d::linkage::vtx_main::vertex_state(&module),
+        vertex: wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_MODULE)
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -529,10 +539,12 @@ fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::T
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(fill_depth_2d::linkage::frag_main::fragment_state(
-            &module,
-            &[],
-        )),
+        fragment: Some(
+            wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_MODULE)
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(&module, &[]),
+        ),
         multiview_mask: None,
         cache: None,
     });
@@ -702,7 +714,8 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 ..Default::default()
             });
 
-            let module = tex2d_variants::linkage::shader_module(device);
+            let module = wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_variants::WGSL_MODULE)
+                .shader_module(device, &tex2d_variants::WGSL_MODULE.wgsl_source());
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("advanced_tex2d_variants_bgl"),
                 entries: &[
@@ -745,15 +758,21 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 "advanced_tex2d_variants",
                 &bgl,
                 &bg,
-                tex2d_variants::linkage::vtx_main::vertex_state(&module),
-                tex2d_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_variants::WGSL_MODULE)
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_variants::WGSL_MODULE)
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_texture2d(tex2d_variants::TEX, &color0);
@@ -782,7 +801,9 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });
-            let module = tex2d_gather_variants::linkage::shader_module(device);
+            let module =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_gather_variants::WGSL_MODULE)
+                    .shader_module(device, &tex2d_gather_variants::WGSL_MODULE.wgsl_source());
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("advanced_tex2d_gather_bgl"),
                 entries: &[
@@ -825,15 +846,21 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 "advanced_tex2d_gather",
                 &bgl,
                 &bg,
-                tex2d_gather_variants::linkage::vtx_main::vertex_state(&module),
-                tex2d_gather_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_gather_variants::WGSL_MODULE)
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_gather_variants::WGSL_MODULE)
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_texture2d(tex2d_gather_variants::TEX, &color0);
@@ -865,7 +892,9 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });
-            let module = tex2d_array_variants::linkage::shader_module(device);
+            let module =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_array_variants::WGSL_MODULE)
+                    .shader_module(device, &tex2d_array_variants::WGSL_MODULE.wgsl_source());
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("advanced_tex2d_array_bgl"),
                 entries: &[
@@ -908,15 +937,21 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 "advanced_tex2d_array_variants",
                 &bgl,
                 &bg,
-                tex2d_array_variants::linkage::vtx_main::vertex_state(&module),
-                tex2d_array_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_array_variants::WGSL_MODULE)
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_array_variants::WGSL_MODULE)
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_texture2d_array(tex2d_array_variants::TEX, &color_layers);
@@ -948,7 +983,9 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 compare: Some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             });
-            let module = depth2d_compare_variants::linkage::shader_module(device);
+            let module =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&depth2d_compare_variants::WGSL_MODULE)
+                    .shader_module(device, &depth2d_compare_variants::WGSL_MODULE.wgsl_source());
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("advanced_depth2d_cmp_bgl"),
                 entries: &[
@@ -991,15 +1028,21 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 "advanced_depth2d_compare",
                 &bgl,
                 &bg,
-                depth2d_compare_variants::linkage::vtx_main::vertex_state(&module),
-                depth2d_compare_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&depth2d_compare_variants::WGSL_MODULE)
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&depth2d_compare_variants::WGSL_MODULE)
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_depth2d(depth2d_compare_variants::DEPTH_TEX, &depth0);
@@ -1036,7 +1079,13 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 compare: Some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             });
-            let module = depth2d_array_compare_variants::linkage::shader_module(device);
+            let module = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &depth2d_array_compare_variants::WGSL_MODULE,
+            )
+            .shader_module(
+                device,
+                &depth2d_array_compare_variants::WGSL_MODULE.wgsl_source(),
+            );
             let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("advanced_depth2d_array_cmp_bgl"),
                 entries: &[
@@ -1079,8 +1128,18 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 "advanced_depth2d_array_compare",
                 &bgl,
                 &bg,
-                depth2d_array_compare_variants::linkage::vtx_main::vertex_state(&module),
-                depth2d_array_compare_variants::linkage::frag_main::fragment_state(
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                    &depth2d_array_compare_variants::WGSL_MODULE,
+                )
+                .vertex_entry("vtx_main")
+                .expect("vtx_main entry present")
+                .vertex_state(&module),
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                    &depth2d_array_compare_variants::WGSL_MODULE,
+                )
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
                     &module,
                     &[Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::Rgba32Float,

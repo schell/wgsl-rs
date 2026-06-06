@@ -147,7 +147,7 @@ impl RoundtripTest for TrigTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: trig_basic::linkage::shader_source(),
+                shader_source: &trig_basic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -192,7 +192,7 @@ impl RoundtripTest for TrigTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: trig_inverse::linkage::shader_source(),
+                shader_source: &trig_inverse::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -236,7 +236,7 @@ impl RoundtripTest for TrigTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: trig_hyperbolic::linkage::shader_source(),
+                shader_source: &trig_hyperbolic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -280,7 +280,7 @@ impl RoundtripTest for TrigTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: trig_inv_hyperbolic::linkage::shader_source(),
+                shader_source: &trig_inv_hyperbolic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,

@@ -169,7 +169,7 @@ impl RoundtripTest for GeometricTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: geo_scalar::linkage::shader_source(),
+                shader_source: &geo_scalar::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -214,7 +214,7 @@ impl RoundtripTest for GeometricTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: geo_fma::linkage::shader_source(),
+                shader_source: &geo_fma::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -260,7 +260,7 @@ impl RoundtripTest for GeometricTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: geo_vector::linkage::shader_source(),
+                shader_source: &geo_vector::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -305,7 +305,7 @@ impl RoundtripTest for GeometricTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: geo_cross_reflect::linkage::shader_source(),
+                shader_source: &geo_cross_reflect::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,

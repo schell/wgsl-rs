@@ -127,7 +127,7 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: bit_count_u32::linkage::shader_source(),
+                shader_source: &bit_count_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -170,7 +170,7 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: bit_first_u32::linkage::shader_source(),
+                shader_source: &bit_first_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -213,7 +213,7 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: bit_extract_insert_u32::linkage::shader_source(),
+                shader_source: &bit_extract_insert_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,

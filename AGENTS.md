@@ -97,8 +97,9 @@ When collaborating with generative AI, please author commits with the format:
 
 `{human-author} with {llm-name} {llm-version} <{human-email}>`
 
-Additionally, if you are working with an agent harness, provide a linke to the
-transcript in the PR description.
+This can be accomplished easily with two steps:
+1. A normal commit via `git commit ...`
+2. Amend the author with `git commit --amend --author "{human-author} with {llm-name} {llm-version} <{human-email}>"`
 
 For more information, see [NLnet's AI Disclosure Policy](https://nlnet.nl/foundation/policies/generativeAI/).
 

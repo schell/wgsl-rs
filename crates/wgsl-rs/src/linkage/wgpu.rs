@@ -38,7 +38,7 @@
 //!     .vertex_state(&shader_module);
 //! ```
 
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use wgsl_rs_ir as ir;
 
@@ -167,36 +167,16 @@ impl BindGroupInfo {
     /// Builds a `wgpu::BindGroupLayoutDescriptor` borrowing this struct.
     /// The returned descriptor borrows from `self`, so `self` must
     /// outlive the descriptor and any wgpu object built from it.
-    pub fn layout_descriptor<'a>(
-        &'a self,
-        extra_label: Option<&'a str>,
-    ) -> wgpu::BindGroupLayoutDescriptor<'a> {
-        // If a suffix is provided we leak a static string for the label
-        // so the descriptor's label type stays `'a` (matching the
-        // borrow on `self.entries`). For the common no-suffix case we
-        // borrow `self.label` directly.
-        match extra_label {
-            Some(suffix) => {
-                let owned: &'static str = leak_str(&format!("{}::{}", self.label, suffix));
-                wgpu::BindGroupLayoutDescriptor {
-                    label: Some(owned),
-                    entries: &self.entries,
-                }
-            }
-            None => wgpu::BindGroupLayoutDescriptor {
-                label: Some(&self.label),
-                entries: &self.entries,
-            },
+    pub fn layout_descriptor<'a>(&'a self) -> wgpu::BindGroupLayoutDescriptor<'a> {
+        wgpu::BindGroupLayoutDescriptor {
+            label: Some(&self.label),
+            entries: &self.entries,
         }
     }
 
     /// Creates the bind group layout on the given device.
-    pub fn layout(
-        &self,
-        device: &wgpu::Device,
-        extra_label: Option<&str>,
-    ) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&self.layout_descriptor(extra_label))
+    pub fn layout(&self, device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&self.layout_descriptor())
     }
 
     /// Creates a bind group with one entry per binding in declaration
@@ -238,8 +218,11 @@ impl BindGroupInfo {
 /// A vertex or fragment shader entry point.
 #[derive(Clone, Debug)]
 pub struct EntryPointInfo {
-    /// The entry point name.
-    pub name: String,
+    /// The entry point name. For non-monomorphized functions this is a
+    /// `Cow::Borrowed` of a `stringify!`-emitted `'static` literal;
+    /// for monomorphized instances (e.g. `id` → `id_f32`) it is a
+    /// `Cow::Owned` holding the runtime-computed name.
+    pub name: Cow<'static, str>,
 }
 
 impl EntryPointInfo {
@@ -271,8 +254,9 @@ impl EntryPointInfo {
 /// A compute shader entry point.
 #[derive(Clone, Debug)]
 pub struct ComputeEntryInfo {
-    /// The entry point name.
-    pub name: String,
+    /// The entry point name (see [`EntryPointInfo::name`] for the
+    /// `Cow<'static, str>` rationale).
+    pub name: Cow<'static, str>,
     /// The `@workgroup_size(X, Y, Z)` dimensions.
     pub workgroup_size: (u32, u32, u32),
     /// A default label for descriptors (`"<module>::<name>"`).
@@ -328,11 +312,32 @@ pub struct BufferDescriptorInfo {
     pub kind: BufferKind,
     /// The byte size, computed per WGSL §14.4.1. `0` for runtime arrays.
     pub size: u64,
-    /// The pre-built descriptor, with `usage` already set. The label is
-    /// a leaked `&'static str` of the binding name (small, one-time
-    /// allocation per binding; matches the original compile-time
-    /// `pub const X_BUFFER_DESCRIPTOR` shape).
-    pub descriptor: wgpu::BufferDescriptor<'static>,
+    /// The pre-built descriptor's usage flags, ready to plug into a
+    /// `wgpu::BufferDescriptor` along with the borrow of
+    /// [`Self::binding_name`].
+    pub usage: wgpu::BufferUsages,
+}
+
+impl BufferDescriptorInfo {
+    /// Builds a `wgpu::BufferDescriptor` borrowing from
+    /// [`Self::binding_name`]. The caller must keep this
+    /// `BufferDescriptorInfo` alive for the duration of any wgpu call
+    /// using the returned descriptor.
+    pub fn descriptor(&self) -> wgpu::BufferDescriptor<'_> {
+        wgpu::BufferDescriptor {
+            label: Some(&self.binding_name),
+            size: self.size,
+            usage: self.usage,
+            mapped_at_creation: false,
+        }
+    }
+
+    /// Creates an empty buffer on the given device. The caller is
+    /// responsible for populating the buffer (typically via
+    /// `queue.write_buffer`).
+    pub fn create_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer(&self.descriptor())
+    }
 }
 
 /// What kind of GPU buffer a [`BufferDescriptorInfo`] describes.
@@ -342,15 +347,6 @@ pub enum BufferKind {
     Uniform,
     /// A storage buffer (`var<storage, read[_write]>`).
     Storage { read_only: bool },
-}
-
-impl BufferDescriptorInfo {
-    /// Creates an empty buffer on the given device using the
-    /// pre-computed descriptor. The caller is responsible for populating
-    /// the buffer (typically via `queue.write_buffer`).
-    pub fn create_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer(&self.descriptor)
-    }
 }
 
 // ===== Analysis entry points =====
@@ -411,14 +407,9 @@ pub fn analyze_module(ir_module: &ir::Module) -> WgpuLinkage {
                     binding: u.binding,
                     kind: BufferKind::Uniform,
                     size,
-                    descriptor: wgpu::BufferDescriptor {
-                        label: Some(leak_str(&u.name)),
-                        size,
-                        usage: wgpu::BufferUsages::UNIFORM
-                            | wgpu::BufferUsages::COPY_DST
-                            | wgpu::BufferUsages::COPY_SRC,
-                        mapped_at_creation: false,
-                    },
+                    usage: wgpu::BufferUsages::UNIFORM
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
                 });
             }
             ir::Item::Storage(s) => {
@@ -461,14 +452,9 @@ pub fn analyze_module(ir_module: &ir::Module) -> WgpuLinkage {
                     binding: s.binding,
                     kind: BufferKind::Storage { read_only },
                     size,
-                    descriptor: wgpu::BufferDescriptor {
-                        label: Some(leak_str(&s.name)),
-                        size,
-                        usage: wgpu::BufferUsages::STORAGE
-                            | wgpu::BufferUsages::COPY_DST
-                            | wgpu::BufferUsages::COPY_SRC,
-                        mapped_at_creation: false,
-                    },
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
                 });
             }
             ir::Item::Sampler(s) => {
@@ -994,15 +980,4 @@ fn eval_array_len(expr: &ir::Expr, module: &ir::Module) -> Option<usize> {
 
 fn eval_const_int(expr: &ir::Expr, module: &ir::Module) -> Option<usize> {
     eval_array_len(expr, module)
-}
-
-/// Convert a `&str` to a `&'static str` by leaking the allocation.
-/// Used to produce `'static` labels for `wgpu::BufferDescriptor` and
-/// other descriptors whose `L` parameter defaults to `&'static str`.
-///
-/// This is a small one-time cost per binding analyzed. Bindings are
-/// typically few, the strings are short (often just the binding name),
-/// and the leaked memory is constant for the lifetime of the program.
-fn leak_str(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
 }

@@ -202,7 +202,7 @@ fn render_texture_load_gpu(
     let bind_group_layout = linkage
         .bind_group(0)
         .expect("bind group 0 present")
-        .layout(device, Some("texture_load_bgl"));
+        .layout(device);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("texture_load_pipeline_layout"),
@@ -295,7 +295,7 @@ fn render_texture_sample_gpu(
     let bind_group_layout = linkage
         .bind_group(0)
         .expect("bind group 0 present")
-        .layout(device, Some("texture_sample_bgl"));
+        .layout(device);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("texture_sample_pipeline_layout"),

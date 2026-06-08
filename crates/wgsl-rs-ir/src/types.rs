@@ -4,6 +4,8 @@
 //! (`String`, `Vec<T>`, plain numeric/bool literals) so they can live at
 //! runtime without any dependency on `syn` or `proc-macro2`.
 
+use std::borrow::Cow;
+
 /// An attribute preserved from Rust source on an IR item.
 ///
 /// Not rendered in WGSL output — exists for extension inspection.
@@ -583,7 +585,14 @@ pub struct ItemFn {
     /// templates (which need substitution before rendering).
     pub type_params: Vec<String>,
     pub fn_attrs: FnAttrs,
-    pub name: String,
+    /// The function's identifier. For fresh (non-monomorphized) functions
+    /// this is a `Cow::Borrowed` of a `stringify!`-emitted `'static` literal
+    /// — safe to borrow for FFI boundaries (wgpu, etc.) without copying.
+    /// For monomorphized instances (e.g. `id` → `id_f32`) the rename
+    /// pass produces a `Cow::Owned` containing a runtime-computed name;
+    /// the owning `String` lives in this `Cow` and is freed when the
+    /// owning `ItemFn` is dropped.
+    pub name: Cow<'static, str>,
     pub inputs: Vec<FnArg>,
     pub return_type: ReturnType,
     pub block: Block,

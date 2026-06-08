@@ -38,7 +38,7 @@ fn renders_simple_function() {
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::None,
-            name: "double".to_string(),
+            name: "double".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
@@ -83,7 +83,7 @@ fn renders_compute_entry_point() {
                     z: None,
                 },
             },
-            name: "main".to_string(),
+            name: "main".to_string().into(),
             inputs: vec![],
             return_type: ReturnType::Default,
             block: Block { stmts: vec![] },
@@ -128,7 +128,7 @@ fn renders_struct_and_impl() {
                 items: vec![ImplItem::Fn(ItemFn {
                     type_params: vec![],
                     fn_attrs: FnAttrs::None,
-                    name: "x_only".to_string(),
+                    name: "x_only".to_string().into(),
                     inputs: vec![FnArg {
                         inter_stage_io: vec![],
                         name: "p".to_string(),
@@ -240,7 +240,7 @@ fn substitute_replaces_type_params() {
         items: vec![Item::Fn(ItemFn {
             type_params: vec!["T".to_string()],
             fn_attrs: FnAttrs::None,
-            name: "id".to_string(),
+            name: "id".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
@@ -280,7 +280,7 @@ fn substitute_propagates_into_arrays_and_pointers() {
         items: vec![Item::Fn(ItemFn {
             type_params: vec!["T".to_string()],
             fn_attrs: FnAttrs::None,
-            name: "f".to_string(),
+            name: "f".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "p".to_string(),
@@ -318,7 +318,7 @@ fn fn_call_translates_builtin_names() {
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::None,
-            name: "f".to_string(),
+            name: "f".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
@@ -354,7 +354,7 @@ fn slab_read_lowers_to_for_loop() {
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::None,
-            name: "f".to_string(),
+            name: "f".to_string().into(),
             inputs: vec![],
             return_type: ReturnType::Default,
             block: Block {

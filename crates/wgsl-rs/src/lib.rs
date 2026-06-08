@@ -568,7 +568,7 @@ mod test {
             vec![ir::Item::Fn(ir::ItemFn {
                 type_params: vec![],
                 fn_attrs: ir::FnAttrs::None,
-                name: "shared".to_string(),
+                name: "shared".to_string().into(),
                 inputs: vec![ir::FnArg {
                     inter_stage_io: vec![],
                     name: "x".to_string(),

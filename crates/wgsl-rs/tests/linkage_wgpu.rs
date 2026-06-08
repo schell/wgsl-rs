@@ -162,7 +162,7 @@ fn analyze_triangle_finds_bind_group_and_entries() {
     assert_eq!(buf.binding, 0);
     assert!(matches!(buf.kind, wg::BufferKind::Uniform));
     assert_eq!(buf.size, 4);
-    assert_eq!(buf.descriptor.size, 4);
+    assert_eq!(buf.descriptor().size, 4);
 }
 
 #[test]
@@ -529,7 +529,7 @@ fn compute_workgroup_size_defaults_to_one() {
                     z: None,
                 },
             },
-            name: "main".to_string(),
+            name: "main".to_string().into(),
             inputs: vec![],
             return_type: ir::ReturnType::Default,
             block: ir::Block { stmts: vec![] },

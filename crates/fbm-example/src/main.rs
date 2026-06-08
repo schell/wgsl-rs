@@ -99,7 +99,7 @@ impl FbmPipeline {
         let bg_layout = linkage
             .bind_group(0)
             .expect("bind group 0 present")
-            .layout(device, Some("bg0"));
+            .layout(device);
         let bind_group = linkage.bind_group(0).unwrap().create(
             device,
             &bg_layout,

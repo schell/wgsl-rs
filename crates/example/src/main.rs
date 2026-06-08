@@ -210,7 +210,7 @@ fn build_linkage() {
             let bindgroup_layout = linkage
                 .bind_group(0)
                 .expect("bind group 0 present")
-                .layout(device, Some("bg0"));
+                .layout(device);
             let bindgroup = linkage.bind_group(0).unwrap().create(
                 device,
                 &bindgroup_layout,

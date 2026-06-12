@@ -48,6 +48,8 @@ Always remember to run `cargo fmt` after making changes.
 This repo contains a `cargo xtask` that provides agents with some
 shorthand commands for common development tasks.
 
+#### wgsl-spec
+
 `cargo xtask wgsl-spec` provides access to the WGSL specification without
 overwhelming an agent's context window.
 
@@ -56,6 +58,18 @@ cargo xtask wgsl-spec toc                        # List WGSL spec table of conte
 cargo xtask wgsl-spec section <anchor>           # Fetch a spec section with subsections
 cargo xtask wgsl-spec section --shallow <anchor> # Fetch section without subsections
 cargo xtask wgsl-spec section <anchor> <sub>     # Fetch a specific subsection
+```
+
+#### CI actions
+
+`cargo xtask ci` provides access to continuous integration actions.
+
+Most importantly this includes a subcommand to run after making changes, before
+committing or pushing a PR:
+
+```bash
+cargo xtask ci --help          # Show CI subcommands
+cargo xtask ci pr-check        # Run all checks before pushing a PR
 ```
 
 ## Code Style

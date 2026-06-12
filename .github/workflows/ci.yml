@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_LOG: info
 
 jobs:
   fmt:
@@ -48,10 +49,7 @@ jobs:
           key: ${{ runner.os }}-cargo-bin-sarif-tools-v1
 
       - name: Install SARIF tools
-        run: |
-          if ! command -v clippy-sarif >/dev/null 2>&1 || ! command -v sarif-fmt >/dev/null 2>&1; then
-            cargo install clippy-sarif sarif-fmt
-          fi
+        run: cargo xtask ci install-clippy-deps
 
       - name: Run Clippy
         run: |
@@ -77,35 +75,11 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install nextest
-        run: |
-          if ! command -v cargo-nextest >/dev/null 2>&1; then
-            cargo install --locked cargo-nextest
-          fi
+      - name: Run all tests
+        run: cargo xtask ci all-tests
 
-      - name: Run tests
-        run: cargo nextest run --all-features
-
-  roundtrip-tests:
-    name: Roundtrip Tests
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: List roundtrip tests
-        run: cargo run -p roundtrip-tests -- --list
-
-      - name: Run roundtrip tests
-        run: cargo run -p roundtrip-tests
-
-  doc-test:
-    name: Doc test
+  docs:
+    name: Docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,5 +90,5 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Run doc tests
-        run: cargo test --doc --all-features
+      - name: Check doc generation
+        run: cargo xtask ci docs 

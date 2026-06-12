@@ -2,6 +2,8 @@
 
 use clap::Parser;
 
+mod ci;
+mod help;
 mod wgsl_spec;
 
 #[derive(clap::Parser)]
@@ -17,6 +19,11 @@ enum Commands {
         #[command(subcommand)]
         action: wgsl_spec::WgslSpecAction,
     },
+    /// Perform actions as if in a continuous integration environment.
+    Ci {
+        #[command(subcommand)]
+        action: ci::CiAction,
+    },
 }
 
 fn main() {
@@ -25,5 +32,6 @@ fn main() {
 
     match cli.command {
         Commands::WgslSpec { action } => action.run(),
+        Commands::Ci { action } => action.run(),
     }
 }

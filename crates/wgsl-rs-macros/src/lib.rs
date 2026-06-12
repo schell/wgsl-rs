@@ -17,8 +17,6 @@ mod builder;
 mod builtins;
 mod ir_convert;
 mod ir_emit;
-#[cfg(feature = "linkage-wgpu")]
-mod linkage;
 mod monomorphize;
 mod parse;
 mod parse_visitor;
@@ -776,26 +774,10 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         }
     }
 
-    // Generate linkage module when feature is enabled.
-    //
-    // Template modules (with module-level type parameters) skip linkage
-    // generation: the WGSL `shader_source()` is a template with unresolved
-    // placeholders, so a `wgpu::ShaderModule` can't be built from it
-    // directly. Users must instantiate the template first, then construct
-    // their own pipeline / bind groups manually for now.
-    #[cfg(feature = "linkage-wgpu")]
-    let linkage_fragment = if module_type_params.is_empty() {
-        let linkage_info =
-            linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
-        linkage::generate_linkage_module(&linkage_info)
-    } else {
-        quote! {}
-    };
-
     // For template modules (those with module-level type parameters),
     // emit an `instantiate` function alongside `WGSL_MODULE`. The
     // function uses `wgsl_rs::linkage::Type<Is = ...>` constraints to
-    // enforce at compile time that every linkage variable's concrete type
+    // enforce at runtime that every linkage variable's concrete type
     // is consistent across all entry points that use it.
     let builder_fragment = if module_type_params.is_empty() {
         quote! {}
@@ -834,14 +816,6 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
             if let Some((_, wrapper_content)) = wrapper_mod.content {
                 content.extend(wrapper_content);
             }
-        }
-
-        // Add linkage if the feature is set (skipped for template modules
-        // — see the linkage_fragment construction above).
-        #[cfg(feature = "linkage-wgpu")]
-        if !linkage_fragment.is_empty() {
-            let linkage_item: syn::Item = syn::parse2(linkage_fragment)?;
-            content.push(linkage_item);
         }
     }
 

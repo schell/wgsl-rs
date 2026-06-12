@@ -141,7 +141,7 @@ fn item_fn(f: &parse::ItemFn) -> Result<ir::ItemFn> {
     Ok(ir::ItemFn {
         type_params: f.type_params.iter().map(|i| i.to_string()).collect(),
         fn_attrs: fn_attrs(&f.fn_attrs)?,
-        name: f.ident.to_string(),
+        name: f.ident.to_string().into(),
         inputs: f.inputs.iter().map(fn_arg).collect::<Result<Vec<_>>>()?,
         return_type: return_type(&f.return_type)?,
         block: block_from_parse(&f.block)?,

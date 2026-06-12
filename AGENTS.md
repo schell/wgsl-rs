@@ -34,6 +34,7 @@ cargo test                                  # Run all tests
 cargo test -p wgsl-rs-macros                # Test specific crate (wgsl-rs-macros in this case)
 cargo test -- test_name                     # Run a single test by name
 cargo fmt && cargo clippy                   # Format and lint
+cargo run -p roundtrip-tests                # Run the round-trip tests to ensure the "two worlds" agree
 cargo run -p example                        # Run the example, showing help text about subcommands
 cargo run -p example -- show                # Show the names of available example modules
 cargo run -p example -- source {name}       # Validate and print a single example module's WGSL source
@@ -97,8 +98,9 @@ When collaborating with generative AI, please author commits with the format:
 
 `{human-author} with {llm-name} {llm-version} <{human-email}>`
 
-Additionally, if you are working with an agent harness, provide a linke to the
-transcript in the PR description.
+This can be accomplished easily with two steps:
+1. A normal commit via `git commit ...`
+2. Amend the author with `git commit --amend --author "{human-author} with {llm-name} {llm-version} <{human-email}>"`
 
 For more information, see [NLnet's AI Disclosure Policy](https://nlnet.nl/foundation/policies/generativeAI/).
 

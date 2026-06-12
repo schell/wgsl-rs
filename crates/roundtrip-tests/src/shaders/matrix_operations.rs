@@ -1190,7 +1190,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                determinant_mat2::linkage::shader_source(),
+                &determinant_mat2::WGSL_MODULE.wgsl_source(),
                 &input,
                 64,
             );
@@ -1208,7 +1208,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                determinant_mat3::linkage::shader_source(),
+                &determinant_mat3::WGSL_MODULE.wgsl_source(),
                 &input,
                 64,
             );
@@ -1226,7 +1226,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                determinant_mat4::linkage::shader_source(),
+                &determinant_mat4::WGSL_MODULE.wgsl_source(),
                 &input,
                 64,
             );
@@ -1244,7 +1244,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat2x2::linkage::shader_source(),
+                &transpose_mat2x2::WGSL_MODULE.wgsl_source(),
                 &input,
                 256,
             );
@@ -1262,7 +1262,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat3x3::linkage::shader_source(),
+                &transpose_mat3x3::WGSL_MODULE.wgsl_source(),
                 &input,
                 576,
             );
@@ -1280,7 +1280,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat4x4::linkage::shader_source(),
+                &transpose_mat4x4::WGSL_MODULE.wgsl_source(),
                 &input,
                 1024,
             );
@@ -1298,7 +1298,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat2x3::linkage::shader_source(),
+                &transpose_mat2x3::WGSL_MODULE.wgsl_source(),
                 &input,
                 384,
             );
@@ -1316,7 +1316,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat3x2::linkage::shader_source(),
+                &transpose_mat3x2::WGSL_MODULE.wgsl_source(),
                 &input,
                 384,
             );
@@ -1334,7 +1334,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat3x4::linkage::shader_source(),
+                &transpose_mat3x4::WGSL_MODULE.wgsl_source(),
                 &input,
                 768,
             );
@@ -1352,7 +1352,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat4x3::linkage::shader_source(),
+                &transpose_mat4x3::WGSL_MODULE.wgsl_source(),
                 &input,
                 768,
             );
@@ -1370,7 +1370,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat2x4::linkage::shader_source(),
+                &transpose_mat2x4::WGSL_MODULE.wgsl_source(),
                 &input,
                 512,
             );
@@ -1388,7 +1388,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                transpose_mat4x2::linkage::shader_source(),
+                &transpose_mat4x2::WGSL_MODULE.wgsl_source(),
                 &input,
                 512,
             );
@@ -1406,7 +1406,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                mat2_vec2_mul::linkage::shader_source(),
+                &mat2_vec2_mul::WGSL_MODULE.wgsl_source(),
                 &input,
                 128,
             );
@@ -1424,7 +1424,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                mat3_vec3_mul::linkage::shader_source(),
+                &mat3_vec3_mul::WGSL_MODULE.wgsl_source(),
                 &input,
                 192,
             );
@@ -1442,7 +1442,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                mat4_vec4_mul::linkage::shader_source(),
+                &mat4_vec4_mul::WGSL_MODULE.wgsl_source(),
                 &input,
                 256,
             );
@@ -1460,7 +1460,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                mat2_mat2_mul::linkage::shader_source(),
+                &mat2_mat2_mul::WGSL_MODULE.wgsl_source(),
                 &input,
                 256,
             );
@@ -1478,7 +1478,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                mat3_mat3_mul::linkage::shader_source(),
+                &mat3_mat3_mul::WGSL_MODULE.wgsl_source(),
                 &input,
                 576,
             );
@@ -1496,7 +1496,7 @@ impl RoundtripTest for MatrixOperationsTest {
             let gpu = run_gpu_f32_shader(
                 device,
                 queue,
-                mat4_mat4_mul::linkage::shader_source(),
+                &mat4_mat4_mul::WGSL_MODULE.wgsl_source(),
                 &input,
                 1024,
             );

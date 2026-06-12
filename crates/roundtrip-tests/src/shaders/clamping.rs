@@ -105,7 +105,7 @@ impl RoundtripTest for ClampingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: clamp_basic::linkage::shader_source(),
+                shader_source: &clamp_basic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,
@@ -150,7 +150,7 @@ impl RoundtripTest for ClampingTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: clamp_interp::linkage::shader_source(),
+                shader_source: &clamp_interp::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: layout_entries,
                 input_data: input_bytes,

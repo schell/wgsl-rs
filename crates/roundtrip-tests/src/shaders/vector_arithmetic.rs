@@ -668,7 +668,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_binary_f32::linkage::shader_source(),
+                shader_source: &vec_binary_f32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -733,7 +733,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_binary_i32::linkage::shader_source(),
+                shader_source: &vec_binary_i32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -776,7 +776,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_binary_u32::linkage::shader_source(),
+                shader_source: &vec_binary_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -815,7 +815,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_scalar_f32::linkage::shader_source(),
+                shader_source: &vec_scalar_f32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -857,7 +857,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_scalar_i32::linkage::shader_source(),
+                shader_source: &vec_scalar_i32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -901,7 +901,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_scalar_u32::linkage::shader_source(),
+                shader_source: &vec_scalar_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -957,7 +957,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_unary::linkage::shader_source(),
+                shader_source: &vec_unary::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -1026,7 +1026,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_mixed_dims::linkage::shader_source(),
+                shader_source: &vec_mixed_dims::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -1080,7 +1080,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_overflow_u32::linkage::shader_source(),
+                shader_source: &vec_overflow_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -1136,7 +1136,7 @@ impl RoundtripTest for VectorArithmeticTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: vec_overflow_i32::linkage::shader_source(),
+                shader_source: &vec_overflow_i32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,

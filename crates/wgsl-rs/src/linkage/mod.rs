@@ -10,6 +10,15 @@
 //! `T: Type<Is = U>` is satisfied iff `T` and `U` are the same type.
 //! This is used in the `where` clause of the generated `instantiate`
 //! function to catch conflicting specialisations at compile time.
+//!
+//! ## wgpu linkage
+//!
+//! Runtime wgpu linkage analysis lives in the [`wgpu`] submodule, gated
+//! behind the `linkage-wgpu` feature. The runtime analyzer walks the IR
+//! produced by a `#[wgsl]` module (post-instantiation for templates) and
+//! produces bind group layouts, pipeline state descriptors, and buffer
+//! descriptors without any compile-time code generation from the
+//! proc-macro. See the [`wgpu`] module for details.
 
 /// A trivial trait for type equality checking.
 ///
@@ -26,3 +35,6 @@ pub trait Type {
 impl<T> Type for T {
     type Is = T;
 }
+
+#[cfg(feature = "linkage-wgpu")]
+pub mod wgpu;

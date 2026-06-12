@@ -254,7 +254,7 @@ fn item_fn(p: &TokenStream, f: &ir::ItemFn) -> TokenStream {
         #p::ItemFn {
             type_params: #type_params,
             fn_attrs: #attrs,
-            name: ::std::string::String::from(#n),
+            name: ::std::borrow::Cow::Borrowed(#n),
             inputs: ::std::vec![#(#inputs),*],
             return_type: #rt,
             block: #body,

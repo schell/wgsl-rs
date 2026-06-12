@@ -172,7 +172,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: modf_basic::linkage::shader_source(),
+                shader_source: &modf_basic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -216,7 +216,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: frexp_basic::linkage::shader_source(),
+                shader_source: &frexp_basic::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -261,7 +261,7 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: frexp_ldexp_roundtrip::linkage::shader_source(),
+                shader_source: &frexp_ldexp_roundtrip::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,

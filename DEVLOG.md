@@ -291,3 +291,44 @@ limits. The fix uses inherent associated constants (`Self::__OFFSET_0`,
 `Self::__SIZE_0`, etc.) to break the recursive computation into individually
 evaluable steps. These consts live on the struct (not any trait impl) so they're
 visible from both the `WgslLayout` and `Layout` trait impls.
+
+### 2026-06-06: Runtime wgpu linkage via IR traversal (issue #120)
+
+`wgpu` linkage code (bind group layouts, vertex/fragment state descriptors,
+compute pipeline descriptors, buffer descriptors, per-binding `create_X_buffer`
+helpers) used to be emitted by the `#[wgsl]` proc-macro walking its `syn`
+parse tree in `crates/wgsl-rs-macros/src/linkage.rs` (~650 lines). This
+predated `wgsl-rs-ir` and was skipped entirely for template modules
+because the generated WGSL source was a template with `__TP{name}__`
+placeholders, so a `wgpu::ShaderModule` couldn't be built from it.
+
+The new `wgsl_rs::linkage::wgpu` module walks the runtime IR instead. The
+same `analyze_wgsl_module` function works for both concrete modules and
+template modules after `Module::instantiate` (which returns a concrete
+`ir::Module`). For templates this enables building wgpu pipelines from
+generic shader modules that previously had no linkage.
+
+The proc-macro no longer generates the `pub mod linkage { ... }` block, nor
+the per-binding `create_X_buffer` and `X_BUFFER_DESCRIPTOR` items. Consumers
+find the buffer they want by name via `linkage.buffer("FRAME")` and call
+`.create_buffer(device)`. The compile-time `linkage-wgpu` feature flag on
+`wgsl-rs-macros` is now a no-op (kept for backwards compatibility); the
+`linkage-wgpu` feature on `wgsl-rs` continues to gate the runtime module.
+
+Sizing follows WGSL §14.4.1 ("Alignment and Size"), implemented inline
+against `ir::Type` rather than via the `wgsl-rs-layout` crate, which
+operates on Rust types. Covers scalars, vectors, matrices, fixed-size
+arrays (including named `const` lengths), runtime arrays (size `0`),
+atomics, and user structs (looked up by name in the assembled IR).
+The previous `size_of::<T>()`-based sizing could disagree with WGSL
+layout for non-`repr(C)` structs; the new sizes are correct for the GPU.
+
+The convenience methods (`EntryPointInfo::vertex_state`,
+`EntryPointInfo::fragment_state`, `BindGroupInfo::create`,
+`BufferDescriptorInfo::create_buffer`, etc.) replace the old typed
+`create(device, layout, frame_uniform_buffer)` named-parameter form
+with slice-based `create(device, layout, &[resource, ...])`. The
+verbosity is the price of resilience to binding reordering; the
+old `create_FRAME_buffer(device)` ergonomic for a single-binding
+module is gone.
+

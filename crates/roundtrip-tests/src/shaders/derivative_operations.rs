@@ -83,7 +83,11 @@ fn render_basic(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 4]> {
     let texture =
         harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, "derivative_basic_target");
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let module = derivative_basic::linkage::shader_module(device);
+
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(&derivative_basic::WGSL_MODULE);
+    let source = &derivative_basic::WGSL_MODULE.wgsl_source();
+    let module = linkage.shader_module(device, source);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("derivative_basic"),
@@ -94,21 +98,29 @@ fn render_basic(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 4]> {
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("derivative_basic"),
         layout: Some(&pipeline_layout),
-        vertex: derivative_basic::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(derivative_basic::linkage::frag_main::fragment_state(
-            &module,
-            &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba32Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::all(),
-            })],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
         multiview_mask: None,
         cache: None,
     });
@@ -150,7 +162,11 @@ fn render_variants(device: &wgpu::Device, queue: &wgpu::Queue) -> (Vec<[f32; 4]>
     );
     let fine_view = fine_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let coarse_view = coarse_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let module = derivative_variants::linkage::shader_module(device);
+
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(&derivative_variants::WGSL_MODULE);
+    let source = &derivative_variants::WGSL_MODULE.wgsl_source();
+    let module = linkage.shader_module(device, source);
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("derivative_variants"),
@@ -161,28 +177,36 @@ fn render_variants(device: &wgpu::Device, queue: &wgpu::Queue) -> (Vec<[f32; 4]>
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("derivative_variants"),
         layout: Some(&pipeline_layout),
-        vertex: derivative_variants::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(derivative_variants::linkage::frag_main::fragment_state(
-            &module,
-            &[
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba32Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::all(),
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba32Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::all(),
-                }),
-            ],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        }),
+                    ],
+                ),
+        ),
         multiview_mask: None,
         cache: None,
     });

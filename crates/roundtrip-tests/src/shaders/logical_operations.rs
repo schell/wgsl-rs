@@ -270,7 +270,7 @@ impl RoundtripTest for LogicalOperationsTest {
             let gpu_output = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: all_vec2b::linkage::shader_source(),
+                shader_source: &all_vec2b::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -284,7 +284,10 @@ impl RoundtripTest for LogicalOperationsTest {
             all_vec2b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                all_vec2b::linkage::main::WORKGROUP_SIZE,
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec2b::WGSL_MODULE)
+                    .compute_entry("main")
+                    .unwrap()
+                    .workgroup_size,
                 |builtins| {
                     all_vec2b::main(builtins.global_invocation_id);
                 },
@@ -310,7 +313,7 @@ impl RoundtripTest for LogicalOperationsTest {
             let gpu_output = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: all_vec3b::linkage::shader_source(),
+                shader_source: &all_vec3b::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -324,7 +327,10 @@ impl RoundtripTest for LogicalOperationsTest {
             all_vec3b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                all_vec3b::linkage::main::WORKGROUP_SIZE,
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec3b::WGSL_MODULE)
+                    .compute_entry("main")
+                    .unwrap()
+                    .workgroup_size,
                 |builtins| {
                     all_vec3b::main(builtins.global_invocation_id);
                 },
@@ -350,7 +356,7 @@ impl RoundtripTest for LogicalOperationsTest {
             let gpu_output = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: all_vec4b::linkage::shader_source(),
+                shader_source: &all_vec4b::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -364,7 +370,10 @@ impl RoundtripTest for LogicalOperationsTest {
             all_vec4b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                all_vec4b::linkage::main::WORKGROUP_SIZE,
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec4b::WGSL_MODULE)
+                    .compute_entry("main")
+                    .unwrap()
+                    .workgroup_size,
                 |builtins| {
                     all_vec4b::main(builtins.global_invocation_id);
                 },
@@ -390,7 +399,7 @@ impl RoundtripTest for LogicalOperationsTest {
             let gpu_output = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: any_vec2b::linkage::shader_source(),
+                shader_source: &any_vec2b::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -404,7 +413,10 @@ impl RoundtripTest for LogicalOperationsTest {
             any_vec2b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                any_vec2b::linkage::main::WORKGROUP_SIZE,
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec2b::WGSL_MODULE)
+                    .compute_entry("main")
+                    .unwrap()
+                    .workgroup_size,
                 |builtins| {
                     any_vec2b::main(builtins.global_invocation_id);
                 },
@@ -430,7 +442,7 @@ impl RoundtripTest for LogicalOperationsTest {
             let gpu_output = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: any_vec3b::linkage::shader_source(),
+                shader_source: &any_vec3b::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -444,7 +456,10 @@ impl RoundtripTest for LogicalOperationsTest {
             any_vec3b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                any_vec3b::linkage::main::WORKGROUP_SIZE,
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec3b::WGSL_MODULE)
+                    .compute_entry("main")
+                    .unwrap()
+                    .workgroup_size,
                 |builtins| {
                     any_vec3b::main(builtins.global_invocation_id);
                 },
@@ -470,7 +485,7 @@ impl RoundtripTest for LogicalOperationsTest {
             let gpu_output = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: any_vec4b::linkage::shader_source(),
+                shader_source: &any_vec4b::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -484,7 +499,10 @@ impl RoundtripTest for LogicalOperationsTest {
             any_vec4b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                any_vec4b::linkage::main::WORKGROUP_SIZE,
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec4b::WGSL_MODULE)
+                    .compute_entry("main")
+                    .unwrap()
+                    .workgroup_size,
                 |builtins| {
                     any_vec4b::main(builtins.global_invocation_id);
                 },

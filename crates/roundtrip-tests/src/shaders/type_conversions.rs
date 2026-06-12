@@ -240,7 +240,7 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: convert_f32_to_u32::linkage::shader_source(),
+                shader_source: &convert_f32_to_u32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -278,7 +278,7 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: convert_f32_to_i32::linkage::shader_source(),
+                shader_source: &convert_f32_to_i32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -316,7 +316,7 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: convert_u32_to_f32::linkage::shader_source(),
+                shader_source: &convert_u32_to_f32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -362,7 +362,7 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: convert_i32_to_f32::linkage::shader_source(),
+                shader_source: &convert_i32_to_f32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,
@@ -408,7 +408,7 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
                 device,
                 queue,
-                shader_source: convert_u32_to_i32::linkage::shader_source(),
+                shader_source: &convert_u32_to_i32::WGSL_MODULE.wgsl_source(),
                 entry_point: "main",
                 bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
                 input_data: input_bytes,

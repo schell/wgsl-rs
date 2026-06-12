@@ -155,7 +155,7 @@ impl RoundtripTest for SynchronizationTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                workgroup_barrier_sum::linkage::shader_source(),
+                &workgroup_barrier_sum::WGSL_MODULE.wgsl_source(),
                 &input,
                 INVOCATIONS,
             );
@@ -175,7 +175,7 @@ impl RoundtripTest for SynchronizationTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                storage_barrier_sum::linkage::shader_source(),
+                &storage_barrier_sum::WGSL_MODULE.wgsl_source(),
                 &input,
                 INVOCATIONS * 2,
             );
@@ -196,7 +196,7 @@ impl RoundtripTest for SynchronizationTest {
             let gpu = run_gpu_u32_shader(
                 device,
                 queue,
-                workgroup_uniform_load_scalar::linkage::shader_source(),
+                &workgroup_uniform_load_scalar::WGSL_MODULE.wgsl_source(),
                 &input,
                 INVOCATIONS,
             );

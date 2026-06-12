@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+# The `linkage-wgpu` feature used to control compile-time wgpu linkage
+# generation in the proc-macro. After issue #120, wgpu linkage is
+# produced at runtime by `wgsl_rs::linkage::wgpu` (gated on the same
+# feature on the `wgsl-rs` crate). This feature is now a no-op kept
+# for backwards compatibility with downstream Cargo features.
 default = ["validation"]
 linkage-wgpu = []
 validation = []

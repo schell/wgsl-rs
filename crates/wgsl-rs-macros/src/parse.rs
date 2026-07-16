@@ -857,6 +857,18 @@ impl Type {
                 type_path.qself.as_ref(),
                 "QSelf not allowed in scalar type",
             )?;
+            // Reject multi-segment paths in type position. WGSL struct
+            // names must be simple identifiers; a Rust path like
+            // `std::marker::PhantomData` has no WGSL equivalent. Bring
+            // the type into scope with a `use` import first.
+            snafu::ensure!(
+                type_path.path.segments.len() == 1,
+                UnsupportedSnafu {
+                    span: type_path.path.segments.span(),
+                    note: "fully qualified type paths like `std::marker::PhantomData` are not \
+                           supported; use a `use` import to bring the type into scope",
+                }
+            );
             let segment = type_path.path.segments.first().context(UnsupportedSnafu {
                 span: type_path.path.segments.span(),
                 note: "Unexpected type path",

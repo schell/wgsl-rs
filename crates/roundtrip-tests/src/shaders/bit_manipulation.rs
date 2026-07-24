@@ -124,12 +124,13 @@ impl RoundtripTest for BitManipulationTest {
 
         // --- bit_count_u32: clz, popcount, ctz, reverse_bits ---
         {
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_count_u32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: bit_count_u32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -167,12 +168,13 @@ impl RoundtripTest for BitManipulationTest {
 
         // --- bit_first_u32: first_leading_bit, first_trailing_bit ---
         {
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_first_u32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: bit_first_u32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -194,8 +196,8 @@ impl RoundtripTest for BitManipulationTest {
                     vec![
                         format!("first_leading_bit(0x{x:08X})"),
                         format!("first_trailing_bit(0x{x:08X})"),
-                        format!("(padding)"),
-                        format!("(padding)"),
+                        "(padding)".into(),
+                        "(padding)".into(),
                     ]
                 })
                 .collect();
@@ -210,12 +212,14 @@ impl RoundtripTest for BitManipulationTest {
 
         // --- bit_extract_insert_u32: extract_bits, insert_bits ---
         {
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_extract_insert_u32::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: bit_extract_insert_u32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

@@ -23,5 +23,5 @@ mod consumer {
 
 fn main() {
     let _ = consumer::run();
-    let _ = consumer::WGSL_MODULE.wgsl_source();
+    let _ = consumer::WGSL_SOURCE.wgsl_source().unwrap();
 }

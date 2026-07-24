@@ -11,7 +11,7 @@
 //!   [`builtin_lookup`]).
 //! * `Expr::Struct` field names are dropped and emitted positionally.
 //! * `Impl` blocks have their methods / constants name-mangled to
-//!   `StructName_member` (via [`crate::mangle`], which escapes underscores).
+//!   `StructName_member` (via [`crate::mangle()`], which escapes underscores).
 //! * Enum discriminants auto-increment starting from 0.
 //! * `let mut` (`Local::mutable == true`) renders as `var`; `let` renders as
 //!   `let`.
@@ -20,7 +20,7 @@
 
 use crate::*;
 
-mod builtin_lookup;
+pub mod builtin_lookup;
 
 /// Render a [`Module`] to a complete WGSL source string.
 pub fn render_module(module: &Module) -> String {

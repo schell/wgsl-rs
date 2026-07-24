@@ -12,6 +12,7 @@ use std::{sync::Arc, time::Instant};
 
 use futures::executor::block_on;
 use shader::fbm_shader;
+use wgsl_rs::linkage::wgpu::analyze_wgsl_module;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -75,35 +76,49 @@ struct FbmPipeline {
 }
 
 impl FbmPipeline {
-    fn new(gpu: &GpuContext) -> Self {
+    fn new(gpu: &GpuContext) -> Result<Self, wgsl_rs::linkage::wgpu::Error> {
         let device = &gpu.device;
 
-        // Create uniform buffers using the generated helpers.
-        let resolution_buffer = fbm_shader::create_u_resolution_buffer(device);
-        let mouse_buffer = fbm_shader::create_u_mouse_buffer(device);
-        let time_buffer = fbm_shader::create_u_time_buffer(device);
+        // Runtime IR-based wgpu linkage analysis (issue #120).
+        let mut linkage = analyze_wgsl_module(&fbm_shader::WGSL_SOURCE).unwrap();
 
-        // Bind group layout and bind group from generated linkage.
-        let bg_layout = fbm_shader::linkage::bind_group_0::layout(device);
-        let bind_group = fbm_shader::linkage::bind_group_0::create(
+        // Pull each uniform's buffer descriptor out by binding name.
+        // The `uniform!` macro preserves the identifier case, so we
+        // must match the SCREAMING_CASE names as declared in the shader.
+        let resolution_buffer = linkage
+            .buffer("U_RESOLUTION")
+            .expect("U_RESOLUTION binding present")
+            .create_buffer(device);
+        let mouse_buffer = linkage
+            .buffer("U_MOUSE")
+            .expect("U_MOUSE binding present")
+            .create_buffer(device);
+        let time_buffer = linkage
+            .buffer("U_TIME")
+            .expect("U_TIME binding present")
+            .create_buffer(device);
+
+        // Bind group layout and bind group from the analyzer.
+        let pipeline_layout = linkage.pipeline_layout(device, Some("fbm"));
+        let bind_group = linkage.create_bind_group_named(
+            0,
             device,
-            &bg_layout,
-            resolution_buffer.as_entire_binding(),
-            mouse_buffer.as_entire_binding(),
-            time_buffer.as_entire_binding(),
-        );
+            &[
+                ("U_RESOLUTION", resolution_buffer.as_entire_binding()),
+                ("U_MOUSE", mouse_buffer.as_entire_binding()),
+                ("U_TIME", time_buffer.as_entire_binding()),
+            ],
+        )?;
 
         // Shader module and render pipeline.
-        let module = fbm_shader::linkage::shader_module(device);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("fbm"),
-            bind_group_layouts: &[Some(&bg_layout)],
-            immediate_size: 0,
-        });
+        let module = linkage.shader_module(device);
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("fbm"),
             layout: Some(&pipeline_layout),
-            vertex: fbm_shader::linkage::vtx_main::vertex_state(&module),
+            vertex: linkage
+                .vertex_entry("vtx_main")
+                .expect("vtx_main entry present")
+                .vertex_state(&module),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
@@ -115,25 +130,30 @@ impl FbmPipeline {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            fragment: Some(fbm_shader::linkage::frag_main::fragment_state(
-                &module,
-                &[Some(wgpu::ColorTargetState {
-                    format: gpu.surface_config.format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::all(),
-                })],
-            )),
+            fragment: Some(
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: gpu.surface_config.format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            ),
             multiview_mask: None,
             cache: None,
         });
 
-        Self {
+        Ok(Self {
             resolution_buffer,
             mouse_buffer,
             time_buffer,
             bind_group,
             render_pipeline,
-        }
+        })
     }
 }
 
@@ -156,7 +176,7 @@ impl AppInner {
                 .unwrap(),
         );
         let gpu = GpuContext::new(window.clone(), event_loop.owned_display_handle());
-        let pipeline = FbmPipeline::new(&gpu);
+        let pipeline = FbmPipeline::new(&gpu).expect("fbm pipeline construction");
 
         Self {
             window,

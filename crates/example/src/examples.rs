@@ -2,46 +2,46 @@
 #![allow(dead_code)]
 use wgsl_rs::wgsl;
 
-pub const EXAMPLE_MODULES: &[&wgsl_rs::Module] = &[
-    &hello_triangle::WGSL_MODULE,
-    &structs::WGSL_MODULE,
-    &compute_shader::WGSL_MODULE,
-    &matrix_example::WGSL_MODULE,
-    &impl_example::WGSL_MODULE,
-    &enum_example::WGSL_MODULE,
-    &binary_ops_example::WGSL_MODULE,
-    &for_loop_example::WGSL_MODULE,
-    &assignment_example::WGSL_MODULE,
-    &zero_value_array_example::WGSL_MODULE,
-    &while_loop_example::WGSL_MODULE,
-    &loop_example::WGSL_MODULE,
-    &if_example::WGSL_MODULE,
-    &break_example::WGSL_MODULE,
-    &return_example::WGSL_MODULE,
-    &switch_example::WGSL_MODULE,
-    &runtime_array_example::WGSL_MODULE,
-    &ptr_example::WGSL_MODULE,
-    &atomic_example::WGSL_MODULE,
-    &texture_example::WGSL_MODULE,
-    &bitcast_example::WGSL_MODULE,
-    &packing_example::WGSL_MODULE,
-    &advanced_numeric_example::WGSL_MODULE,
-    &matrix_builtin_example::WGSL_MODULE,
-    &synchronization_example::WGSL_MODULE,
-    &macro_rules_definitions::WGSL_MODULE,
-    &slab_read_write::WGSL_MODULE,
-    &derivative_example::WGSL_MODULE,
-    &discard_example::WGSL_MODULE,
-    &generic_functions::WGSL_MODULE,
-    &trait_impl_example::WGSL_MODULE,
-    &renderer_specialization::WGSL_MODULE,
-    &renderer_specialization_simple::WGSL_MODULE,
-    &generic_structs::WGSL_MODULE,
-    &shared_inter_stage::WGSL_MODULE,
-    &hello_triangle_generic::WGSL_MODULE,
+pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
+    &hello_triangle::WGSL_SOURCE,
+    &structs::WGSL_SOURCE,
+    &compute_shader::WGSL_SOURCE,
+    &matrix_example::WGSL_SOURCE,
+    &impl_example::WGSL_SOURCE,
+    &enum_example::WGSL_SOURCE,
+    &binary_ops_example::WGSL_SOURCE,
+    &for_loop_example::WGSL_SOURCE,
+    &assignment_example::WGSL_SOURCE,
+    &zero_value_array_example::WGSL_SOURCE,
+    &while_loop_example::WGSL_SOURCE,
+    &loop_example::WGSL_SOURCE,
+    &if_example::WGSL_SOURCE,
+    &break_example::WGSL_SOURCE,
+    &return_example::WGSL_SOURCE,
+    &switch_example::WGSL_SOURCE,
+    &runtime_array_example::WGSL_SOURCE,
+    &ptr_example::WGSL_SOURCE,
+    &atomic_example::WGSL_SOURCE,
+    &texture_example::WGSL_SOURCE,
+    &bitcast_example::WGSL_SOURCE,
+    &packing_example::WGSL_SOURCE,
+    &advanced_numeric_example::WGSL_SOURCE,
+    &matrix_builtin_example::WGSL_SOURCE,
+    &synchronization_example::WGSL_SOURCE,
+    &macro_rules_definitions::WGSL_SOURCE,
+    &slab_read_write::WGSL_SOURCE,
+    &derivative_example::WGSL_SOURCE,
+    &discard_example::WGSL_SOURCE,
+    &generic_functions::WGSL_SOURCE,
+    &trait_impl_example::WGSL_SOURCE,
+    &renderer_specialization::WGSL_SOURCE,
+    &renderer_specialization_simple::WGSL_SOURCE,
+    &generic_structs::WGSL_SOURCE,
+    &shared_inter_stage::WGSL_SOURCE,
+    &hello_triangle_generic::WGSL_SOURCE,
 ];
 
-pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Module> {
+pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
     EXAMPLE_MODULES
         .iter()
         .find(|&module| module.name == name)
@@ -484,7 +484,7 @@ pub mod assignment_example {
     //! - Simple assignment: x = expr;
     //! - Compound assignment: x += expr;, x -= expr;, etc.
     //! - Field assignment: obj.field = expr;
-    //! - Array element assignment: arr[i] = expr;
+    //! - Array element assignment: `arr[i] = expr;`;
     use wgsl_rs::std::*;
 
     pub struct Point {
@@ -975,7 +975,7 @@ pub mod switch_example {
 #[wgsl]
 #[allow(dead_code)]
 pub mod runtime_array_example {
-    //! Demonstrates runtime-sized arrays (RuntimeArray<T>).
+    //! Demonstrates runtime-sized arrays (`RuntimeArray<T>`).
     //!
     //! Runtime-sized arrays transpile to `array<T>` in WGSL (no size
     //! parameter). They can only be used in storage buffers, typically as
@@ -1801,13 +1801,13 @@ pub mod generic_structs {
         Pair::sum(p)
     }
 
-    /// Uses Pair<f32>.
+    /// Uses `Pair<f32>`.
     pub fn use_pair_f32() -> f32 {
         let p = Pair { a: 1.0, b: 2.0 };
         Pair::<f32>::sum(p)
     }
 
-    /// Uses Pair<i32>.
+    /// Uses `Pair<i32>`.
     pub fn use_pair_i32() -> i32 {
         let p: Pair<i32> = Pair::<i32> { a: 10, b: 20 };
         Pair::<i32>::first(p)

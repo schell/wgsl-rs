@@ -355,7 +355,7 @@ pub struct TextureDataMultisampled2D<T> {
     pub height: u32,
     /// Number of samples per pixel
     pub sample_count: u32,
-    /// Pixel data: [y][x][sample]
+    /// Pixel data: `[y][x][sample]`
     pub samples: std::vec::Vec<std::vec::Vec<std::vec::Vec<[T; 4]>>>,
 }
 
@@ -551,7 +551,7 @@ pub struct TextureDataDepthMultisampled2D {
     pub height: u32,
     /// Number of samples per pixel
     pub sample_count: u32,
-    /// Depth samples: [y][x][sample]
+    /// Depth samples: `[y][x][sample]`
     pub samples: std::vec::Vec<std::vec::Vec<std::vec::Vec<f32>>>,
 }
 
@@ -759,7 +759,7 @@ pub trait TextureNumSamplesQuery {
 
 /// Trait for textures that support `textureLoad`.
 pub trait TextureLoad<Coords, Level> {
-    /// The output type (Vec4<T> for sampled textures, f32 for depth)
+    /// The output type (`Vec4<T>` for sampled textures, f32 for depth)
     type Output;
 
     /// Load a texel at the given coordinates and mip level.

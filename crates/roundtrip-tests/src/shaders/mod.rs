@@ -2,7 +2,7 @@
 //!
 //! Each submodule defines one or more `#[wgsl]` compute shader modules that
 //! exercise a category of `wgsl_rs::std` builtin functions, along with a
-//! [`RoundtripTest`](crate::harness::RoundtripTest) implementation that drives
+//! [`RoundtripTest`] implementation that drives
 //! the GPU vs CPU comparison.
 //!
 //! ## Current coverage

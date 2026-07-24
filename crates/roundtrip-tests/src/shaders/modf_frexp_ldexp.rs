@@ -13,7 +13,7 @@ const N: usize = 64;
 
 /// modf_basic: Tests modf(x) -> ModfResult{fract, whole}
 ///
-/// We flatten ModfResult<f32> into two consecutive f32 values per input.
+/// We flatten `ModfResult<f32>` into two consecutive f32 values per input.
 /// OUTPUT layout: [fract_0, whole_0, fract_1, whole_1, ...]
 #[wgsl]
 pub mod modf_basic {
@@ -169,12 +169,13 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
             let output_size = (N * 2 * std::mem::size_of::<f32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&modf_basic::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: modf_basic::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -213,12 +214,13 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
             let output_size = (N * 2 * std::mem::size_of::<f32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&frexp_basic::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: frexp_basic::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -258,12 +260,14 @@ impl RoundtripTest for ModfFrexpLdexpTest {
             let output_size = (N * std::mem::size_of::<f32>()) as u64;
 
             // GPU: frexp -> ldexp roundtrip
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&frexp_ldexp_roundtrip::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: frexp_ldexp_roundtrip::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

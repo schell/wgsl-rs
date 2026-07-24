@@ -4656,7 +4656,7 @@ impl ItemMod {
                     }
 
                     imports.push(quote! {
-                        #path::WGSL_MODULE
+                        #path::WGSL_SOURCE
                     });
                 }
             }

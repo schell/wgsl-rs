@@ -13,5 +13,5 @@ mod ext_shader {
 }
 
 fn main() {
-    let _ = ext_shader::WGSL_MODULE.wgsl_source();
+    let _ = ext_shader::WGSL_SOURCE.wgsl_source().unwrap();
 }

@@ -75,40 +75,18 @@ impl RoundtripTest for ExponentialTest {
         let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
         let output_size = (N * 4 * std::mem::size_of::<f32>()) as u64;
 
-        let layout_entries = &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ];
-
         let epsilon = 1e-3;
         let mut results = Vec::new();
 
         // --- exp_basic: exp, exp2, log, log2 ---
         {
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&exp_basic::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: exp_basic::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -147,12 +125,13 @@ impl RoundtripTest for ExponentialTest {
 
         // --- exp_power: pow, sqrt, inverse_sqrt ---
         {
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&exp_power::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: exp_power::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

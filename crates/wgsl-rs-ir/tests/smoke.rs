@@ -18,7 +18,7 @@ fn lit_u(n: u32) -> Expr {
 #[test]
 fn renders_simple_const() {
     let m = Module {
-        name: "test".to_string(),
+        name: "test",
         items: vec![Item::Const(ItemConst {
             name: "MAX".to_string(),
             ty: Type::Scalar(ScalarType::U32),
@@ -34,11 +34,11 @@ fn renders_simple_const() {
 #[test]
 fn renders_simple_function() {
     let m = Module {
-        name: "test".to_string(),
+        name: "test",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::None,
-            name: "double".to_string(),
+            name: "double".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
@@ -73,7 +73,7 @@ fn renders_simple_function() {
 #[test]
 fn renders_compute_entry_point() {
     let m = Module {
-        name: "test".to_string(),
+        name: "test",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::Compute {
@@ -83,7 +83,7 @@ fn renders_compute_entry_point() {
                     z: None,
                 },
             },
-            name: "main".to_string(),
+            name: "main".to_string().into(),
             inputs: vec![],
             return_type: ReturnType::Default,
             block: Block { stmts: vec![] },
@@ -101,7 +101,7 @@ fn renders_compute_entry_point() {
 #[test]
 fn renders_struct_and_impl() {
     let m = Module {
-        name: "test".to_string(),
+        name: "test",
         items: vec![
             Item::Struct(ItemStruct {
                 type_params: vec![],
@@ -128,7 +128,7 @@ fn renders_struct_and_impl() {
                 items: vec![ImplItem::Fn(ItemFn {
                     type_params: vec![],
                     fn_attrs: FnAttrs::None,
-                    name: "x_only".to_string(),
+                    name: "x_only".to_string().into(),
                     inputs: vec![FnArg {
                         inter_stage_io: vec![],
                         name: "p".to_string(),
@@ -186,7 +186,7 @@ fn renders_struct_expr_positionally() {
         ],
     };
     let m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Const(ItemConst {
             name: "P".to_string(),
             ty: Type::Struct {
@@ -205,7 +205,7 @@ fn renders_struct_expr_positionally() {
 #[test]
 fn renders_enum_with_auto_discriminants() {
     let m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Enum(ItemEnum {
             name: "Color".to_string(),
             variants: vec![
@@ -236,11 +236,11 @@ fn renders_enum_with_auto_discriminants() {
 #[test]
 fn substitute_replaces_type_params() {
     let mut m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec!["T".to_string()],
             fn_attrs: FnAttrs::None,
-            name: "id".to_string(),
+            name: "id".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
@@ -276,11 +276,11 @@ fn substitute_replaces_type_params() {
 #[test]
 fn substitute_propagates_into_arrays_and_pointers() {
     let mut m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec!["T".to_string()],
             fn_attrs: FnAttrs::None,
-            name: "f".to_string(),
+            name: "f".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "p".to_string(),
@@ -314,11 +314,11 @@ fn substitute_propagates_into_arrays_and_pointers() {
 #[test]
 fn fn_call_translates_builtin_names() {
     let m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::None,
-            name: "f".to_string(),
+            name: "f".to_string().into(),
             inputs: vec![FnArg {
                 inter_stage_io: vec![],
                 name: "x".to_string(),
@@ -350,11 +350,11 @@ fn fn_call_translates_builtin_names() {
 #[test]
 fn slab_read_lowers_to_for_loop() {
     let m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
             fn_attrs: FnAttrs::None,
-            name: "f".to_string(),
+            name: "f".to_string().into(),
             inputs: vec![],
             return_type: ReturnType::Default,
             block: Block {
@@ -380,7 +380,7 @@ fn slab_read_lowers_to_for_loop() {
 #[test]
 fn attrs_are_not_rendered_in_wgsl() {
     let m = Module {
-        name: "test".to_string(),
+        name: "test",
         items: vec![Item::Struct(ItemStruct {
             type_params: vec![],
             name: "Foo".to_string(),
@@ -418,7 +418,7 @@ fn attrs_are_not_rendered_in_wgsl() {
 #[test]
 fn substitute_preserves_attrs() {
     let mut m = Module {
-        name: "t".to_string(),
+        name: "t",
         items: vec![Item::Struct(ItemStruct {
             type_params: vec![],
             name: "Pair".to_string(),

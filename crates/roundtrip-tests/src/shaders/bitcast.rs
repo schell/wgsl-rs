@@ -124,12 +124,14 @@ impl RoundtripTest for BitcastTest {
         // --- bitcast_scalar_roundtrip ---
         {
             let output_size = (N * 4 * std::mem::size_of::<u32>()) as u64;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bitcast_scalar_roundtrip::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: bitcast_scalar_roundtrip::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -152,7 +154,7 @@ impl RoundtripTest for BitcastTest {
                         format!("u32->f32->u32(0x{x:08X})"),
                         format!("u32->i32->f32->u32(0x{x:08X})"),
                         format!("i32->f32->u32(0x{x:08X})"),
-                        format!("(padding)"),
+                        "(padding)".into(),
                     ]
                 })
                 .collect();
@@ -169,12 +171,14 @@ impl RoundtripTest for BitcastTest {
         {
             const VEC4_COUNT: usize = 16;
             let output_size = (VEC4_COUNT * 4 * std::mem::size_of::<u32>()) as u64;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bitcast_vec4_roundtrip::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: bitcast_vec4_roundtrip::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

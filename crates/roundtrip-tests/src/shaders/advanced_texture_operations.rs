@@ -437,18 +437,19 @@ fn fill_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture
     });
     let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let module = fill_depth_2d::linkage::shader_module(device);
+    let mut linkage =
+        wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_SOURCE).unwrap();
+    let module = linkage.shader_module(device);
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("fill_depth_layout"),
-        bind_group_layouts: &[],
-        immediate_size: 0,
-    });
+    let pipeline_layout = linkage.pipeline_layout(device, Some("fill_depth_layout"));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("fill_depth_pipeline"),
         layout: Some(&pipeline_layout),
-        vertex: fill_depth_2d::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -458,10 +459,12 @@ fn fill_gpu_depth2d(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(fill_depth_2d::linkage::frag_main::fragment_state(
-            &module,
-            &[],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(&module, &[]),
+        ),
         multiview_mask: None,
         cache: None,
     });
@@ -508,18 +511,19 @@ fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::T
         view_formats: &[],
     });
 
-    let module = fill_depth_2d::linkage::shader_module(device);
+    let mut linkage =
+        wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_2d::WGSL_SOURCE).unwrap();
+    let module = linkage.shader_module(device);
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("fill_depth_array_layout"),
-        bind_group_layouts: &[],
-        immediate_size: 0,
-    });
+    let pipeline_layout = linkage.pipeline_layout(device, Some("fill_depth_array_layout"));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("fill_depth_array_pipeline"),
         layout: Some(&pipeline_layout),
-        vertex: fill_depth_2d::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -529,10 +533,12 @@ fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::T
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(fill_depth_2d::linkage::frag_main::fragment_state(
-            &module,
-            &[],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(&module, &[]),
+        ),
         multiview_mask: None,
         cache: None,
     });
@@ -577,7 +583,7 @@ fn render_one_target(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &'static str,
-    bind_group_layout: &wgpu::BindGroupLayout,
+    pipeline_layout: &wgpu::PipelineLayout,
     bind_group: &wgpu::BindGroup,
     vertex_state: wgpu::VertexState<'_>,
     fragment_state: wgpu::FragmentState<'_>,
@@ -585,15 +591,9 @@ fn render_one_target(
     let target = harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, label);
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: &[Some(bind_group_layout)],
-        immediate_size: 0,
-    });
-
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
-        layout: Some(&pipeline_layout),
+        layout: Some(pipeline_layout),
         vertex: vertex_state,
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
@@ -702,58 +702,42 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 ..Default::default()
             });
 
-            let module = tex2d_variants::linkage::shader_module(device);
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("advanced_tex2d_variants_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("advanced_tex2d_variants_bg"),
-                layout: &bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_variants::WGSL_SOURCE).unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_tex2d_variants"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_tex2d_variants bind group");
 
             let gpu = render_one_target(
                 device,
                 queue,
                 "advanced_tex2d_variants",
-                &bgl,
+                &pipeline_layout,
                 &bg,
-                tex2d_variants::linkage::vtx_main::vertex_state(&module),
-                tex2d_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_texture2d(tex2d_variants::TEX, &color0);
@@ -782,58 +766,43 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });
-            let module = tex2d_gather_variants::linkage::shader_module(device);
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("advanced_tex2d_gather_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("advanced_tex2d_gather_bg"),
-                layout: &bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_gather_variants::WGSL_SOURCE)
+                    .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_tex2d_gather"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_tex2d_gather bind group");
 
             let gpu = render_one_target(
                 device,
                 queue,
                 "advanced_tex2d_gather",
-                &bgl,
+                &pipeline_layout,
                 &bg,
-                tex2d_gather_variants::linkage::vtx_main::vertex_state(&module),
-                tex2d_gather_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_texture2d(tex2d_gather_variants::TEX, &color0);
@@ -865,58 +834,44 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                 ..Default::default()
             });
-            let module = tex2d_array_variants::linkage::shader_module(device);
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("advanced_tex2d_array_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("advanced_tex2d_array_bg"),
-                layout: &bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex2d_array_variants::WGSL_SOURCE)
+                    .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_tex2d_array_variants"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_tex2d_array bind group");
 
             let gpu = render_one_target(
                 device,
                 queue,
                 "advanced_tex2d_array_variants",
-                &bgl,
+                &pipeline_layout,
                 &bg,
-                tex2d_array_variants::linkage::vtx_main::vertex_state(&module),
-                tex2d_array_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_texture2d_array(tex2d_array_variants::TEX, &color_layers);
@@ -948,58 +903,49 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 compare: Some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             });
-            let module = depth2d_compare_variants::linkage::shader_module(device);
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("advanced_depth2d_cmp_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                        count: None,
-                    },
-                ],
-            });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("advanced_depth2d_cmp_bg"),
-                layout: &bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&cmp_sampler),
-                    },
-                ],
-            });
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&depth2d_compare_variants::WGSL_SOURCE)
+                    .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_depth2d_compare"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        (
+                            "DEPTH_TEX",
+                            wgpu::BindingResource::TextureView(&source_view),
+                        ),
+                        (
+                            "DEPTH_SAMPLER",
+                            wgpu::BindingResource::Sampler(&cmp_sampler),
+                        ),
+                    ],
+                )
+                .expect("advanced_depth2d_compare bind group");
 
             let gpu = render_one_target(
                 device,
                 queue,
                 "advanced_depth2d_compare",
-                &bgl,
+                &pipeline_layout,
                 &bg,
-                depth2d_compare_variants::linkage::vtx_main::vertex_state(&module),
-                depth2d_compare_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_depth2d(depth2d_compare_variants::DEPTH_TEX, &depth0);
@@ -1036,58 +982,51 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 compare: Some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             });
-            let module = depth2d_array_compare_variants::linkage::shader_module(device);
-            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("advanced_depth2d_array_cmp_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                        count: None,
-                    },
-                ],
-            });
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("advanced_depth2d_array_cmp_bg"),
-                layout: &bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&source_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&cmp_sampler),
-                    },
-                ],
-            });
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &depth2d_array_compare_variants::WGSL_SOURCE,
+            )
+            .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_depth2d_array_compare"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        (
+                            "DEPTH_TEX",
+                            wgpu::BindingResource::TextureView(&source_view),
+                        ),
+                        (
+                            "DEPTH_SAMPLER",
+                            wgpu::BindingResource::Sampler(&cmp_sampler),
+                        ),
+                    ],
+                )
+                .expect("advanced_depth2d_array_compare bind group");
 
             let gpu = render_one_target(
                 device,
                 queue,
                 "advanced_depth2d_array_compare",
-                &bgl,
+                &pipeline_layout,
                 &bg,
-                depth2d_array_compare_variants::linkage::vtx_main::vertex_state(&module),
-                depth2d_array_compare_variants::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                ),
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
             );
 
             write_cpu_depth2d_array(depth2d_array_compare_variants::DEPTH_TEX, &depth_layers);

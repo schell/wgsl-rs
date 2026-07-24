@@ -21,4 +21,5 @@ wgsl-rs-ir = { path = "../wgsl-rs-ir" }
 wgsl-rs-macros = { version = "0.1.0", path = "../wgsl-rs-macros" }
 
 [dev-dependencies]
+futures = { workspace = true }
 trybuild = "1"

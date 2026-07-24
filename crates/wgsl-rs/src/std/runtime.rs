@@ -509,6 +509,20 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    /// Run a closure inside a dedicated 4-thread rayon pool. Required
+    /// by `quad_context_*` tests because `QuadContext` synchronizes quad
+    /// members through a `std::sync::Barrier::new(4)`, which deadlocks
+    /// if the global rayon pool has fewer than 4 threads available.
+    /// The production `dispatch_fragments` and `dispatch_workgroups`
+    /// paths use the same dedicated-pool pattern.
+    fn with_quad_test_pool<F: FnOnce(&rayon::Scope<'_>) + Send>(f: F) {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .expect("failed to build quad test thread pool");
+        pool.scope(f);
+    }
+
     #[test]
     fn compute_dispatch_basic() {
         let counter = AtomicU32::new(0);
@@ -737,7 +751,7 @@ mod tests {
         let values = [10.0f32, 30.0, 20.0, 40.0];
         let results: Arc<Mutex<[f32; 4]>> = Arc::new(Mutex::new([0.0; 4]));
 
-        rayon::scope(|s| {
+        with_quad_test_pool(|s| {
             for idx in 0..4u8 {
                 let quad = quad.clone();
                 let results = results.clone();
@@ -763,7 +777,7 @@ mod tests {
         let values = [10.0f32, 30.0, 50.0, 70.0];
         let results: Arc<Mutex<[f32; 4]>> = Arc::new(Mutex::new([0.0; 4]));
 
-        rayon::scope(|s| {
+        with_quad_test_pool(|s| {
             for idx in 0..4u8 {
                 let quad = quad.clone();
                 let results = results.clone();
@@ -789,7 +803,7 @@ mod tests {
         let values = [10.0f32, 30.0, 20.0, 40.0];
         let results: Arc<Mutex<[f32; 4]>> = Arc::new(Mutex::new([0.0; 4]));
 
-        rayon::scope(|s| {
+        with_quad_test_pool(|s| {
             for idx in 0..4u8 {
                 let quad = quad.clone();
                 let results = results.clone();
@@ -818,7 +832,7 @@ mod tests {
         let values = [10.0f32, 30.0, 50.0, 70.0];
         let results: Arc<Mutex<[f32; 4]>> = Arc::new(Mutex::new([0.0; 4]));
 
-        rayon::scope(|s| {
+        with_quad_test_pool(|s| {
             for idx in 0..4u8 {
                 let quad = quad.clone();
                 let results = results.clone();
@@ -848,7 +862,7 @@ mod tests {
         let values2 = [10.0f32, 10.0, 20.0, 20.0];
         let results: Arc<Mutex<[(f32, f32); 4]>> = Arc::new(Mutex::new([(0.0, 0.0); 4]));
 
-        rayon::scope(|s| {
+        with_quad_test_pool(|s| {
             for idx in 0..4u8 {
                 let quad = quad.clone();
                 let results = results.clone();
@@ -879,7 +893,7 @@ mod tests {
         let values: [[f32; 2]; 4] = [[1.0, 10.0], [3.0, 30.0], [2.0, 20.0], [4.0, 40.0]];
         let results: Arc<Mutex<[[f32; 4]; 4]>> = Arc::new(Mutex::new([[0.0; 4]; 4]));
 
-        rayon::scope(|s| {
+        with_quad_test_pool(|s| {
             for idx in 0..4u8 {
                 let quad = quad.clone();
                 let results = results.clone();

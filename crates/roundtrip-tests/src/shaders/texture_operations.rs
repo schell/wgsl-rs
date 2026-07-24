@@ -83,7 +83,7 @@ fn build_rgba8_pixels() -> Vec<[u8; 4]> {
     pixels
 }
 
-/// Writes RGBA8 pixels into a CPU Texture2D<f32> as normalized channels.
+/// Writes RGBA8 pixels into a CPU `Texture2D<f32>` as normalized channels.
 fn write_cpu_texture(tex: &wgsl_rs::std::Texture2D<f32>, rgba8: &[[u8; 4]]) {
     tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
@@ -193,55 +193,48 @@ fn render_texture_load_gpu(
     let target =
         harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, "texture_load_target");
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let module = texture_load_2d::linkage::shader_module(device);
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("texture_load_bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        }],
-    });
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let module = &texture_load_2d::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("texture_load_pipeline_layout"),
-        bind_group_layouts: &[Some(&bind_group_layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = linkage.pipeline_layout(device, Some("texture_load_pipeline_layout"));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("texture_load_pipeline"),
         layout: Some(&pipeline_layout),
-        vertex: texture_load_2d::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(texture_load_2d::linkage::frag_main::fragment_state(
-            &module,
-            &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba32Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::all(),
-            })],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
         multiview_mask: None,
         cache: None,
     });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("texture_load_bg"),
-        layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&source_view),
-        }],
-    });
+    let bind_group = linkage
+        .create_bind_group_named(
+            0,
+            device,
+            &[("TEX", wgpu::BindingResource::TextureView(&source_view))],
+        )
+        .expect("texture_load bind group");
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("texture_load_render"),
@@ -286,69 +279,51 @@ fn render_texture_sample_gpu(
     let target =
         harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, "texture_sample_target");
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let module = texture_sample_2d::linkage::shader_module(device);
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("texture_sample_bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let module = &texture_sample_2d::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("texture_sample_pipeline_layout"),
-        bind_group_layouts: &[Some(&bind_group_layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = linkage.pipeline_layout(device, Some("texture_sample_pipeline_layout"));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("texture_sample_pipeline"),
         layout: Some(&pipeline_layout),
-        vertex: texture_sample_2d::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(texture_sample_2d::linkage::frag_main::fragment_state(
-            &module,
-            &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba32Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::all(),
-            })],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
         multiview_mask: None,
         cache: None,
     });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("texture_sample_bg"),
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&source_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
-    });
+    let bind_group = linkage
+        .create_bind_group_named(
+            0,
+            device,
+            &[
+                ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                ("TEX_SAMPLER", wgpu::BindingResource::Sampler(&sampler)),
+            ],
+        )
+        .expect("texture_sample bind group");
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("texture_sample_render"),

@@ -29,7 +29,7 @@ mod consumer {
 #[test]
 fn resolves_template_instantiation_from_correct_import() {
     let _ = consumer::apply();
-    let full_src = consumer::WGSL_MODULE.wgsl_source();
+    let full_src = consumer::WGSL_SOURCE.wgsl_source().unwrap();
     // Under the robust mangling scheme (issue #112) the underscore in
     // `external_identity` causes it to be escaped to `_1external_identity`.
     assert!(

@@ -2,7 +2,7 @@
 //!
 //! When a `#[wgsl]` module has module-level type parameters (from `impl Trait`
 //! linkage variables and/or generic entry points), the proc macro emits an
-//! `instantiate` function alongside `WGSL_MODULE`. The function uses
+//! `instantiate` function alongside `WGSL_SOURCE`. The function uses
 //! `wgsl_rs::linkage::Type<Is = ...>` trait constraints to enforce at compile
 //! time that every linkage variable's concrete type is consistent across all
 //! entry points that use it.
@@ -30,7 +30,7 @@
 //!     FRAME: Convert<f32> + wgsl_rs::std::Wgsl,
 //!     FRAME: wgsl_rs::linkage::Type<Is = T>,
 //! {
-//!     let mut ir_module = (WGSL_MODULE.ir_constructor)();
+//!     let mut ir_module = (WGSL_SOURCE.ir_constructor)();
 //!     let __subst: ::std::collections::HashMap<::std::string::String, wgsl_rs::ir::Type> = [
 //!         ("FRAME".to_string(), <FRAME as wgsl_rs::std::Wgsl>::to_ir()),
 //!         ("frag_main_0".to_string(), <T as wgsl_rs::std::Wgsl>::to_ir()),
@@ -271,7 +271,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         pub fn instantiate #impl_generics () -> #ir_p::Module
         #split_where_clause
         {
-            let mut __ir_module = (WGSL_MODULE.ir_constructor)();
+            let mut __ir_module = (WGSL_SOURCE.ir_constructor)();
             let __subst: ::std::collections::HashMap<::std::string::String, #ir_p::Type> = [
                 #(#subst_entries),*
             ].into_iter().collect();

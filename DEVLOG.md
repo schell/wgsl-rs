@@ -291,3 +291,189 @@ limits. The fix uses inherent associated constants (`Self::__OFFSET_0`,
 `Self::__SIZE_0`, etc.) to break the recursive computation into individually
 evaluable steps. These consts live on the struct (not any trait impl) so they're
 visible from both the `WgslLayout` and `Layout` trait impls.
+
+### 2026-06-06: Runtime wgpu linkage via IR traversal (issue #120)
+
+`wgpu` linkage code (bind group layouts, vertex/fragment state descriptors,
+compute pipeline descriptors, buffer descriptors, per-binding `create_X_buffer`
+helpers) used to be emitted by the `#[wgsl]` proc-macro walking its `syn`
+parse tree in `crates/wgsl-rs-macros/src/linkage.rs` (~650 lines). This
+predated `wgsl-rs-ir` and was skipped entirely for template modules
+because the generated WGSL source was a template with `__TP{name}__`
+placeholders, so a `wgpu::ShaderModule` couldn't be built from it.
+
+The new `wgsl_rs::linkage::wgpu` module walks the runtime IR instead. The
+same `analyze_wgsl_module` function works for both concrete modules and
+template modules after `Module::instantiate` (which returns a concrete
+`ir::Module`). For templates this enables building wgpu pipelines from
+generic shader modules that previously had no linkage.
+
+The proc-macro no longer generates the `pub mod linkage { ... }` block, nor
+the per-binding `create_X_buffer` and `X_BUFFER_DESCRIPTOR` items. Consumers
+find the buffer they want by name via `linkage.buffer("FRAME")` and call
+`.create_buffer(device)`. The compile-time `linkage-wgpu` feature flag on
+`wgsl-rs-macros` is now a no-op (kept for backwards compatibility); the
+`linkage-wgpu` feature on `wgsl-rs` continues to gate the runtime module.
+
+Sizing follows WGSL §14.4.1 ("Alignment and Size"), implemented inline
+against `ir::Type` rather than via the `wgsl-rs-layout` crate, which
+operates on Rust types. Covers scalars, vectors, matrices, fixed-size
+arrays (including named `const` lengths), runtime arrays (size `0`),
+atomics, and user structs (looked up by name in the assembled IR).
+The previous `size_of::<T>()`-based sizing could disagree with WGSL
+layout for non-`repr(C)` structs; the new sizes are correct for the GPU.
+
+The convenience methods (`EntryPointInfo::vertex_state`,
+`EntryPointInfo::fragment_state`, `BindGroupInfo::create`,
+`BufferDescriptorInfo::create_buffer`, etc.) replace the old typed
+`create(device, layout, frame_uniform_buffer)` named-parameter form
+with slice-based `create(device, layout, &[resource, ...])`. The
+verbosity is the price of resilience to binding reordering; the
+old `create_FRAME_buffer(device)` ergonomic for a single-binding
+module is gone.
+
+### 2026-07-11: `WgpuLinkage` owns the concrete IR it was built from
+
+`WgpuLinkage::shader_module` (and `shader_module_descriptor`) used to take
+a `&wgsl_rs::Module` argument and render the shader's WGSL source by
+calling `module.wgsl_source()` on it. This had two problems:
+
+1. The API was awkward — callers always had to re-pass the same
+   `WGSL_MODULE` they had just analyzed, even though the linkage was
+   derived from it.
+2. There was a correctness gap. If the linkage came from an
+   instantiated `ir::Module` (the `Linkage` impl for `ir::Module`),
+   there was no `&wgsl_rs::Module` to pass that would render the same
+   source the linkage was built from. And the original template module's
+   `wgsl_source()` would emit `__TP{name}__` placeholders — invalid
+   WGSL. The function only worked by accident for concrete modules
+   whose `wgsl_source()` happened to equal the linkage's assembled IR.
+
+The fix makes `WgpuLinkage` own the concrete `ir::Module` it was
+analyzed from (via a new private `ir` field) and render WGSL with
+`ir::render_module(&self.ir)`. Both `analyze_wgsl_module` (which
+already had to assemble the concrete IR via `assemble_ir`) and
+`analyze_ir_module` (which now takes the `ir::Module` by value)
+populate this field. The `&Module` parameter is removed from
+`shader_module`, `shader_module_descriptor`, and a new
+`WgpuLinkage::wgsl_source()` accessor exposes the rendered text.
+
+The linkage now correctly renders the same source it was analyzed
+from, regardless of whether the linkage came from a concrete
+`wgsl_rs::Module` or an instantiated `ir::Module` from a template.
+Template handling itself is unchanged: `generate_linkage()` on a
+template `Module` still returns `Error::Monomorphize`; callers
+must still `instantiate::<...>()` first.
+
+### 2026-07-18: Per-binding `ShaderStages` visibility in the linkage analyzer
+
+The `WgpuLinkage` analyzer was hardcoding `wgpu::ShaderStages::all()`
+for every binding's `BindGroupLayoutEntry::visibility`. For a
+`read_write` storage binding, `ShaderStages::all()` includes VERTEX,
+which silently demands the `VERTEX_WRITABLE_STORAGE` (now
+`STORAGE_WRITE_TO_VERTEX`) feature on the device. This made every
+linkage-driven compute dispatch of a `read_write` storage buffer fail
+with a wgpu validation error the first time the harness tried to run
+them.
+
+The fix: the analyzer now walks each entry-point function body and
+collects every `ir::Expr::Ident` reference. For each binding name that
+appears in a function's body, the analyzer unions that function's
+`FnAttrs`-derived `ShaderStages` (VERTEX / FRAGMENT / COMPUTE) into a
+per-binding visibility map. The final entry's visibility is the
+union of all stages that actually reference the binding. Bindings that
+no entry-point references get a default of `COMPUTE` — the
+`wgsl-rs` roundtrip-test convention. This silently fixed every B3
+roundtrip that was failing with `VERTEX_WRITABLE_STORAGE` required.
+
+The dependency-graph walker had to be threaded through a two-pass
+analysis: pass one walks the IR to collect the per-binding reference
+set, pass two populates the entries. The same pattern is used in
+`render_module` for unresolved type-parameter substitution.
+
+### 2026-07-18: `WgpuLinkage` layout cache ergonomics
+
+The original `WgpuLinkage::pipeline_layout(&self, device, label)` returned
+`(wgpu::PipelineLayout, Vec<wgpu::BindGroupLayout>)`. Callers had to
+destructure the tuple and thread `&bg_layouts[0]` back into
+`BindGroupInfo::create_named`, knowing which index in the `Vec`
+corresponded to which `@group(N)`. The call pattern was:
+
+```rust
+let (pipeline_layout, bg_layouts) = linkage.pipeline_layout(device, label);
+let bg = linkage.bind_group(0).unwrap().create_named(
+    linkage.module_label, device, &bg_layouts[0], &[("U_RESOLUTION", res)],
+)?;
+```
+
+The cache ergonomics rework adds two lazy-cached fields to
+`WgpuLinkage`: `bind_group_layouts: HashMap<u32, wgpu::BindGroupLayout>`
+keyed by `@group(N)`, and `pipeline_layout: Option<wgpu::PipelineLayout>`.
+Both methods take `&mut self` (plain `&mut`, not `RefCell`) and return
+owned values — `wgpu::PipelineLayout` and `wgpu::BindGroupLayout` are
+Arc-backed, so the cached `clone()` is a cheap refcount bump. The
+`&mut self` borrow ends at the call site (returns owned values), so
+`pipeline_layout` followed by a `&mut self` call on the same linkage
+works fine without borrow conflicts.
+
+The new `WgpuLinkage::create_bind_group_named(group, device, resources)`
+hides the layout-threading wart: callers just pass the `@group(N)`
+index and the resource list. The method looks up (and builds+caches
+on first access) the bind group layout for that group, then delegates
+to `BindGroupInfo::create_named` (kept public as the low-level
+implementation). A new `Error::NoSuchBindGroup` variant fires when the
+requested `@group(N)` is not declared in the linkage; the error
+message lists the available groups so the user can quickly see what
+went wrong.
+
+### 2026-07-18: `ir::Module` as the AST; `wgsl_rs::Source` is the spec
+
+The wgsl-rs public surface is now structured around two distinct
+types. `wgsl_rs::Source` is the public-facing spec: a static emitted
+by the `#[wgsl]` macro (renamed from `WGSL_MODULE` to `WGSL_SOURCE`),
+describing the source code the user wrote. `Source::wgsl_source`
+returns `Result<String, SourceError>`: `Ok` for concrete sources,
+`Err(SourceError::TemplateWgsl { .. })` for templates (with a clear
+hint pointing at the macro-emitted `instantiate::<…>()`). The
+new `SourceError` enum lives in its own module (`wgsl_rs::source_error`)
+so it's clearly distinct from the linkage error type.
+
+`wgsl_rs_ir::Module` is the AST: a concrete IR with no
+`Type::TypeParam` nodes, reachable from a template only via
+`mod::instantiate::<…>()`. The methods that produce WGSL or build
+wgpu linkages live on `ir::Module`:
+
+- `ir::Module::wgsl_source(&self) -> String` — inherent, lives in
+  `wgsl-rs-ir` (no `wgsl-rs` types needed).
+- `ir::Module::generate_linkage(&self) -> WgpuLinkage` and
+  `ir::Module::validate(&self) -> Result<(), String>` — via the
+  `IrModuleExt` extension trait in `wgsl-rs::linkage::wgpu`, re-exported
+  via `wgsl_rs::*` so `m.generate_linkage()` works after
+  `use wgsl_rs;` without an explicit import.
+
+The original bead note for C3 said "ADD INHERENT METHODS ON ir::Module"
+in `wgsl-rs-ir`. That's impossible because `wgsl-rs-ir` cannot
+depend on `wgsl-rs` (would create a cycle). Inherent `wgsl_source` is
+the only method that doesn't need `wgsl-rs` types and so can be added
+in `wgsl-rs-ir`; the rest have to live in an extension trait. The
+call shape `m.generate_linkage()` from the bead is preserved.
+
+The `Linkage<T>` trait and `Wgpu` marker struct were dropped along
+with the `Linkage<Wgpu> for Source` and `Linkage<Wgpu> for ir::Module`
+impls. `Error::Monomorphize` is gone (unreachable — `analyze_wgsl_module`
+on a template now returns `Error::TemplateResolution` via a
+`From<SourceError> for Error` impl). The `Type<Is = U>` trait stays —
+it's the mechanism the macro uses to generate
+`where T: Type<Is = U>` clauses for the `instantiate` function.
+
+User recovery pattern from a template:
+```rust
+let source = match my_mod::WGSL_SOURCE.wgsl_source() {
+    Ok(src) => src,
+    Err(SourceError::TemplateWgsl { .. }) => {
+        my_mod::instantiate::<f32, f32>().wgsl_source()
+        // or: .generate_linkage() for the linkage path
+    }
+};
+```
+

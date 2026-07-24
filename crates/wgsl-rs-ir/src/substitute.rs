@@ -5,7 +5,7 @@
 //! caller-supplied map. The replacement is applied recursively into all
 //! nested types, expressions, and statements.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use crate::*;
 
@@ -53,7 +53,7 @@ fn rename_item(item: &mut Item, from: &str, to: &str) {
         Item::Texture(t) => rename_type(&mut t.ty, from, to),
         Item::Fn(f) => {
             if f.name == from {
-                f.name = to.to_string();
+                f.name = Cow::Owned(to.to_string());
             }
             rename_fn(f, from, to);
         }

@@ -2,6 +2,7 @@ use clap::Parser;
 
 mod examples;
 use examples::*;
+use wgsl_rs::linkage::wgpu::analyze_wgsl_module;
 
 #[derive(Parser)]
 #[command(
@@ -29,26 +30,37 @@ fn print_available_modules() {
     }
 }
 
-fn validate_and_print_source(module: &wgsl_rs::Module) {
+fn validate_and_print_source(module: &wgsl_rs::Source) {
     println!("## {}", module.name);
 
-    let source = module.wgsl_source();
-    println!("raw source:\n\n{source}\n\n");
+    let source = match module.wgsl_source() {
+        Ok(src) => {
+            println!("raw source:\n\n{src}\n\n");
+            src
+        }
+        Err(wgsl_rs::SourceError::TemplateWgsl {
+            uninstantiated_source,
+        }) => {
+            // Template sources can't be parsed/validated standalone — their IR
+            // contains unresolved `Type::TypeParam` nodes (rendered as
+            // `__TP{name}__` placeholders, which aren't valid WGSL identifiers).
+            // Tell the user how to specialize the template to get a concrete
+            // source they can validate.
+            println!(
+                "(this is a template source with type parameters {:?}; call `m.instantiate::<T1, \
+                 T2, ...>()` (types in `module_type_params` order) then `.generate_linkage()` to \
+                 build a WgpuLinkage)",
+                uninstantiated_source.module_type_params
+            );
+            return;
+        }
+        Err(e) => {
+            println!("error: {e}");
+            return;
+        }
+    };
 
-    // Template modules can't be parsed/validated standalone — their IR
-    // contains unresolved `Type::TypeParam` nodes (rendered as
-    // `__TP{name}__` placeholders, which aren't valid WGSL identifiers).
-    // Just print the raw template source.
-    if module.is_template() {
-        println!(
-            "(this is a template module with type parameters {:?}; call \
-             `instantiate(&[ir::Type::...])` to produce a concrete shader)",
-            module.module_type_params
-        );
-        return;
-    }
-
-    // Parse the source into a Module.
+    // Parse the source into a naga::Module.
     let module: naga::Module = naga::front::wgsl::parse_str(&source).unwrap();
 
     // Validate the module.
@@ -75,7 +87,7 @@ fn validate_and_print_source(module: &wgsl_rs::Module) {
 }
 
 // /// Print the linkage within a module.
-// fn print_linkage(module: &wgsl_rs::Module) {
+// fn print_linkage(module: &wgsl_rs::Source) {
 //     let name = module.name;
 //     // Test hello_triangle linkage
 //     println!(
@@ -190,30 +202,40 @@ fn build_linkage() {
     }
 
     impl HelloTriangle {
-        fn new(wgpu_stuff: &WgpuStuff) -> Self {
+        fn new(wgpu_stuff: &WgpuStuff) -> Result<Self, wgsl_rs::linkage::wgpu::Error> {
             let device = &wgpu_stuff.device;
             let queue = &wgpu_stuff.queue;
             let frame = 0u32;
-            let frame_uniform_buffer = hello_triangle::create_frame_buffer(device);
+
+            // Runtime IR-based wgpu linkage analysis (issue #120).
+            let mut linkage = analyze_wgsl_module(&hello_triangle::WGSL_SOURCE).unwrap();
+
+            // Pull the FRAME uniform's buffer descriptor out by binding
+            // name. Sizing follows WGSL §14.4.1.
+            let frame_uniform_buffer = linkage
+                .buffer("FRAME")
+                .expect("FRAME binding present")
+                .create_buffer(device);
             queue.write_buffer(&frame_uniform_buffer, 0, &frame.to_ne_bytes());
 
-            let bindgroup_layout = hello_triangle::linkage::bind_group_0::layout(device);
-            let bindgroup = hello_triangle::linkage::bind_group_0::create(
+            // Build the bind group layout and bind group from the analyzer.
+            let pipeline_layout = linkage.pipeline_layout(device, Some("hello_triangle"));
+            let bindgroup = linkage.create_bind_group_named(
+                0,
                 device,
-                &bindgroup_layout,
-                frame_uniform_buffer.as_entire_binding(),
-            );
+                &[("FRAME", frame_uniform_buffer.as_entire_binding())],
+            )?;
 
-            let module = hello_triangle::linkage::shader_module(device);
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("hello_triangle"),
-                bind_group_layouts: &[Some(&bindgroup_layout)],
-                immediate_size: 0,
-            });
+            // Create the shader module.
+            let module = linkage.shader_module(device);
+
             let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("hello_triangle"),
                 layout: Some(&pipeline_layout),
-                vertex: hello_triangle::linkage::vtx_main::vertex_state(&module),
+                vertex: linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
@@ -225,28 +247,33 @@ fn build_linkage() {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                fragment: Some(hello_triangle::linkage::frag_main::fragment_state(
-                    &module,
-                    &[Some(wgpu::ColorTargetState {
-                        format: wgpu_stuff
-                            .surface
-                            .get_configuration()
-                            .expect("missing surface configuration")
-                            .format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                )),
+                fragment: Some(
+                    linkage
+                        .fragment_entry("frag_main")
+                        .expect("frag_main entry present")
+                        .fragment_state(
+                            &module,
+                            &[Some(wgpu::ColorTargetState {
+                                format: wgpu_stuff
+                                    .surface
+                                    .get_configuration()
+                                    .expect("missing surface configuration")
+                                    .format,
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::all(),
+                            })],
+                        ),
+                ),
                 multiview_mask: None,
                 cache: None,
             });
 
-            Self {
+            Ok(Self {
                 frame,
                 frame_uniform_buffer,
                 bindgroup,
                 render_pipeline,
-            }
+            })
         }
     }
 
@@ -264,7 +291,8 @@ fn build_linkage() {
                     .unwrap(),
             );
             let wgpu_stuff = WgpuStuff::new(window.clone(), event_loop.owned_display_handle());
-            let hello_triangle = HelloTriangle::new(&wgpu_stuff);
+            let hello_triangle =
+                HelloTriangle::new(&wgpu_stuff).expect("hello_triangle construction");
             Self {
                 window,
                 wgpu_stuff,

@@ -433,12 +433,13 @@ impl RoundtripTest for BasicNumericTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (320 * std::mem::size_of::<f32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&abs_f32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: abs_f32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -483,12 +484,13 @@ impl RoundtripTest for BasicNumericTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (320 * std::mem::size_of::<i32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&abs_i32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: abs_i32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -536,12 +538,13 @@ impl RoundtripTest for BasicNumericTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (320 * std::mem::size_of::<f32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&sign_f32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: sign_f32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -588,12 +591,13 @@ impl RoundtripTest for BasicNumericTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (320 * std::mem::size_of::<f32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&degrees_f32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: degrees_f32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -638,12 +642,13 @@ impl RoundtripTest for BasicNumericTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (320 * std::mem::size_of::<f32>()) as u64;
 
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&radians_f32::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: radians_f32::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

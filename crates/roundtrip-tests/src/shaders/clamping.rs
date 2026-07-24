@@ -74,40 +74,18 @@ impl RoundtripTest for ClampingTest {
         let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
         let output_size = (N * 4 * std::mem::size_of::<f32>()) as u64;
 
-        let layout_entries = &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ];
-
         let mut results = Vec::new();
 
         // --- clamp_basic: clamp, min, max, step ---
         {
             let epsilon = 0.0;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&clamp_basic::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: clamp_basic::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -147,12 +125,13 @@ impl RoundtripTest for ClampingTest {
         // --- clamp_interp: mix, smoothstep, select ---
         {
             let epsilon = 1e-5;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&clamp_interp::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: clamp_interp::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -175,7 +154,7 @@ impl RoundtripTest for ClampingTest {
                         format!("mix(0,10,clamp({x:.4}))"),
                         format!("smoothstep(0,1,clamp({x:.4}))"),
                         format!("select(1,2,{x:.4}>0)"),
-                        format!("(padding)"),
+                        "(padding)".into(),
                     ]
                 })
                 .collect();

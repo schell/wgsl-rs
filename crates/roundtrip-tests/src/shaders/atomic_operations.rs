@@ -159,36 +159,35 @@ pub mod atomic_i32_contended_add {
     }
 }
 
-/// Runs one u32-based compute shader on the GPU and returns unpacked u32
-/// output.
-fn run_gpu_u32_shader(
+/// Pushes one u32 comparison result with generated labels.
+fn push_u32_result(results: &mut Vec<ComparisonResult>, name: &str, gpu: &[u32], cpu: &[u32]) {
+    let labels: Vec<String> = (0..gpu.len()).map(|i| format!("{name}[{i}]")).collect();
+    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+    results.push(harness::compare_u32_results(name, gpu, cpu, &label_refs));
+}
+
+/// Dispatch a u32-based compute shader with the standard INPUT/OUTPUT
+/// binding convention and the given workgroup count.
+fn dispatch_u32(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    shader_source: &str,
+    linkage: &wgsl_rs::linkage::wgpu::WgpuLinkage,
     input: &[u32],
     output_len: usize,
     workgroup_count: (u32, u32, u32),
 ) -> Vec<u32> {
     let input_bytes = bytemuck::cast_slice(input);
     let output_size = (output_len * std::mem::size_of::<u32>()) as u64;
-    let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+    let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
         device,
         queue,
-        shader_source,
-        entry_point: "main",
-        bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
+        linkage,
+        entry: "main",
         input_data: input_bytes,
         output_size,
         workgroup_count,
     });
     bytemuck::cast_slice(&gpu_bytes).to_vec()
-}
-
-/// Pushes one u32 comparison result with generated labels.
-fn push_u32_result(results: &mut Vec<ComparisonResult>, name: &str, gpu: &[u32], cpu: &[u32]) {
-    let labels: Vec<String> = (0..gpu.len()).map(|i| format!("{name}[{i}]")).collect();
-    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-    results.push(harness::compare_u32_results(name, gpu, cpu, &label_refs));
 }
 
 pub struct AtomicOperationsTest;
@@ -209,14 +208,10 @@ impl RoundtripTest for AtomicOperationsTest {
         let input = [0u32; 1];
 
         {
-            let gpu = run_gpu_u32_shader(
-                device,
-                queue,
-                atomic_u32_scalar_ops::linkage::shader_source(),
-                &input,
-                16,
-                (1, 1, 1),
-            );
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_u32_scalar_ops::WGSL_SOURCE)
+                    .unwrap();
+            let gpu = dispatch_u32(device, queue, &linkage, &input, 16, (1, 1, 1));
 
             atomic_u32_scalar_ops::INPUT.set(input);
             atomic_u32_scalar_ops::A.set(Atomic::default());
@@ -230,14 +225,10 @@ impl RoundtripTest for AtomicOperationsTest {
         }
 
         {
-            let gpu = run_gpu_u32_shader(
-                device,
-                queue,
-                atomic_i32_scalar_ops::linkage::shader_source(),
-                &input,
-                16,
-                (1, 1, 1),
-            );
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_i32_scalar_ops::WGSL_SOURCE)
+                    .unwrap();
+            let gpu = dispatch_u32(device, queue, &linkage, &input, 16, (1, 1, 1));
 
             atomic_i32_scalar_ops::INPUT.set(input);
             atomic_i32_scalar_ops::A.set(Atomic::default());
@@ -251,14 +242,10 @@ impl RoundtripTest for AtomicOperationsTest {
         }
 
         {
-            let gpu = run_gpu_u32_shader(
-                device,
-                queue,
-                atomic_u32_contended_add::linkage::shader_source(),
-                &input,
-                WG_SIZE,
-                (1, 1, 1),
-            );
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_u32_contended_add::WGSL_SOURCE)
+                    .unwrap();
+            let gpu = dispatch_u32(device, queue, &linkage, &input, WG_SIZE, (1, 1, 1));
 
             atomic_u32_contended_add::INPUT.set(input);
             atomic_u32_contended_add::COUNTER.set(Atomic::default());
@@ -272,14 +259,10 @@ impl RoundtripTest for AtomicOperationsTest {
         }
 
         {
-            let gpu = run_gpu_u32_shader(
-                device,
-                queue,
-                atomic_i32_contended_add::linkage::shader_source(),
-                &input,
-                WG_SIZE,
-                (1, 1, 1),
-            );
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_i32_contended_add::WGSL_SOURCE)
+                    .unwrap();
+            let gpu = dispatch_u32(device, queue, &linkage, &input, WG_SIZE, (1, 1, 1));
 
             atomic_i32_contended_add::INPUT.set(input);
             atomic_i32_contended_add::COUNTER.set(Atomic::default());

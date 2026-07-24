@@ -5,10 +5,10 @@ use crate::std::{Vec2f, Vec2i, Vec2u, Vec3f, Vec3i, Vec3u, Vec4f, Vec4i, Vec4u};
 /// Trait for WGSL `bitcast` operations that reinterpret bits from one type as
 /// another.
 ///
-/// Unlike [`Convert`], which performs value-preserving type conversion (e.g.
-/// `f32(1u)` yields `1.0`), `Bitcast` reinterprets the raw bit pattern of the
-/// source value as the target type (e.g. `bitcast<f32>(0x3F800000u)` yields
-/// `1.0`).
+/// Unlike [`Convert`](super::Convert), which performs value-preserving type
+/// conversion (e.g. `f32(1u)` yields `1.0`), `Bitcast` reinterprets the raw bit
+/// pattern of the source value as the target type (e.g.
+/// `bitcast<f32>(0x3F800000u)` yields `1.0`).
 ///
 /// See [WGSL spec section 17.2.1](https://gpuweb.github.io/gpuweb/wgsl/#bitcast-builtin).
 pub trait Bitcast<T> {

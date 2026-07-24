@@ -23,7 +23,7 @@ pub fn emit_module(ir_path: &TokenStream, m: &ir::Module) -> TokenStream {
     let attrs = emit_attrs(ir_path, &m.attrs);
     quote! {
         #ir_path::Module {
-            name: ::std::string::String::from(#name),
+            name: #name,
             items: ::std::vec![#(#items),*],
             #attrs,
         }
@@ -254,7 +254,7 @@ fn item_fn(p: &TokenStream, f: &ir::ItemFn) -> TokenStream {
         #p::ItemFn {
             type_params: #type_params,
             fn_attrs: #attrs,
-            name: ::std::string::String::from(#n),
+            name: ::std::borrow::Cow::Borrowed(#n),
             inputs: ::std::vec![#(#inputs),*],
             return_type: #rt,
             block: #body,

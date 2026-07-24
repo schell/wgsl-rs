@@ -4,6 +4,8 @@
 //! (`String`, `Vec<T>`, plain numeric/bool literals) so they can live at
 //! runtime without any dependency on `syn` or `proc-macro2`.
 
+use std::borrow::Cow;
+
 /// An attribute preserved from Rust source on an IR item.
 ///
 /// Not rendered in WGSL output — exists for extension inspection.
@@ -24,7 +26,7 @@ pub struct Attribute {
 /// A complete WGSL module: a name and an ordered list of top-level items.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
-    pub name: String,
+    pub name: &'static str,
     pub items: Vec<Item>,
     /// Attributes preserved from Rust source on the module itself.
     pub attrs: Vec<Attribute>,
@@ -583,7 +585,14 @@ pub struct ItemFn {
     /// templates (which need substitution before rendering).
     pub type_params: Vec<String>,
     pub fn_attrs: FnAttrs,
-    pub name: String,
+    /// The function's identifier. For fresh (non-monomorphized) functions
+    /// this is a `Cow::Borrowed` of a `stringify!`-emitted `'static` literal
+    /// — safe to borrow for FFI boundaries (wgpu, etc.) without copying.
+    /// For monomorphized instances (e.g. `id` → `id_f32`) the rename
+    /// pass produces a `Cow::Owned` containing a runtime-computed name;
+    /// the owning `String` lives in this `Cow` and is freed when the
+    /// owning `ItemFn` is dropped.
+    pub name: Cow<'static, str>,
     pub inputs: Vec<FnArg>,
     pub return_type: ReturnType,
     pub block: Block,
@@ -660,4 +669,22 @@ pub enum Item {
     Struct(ItemStruct),
     Impl(ItemImpl),
     Enum(ItemEnum),
+}
+
+impl Module {
+    /// Renders this IR module to its WGSL source text.
+    ///
+    /// This is the canonical (and only) WGSL emitter in the project. The
+    /// IR may contain `Type::TypeParam`s (e.g. a template module that has
+    /// not yet been monomorphized); in that case `render_module` emits
+    /// `__TP{name}__` placeholders, which are not valid WGSL. Callers that
+    /// need valid WGSL should ensure the IR is concrete (no `Type::TypeParam`s)
+    /// before calling — for a `wgsl_rs::Source` template, use the
+    /// macro-emitted `instantiate::<…>()` to obtain a concrete IR module.
+    ///
+    /// For methods that need access to `wgsl-rs` types (e.g. `WgpuLinkage`),
+    /// see the `wgsl_rs::linkage::wgpu::IrModuleExt` extension trait.
+    pub fn wgsl_source(&self) -> String {
+        crate::render_module(self)
+    }
 }

@@ -23,7 +23,7 @@
 //! discriminant auto-increment) lives in the [`render`] module.
 
 pub mod mangle;
-mod render;
+pub mod render;
 mod substitute;
 mod types;
 

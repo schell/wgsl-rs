@@ -135,60 +135,64 @@ pub fn read_rgba32float_texture(
     pixels
 }
 
-/// Parameters for a GPU compute dispatch.
-pub struct GpuComputeParams<'a> {
+/// Parameters for a GPU compute dispatch driven by
+/// [`wgsl_rs::linkage::wgpu::WgpuLinkage`].
+///
+/// The shader source, bind group layout, and entry point are all
+/// derived from the supplied linkage; the caller only provides buffers
+/// and dispatch parameters. The binding-0-input / binding-1-output
+/// convention is hardcoded because every roundtrip compute shader in
+/// this crate follows it: binding 0 is a read-only `INPUT` storage
+/// buffer, binding 1 is a read-write `OUTPUT` storage buffer.
+pub struct GpuComputeParamsLinked<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
-    pub shader_source: &'a str,
-    pub entry_point: &'a str,
-    pub bind_group_layout_entries: &'a [wgpu::BindGroupLayoutEntry],
+    pub linkage: &'a wgsl_rs::linkage::wgpu::WgpuLinkage,
+    pub entry: &'a str,
     pub input_data: &'a [u8],
     pub output_size: u64,
     pub workgroup_count: (u32, u32, u32),
 }
 
-/// Runs a compute shader on the GPU and reads back the output storage buffer.
-///
-/// This is the core GPU execution primitive. It:
-/// 1. Creates the shader module from WGSL source
-/// 2. Creates the bind group layout and pipeline
-/// 3. Uploads `input_data` to the input storage buffer (binding 0)
-/// 4. Creates an output storage buffer of `output_size` bytes (binding 1)
-/// 5. Dispatches the compute shader
-/// 6. Reads back the output buffer contents
-pub fn run_gpu_compute(params: &GpuComputeParams<'_>) -> Vec<u8> {
-    let GpuComputeParams {
+/// Runs a linkage-driven compute dispatch on the GPU and reads back the
+/// output storage buffer. The shader module, bind group layout, and
+/// pipeline are all derived from [`GpuComputeParamsLinked::linkage`];
+/// the binding-0-input / binding-1-output convention is hardcoded; the
+/// buffer names must be `"INPUT"` and `"OUTPUT"` in the shader source.
+pub fn run_gpu_compute_linked(params: &GpuComputeParamsLinked<'_>) -> Vec<u8> {
+    let GpuComputeParamsLinked {
         device,
         queue,
-        shader_source,
-        entry_point,
-        bind_group_layout_entries,
+        linkage,
+        entry,
         input_data,
         output_size,
         workgroup_count,
     } = params;
     let output_size = *output_size;
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("roundtrip_test"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
-    });
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("roundtrip_test"),
-        entries: bind_group_layout_entries,
-    });
+    // Look up the WGSL entry point name. The plan spec calls for
+    // `linkage.compute_entry(params.entry).name`; `compute_entry` returns
+    // a `&ComputeEntryInfo` whose `name` is `Cow<'static, str>`, which
+    // borrows fine for `ComputePipelineDescriptor::entry_point`.
+    let entry_info: &wgsl_rs::linkage::wgpu::ComputeEntryInfo = linkage
+        .compute_entry(entry)
+        .expect("entry point not found in linkage");
+    let entry_name: &str = &entry_info.name;
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("roundtrip_test"),
-        bind_group_layouts: &[Some(&bind_group_layout)],
-        immediate_size: 0,
-    });
+    // Derive the shader module, pipeline layout, and bind group layout
+    // from the linkage. The bind group layout is built once via
+    // `pipeline_layout` (which also builds the pipeline layout) and
+    // then reused for the bind group.
+    let module = device.create_shader_module(linkage.shader_module_descriptor());
+    let mut linkage = (*linkage).clone();
+    let pipeline_layout = linkage.pipeline_layout(device, Some("roundtrip_test"));
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("roundtrip_test"),
         layout: Some(&pipeline_layout),
         module: &module,
-        entry_point: Some(entry_point),
+        entry_point: Some(entry_name),
         compilation_options: Default::default(),
         cache: None,
     });
@@ -216,20 +220,16 @@ pub fn run_gpu_compute(params: &GpuComputeParams<'_>) -> Vec<u8> {
     let zeros = vec![0u8; output_size as usize];
     queue.write_buffer(&output_buffer, 0, &zeros);
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("roundtrip_test"),
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: input_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: output_buffer.as_entire_binding(),
-            },
-        ],
-    });
+    let bind_group = linkage
+        .create_bind_group_named(
+            0,
+            device,
+            &[
+                ("INPUT", input_buffer.as_entire_binding()),
+                ("OUTPUT", output_buffer.as_entire_binding()),
+            ],
+        )
+        .expect("roundtrip_test bind group");
 
     // Dispatch.
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -433,33 +433,6 @@ pub fn compare_packed_u32_results(
         mismatches,
     }
 }
-
-/// The standard bind group layout entries for a read-only input buffer at
-/// binding 0 and a read-write output buffer at binding 1.
-///
-/// This is the common layout used by almost all roundtrip test shaders.
-pub const STANDARD_LAYOUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    },
-    wgpu::BindGroupLayoutEntry {
-        binding: 1,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: false },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    },
-];
 
 /// A roundtrip test that can be run by the harness.
 pub trait RoundtripTest {

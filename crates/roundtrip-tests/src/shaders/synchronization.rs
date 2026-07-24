@@ -103,37 +103,6 @@ pub mod workgroup_uniform_load_scalar {
     }
 }
 
-/// Runs one u32-based compute shader on the GPU and returns unpacked u32
-/// output.
-fn run_gpu_u32_shader(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    shader_source: &str,
-    input: &[u32],
-    output_len: usize,
-) -> Vec<u32> {
-    let input_bytes = bytemuck::cast_slice(input);
-    let output_size = (output_len * std::mem::size_of::<u32>()) as u64;
-    let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
-        device,
-        queue,
-        shader_source,
-        entry_point: "main",
-        bind_group_layout_entries: harness::STANDARD_LAYOUT_ENTRIES,
-        input_data: input_bytes,
-        output_size,
-        workgroup_count: (WG_COUNT as u32, 1, 1),
-    });
-    bytemuck::cast_slice(&gpu_bytes).to_vec()
-}
-
-/// Pushes one u32 comparison result with generated labels.
-fn push_u32_result(results: &mut Vec<ComparisonResult>, name: &str, gpu: &[u32], cpu: &[u32]) {
-    let labels: Vec<String> = (0..gpu.len()).map(|i| format!("{name}[{i}]")).collect();
-    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-    results.push(harness::compare_u32_results(name, gpu, cpu, &label_refs));
-}
-
 pub struct SynchronizationTest;
 
 impl RoundtripTest for SynchronizationTest {
@@ -152,13 +121,21 @@ impl RoundtripTest for SynchronizationTest {
         let input = [0u32; 1];
 
         {
-            let gpu = run_gpu_u32_shader(
+            let input_bytes = bytemuck::cast_slice(&input);
+            let output_size = (INVOCATIONS * std::mem::size_of::<u32>()) as u64;
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&workgroup_barrier_sum::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                workgroup_barrier_sum::linkage::shader_source(),
-                &input,
-                INVOCATIONS,
-            );
+                linkage: &linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (WG_COUNT as u32, 1, 1),
+            });
+            let gpu: Vec<u32> = bytemuck::cast_slice(&gpu_bytes).to_vec();
 
             workgroup_barrier_sum::INPUT.set(input);
             workgroup_barrier_sum::SHARED.set([0u32; WG_SIZE]);
@@ -172,13 +149,21 @@ impl RoundtripTest for SynchronizationTest {
         }
 
         {
-            let gpu = run_gpu_u32_shader(
+            let input_bytes = bytemuck::cast_slice(&input);
+            let output_size = (INVOCATIONS * 2 * std::mem::size_of::<u32>()) as u64;
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&storage_barrier_sum::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                storage_barrier_sum::linkage::shader_source(),
-                &input,
-                INVOCATIONS * 2,
-            );
+                linkage: &linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (WG_COUNT as u32, 1, 1),
+            });
+            let gpu: Vec<u32> = bytemuck::cast_slice(&gpu_bytes).to_vec();
 
             storage_barrier_sum::INPUT.set(input);
             storage_barrier_sum::OUTPUT.set([0u32; INVOCATIONS * 2]);
@@ -193,13 +178,22 @@ impl RoundtripTest for SynchronizationTest {
         }
 
         {
-            let gpu = run_gpu_u32_shader(
+            let input_bytes = bytemuck::cast_slice(&input);
+            let output_size = (INVOCATIONS * std::mem::size_of::<u32>()) as u64;
+            let linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &workgroup_uniform_load_scalar::WGSL_SOURCE,
+            )
+            .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                workgroup_uniform_load_scalar::linkage::shader_source(),
-                &input,
-                INVOCATIONS,
-            );
+                linkage: &linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (WG_COUNT as u32, 1, 1),
+            });
+            let gpu: Vec<u32> = bytemuck::cast_slice(&gpu_bytes).to_vec();
 
             workgroup_uniform_load_scalar::INPUT.set(input);
             workgroup_uniform_load_scalar::GROUP_VALUE.set([0u32; 1]);
@@ -217,4 +211,10 @@ impl RoundtripTest for SynchronizationTest {
 
         results
     }
+}
+
+fn push_u32_result(results: &mut Vec<ComparisonResult>, name: &str, gpu: &[u32], cpu: &[u32]) {
+    let labels: Vec<String> = (0..gpu.len()).map(|i| format!("{name}[{i}]")).collect();
+    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+    results.push(harness::compare_u32_results(name, gpu, cpu, &label_refs));
 }

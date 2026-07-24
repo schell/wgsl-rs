@@ -17,8 +17,6 @@ mod builder;
 mod builtins;
 mod ir_convert;
 mod ir_emit;
-#[cfg(feature = "linkage-wgpu")]
-mod linkage;
 mod monomorphize;
 mod parse;
 mod parse_visitor;
@@ -99,7 +97,7 @@ struct Attrs {
     /// number of type parameters in the module's `instantiate` function.
     ///
     /// For non-template modules, this has no effect (they are always
-    /// validated via `WGSL_MODULE.validate()`).
+    /// validated via `WGSL_SOURCE.validate()`).
     validate_instantiations: Vec<Vec<syn::Type>>,
 
     /// Extension types that implement `WgslExtension`.
@@ -232,7 +230,7 @@ impl From<parse::Error> for WgslGenError {
 
 /// Collect the encoded names of all module-level type parameters in the
 /// parsed module, in the order they should appear in the generated
-/// `WGSL_MODULE.module_type_params` slice.
+/// `WGSL_SOURCE.module_type_params` slice.
 ///
 /// Two sources contribute, both encoded so that no two distinct
 /// declarations can share an IR name:
@@ -454,7 +452,7 @@ fn gen_wgsl_module(
     }
 
     let ir_p = ir_path(crate_path);
-    let module_name_lit = wgsl_module.ident.to_string();
+    let module_name_ident = &wgsl_module.ident;
 
     // Convert the parse module's items to IR items and emit a constructor
     // function body that builds the IR at runtime.
@@ -471,7 +469,7 @@ fn gen_wgsl_module(
         let module_attrs = ir_emit::emit_attrs(&ir_p, &wgsl_module.attrs);
         let module_struct = quote! {
             #ir_p::Module {
-                name: ::std::string::String::from(#module_name_lit),
+                name: stringify!(#module_name_ident),
                 items: ::std::vec![#(#item_exprs),*],
                 #module_attrs,
             }
@@ -589,7 +587,7 @@ fn gen_wgsl_module(
             let modules: Vec<proc_macro2::TokenStream> = import_paths
                 .iter()
                 .filter(|path| !is_wgsl_std_import(crate_path, path))
-                .map(|path| quote! { &#path::WGSL_MODULE })
+                .map(|path| quote! { &#path::WGSL_SOURCE })
                 .collect();
 
             Ok::<_, WgslGenError>(quote! {
@@ -619,7 +617,7 @@ fn gen_wgsl_module(
 
         #(#inst_constructors)*
 
-        pub static WGSL_MODULE: #crate_path::Module = #crate_path::Module {
+        pub static WGSL_SOURCE: #crate_path::Source = #crate_path::Source {
             id: #module_id,
             name: stringify!(#name),
             imports: &[
@@ -643,7 +641,7 @@ fn gen_wgsl_module(
 ///
 /// Emitted for non-template `#[wgsl]` modules (unless `skip_validation` is
 /// set). The validation is deferred to `cargo test` time, where it calls
-/// `WGSL_MODULE.validate()`.
+/// `WGSL_SOURCE.validate()`.
 ///
 /// The test is only generated when the `validation` feature is enabled
 /// (the default). Without this feature, `Module::validate()` is unavailable,
@@ -657,7 +655,7 @@ fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
         #[cfg(test)]
         #[test]
         fn __validate_wgsl() {
-            WGSL_MODULE.validate().expect(#error_msg);
+            WGSL_SOURCE.validate().expect(#error_msg);
         }
     }
 }
@@ -736,7 +734,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // Generate validation tests.
     //
     // Non-template modules get a `__validate_wgsl` test that calls
-    // `WGSL_MODULE.validate()`. Template (generic) modules cannot be
+    // `WGSL_SOURCE.validate()`. Template (generic) modules cannot be
     // validated standalone — their placeholders aren't valid WGSL. Instead,
     // each `validate_with_instantiation_types(T1, T2, ...)` attribute
     // produces a test that instantiates with those concrete types, renders
@@ -776,24 +774,8 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         }
     }
 
-    // Generate linkage module when feature is enabled.
-    //
-    // Template modules (with module-level type parameters) skip linkage
-    // generation: the WGSL `shader_source()` is a template with unresolved
-    // placeholders, so a `wgpu::ShaderModule` can't be built from it
-    // directly. Users must instantiate the template first, then construct
-    // their own pipeline / bind groups manually for now.
-    #[cfg(feature = "linkage-wgpu")]
-    let linkage_fragment = if module_type_params.is_empty() {
-        let linkage_info =
-            linkage::LinkageInfo::from_item_mod(input_mod.ident.clone(), &wgsl_module);
-        linkage::generate_linkage_module(&linkage_info)
-    } else {
-        quote! {}
-    };
-
     // For template modules (those with module-level type parameters),
-    // emit an `instantiate` function alongside `WGSL_MODULE`. The
+    // emit an `instantiate` function alongside `WGSL_SOURCE`. The
     // function uses `wgsl_rs::linkage::Type<Is = ...>` constraints to
     // enforce at compile time that every linkage variable's concrete type
     // is consistent across all entry points that use it.
@@ -805,7 +787,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 
     if let Some((_, content)) = input_mod.content.as_mut() {
         // The module fragment now contains multiple items (constructor
-        // fns + the WGSL_MODULE static), so parse it as a list of items
+        // fns + the WGSL_SOURCE static), so parse it as a list of items
         // by wrapping in a synthetic `mod __wgsl_emit { ... }` and
         // splicing its contents.
         let wrapper_tokens = quote! {
@@ -835,14 +817,6 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
                 content.extend(wrapper_content);
             }
         }
-
-        // Add linkage if the feature is set (skipped for template modules
-        // — see the linkage_fragment construction above).
-        #[cfg(feature = "linkage-wgpu")]
-        if !linkage_fragment.is_empty() {
-            let linkage_item: syn::Item = syn::parse2(linkage_fragment)?;
-            content.push(linkage_item);
-        }
     }
 
     // NOTE: Compile-time WGSL validation has been removed in favor of
@@ -869,11 +843,10 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 
 /// Transpiles a Rust module to WGSL.
 ///
-/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_MODULE` static
-/// containing the module's IR constructor and metadata. The Rust code
-/// inside the module remains fully functional and can be executed on the
-/// CPU, while the WGSL produced by `WGSL_MODULE.wgsl_source()` (or
-/// `WGSL_MODULE.instantiate(...)` for generic modules) runs on the GPU.
+/// Apply `#[wgsl]` to a `mod` item to generate a `WGSL_SOURCE` static
+/// alongside any user-defined fns. The Rust code in the module runs on the
+/// CPU, while the WGSL produced by `WGSL_SOURCE.wgsl_source()` (or
+/// `WGSL_SOURCE.instantiate(...)` for generic sources) runs on the GPU.
 ///
 /// # Module Options
 ///
@@ -891,7 +864,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// # Auto-generated Validation Tests
 ///
 /// Every non-template `#[wgsl]` module gets an auto-generated `__validate_wgsl`
-/// test that calls `WGSL_MODULE.validate()` at `cargo test` time, provided the
+/// test that calls `WGSL_SOURCE.validate()` at `cargo test` time, provided the
 /// `validation` feature is enabled (the default). Without this feature,
 /// `Module::validate()` is unavailable, so no test is generated.
 ///

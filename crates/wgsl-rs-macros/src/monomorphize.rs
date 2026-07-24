@@ -26,7 +26,7 @@ use crate::{
 };
 
 /// A cross-module template instantiation that needs to be included in the
-/// consuming module's `WGSL_MODULE`.
+/// consuming module's `WGSL_SOURCE`.
 #[derive(Clone)]
 pub struct CrossModuleInstantiation {
     /// Candidate imported modules that may contain the template.
@@ -39,7 +39,7 @@ pub struct CrossModuleInstantiation {
     pub mangled_type_args: Vec<String>,
     /// The original parse-side type arguments. These are converted to IR
     /// at emission time and shipped as a `fn() -> Vec<ir::Type>`
-    /// constructor on the [`crate::Module`] so runtime substitution can
+    /// constructor on the [`crate::Source`] so runtime substitution can
     /// produce a concrete shader source.
     pub type_args: Vec<Type>,
 }
@@ -47,7 +47,7 @@ pub struct CrossModuleInstantiation {
 /// Result of the monomorphization pass.
 pub struct MonoResult {
     /// Cross-module template instantiations that need macro invocations in
-    /// the consuming module's `WGSL_MODULE.source`.
+    /// the consuming source's `WGSL_SOURCE`.
     pub cross_module_instantiations: Vec<CrossModuleInstantiation>,
     /// Template macros to generate for generic functions defined in this
     /// module.

@@ -4,11 +4,10 @@
 //!
 //! # Overview
 //!
-//! Given any type `T` that implements both [`Layout`](crate::Layout)
-//! and [`WgslLayout`](crate::WgslLayout) (i.e. any type annotated
-//! with `#[derive(Layout)]` and every built-in WGSL type),
-//! [`generate_svg`] produces a self-contained SVG byte-layout
-//! diagram. The visual style mirrors
+//! Given any type `T` that implements both [`Layout`] and [`WgslLayout`]
+//! (i.e. any type annotated with `#[derive(Layout)]` and every
+//! built-in WGSL type), [`generate_svg`] produces a self-contained SVG
+//! byte-layout diagram. The visual style mirrors
 //! <https://webgpufundamentals.org/webgpu/lessons/webgpu-memory-layout.html>:
 //! one label band + one byte band, repeated for every row, with
 //! per-field HSL coloring.
@@ -157,7 +156,7 @@ pub enum DiagramError {
 /// Maximum byte size the renderer supports. Above this, diagrams
 /// become unreadable, so [`generate_svg`] returns
 /// [`DiagramError::SizeTooLarge`].
-const MAX_BYTES: usize = 16 * 1024;
+pub const MAX_BYTES: usize = 16 * 1024;
 
 /// Number of example array elements rendered for a runtime array.
 /// Chosen as 1 to keep the diagram compact: the meta line already

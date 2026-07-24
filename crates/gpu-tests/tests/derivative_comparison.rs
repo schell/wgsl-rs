@@ -9,16 +9,43 @@
 
 use futures::executor::block_on;
 use gpu_tests::{derivative_shader, derivative_variants_shader};
+use std::{sync::mpsc, thread, time::Duration};
 use wgsl_rs::std::*;
 
 const WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
 const TEXEL_SIZE: u32 = 16; // 4 f32s * 4 bytes each = 16 bytes per pixel (Rgba32Float)
 
+/// Upper bound on any single GPU operation in this test file. Adapter
+/// enumeration, device creation, and buffer mapping should each complete
+/// in well under a second on a healthy host; we set a generous ceiling
+/// so wedged-driver CI failures surface as skips rather than hangs.
+const GPU_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Creates a headless wgpu device, or returns `None` if no suitable adapter
-/// is found. Checks that the adapter supports `Rgba32Float` as a render
-/// attachment (some software rasterizers may not).
+/// is found, **or** if the underlying `wgpu` adapter/device enumeration
+/// hangs longer than [`GPU_TIMEOUT`]. Checks that the adapter supports
+/// `Rgba32Float` as a render attachment (some software rasterizers may
+/// not).
 fn create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let result = create_device_inner();
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(GPU_TIMEOUT) {
+        Ok(opt) => opt,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            eprintln!(
+                "wgpu adapter enumeration timed out after {GPU_TIMEOUT:?} — skipping GPU test"
+            );
+            None
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => None,
+    }
+}
+
+fn create_device_inner() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -108,22 +135,63 @@ fn read_texture(
     );
     let idx = queue.submit(Some(encoder.finish()));
 
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    // Clone the device handle so the readback thread can hold it
+    // independently of this function's borrow scope. `wgpu::Device`
+    // is internally an Arc, so the clone is cheap and the GPU
+    // resources are shared.
+    let device_for_thread = device.clone();
+    thread::spawn(move || {
+        let result = readback_inner(
+            staging,
+            &device_for_thread,
+            idx,
+            width,
+            height,
+            bytes_per_row,
+        );
+        let _ = result_tx.send(result);
+    });
+    match result_rx.recv_timeout(GPU_TIMEOUT) {
+        Ok(Ok(pixels)) => pixels,
+        Ok(Err(reason)) => panic!("GPU readback failed: {reason}"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("GPU readback timed out after {GPU_TIMEOUT:?}");
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("GPU readback thread disconnected unexpectedly");
+        }
+    }
+}
+
+/// Performs the full GPU→CPU readback: map the staging buffer, copy
+/// pixels, and unmap. Runs on the calling thread (intended to be a
+/// `std::thread::spawn` worker so the outer caller can impose a
+/// timeout). Returns the pixel data on success or a static error
+/// string on failure.
+fn readback_inner(
+    staging: wgpu::Buffer,
+    device: &wgpu::Device,
+    submission_index: wgpu::SubmissionIndex,
+    width: u32,
+    height: u32,
+    bytes_per_row: u32,
+) -> Result<Vec<[f32; 4]>, &'static str> {
+    let (sender, receiver) = mpsc::channel();
     staging
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).expect("channel send failed");
+            let _ = sender.send(result);
         });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(idx),
-            timeout: None,
-        })
-        .unwrap();
+    let poll_result = device.poll(wgpu::PollType::Wait {
+        submission_index: Some(submission_index),
+        timeout: None,
+    });
+    poll_result.map_err(|_| "device.poll returned an error")?;
     receiver
         .recv()
-        .expect("channel recv failed")
-        .expect("buffer mapping failed");
+        .map_err(|_| "buffer mapping channel closed")?
+        .map_err(|_| "buffer mapping failed")?;
 
     let data = staging.slice(..).get_mapped_range();
     let mut pixels = Vec::with_capacity((width * height) as usize);
@@ -138,7 +206,7 @@ fn read_texture(
     }
     drop(data);
     staging.unmap();
-    pixels
+    Ok(pixels)
 }
 
 /// Align `value` up to the next multiple of `alignment`.
@@ -157,32 +225,39 @@ fn render_single_target(
     let texture = create_render_target(device, width, height);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let module = derivative_shader::linkage::shader_module(device);
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let module = &derivative_shader::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("derivative_test"),
-        bind_group_layouts: &[],
-        immediate_size: 0,
-    });
+    let pipeline_layout = linkage.pipeline_layout(device, Some("derivative_test"));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("derivative_test"),
         layout: Some(&pipeline_layout),
-        vertex: derivative_shader::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(derivative_shader::linkage::frag_main::fragment_state(
-            &module,
-            &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba32Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::all(),
-            })],
-        )),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
         multiview_mask: None,
         cache: None,
     });
@@ -225,18 +300,20 @@ fn render_variant_targets(
     let fine_view = fine_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let coarse_view = coarse_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let module = derivative_variants_shader::linkage::shader_module(device);
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let module = &derivative_variants_shader::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("variant_test"),
-        bind_group_layouts: &[],
-        immediate_size: 0,
-    });
+    let pipeline_layout = linkage.pipeline_layout(device, Some("variant_test"));
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("variant_test"),
         layout: Some(&pipeline_layout),
-        vertex: derivative_variants_shader::linkage::vtx_main::vertex_state(&module),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
@@ -244,21 +321,24 @@ fn render_variant_targets(
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(
-            derivative_variants_shader::linkage::frag_main::fragment_state(
-                &module,
-                &[
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    }),
-                    Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba32Float,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    }),
-                ],
-            ),
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        }),
+                        Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        }),
+                    ],
+                ),
         ),
         multiview_mask: None,
         cache: None,

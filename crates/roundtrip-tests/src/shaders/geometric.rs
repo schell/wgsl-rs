@@ -137,41 +137,19 @@ impl RoundtripTest for GeometricTest {
         let inputs = geo_inputs();
         let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
 
-        let layout_entries = &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ];
-
         let epsilon = 1e-4;
         let mut results = Vec::new();
 
         // --- geo_scalar: degrees, radians, sign, abs ---
         {
             let output_size = (N * 4 * std::mem::size_of::<f32>()) as u64;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&geo_scalar::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: geo_scalar::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -211,12 +189,13 @@ impl RoundtripTest for GeometricTest {
         // --- geo_fma: fma, distance(scalar), length(scalar) ---
         {
             let output_size = (N * 4 * std::mem::size_of::<f32>()) as u64;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&geo_fma::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: geo_fma::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -239,7 +218,7 @@ impl RoundtripTest for GeometricTest {
                         format!("fma({x:.4}, 2, 1)"),
                         format!("distance({x:.4}, 0)"),
                         format!("length({x:.4})"),
-                        format!("(padding)"),
+                        "(padding)".into(),
                     ]
                 })
                 .collect();
@@ -257,12 +236,13 @@ impl RoundtripTest for GeometricTest {
         {
             const OUTPUT_COUNT: usize = 16;
             let output_size = (OUTPUT_COUNT * 4 * std::mem::size_of::<f32>()) as u64;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&geo_vector::WGSL_SOURCE).unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: geo_vector::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),
@@ -302,12 +282,14 @@ impl RoundtripTest for GeometricTest {
         {
             const OUTPUT_COUNT: usize = 16;
             let output_size = (OUTPUT_COUNT * 4 * std::mem::size_of::<f32>()) as u64;
-            let gpu_bytes = harness::run_gpu_compute(&harness::GpuComputeParams {
+            let linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&geo_cross_reflect::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                shader_source: geo_cross_reflect::linkage::shader_source(),
-                entry_point: "main",
-                bind_group_layout_entries: layout_entries,
+                linkage: &linkage,
+                entry: "main",
                 input_data: input_bytes,
                 output_size,
                 workgroup_count: (1, 1, 1),

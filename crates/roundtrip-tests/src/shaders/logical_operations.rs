@@ -285,10 +285,9 @@ impl RoundtripTest for LogicalOperationsTest {
             all_vec2b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec2b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     all_vec2b::main(builtins.global_invocation_id);
@@ -330,10 +329,9 @@ impl RoundtripTest for LogicalOperationsTest {
             all_vec3b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec3b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     all_vec3b::main(builtins.global_invocation_id);
@@ -375,10 +373,9 @@ impl RoundtripTest for LogicalOperationsTest {
             all_vec4b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec4b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     all_vec4b::main(builtins.global_invocation_id);
@@ -420,10 +417,9 @@ impl RoundtripTest for LogicalOperationsTest {
             any_vec2b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec2b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     any_vec2b::main(builtins.global_invocation_id);
@@ -465,10 +461,9 @@ impl RoundtripTest for LogicalOperationsTest {
             any_vec3b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec3b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     any_vec3b::main(builtins.global_invocation_id);
@@ -510,10 +505,9 @@ impl RoundtripTest for LogicalOperationsTest {
             any_vec4b::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec4b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     any_vec4b::main(builtins.global_invocation_id);

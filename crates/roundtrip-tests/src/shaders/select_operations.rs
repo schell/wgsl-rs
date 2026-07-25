@@ -481,10 +481,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_f32_scalar::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_f32_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_f32_scalar::main(builtins.global_invocation_id);
@@ -529,10 +528,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_i32_scalar::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_i32_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_i32_scalar::main(builtins.global_invocation_id);
@@ -577,10 +575,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_u32_scalar::OUTPUT.set([0u32; N]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_u32_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_u32_scalar::main(builtins.global_invocation_id);
@@ -625,10 +622,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec2f_scalar::OUTPUT.set([0u32; N * 2]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec2f_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec2f_scalar::main(builtins.global_invocation_id);
@@ -673,10 +669,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec4f_scalar::OUTPUT.set([0u32; N * 4]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec4f_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec4f_scalar::main(builtins.global_invocation_id);
@@ -721,10 +716,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec4i_scalar::OUTPUT.set([0u32; N * 4]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec4i_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec4i_scalar::main(builtins.global_invocation_id);
@@ -769,10 +763,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec4u_scalar::OUTPUT.set([0u32; N * 4]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec4u_scalar::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec4u_scalar::main(builtins.global_invocation_id);
@@ -817,10 +810,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec4f_vec4b::OUTPUT.set([0u32; N * 4]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec4f_vec4b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec4f_vec4b::main(builtins.global_invocation_id);
@@ -865,10 +857,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec4i_vec4b::OUTPUT.set([0u32; N * 4]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec4i_vec4b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec4i_vec4b::main(builtins.global_invocation_id);
@@ -913,10 +904,9 @@ impl RoundtripTest for SelectOperationsTest {
             select_vec4u_vec4b::OUTPUT.set([0u32; N * 4]);
             dispatch_workgroups(
                 (1, 1, 1),
-                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&select_vec4u_vec4b::WGSL_SOURCE)
-                    .unwrap()
+                linkage
                     .compute_entry("main")
-                    .unwrap()
+                    .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
                     select_vec4u_vec4b::main(builtins.global_invocation_id);

@@ -1266,20 +1266,24 @@ fn collect_instantiation(
     );
 
     if matching.len() > 1 {
-        let names: Vec<&str> = matching.iter().map(|m| m.name).collect();
-        panic!(
-            "ambiguous template instantiation '{template_name}' for type args {:?}; matching \
-             sources: {:?}; available templates: {:?}",
-            mangled_type_args, names, available
-        );
+        let names: Vec<String> = matching.iter().map(|m| m.name.to_string()).collect();
+        return TemplateResolutionSnafu {
+            template_name: template_name.to_string(),
+            mangled_type_args: mangled_type_args.to_vec(),
+            available: names,
+        }
+        .fail();
     }
 
     let source = matching
         .pop()
         .expect("matching is non-empty after the check above");
     let Some(template) = source.templates.iter().find(|t| t.name == template_name) else {
-        panic!(
-            "internal error: resolved source '{}' has no template '{}'; available: {:?}",
+        // Invariant: `matching` was built by filtering on
+        // `templates.iter().any(|t| t.name == template_name)`, so the
+        // sole surviving source must contain the template.
+        unreachable!(
+            "resolved source '{}' has no template '{}'; available: {:?}",
             source.name, template_name, available
         );
     };

@@ -361,9 +361,11 @@ impl Source {
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` if validation succeeds, or an error message describing
-    /// the validation failure. Template sources return
-    /// [`SourceError::TemplateWgsl`]-style errors.
+    /// Returns `Ok(())` if validation succeeds, or an error message
+    /// describing the validation failure. Template sources return an
+    /// `Err(String)` instructing the caller to `instantiate::<…>()`
+    /// first (they cannot be validated standalone — their IR contains
+    /// `__TP{name}__` placeholders that aren't valid WGSL).
     ///
     /// # Example
     ///

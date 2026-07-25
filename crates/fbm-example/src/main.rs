@@ -80,7 +80,7 @@ impl FbmPipeline {
         let device = &gpu.device;
 
         // Runtime IR-based wgpu linkage analysis (issue #120).
-        let mut linkage = analyze_wgsl_module(&fbm_shader::WGSL_SOURCE).unwrap();
+        let mut linkage = analyze_wgsl_module(&fbm_shader::WGSL_SOURCE)?;
 
         // Pull each uniform's buffer descriptor out by binding name.
         // The `uniform!` macro preserves the identifier case, so we

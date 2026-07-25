@@ -47,9 +47,10 @@ fn validate_and_print_source(module: &wgsl_rs::Source) {
             // Tell the user how to specialize the template to get a concrete
             // source they can validate.
             println!(
-                "(this is a template source with type parameters {:?}; call `m.instantiate::<T1, \
-                 T2, ...>()` (types in `module_type_params` order) then `.generate_linkage()` to \
-                 build a WgpuLinkage)",
+                "(this is a template source with type parameters {:?}; call \
+                 `<shader_module>::instantiate::<T1, T2, ...>()` (types in `module_type_params` \
+                 order) then `.generate_linkage()` on the returned `ir::Module` to build a \
+                 WgpuLinkage)",
                 uninstantiated_source.module_type_params
             );
             return;
@@ -208,7 +209,7 @@ fn build_linkage() {
             let frame = 0u32;
 
             // Runtime IR-based wgpu linkage analysis (issue #120).
-            let mut linkage = analyze_wgsl_module(&hello_triangle::WGSL_SOURCE).unwrap();
+            let mut linkage = analyze_wgsl_module(&hello_triangle::WGSL_SOURCE)?;
 
             // Pull the FRAME uniform's buffer descriptor out by binding
             // name. Sizing follows WGSL §14.4.1.

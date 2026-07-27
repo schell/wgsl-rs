@@ -7,7 +7,12 @@
 //! Requires a GPU (or software rasterizer) — tests are skipped if no adapter
 //! is available.
 
-use futures::executor::block_on;
+use futures::{
+    Future, FutureExt,
+    channel::oneshot,
+    executor::block_on,
+    future::{self, Either},
+};
 use gpu_tests::{derivative_shader, derivative_variants_shader};
 use std::{sync::mpsc, thread, time::Duration};
 use wgsl_rs::std::*;
@@ -22,40 +27,82 @@ const TEXEL_SIZE: u32 = 16; // 4 f32s * 4 bytes each = 16 bytes per pixel (Rgba3
 /// so wedged-driver CI failures surface as skips rather than hangs.
 const GPU_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Sentinel returned when [`race_timeout`] fires before the work future.
+#[derive(Debug)]
+struct TimedOut;
+
+/// Races `fut` against a deadline of `dur`.
+///
+/// The deadline is implemented by spawning a detached daemon thread that
+/// sleeps for `dur` and then fires a [`oneshot`] channel. If the work
+/// future wins the race, the timer thread is not cancelled (it keeps
+/// sleeping), but its oneshot sender is dropped on return and the thread
+/// will exit harmlessly after its sleep elapses. Crucially the work
+/// future is *dropped* on timeout, so a `wgpu` future wedged inside the
+/// driver is abandoned cleanly — no permanently-blocked OS thread is
+/// left behind, unlike the previous `thread::spawn` + `recv_timeout`
+/// pattern.
+async fn race_timeout<F, T>(fut: F, dur: Duration) -> Result<T, TimedOut>
+where
+    F: Future<Output = T> + Send,
+{
+    let (tx, rx) = oneshot::channel::<()>();
+    thread::spawn(move || {
+        thread::sleep(dur);
+        let _ = tx.send(());
+    });
+    // `Box::pin` erases the concrete future type and yields a `BoxFuture`,
+    // which is `Unpin` — required by `futures::future::select`.
+    let work = fut.boxed();
+    let timer = rx.fuse();
+    match future::select(work, timer).await {
+        Either::Left((result, _timer)) => Ok(result),
+        Either::Right((_timer_fired, _work)) => Err(TimedOut),
+    }
+}
+
 /// Creates a headless wgpu device, or returns `None` if no suitable adapter
 /// is found, **or** if the underlying `wgpu` adapter/device enumeration
 /// hangs longer than [`GPU_TIMEOUT`]. Checks that the adapter supports
 /// `Rgba32Float` as a render attachment (some software rasterizers may
 /// not).
 fn create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = create_device_inner();
-        let _ = tx.send(result);
-    });
-    match rx.recv_timeout(GPU_TIMEOUT) {
-        Ok(opt) => opt,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
+    let result = block_on(race_timeout(
+        get_adapter_device_and_queue_inner(),
+        GPU_TIMEOUT,
+    ));
+    match result {
+        Ok(Some((_adapter, device, queue))) => Some((device, queue)),
+        Ok(None) => None,
+        Err(TimedOut) => {
             eprintln!(
-                "wgpu adapter enumeration timed out after {GPU_TIMEOUT:?} — skipping GPU test"
+                "wgpu adapter/device creation timed out after {GPU_TIMEOUT:?} — skipping GPU test"
             );
             None
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => None,
     }
 }
 
-fn create_device_inner() -> Option<(wgpu::Device, wgpu::Queue)> {
+/// Inner async adapter/device acquisition. The returned future is raced
+/// against a timer by [`create_device`] so a wedged driver cannot hang
+/// the test process — on timeout the future is dropped, abandoning the
+/// in-flight `wgpu` request without leaving a blocked thread behind.
+async fn get_adapter_device_and_queue_inner() -> Option<(wgpu::Adapter, wgpu::Device, wgpu::Queue)>
+{
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
-    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::default(),
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
+
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })
+        .await
+        .map_err(|e| eprintln!("{e}"))
+        .ok()?;
 
     // Verify Rgba32Float is renderable on this adapter.
     let format_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba32Float);
@@ -67,9 +114,13 @@ fn create_device_inner() -> Option<(wgpu::Device, wgpu::Queue)> {
         return None;
     }
 
-    let (device, queue) =
-        block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
-    Some((device, queue))
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor::default())
+        .await
+        .map_err(|e| eprintln!("{e}"))
+        .ok()?;
+
+    Some((adapter, device, queue))
 }
 
 /// Creates a render target texture with `Rgba32Float` format.
@@ -135,40 +186,21 @@ fn read_texture(
     );
     let idx = queue.submit(Some(encoder.finish()));
 
-    let (result_tx, result_rx) = mpsc::channel();
-    // Clone the device handle so the readback thread can hold it
-    // independently of this function's borrow scope. `wgpu::Device`
-    // is internally an Arc, so the clone is cheap and the GPU
-    // resources are shared.
-    let device_for_thread = device.clone();
-    thread::spawn(move || {
-        let result = readback_inner(
-            staging,
-            &device_for_thread,
-            idx,
-            width,
-            height,
-            bytes_per_row,
-        );
-        let _ = result_tx.send(result);
-    });
-    match result_rx.recv_timeout(GPU_TIMEOUT) {
-        Ok(Ok(pixels)) => pixels,
-        Ok(Err(reason)) => panic!("GPU readback failed: {reason}"),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            panic!("GPU readback timed out after {GPU_TIMEOUT:?}");
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            panic!("GPU readback thread disconnected unexpectedly");
-        }
+    // Run readback on the calling thread. The timeout is enforced
+    // natively by `wgpu`'s `PollType::Wait { timeout: Some(..) }`,
+    // which returns `PollError::Timeout` instead of blocking forever —
+    // no spawned worker thread to leak if the driver wedges.
+    match readback_inner(staging, device, idx, width, height, bytes_per_row) {
+        Ok(pixels) => pixels,
+        Err(reason) => panic!("GPU readback failed: {reason}"),
     }
 }
 
 /// Performs the full GPU→CPU readback: map the staging buffer, copy
-/// pixels, and unmap. Runs on the calling thread (intended to be a
-/// `std::thread::spawn` worker so the outer caller can impose a
-/// timeout). Returns the pixel data on success or a static error
-/// string on failure.
+/// pixels, and unmap. The [`GPU_TIMEOUT`] deadline is passed directly
+/// into [`wgpu::Device::poll`], which returns [`wgpu::PollError::Timeout`]
+/// rather than blocking indefinitely — so a wedged driver surfaces as a
+/// panic without leaving a permanently-blocked OS thread behind.
 fn readback_inner(
     staging: wgpu::Buffer,
     device: &wgpu::Device,
@@ -185,9 +217,13 @@ fn readback_inner(
         });
     let poll_result = device.poll(wgpu::PollType::Wait {
         submission_index: Some(submission_index),
-        timeout: None,
+        timeout: Some(GPU_TIMEOUT),
     });
-    poll_result.map_err(|_| "device.poll returned an error")?;
+    match poll_result {
+        Ok(_) => {}
+        Err(wgpu::PollError::Timeout) => return Err("GPU readback timed out"),
+        Err(_) => return Err("device.poll returned an error"),
+    }
     receiver
         .recv()
         .map_err(|_| "buffer mapping channel closed")?

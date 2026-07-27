@@ -171,14 +171,14 @@ fn push_u32_result(results: &mut Vec<ComparisonResult>, name: &str, gpu: &[u32],
 fn dispatch_u32(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    linkage: &wgsl_rs::linkage::wgpu::WgpuLinkage,
+    linkage: &mut wgsl_rs::linkage::wgpu::WgpuLinkage,
     input: &[u32],
     output_len: usize,
     workgroup_count: (u32, u32, u32),
 ) -> Vec<u32> {
     let input_bytes = bytemuck::cast_slice(input);
     let output_size = (output_len * std::mem::size_of::<u32>()) as u64;
-    let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+    let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
         device,
         queue,
         linkage,
@@ -208,10 +208,10 @@ impl RoundtripTest for AtomicOperationsTest {
         let input = [0u32; 1];
 
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_u32_scalar_ops::WGSL_SOURCE)
                     .unwrap();
-            let gpu = dispatch_u32(device, queue, &linkage, &input, 16, (1, 1, 1));
+            let gpu = dispatch_u32(device, queue, &mut linkage, &input, 16, (1, 1, 1));
 
             atomic_u32_scalar_ops::INPUT.set(input);
             atomic_u32_scalar_ops::A.set(Atomic::default());
@@ -225,10 +225,10 @@ impl RoundtripTest for AtomicOperationsTest {
         }
 
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_i32_scalar_ops::WGSL_SOURCE)
                     .unwrap();
-            let gpu = dispatch_u32(device, queue, &linkage, &input, 16, (1, 1, 1));
+            let gpu = dispatch_u32(device, queue, &mut linkage, &input, 16, (1, 1, 1));
 
             atomic_i32_scalar_ops::INPUT.set(input);
             atomic_i32_scalar_ops::A.set(Atomic::default());
@@ -242,10 +242,10 @@ impl RoundtripTest for AtomicOperationsTest {
         }
 
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_u32_contended_add::WGSL_SOURCE)
                     .unwrap();
-            let gpu = dispatch_u32(device, queue, &linkage, &input, WG_SIZE, (1, 1, 1));
+            let gpu = dispatch_u32(device, queue, &mut linkage, &input, WG_SIZE, (1, 1, 1));
 
             atomic_u32_contended_add::INPUT.set(input);
             atomic_u32_contended_add::COUNTER.set(Atomic::default());
@@ -259,10 +259,10 @@ impl RoundtripTest for AtomicOperationsTest {
         }
 
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&atomic_i32_contended_add::WGSL_SOURCE)
                     .unwrap();
-            let gpu = dispatch_u32(device, queue, &linkage, &input, WG_SIZE, (1, 1, 1));
+            let gpu = dispatch_u32(device, queue, &mut linkage, &input, WG_SIZE, (1, 1, 1));
 
             atomic_i32_contended_add::INPUT.set(input);
             atomic_i32_contended_add::COUNTER.set(Atomic::default());

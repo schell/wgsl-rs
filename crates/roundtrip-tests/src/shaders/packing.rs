@@ -174,12 +174,12 @@ impl RoundtripTest for PackingTest {
         // --- pack_unpack_4x8: snorm and unorm roundtrip ---
         {
             let output_size = (N * 2 * 4 * std::mem::size_of::<f32>()) as u64;
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&pack_unpack_4x8::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -226,13 +226,13 @@ impl RoundtripTest for PackingTest {
         // --- pack_unpack_2x16_norm: snorm and unorm 16-bit roundtrip ---
         {
             let output_size = (N * 4 * std::mem::size_of::<f32>()) as u64;
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&pack_unpack_2x16_norm::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -274,13 +274,13 @@ impl RoundtripTest for PackingTest {
         // --- pack_unpack_2x16_float: f16 roundtrip ---
         {
             let output_size = (N * 4 * std::mem::size_of::<f32>()) as u64;
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&pack_unpack_2x16_float::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -322,12 +322,12 @@ impl RoundtripTest for PackingTest {
         // --- pack_raw_u32: compare raw packed integers ---
         {
             let output_size = (N * 4 * std::mem::size_of::<u32>()) as u64;
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&pack_raw_u32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,

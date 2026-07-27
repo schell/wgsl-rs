@@ -124,12 +124,12 @@ impl RoundtripTest for BitManipulationTest {
 
         // --- bit_count_u32: clz, popcount, ctz, reverse_bits ---
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_count_u32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -168,12 +168,12 @@ impl RoundtripTest for BitManipulationTest {
 
         // --- bit_first_u32: first_leading_bit, first_trailing_bit ---
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_first_u32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -212,13 +212,13 @@ impl RoundtripTest for BitManipulationTest {
 
         // --- bit_extract_insert_u32: extract_bits, insert_bits ---
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_extract_insert_u32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,

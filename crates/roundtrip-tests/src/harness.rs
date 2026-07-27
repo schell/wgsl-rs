@@ -147,7 +147,7 @@ pub fn read_rgba32float_texture(
 pub struct GpuComputeParamsLinked<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
-    pub linkage: &'a wgsl_rs::linkage::wgpu::WgpuLinkage,
+    pub linkage: &'a mut wgsl_rs::linkage::wgpu::WgpuLinkage,
     pub entry: &'a str,
     pub input_data: &'a [u8],
     pub output_size: u64,
@@ -159,7 +159,7 @@ pub struct GpuComputeParamsLinked<'a> {
 /// pipeline are all derived from [`GpuComputeParamsLinked::linkage`];
 /// the binding-0-input / binding-1-output convention is hardcoded; the
 /// buffer names must be `"INPUT"` and `"OUTPUT"` in the shader source.
-pub fn run_gpu_compute_linked(params: &GpuComputeParamsLinked<'_>) -> Vec<u8> {
+pub fn run_gpu_compute_linked(params: &mut GpuComputeParamsLinked<'_>) -> Vec<u8> {
     let GpuComputeParamsLinked {
         device,
         queue,
@@ -173,26 +173,26 @@ pub fn run_gpu_compute_linked(params: &GpuComputeParamsLinked<'_>) -> Vec<u8> {
 
     // Look up the WGSL entry point name. The plan spec calls for
     // `linkage.compute_entry(params.entry).name`; `compute_entry` returns
-    // a `&ComputeEntryInfo` whose `name` is `Cow<'static, str>`, which
-    // borrows fine for `ComputePipelineDescriptor::entry_point`.
+    // a `&ComputeEntryInfo` whose `name` is `Cow<'static, str>`. We clone
+    // it to an owned `String` so the immutable borrow of `linkage` ends
+    // before the mutable `pipeline_layout` call below.
     let entry_info: &wgsl_rs::linkage::wgpu::ComputeEntryInfo = linkage
         .compute_entry(entry)
         .expect("entry point not found in linkage");
-    let entry_name: &str = &entry_info.name;
+    let entry_name: String = entry_info.name.to_string();
 
     // Derive the shader module, pipeline layout, and bind group layout
     // from the linkage. The bind group layout is built once via
     // `pipeline_layout` (which also builds the pipeline layout) and
     // then reused for the bind group.
     let module = device.create_shader_module(linkage.shader_module_descriptor());
-    let mut linkage = (*linkage).clone();
     let pipeline_layout = linkage.pipeline_layout(device, Some("roundtrip_test"));
 
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("roundtrip_test"),
         layout: Some(&pipeline_layout),
         module: &module,
-        entry_point: Some(entry_name),
+        entry_point: Some(&entry_name),
         compilation_options: Default::default(),
         cache: None,
     });

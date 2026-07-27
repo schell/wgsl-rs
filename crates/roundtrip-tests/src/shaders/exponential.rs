@@ -80,12 +80,12 @@ impl RoundtripTest for ExponentialTest {
 
         // --- exp_basic: exp, exp2, log, log2 ---
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&exp_basic::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -125,12 +125,12 @@ impl RoundtripTest for ExponentialTest {
 
         // --- exp_power: pow, sqrt, inverse_sqrt ---
         {
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&exp_power::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,

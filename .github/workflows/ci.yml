@@ -82,7 +82,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Roundtrip tests
-        run: cargo test -p roundtrip-tests
+        run: cargo xtask ci roundtrip-tests
 
       - name: Unit tests
         run: cargo xtask ci unit-tests

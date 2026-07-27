@@ -1,12 +1,12 @@
 //! Linkage machinery for `wgsl-rs`.
 //!
 //! ## wgpu linkage
-//! Runtime wgpu linkage analysis lives in the [`wgpu`] submodule, gated
+//! Runtime wgpu linkage analysis lives in the `wgpu` submodule, gated
 //! behind the `linkage-wgpu` feature. The runtime analyzer walks the IR
 //! produced by a `#[wgsl]` source (post-instantiation for templates) and
 //! produces bind group layouts, pipeline state descriptors, and buffer
 //! descriptors without any compile-time code generation from the
-//! proc-macro. See the [`wgpu`] module for details.
+//! proc-macro. See the `wgpu` module for details.
 //!
 //! ## Source instantiation
 //! When a `#[wgsl]` source contains generic linkage variables (e.g.

@@ -1131,13 +1131,13 @@ fn mat4_mat4_inputs() -> [f32; 2048] {
 fn run_gpu_f32_shader(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    linkage: &wgsl_rs::linkage::wgpu::WgpuLinkage,
+    linkage: &mut wgsl_rs::linkage::wgpu::WgpuLinkage,
     input: &[f32],
     output_len: usize,
 ) -> Vec<f32> {
     let input_bytes = bytemuck::cast_slice(input);
     let output_size = (output_len * std::mem::size_of::<f32>()) as u64;
-    let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+    let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
         device,
         queue,
         linkage,
@@ -1186,10 +1186,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat2_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&determinant_mat2::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 64);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 64);
             determinant_mat2::INPUT.set(input);
             determinant_mat2::OUTPUT.set([0.0f32; 64]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1201,10 +1201,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat3_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&determinant_mat3::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 64);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 64);
             determinant_mat3::INPUT.set(input);
             determinant_mat3::OUTPUT.set([0.0f32; 64]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1216,10 +1216,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat4_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&determinant_mat4::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 64);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 64);
             determinant_mat4::INPUT.set(input);
             determinant_mat4::OUTPUT.set([0.0f32; 64]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1231,10 +1231,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat2_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat2x2::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 256);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
             transpose_mat2x2::INPUT.set(input);
             transpose_mat2x2::OUTPUT.set([0.0f32; 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1246,10 +1246,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat3_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat3x3::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 576);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 576);
             transpose_mat3x3::INPUT.set(input);
             transpose_mat3x3::OUTPUT.set([0.0f32; 576]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1261,10 +1261,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat4_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat4x4::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 1024);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 1024);
             transpose_mat4x4::INPUT.set(input);
             transpose_mat4x4::OUTPUT.set([0.0f32; 1024]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1276,10 +1276,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat2x3_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat2x3::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 384);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 384);
             transpose_mat2x3::INPUT.set(input);
             transpose_mat2x3::OUTPUT.set([0.0f32; 384]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1291,10 +1291,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat3x2_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat3x2::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 384);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 384);
             transpose_mat3x2::INPUT.set(input);
             transpose_mat3x2::OUTPUT.set([0.0f32; 384]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1306,10 +1306,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat3x4_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat3x4::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 768);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 768);
             transpose_mat3x4::INPUT.set(input);
             transpose_mat3x4::OUTPUT.set([0.0f32; 768]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1321,10 +1321,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat4x3_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat4x3::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 768);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 768);
             transpose_mat4x3::INPUT.set(input);
             transpose_mat4x3::OUTPUT.set([0.0f32; 768]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1336,10 +1336,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat2x4_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat2x4::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 512);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 512);
             transpose_mat2x4::INPUT.set(input);
             transpose_mat2x4::OUTPUT.set([0.0f32; 512]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1351,10 +1351,10 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat4x2_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&transpose_mat4x2::WGSL_SOURCE)
                     .unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 512);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 512);
             transpose_mat4x2::INPUT.set(input);
             transpose_mat4x2::OUTPUT.set([0.0f32; 512]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1366,9 +1366,9 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat2_vec2_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat2_vec2_mul::WGSL_SOURCE).unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 128);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 128);
             mat2_vec2_mul::INPUT.set(input);
             mat2_vec2_mul::OUTPUT.set([0.0f32; 128]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1380,9 +1380,9 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat3_vec3_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat3_vec3_mul::WGSL_SOURCE).unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 192);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 192);
             mat3_vec3_mul::INPUT.set(input);
             mat3_vec3_mul::OUTPUT.set([0.0f32; 192]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1394,9 +1394,9 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat4_vec4_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat4_vec4_mul::WGSL_SOURCE).unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 256);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
             mat4_vec4_mul::INPUT.set(input);
             mat4_vec4_mul::OUTPUT.set([0.0f32; 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1408,9 +1408,9 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat2_mat2_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat2_mat2_mul::WGSL_SOURCE).unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 256);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
             mat2_mat2_mul::INPUT.set(input);
             mat2_mat2_mul::OUTPUT.set([0.0f32; 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1422,9 +1422,9 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat3_mat3_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat3_mat3_mul::WGSL_SOURCE).unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 576);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 576);
             mat3_mat3_mul::INPUT.set(input);
             mat3_mat3_mul::OUTPUT.set([0.0f32; 576]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
@@ -1436,9 +1436,9 @@ impl RoundtripTest for MatrixOperationsTest {
 
         {
             let input = mat4_mat4_inputs();
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat4_mat4_mul::WGSL_SOURCE).unwrap();
-            let gpu = run_gpu_f32_shader(device, queue, &linkage, &input, 1024);
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 1024);
             mat4_mat4_mul::INPUT.set(input);
             mat4_mat4_mul::OUTPUT.set([0.0f32; 1024]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {

@@ -237,13 +237,13 @@ impl RoundtripTest for TypeConversionsTest {
             let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
             let output_size = (N * std::mem::size_of::<u32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&convert_f32_to_u32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -277,13 +277,13 @@ impl RoundtripTest for TypeConversionsTest {
             let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
             let output_size = (N * std::mem::size_of::<u32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&convert_f32_to_i32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -317,13 +317,13 @@ impl RoundtripTest for TypeConversionsTest {
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
             let output_size = (N * std::mem::size_of::<f32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&convert_u32_to_f32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -365,13 +365,13 @@ impl RoundtripTest for TypeConversionsTest {
             let input_bytes = bytemuck::cast_slice::<i32, u8>(&inputs);
             let output_size = (N * std::mem::size_of::<f32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&convert_i32_to_f32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -413,13 +413,13 @@ impl RoundtripTest for TypeConversionsTest {
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
             let output_size = (N * std::mem::size_of::<u32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&convert_u32_to_i32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,

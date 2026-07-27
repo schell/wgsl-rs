@@ -267,17 +267,18 @@ impl RoundtripTest for LogicalOperationsTest {
             let inputs = all_any_vec2b_inputs();
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec2b::WGSL_SOURCE).unwrap();
-            let gpu_output = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
-                device,
-                queue,
-                linkage: &linkage,
-                entry: "main",
-                input_data: input_bytes,
-                output_size: (N * std::mem::size_of::<u32>()) as u64,
-                workgroup_count: (1, 1, 1),
-            });
+            let gpu_output =
+                harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                    device,
+                    queue,
+                    linkage: &mut linkage,
+                    entry: "main",
+                    input_data: input_bytes,
+                    output_size: (N * std::mem::size_of::<u32>()) as u64,
+                    workgroup_count: (1, 1, 1),
+                });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
@@ -311,17 +312,18 @@ impl RoundtripTest for LogicalOperationsTest {
             let inputs = all_any_vec3b_inputs();
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec3b::WGSL_SOURCE).unwrap();
-            let gpu_output = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
-                device,
-                queue,
-                linkage: &linkage,
-                entry: "main",
-                input_data: input_bytes,
-                output_size: (N * std::mem::size_of::<u32>()) as u64,
-                workgroup_count: (1, 1, 1),
-            });
+            let gpu_output =
+                harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                    device,
+                    queue,
+                    linkage: &mut linkage,
+                    entry: "main",
+                    input_data: input_bytes,
+                    output_size: (N * std::mem::size_of::<u32>()) as u64,
+                    workgroup_count: (1, 1, 1),
+                });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
@@ -355,17 +357,18 @@ impl RoundtripTest for LogicalOperationsTest {
             let inputs = all_any_vec4b_inputs();
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&all_vec4b::WGSL_SOURCE).unwrap();
-            let gpu_output = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
-                device,
-                queue,
-                linkage: &linkage,
-                entry: "main",
-                input_data: input_bytes,
-                output_size: (N * std::mem::size_of::<u32>()) as u64,
-                workgroup_count: (1, 1, 1),
-            });
+            let gpu_output =
+                harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                    device,
+                    queue,
+                    linkage: &mut linkage,
+                    entry: "main",
+                    input_data: input_bytes,
+                    output_size: (N * std::mem::size_of::<u32>()) as u64,
+                    workgroup_count: (1, 1, 1),
+                });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
@@ -399,17 +402,18 @@ impl RoundtripTest for LogicalOperationsTest {
             let inputs = all_any_vec2b_inputs();
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec2b::WGSL_SOURCE).unwrap();
-            let gpu_output = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
-                device,
-                queue,
-                linkage: &linkage,
-                entry: "main",
-                input_data: input_bytes,
-                output_size: (N * std::mem::size_of::<u32>()) as u64,
-                workgroup_count: (1, 1, 1),
-            });
+            let gpu_output =
+                harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                    device,
+                    queue,
+                    linkage: &mut linkage,
+                    entry: "main",
+                    input_data: input_bytes,
+                    output_size: (N * std::mem::size_of::<u32>()) as u64,
+                    workgroup_count: (1, 1, 1),
+                });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
@@ -443,17 +447,18 @@ impl RoundtripTest for LogicalOperationsTest {
             let inputs = all_any_vec3b_inputs();
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec3b::WGSL_SOURCE).unwrap();
-            let gpu_output = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
-                device,
-                queue,
-                linkage: &linkage,
-                entry: "main",
-                input_data: input_bytes,
-                output_size: (N * std::mem::size_of::<u32>()) as u64,
-                workgroup_count: (1, 1, 1),
-            });
+            let gpu_output =
+                harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                    device,
+                    queue,
+                    linkage: &mut linkage,
+                    entry: "main",
+                    input_data: input_bytes,
+                    output_size: (N * std::mem::size_of::<u32>()) as u64,
+                    workgroup_count: (1, 1, 1),
+                });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
@@ -487,17 +492,18 @@ impl RoundtripTest for LogicalOperationsTest {
             let inputs = all_any_vec4b_inputs();
             let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&any_vec4b::WGSL_SOURCE).unwrap();
-            let gpu_output = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
-                device,
-                queue,
-                linkage: &linkage,
-                entry: "main",
-                input_data: input_bytes,
-                output_size: (N * std::mem::size_of::<u32>()) as u64,
-                workgroup_count: (1, 1, 1),
-            });
+            let gpu_output =
+                harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                    device,
+                    queue,
+                    linkage: &mut linkage,
+                    entry: "main",
+                    input_data: input_bytes,
+                    output_size: (N * std::mem::size_of::<u32>()) as u64,
+                    workgroup_count: (1, 1, 1),
+                });
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 

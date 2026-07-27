@@ -665,12 +665,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (N * 5 * 4 * std::mem::size_of::<f32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_binary_f32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -731,12 +731,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (N * 4 * 4 * std::mem::size_of::<i32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_binary_i32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -775,12 +775,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (N * 4 * 4 * std::mem::size_of::<u32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_binary_u32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -815,12 +815,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (N * 8 * 4 * std::mem::size_of::<f32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_scalar_f32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -858,12 +858,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (N * 8 * 4 * std::mem::size_of::<i32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_scalar_i32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -903,12 +903,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (N * 8 * 4 * std::mem::size_of::<u32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_scalar_u32::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -960,12 +960,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (512 * std::mem::size_of::<f32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_unary::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -1030,12 +1030,12 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (384 * std::mem::size_of::<f32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_mixed_dims::WGSL_SOURCE).unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -1085,13 +1085,13 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (384 * 4 * std::mem::size_of::<u32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_overflow_u32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,
@@ -1143,13 +1143,13 @@ impl RoundtripTest for VectorArithmeticTest {
             let input_bytes = bytemuck::cast_slice(&flattened);
             let output_size = (448 * 4 * std::mem::size_of::<i32>()) as u64;
 
-            let linkage =
+            let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_overflow_i32::WGSL_SOURCE)
                     .unwrap();
-            let gpu_bytes = harness::run_gpu_compute_linked(&harness::GpuComputeParamsLinked {
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
                 device,
                 queue,
-                linkage: &linkage,
+                linkage: &mut linkage,
                 entry: "main",
                 input_data: input_bytes,
                 output_size,

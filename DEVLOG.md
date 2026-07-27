@@ -304,8 +304,9 @@ placeholders, so a `wgpu::ShaderModule` couldn't be built from it.
 
 The new `wgsl_rs::linkage::wgpu` module walks the runtime IR instead. The
 same `analyze_wgsl_module` function works for both concrete modules and
-template modules after `Module::instantiate` (which returns a concrete
-`ir::Module`). For templates this enables building wgpu pipelines from
+template modules after instantiation via the macro-emitted
+`instantiate::<...>()` function (which returns a concrete `ir::Module`).
+For templates this enables building wgpu pipelines from
 generic shader modules that previously had no linkage.
 
 The proc-macro no longer generates the `pub mod linkage { ... }` block, nor
@@ -361,9 +362,10 @@ populate this field. The `&Module` parameter is removed from
 The linkage now correctly renders the same source it was analyzed
 from, regardless of whether the linkage came from a concrete
 `wgsl_rs::Module` or an instantiated `ir::Module` from a template.
-Template handling itself is unchanged: `generate_linkage()` on a
-template `Module` still returns `Error::Monomorphize`; callers
-must still `instantiate::<...>()` first.
+Template handling itself is unchanged: `analyze_wgsl_module` on a
+template `Source` still returns `Error::TemplateResolution` (via
+`From<SourceError>`); callers must still instantiate via the
+macro-emitted `instantiate::<...>()` first.
 
 ### 2026-07-18: Per-binding `ShaderStages` visibility in the linkage analyzer
 

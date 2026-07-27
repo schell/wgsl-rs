@@ -1,9 +1,10 @@
 //! Runtime wgpu linkage analysis for WGSL modules.
 //!
 //! Given an [`ir::Module`] (produced by a `#[wgsl]` source's
-//! `WGSL_SOURCE.ir_constructor`, or by `Source::instantiate` for
-//! templates), this module extracts the binding and entry-point
-//! information needed to build wgpu pipelines.
+//! `WGSL_SOURCE.ir_constructor`, or by the macro-emitted
+//! `instantiate::<...>()` function for templates), this module extracts
+//! the binding and entry-point information needed to build wgpu
+//! pipelines.
 //!
 //! # Why at runtime?
 //!
@@ -17,8 +18,8 @@
 //! 2. The proc-macro walked a parse tree that duplicated information already
 //!    present in `wgsl-rs-ir`.
 //!
-//! Walking the runtime IR unifies the two cases. After
-//! `Source::instantiate::<...>()` produces a concrete `ir::Module`, the
+//! Walking the runtime IR unifies the two cases. After the macro-emitted
+//! `instantiate::<...>()` function produces a concrete `ir::Module`, the
 //! same analyzer used for non-template sources works on the result.
 //!
 //! # Example
@@ -26,8 +27,7 @@
 //! ```ignore
 //! use wgsl_rs::linkage::wgpu;
 //!
-//! let module = hello_triangle::WGSL_SOURCE;
-//! let linkage = wgpu::analyze_wgsl_module(&module).unwrap();
+//! let linkage = wgpu::analyze_wgsl_module(&hello_triangle::WGSL_SOURCE).unwrap();
 //! let shader_module = linkage.shader_module(&device);
 //! let bg_layout = linkage.bind_group(0).unwrap().layout(&device);
 //! let bg = linkage.bind_group(0).unwrap().create(
@@ -710,8 +710,9 @@ pub enum BufferKind {
 /// Analyzes an IR module and returns its wgpu linkage.
 ///
 /// This is the core entry point. It expects a concrete IR module (no
-/// `Type::TypeParam` nodes); for template modules, call
-/// `Source::instantiate` first and then pass the result here.
+/// `Type::TypeParam` nodes); for template modules, call the
+/// macro-emitted `instantiate::<...>()` function first and then pass the
+/// result here.
 ///
 /// The passed IR is consumed and stored on the returned linkage so that
 /// [`WgpuLinkage::wgsl_source`] and [`WgpuLinkage::shader_module`] can
@@ -1151,8 +1152,9 @@ fn collect_idents_in_expr(out: &mut std::collections::HashSet<String>, expr: &ir
 /// [`analyze_ir_module`].
 ///
 /// Errors if the source is a template (has unresolved
-/// `Type::TypeParam`s). For templates, call `Source::instantiate`
-/// first and pass the resulting `ir::Module` to [`analyze_ir_module`].
+/// `Type::TypeParam`s). For templates, call the macro-emitted
+/// `instantiate::<...>()` function first and pass the resulting
+/// `ir::Module` to [`analyze_ir_module`].
 ///
 /// **Fallible.** Returns
 /// [`SourceError::TemplateWgsl`](crate::SourceError::TemplateWgsl)-style errors

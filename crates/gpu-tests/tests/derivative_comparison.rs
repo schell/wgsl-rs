@@ -33,15 +33,15 @@ struct TimedOut;
 
 /// Races `fut` against a deadline of `dur`.
 ///
-/// The deadline is implemented by spawning a detached daemon thread that
-/// sleeps for `dur` and then fires a [`oneshot`] channel. If the work
-/// future wins the race, the timer thread is not cancelled (it keeps
-/// sleeping), but its oneshot sender is dropped on return and the thread
-/// will exit harmlessly after its sleep elapses. Crucially the work
-/// future is *dropped* on timeout, so a `wgpu` future wedged inside the
-/// driver is abandoned cleanly — no permanently-blocked OS thread is
-/// left behind, unlike the previous `thread::spawn` + `recv_timeout`
-/// pattern.
+/// The deadline is implemented by spawning a detached thread (its
+/// `JoinHandle` is dropped) that sleeps for `dur` and then fires a
+/// [`oneshot`] channel. If the work future wins the race, the timer
+/// thread is not cancelled (it keeps sleeping), but its oneshot sender
+/// is dropped on return and the thread will exit harmlessly after its
+/// sleep elapses. Crucially the work future is *dropped* on timeout, so
+/// a `wgpu` future wedged inside the driver is abandoned cleanly — no
+/// permanently-blocked OS thread is left behind, unlike the previous
+/// `thread::spawn` + `recv_timeout` pattern.
 async fn race_timeout<F, T>(fut: F, dur: Duration) -> Result<T, TimedOut>
 where
     F: Future<Output = T> + Send,

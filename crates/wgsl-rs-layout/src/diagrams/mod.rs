@@ -4,11 +4,11 @@
 //!
 //! # Overview
 //!
-//! Given any type `T` that implements both [`Layout`] and [`WgslLayout`]
-//! (i.e. any type annotated with `#[derive(Layout)]` and every
-//! built-in WGSL type), [`generate_svg`] produces a self-contained SVG
-//! byte-layout diagram. The visual style mirrors
-//! <https://webgpufundamentals.org/webgpu/lessons/webgpu-memory-layout.html>:
+//! Given any type `T` that implements both [`crate::Layout`] and
+//! [`crate::WgslLayout`] (i.e. any type annotated with
+//! `#[derive(Layout)]` and every built-in WGSL type),
+//! [`generate_svg`] produces a self-contained SVG byte-layout diagram. The
+//! visual style mirrors <https://webgpufundamentals.org/webgpu/lessons/webgpu-memory-layout.html>:
 //! one label band + one byte band, repeated for every row, with
 //! per-field HSL coloring.
 //!

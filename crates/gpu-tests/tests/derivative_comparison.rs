@@ -24,7 +24,7 @@ const TEXEL_SIZE: u32 = 16; // 4 f32s * 4 bytes each = 16 bytes per pixel (Rgba3
 /// Upper bound on any single GPU operation in this test file. Adapter
 /// enumeration, device creation, and buffer mapping should each complete
 /// in well under a second on a healthy host; we set a generous ceiling
-/// so wedged-driver CI failures surface as skips rather than hangs.
+/// so wedged-driver CI failures surface quickly rather than hanging.
 const GPU_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Sentinel returned when [`race_timeout`] fires before the work future.

@@ -3429,12 +3429,12 @@ fn parse_match_arm_pattern(pat: &syn::Pat) -> Result<(Vec<CaseSelector>, Vec<Spa
                 format!(
                     "WGSL requires 'default' to be its own switch arm — cannot mix '_' with \
                      literal selectors in an or-pattern. Split '{lits_joined} | _' into separate \
-                     arms: '{lits_joined} => ...' and '_ => ...'."
+                     arms: '{lits_joined} => ...' and '_ => ...'"
                 )
             }
             _ => "WGSL requires 'default' to be its own switch arm — cannot mix '_' with other \
-                 selectors in an or-pattern. Split this arm into a literal/expression arm and a \
-                 separate '_' arm."
+                  selectors in an or-pattern. Split this arm into a literal/expression arm and a \
+                  separate '_' arm"
                 .to_string(),
         };
 

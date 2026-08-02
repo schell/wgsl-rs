@@ -1244,7 +1244,23 @@ pub fn vertex(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 /// See [`wgsl`] for the full annotation reference.
 #[proc_macro_attribute]
 pub fn fragment(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
-    token_stream
+    // Strip #[builtin(...)] attributes from function arguments, mirroring
+    // `#[vertex]` and `#[compute]`. Without this, `#[builtin(position)]` on a
+    // fragment parameter is passed through to the Rust compiler, which rejects
+    // it as a non-macro attribute (wgsl-rs#84).
+    let mut item_fn: syn::ItemFn = syn::parse_macro_input!(token_stream);
+    for arg in item_fn.sig.inputs.iter_mut() {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            pat_type.attrs.retain(|attr| {
+                if let Some(ident) = attr.path().get_ident() {
+                    !matches!(ident.to_string().as_str(), "builtin")
+                } else {
+                    true
+                }
+            });
+        }
+    }
+    item_fn.into_token_stream().into()
 }
 
 /// Marks a function as a compute shader entry point.

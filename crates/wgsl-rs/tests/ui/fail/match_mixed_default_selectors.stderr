@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       WGSL requires 'default' to be its own switch arm — cannot mix '_' with literal selectors in an or-pattern. Split '0 | _' into separate arms: '0 => ...' and '_ => ...'..'
+ --> tests/ui/fail/match_mixed_default_selectors.rs:7:17
+  |
+7 |             0 | _ => 1u32,
+  |                 ^

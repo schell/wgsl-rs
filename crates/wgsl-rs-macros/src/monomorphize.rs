@@ -1007,7 +1007,6 @@ fn rewrite_names_in_item(
     let _ = v.visit_item(item);
 }
 
-
 // ===== Missing turbofish detection =====
 //
 // Errors if any call to a known generic template function lacks turbofish
@@ -1284,7 +1283,6 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
     }
 }
 
-
 // ===== Template dependency scanning =====
 //
 // Scans a generic function's body for turbofish calls to other generic
@@ -1519,7 +1517,6 @@ fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
         }
     })
 }
-
 
 /// Convert an array length expression to a string for name mangling.
 fn len_to_string(expr: &Expr) -> String {

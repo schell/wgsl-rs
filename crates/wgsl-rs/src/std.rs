@@ -160,7 +160,6 @@ impl<T: AnySendSync> DerefMut for ModuleVarWriteGuard<'_, T> {
     }
 }
 
-
 /// A `TypeMap` holds values of any WGSL type, but only one of that type.
 type TypeMap = HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>;
 

@@ -77,7 +77,6 @@ pub mod derivative_variants {
     }
 }
 
-
 /// Renders the basic derivative shader to one target and returns pixels.
 fn render_basic(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<[f32; 4]> {
     let texture =

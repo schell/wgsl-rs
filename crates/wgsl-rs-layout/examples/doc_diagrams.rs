@@ -41,7 +41,6 @@ struct Tight {
     delta: f32,
 }
 
-
 #[cfg(feature = "doc-diagrams")]
 #[derive(Layout)]
 /// An example from

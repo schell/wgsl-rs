@@ -227,7 +227,6 @@ impl From<parse::Error> for WgslGenError {
     }
 }
 
-
 /// Collect the encoded names of all module-level type parameters in the
 /// parsed module, in the order they should appear in the generated
 /// `WGSL_SOURCE.module_type_params` slice.
@@ -1365,7 +1364,6 @@ pub fn builtin(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
 pub fn wgsl_allow(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
 }
-
 
 /// Ignores any item following the attribute during parsing, skipping WGSL code
 /// generation.

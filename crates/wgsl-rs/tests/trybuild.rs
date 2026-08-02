@@ -27,3 +27,9 @@ fn multi_segment_type_path_in_struct_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/path_in_struct.rs");
 }
+
+#[test]
+fn typed_literal_f64_suffix_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/typed_literal_f64_suffix.rs");
+}

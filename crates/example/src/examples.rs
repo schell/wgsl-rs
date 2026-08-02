@@ -48,7 +48,6 @@ pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
         .map(|v| v as _)
 }
 
-
 #[wgsl]
 pub mod hello_triangle {
     //! This is a "hello world" shader that shows a triangle with changing

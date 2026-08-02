@@ -509,7 +509,7 @@ fn tex_depth_kind(k: parse::TextureDepthKind) -> ir::TextureDepthKind {
 /// Convert a parse expression to IR.
 pub fn expr_from_parse(e: &parse::Expr) -> Result<ir::Expr> {
     Ok(match e {
-        parse::Expr::Lit(l) => ir::Expr::Lit(lit(l)),
+        parse::Expr::Lit(l) => ir::Expr::Lit(lit(l)?),
         parse::Expr::Ident(i) => ir::Expr::Ident(i.to_string()),
         parse::Expr::Array { elems, .. } => ir::Expr::Array {
             elems: elems
@@ -614,17 +614,45 @@ fn fn_path(p: &parse::FnPath) -> ir::FnPath {
     }
 }
 
-fn lit(l: &parse::Lit) -> ir::Lit {
-    match l {
+fn lit(l: &parse::Lit) -> Result<ir::Lit> {
+    Ok(match l {
         parse::Lit::Bool(b) => ir::Lit::Bool(b.value()),
         parse::Lit::Int(i) => ir::Lit::Int {
             digits: i.base10_digits().to_string(),
             suffix: i.suffix().to_string(),
         },
-        parse::Lit::Float(f) => ir::Lit::Float {
-            text: f.to_string(),
-        },
-    }
+        parse::Lit::Float(f) => {
+            // Rust float literals may carry a type suffix like `_f32`, `_f64`,
+            // or `_f16` (e.g. `0.0_f32`). WGSL does not recognize these suffixes,
+            // so the suffix must be stripped before storing the text. WGSL only
+            // has `f32` (and `f16` behind an extension), so the plain mantissa
+            // (e.g. `0.0`) is valid WGSL. `f64` is unsupported and produces a
+            // compile error.
+            let raw = f.to_string();
+            let text = match f.suffix() {
+                // Common path: no suffix, the literal text is already valid WGSL.
+                "" => raw,
+                "f32" | "f16" => raw
+                    .strip_suffix(f.suffix())
+                    .map(|s| s.trim_end_matches('_').to_string())
+                    .unwrap_or(raw),
+                "f64" => {
+                    return Err(ConvertError::Unsupported {
+                        span: f.span(),
+                        note: "f64 float literals are not supported in WGSL (only f32/f16)"
+                            .to_string(),
+                    });
+                }
+                other => {
+                    return Err(ConvertError::Unsupported {
+                        span: f.span(),
+                        note: format!("unsupported float literal suffix `{other}` in WGSL"),
+                    });
+                }
+            };
+            ir::Lit::Float { text }
+        }
+    })
 }
 
 fn bin_op(op: &parse::BinOp) -> ir::BinOp {
@@ -798,7 +826,7 @@ fn stmt_if(i: &parse::StmtIf) -> Result<ir::StmtIf> {
 
 fn case_selector(s: &parse::CaseSelector) -> Result<ir::CaseSelector> {
     Ok(match s {
-        parse::CaseSelector::Literal(l) => ir::CaseSelector::Literal(lit(l)),
+        parse::CaseSelector::Literal(l) => ir::CaseSelector::Literal(lit(l)?),
         parse::CaseSelector::Expr(e) => ir::CaseSelector::Expr(expr_from_parse(e)?),
         parse::CaseSelector::Default(_) => ir::CaseSelector::Default,
     })

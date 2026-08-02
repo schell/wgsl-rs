@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       f64 float literals are not supported in WGSL (only f32/f16).'
+ --> tests/ui/fail/typed_literal_f64_suffix.rs:6:17
+  |
+6 |         let v = 0.0_f64;
+  |                 ^^^^^^^

@@ -678,7 +678,6 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-
             vec_binary_f32::INPUT.set(flattened);
             vec_binary_f32::OUTPUT.set([Vec4f::default(); 320]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -744,7 +743,6 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-
             vec_binary_i32::INPUT.set(flattened);
             vec_binary_i32::OUTPUT.set([Vec4i::default(); 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -788,7 +786,6 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
-
             vec_binary_u32::INPUT.set(flattened);
             vec_binary_u32::OUTPUT.set([Vec4u::default(); 256]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -827,7 +824,6 @@ impl RoundtripTest for VectorArithmeticTest {
                 workgroup_count: (1, 1, 1),
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
-
 
             vec_scalar_f32::INPUT.set(flattened);
             vec_scalar_f32::OUTPUT.set([Vec4f::default(); 512]);
@@ -870,7 +866,6 @@ impl RoundtripTest for VectorArithmeticTest {
                 workgroup_count: (1, 1, 1),
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
-
 
             vec_scalar_i32::INPUT.set(flattened);
             vec_scalar_i32::OUTPUT.set([Vec4i::default(); 512]);
@@ -915,7 +910,6 @@ impl RoundtripTest for VectorArithmeticTest {
                 workgroup_count: (1, 1, 1),
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
-
 
             vec_scalar_u32::INPUT.set(flattened);
             vec_scalar_u32::OUTPUT.set([Vec4u::default(); 512]);
@@ -972,7 +966,6 @@ impl RoundtripTest for VectorArithmeticTest {
                 workgroup_count: (1, 1, 1),
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
-
 
             vec_unary::INPUT.set(flattened);
             vec_unary::OUTPUT.set([0.0f32; 512]);
@@ -1043,7 +1036,6 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-
             vec_mixed_dims::INPUT.set(flattened);
             vec_mixed_dims::OUTPUT.set([0.0f32; 384]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
@@ -1098,7 +1090,6 @@ impl RoundtripTest for VectorArithmeticTest {
                 workgroup_count: (1, 1, 1),
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
-
 
             vec_overflow_u32::INPUT.set(flattened);
             vec_overflow_u32::OUTPUT.set([vec4u(0, 0, 0, 0); 384]);
@@ -1156,7 +1147,6 @@ impl RoundtripTest for VectorArithmeticTest {
                 workgroup_count: (1, 1, 1),
             });
             let gpu_i32s_raw: &[i32] = bytemuck::cast_slice(&gpu_bytes);
-
 
             vec_overflow_i32::INPUT.set(flattened);
             vec_overflow_i32::OUTPUT.set([vec4i(0, 0, 0, 0); 448]);

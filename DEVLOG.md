@@ -479,3 +479,28 @@ let source = match my_mod::WGSL_SOURCE.wgsl_source() {
 };
 ```
 
+### 2026-08-02: Trait impls on complex types transpile to mangled WGSL functions
+
+**Problem:** `impl Zeroable for [u32; 4]` was rejected by the proc-macro with
+"impl block type must be a simple struct name" (issue #107). Only simple
+struct/ident self types were accepted.
+
+**Decision:** Widen `parse::ItemImpl.self_ty` from `Ident` to `Type`, reusing
+the existing `Type::parse` machinery. Complex self types (arrays, fully-applied
+generic structs) are mangled via the existing `monomorphize::mangle_type`
+function (e.g. `[u32; 4]` → `array_u32_4`) and the impl's methods are emitted
+as flattened WGSL functions prefixed with that mangled name (e.g.
+`_2array_u32_4_zero`).
+
+**Key distinction:** For *generic* impl blocks (`impl<T> Pair<T>`), the base
+struct ident is used as `self_ty` in the IR so that `ir::rename_items` can
+substitute it during runtime instantiation. For *concrete* impl blocks
+(`impl Zeroable for [u32; 4]`), the full mangled self type is used directly.
+This distinction is detected via `contains_type_param` (which was fixed to
+recurse into `Type::Struct` type_args) rather than `type_params.is_empty()`
+because the monomorphization pass clears `type_params` before IR conversion.
+
+**Limitation:** Direct `<[u32; 4]>::method()` call syntax (QSelf paths) is not
+yet supported — only `T::method()` (resolved via monomorphization). Tracked in
+GitHub issue #131.
+

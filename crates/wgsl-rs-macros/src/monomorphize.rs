@@ -227,20 +227,31 @@ impl MonoCtx {
                 }
                 Item::Impl(impl_item) => {
                     if !impl_item.type_params.is_empty() {
-                        // Generic impl block — store as a template
+                        // Generic impl block — store as a template, keyed
+                        // by the base struct ident (e.g. `Pair` for
+                        // `impl<T> Pair<T>`). This matches the lookup in
+                        // `generate_template_macros` which uses
+                        // `template.ident.to_string()`.
+                        let key =
+                            self_ty_base_ident_string(&impl_item.self_ty).ok_or_else(|| {
+                                crate::parse::Error::unsupported(
+                                    proc_macro2::Span::call_site(),
+                                    "generic impl blocks require a struct self type",
+                                )
+                            })?;
                         impl_templates
-                            .entry(impl_item.self_ty.to_string())
+                            .entry(key)
                             .or_default()
                             .push(impl_item.clone());
                     } else {
                         // Concrete impl block — register reserved names
+                        // using the mangled self type (e.g. `Light`,
+                        // `array_u32_4` for `[u32; 4]`).
+                        let self_ty_mangled = mangle_type(&impl_item.self_ty)?;
                         for ii in &impl_item.items {
                             match ii {
                                 crate::parse::ImplItem::Fn(f) => {
-                                    let mangled = mangle(&[
-                                        &impl_item.self_ty.to_string(),
-                                        &f.ident.to_string(),
-                                    ]);
+                                    let mangled = mangle(&[&self_ty_mangled, &f.ident.to_string()]);
                                     if !reserved_names.insert(mangled.clone()) {
                                         return Err(crate::parse::Error::unsupported(
                                             f.ident.span(),
@@ -252,10 +263,7 @@ impl MonoCtx {
                                     }
                                 }
                                 crate::parse::ImplItem::Const(c) => {
-                                    let mangled = mangle(&[
-                                        &impl_item.self_ty.to_string(),
-                                        &c.ident.to_string(),
-                                    ]);
+                                    let mangled = mangle(&[&self_ty_mangled, &c.ident.to_string()]);
                                     if !reserved_names.insert(mangled.clone()) {
                                         return Err(crate::parse::Error::unsupported(
                                             c.ident.span(),
@@ -1392,35 +1400,37 @@ fn collect_template_dependencies(
 
 // ===== Type-to-ident conversion =====
 
+/// Extract the base struct ident string from a self type, if it has one.
+///
+/// Returns `Some(name)` for `Type::Struct { ident, .. }` (any type args).
+/// Returns `None` for non-struct types. Used to key generic impl templates
+/// by their base struct name (e.g. `Pair` for `impl<T> Pair<T>`).
+fn self_ty_base_ident_string(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Struct { ident, .. } => Some(ident.to_string()),
+        _ => None,
+    }
+}
+
 /// Convert a concrete `Type` to the `Ident` used in `FnPath::TypeMethod`
 /// and impl block name mangling (e.g., `Type::Scalar { ty: F32, .. }` → `f32`).
+///
+/// Compound types (arrays, runtime arrays, atomics, pointers) are mangled
+/// via [`mangle_type`] so that e.g. `[u32; 4]` becomes `array_u32_4` rather
+/// than the lossy `"array"` used previously. This ensures `T::method()`
+/// where `T` is a complex type resolves to a unique mangled function name
+/// (issue #107).
 fn type_to_ident(ty: &Type, span: Span) -> Ident {
-    let name = match ty {
-        Type::Scalar { ty: scalar, .. } => scalar.wgsl_name().to_string(),
-        Type::Vector {
-            elements,
-            scalar_ty,
-            ..
-        } => format!("Vec{}{}", elements, scalar_ty.short_name()),
-        Type::Matrix { columns, rows, .. } => {
-            if columns == rows {
-                format!("Mat{}f", columns)
-            } else {
-                format!("Mat{}x{}f", columns, rows)
-            }
-        }
+    match ty {
         Type::Struct { ident, .. } => return ident.clone(),
         Type::Sampler { ident } => return ident.clone(),
         Type::SamplerComparison { ident } => return ident.clone(),
         Type::Texture { ident, .. } => return ident.clone(),
         Type::TextureDepth { ident, .. } => return ident.clone(),
-        // These shouldn't appear as self_ty in practice
-        Type::Array { .. } => "array".to_string(),
-        Type::RuntimeArray { .. } => "array".to_string(),
-        Type::Atomic { .. } => "atomic".to_string(),
-        Type::Ptr { .. } => "ptr".to_string(),
         Type::TypeParam { ident } => return ident.clone(),
-    };
+        _ => {}
+    }
+    let name = mangle_type(ty).unwrap_or_else(|_| "unknown".to_string());
     Ident::new(&name, span)
 }
 
@@ -1452,7 +1462,7 @@ fn mangle_name(base: &str, type_args: &[Type]) -> Result<String, crate::parse::E
 /// component in [`mangle`]. Compound types (e.g. `array<f32, 3>`) are
 /// themselves composed via [`mangle`] so their structure is preserved
 /// unambiguously through nesting.
-fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
+pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
     Ok(match ty {
         Type::Scalar { ty: scalar, .. } => scalar.wgsl_name().to_string(),
         Type::Vector {
@@ -1579,17 +1589,17 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
 }
 
 /// Returns true if the type contains any unresolved `TypeParam`.
-fn contains_type_param(ty: &Type) -> bool {
+pub(crate) fn contains_type_param(ty: &Type) -> bool {
     match ty {
         Type::TypeParam { .. } => true,
         Type::Array { elem, .. }
         | Type::RuntimeArray { elem, .. }
         | Type::Atomic { elem, .. }
         | Type::Ptr { elem, .. } => contains_type_param(elem),
+        Type::Struct { type_args, .. } => type_args.iter().any(contains_type_param),
         Type::Scalar { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }
-        | Type::Struct { .. }
         | Type::Sampler { .. }
         | Type::SamplerComparison { .. }
         | Type::Texture { .. }
@@ -1817,6 +1827,52 @@ mod test {
         assert!(
             wgsl.contains("fn f32_double("),
             "Trait impl should generate f32_double, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn trait_impl_for_array_generates_wgsl() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub trait Zeroable {
+                    fn zero() -> Self;
+                }
+
+                impl Zeroable for [u32; 4] {
+                    fn zero() -> [u32; 4] {
+                        [0u32, 0u32, 0u32, 0u32]
+                    }
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        // [u32; 4] mangles to `array_u32_4`, which has 2 underscores so
+        // the outer mangle escapes it as `_2array_u32_4`.
+        assert!(
+            wgsl.contains("fn _2array_u32_4_zero("),
+            "Array trait impl should generate _2array_u32_4_zero, got:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn mono_with_array_trait_impl() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub trait Zeroable {
+                    fn zero() -> Self;
+                }
+
+                impl Zeroable for [u32; 4] {
+                    fn zero() -> [u32; 4] {
+                        [0u32, 0u32, 0u32, 0u32]
+                    }
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("_2array_u32_4_zero"),
+            "Array trait impl should generate _2array_u32_4_zero, got:\n{wgsl}"
         );
     }
 

@@ -164,9 +164,34 @@ fn item_struct(s: &parse::ItemStruct) -> Result<ir::ItemStruct> {
 }
 
 fn item_impl(i: &parse::ItemImpl) -> Result<ir::ItemImpl> {
+    // For generic impl blocks (e.g. `impl<T> Pair<T>`), use the base
+    // struct ident as `self_ty` so that `ir::rename_items` can substitute
+    // it during runtime instantiation. For concrete impl blocks (e.g.
+    // `impl Zeroable for [u32; 4]`), use the full mangled self type so
+    // that method names are prefixed correctly (e.g. `array_u32_4_zero`).
+    //
+    // Note: `type_params` may have been cleared by the monomorphization
+    // pass for template macros, so we detect "generic" by checking
+    // whether the self type contains a `Type::TypeParam`.
+    let self_ty = if crate::monomorphize::contains_type_param(&i.self_ty) {
+        match &i.self_ty {
+            parse::Type::Struct { ident, .. } => ident.to_string(),
+            _ => crate::monomorphize::mangle_type(&i.self_ty).map_err(|e| {
+                ConvertError::Unsupported {
+                    span: proc_macro2::Span::call_site(),
+                    note: e.to_string(),
+                }
+            })?,
+        }
+    } else {
+        crate::monomorphize::mangle_type(&i.self_ty).map_err(|e| ConvertError::Unsupported {
+            span: proc_macro2::Span::call_site(),
+            note: e.to_string(),
+        })?
+    };
     Ok(ir::ItemImpl {
         type_params: i.type_params.iter().map(|i| i.to_string()).collect(),
-        self_ty: i.self_ty.to_string(),
+        self_ty,
         items: i
             .items
             .iter()

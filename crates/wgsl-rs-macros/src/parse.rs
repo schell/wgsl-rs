@@ -5774,7 +5774,12 @@ pub struct ItemImpl {
     /// Type parameters for generic impl blocks (empty for non-generic).
     pub type_params: Vec<Ident>,
     pub _impl_token: Token![impl],
-    pub self_ty: Ident,
+    /// The `Self` type of this impl block. For simple struct impls this is
+    /// `Type::Struct { ident, type_args: [] }`; for trait impls on complex
+    /// types like `[u32; 4]` it is `Type::Array { .. }`. The monomorphization
+    /// and IR-convert passes mangle this into a WGSL-safe identifier string
+    /// (e.g. `array_u32_4`) used as the prefix for flattened method names.
+    pub self_ty: Type,
     pub _brace_token: syn::token::Brace,
     pub items: Vec<ImplItem>,
     /// Attributes preserved from Rust source.
@@ -5835,33 +5840,23 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         // trait path and just use the self_ty + methods, same as inherent impls.
         let is_trait_impl = trait_.is_some();
 
-        // Get the type name. For non-generic impls, self_ty must be a simple
-        // ident. For generic impls like `impl<T> Pair<T>`, self_ty is a path
-        // with angle brackets — we extract just the ident.
-        let self_ty_ident = match self_ty.as_ref() {
-            syn::Type::Path(type_path) => {
-                let segment = type_path.path.segments.first().context(UnsupportedSnafu {
-                    span: type_path.span(),
-                    note: "impl block type must be a simple identifier",
-                })?;
-                // Verify the type args on self_ty (if any) match the impl's
-                // type params. We don't store them — the monomorphization pass
-                // uses the impl's type_params directly.
-                segment.ident.clone()
-            }
-            other => {
-                return UnsupportedSnafu {
-                    span: other.span(),
-                    note: "impl block type must be a simple struct name",
-                }
-                .fail();
-            }
-        };
-
         // Build parse context with type params so method bodies and signatures
         // can reference them. Generic impls go through same-module
         // monomorphization and keep source-level names.
         let ctx = ParseContext::from_type_params(type_params.iter().cloned());
+
+        // Parse the self type. This reuses the general `Type::parse` machinery,
+        // which handles simple idents (`Light`, `f32`), fully-applied generic
+        // structs (`Pair<f32>`), arrays (`[u32; 4]`), and other supported
+        // types. For generic impls like `impl<T> Pair<T>`, the type param `T`
+        // is resolved via `ctx` to `Type::TypeParam`.
+        //
+        // Previously this only accepted a simple path ident and rejected
+        // complex types like arrays (issue #107). Widening to `Type::parse`
+        // lets trait impls on arrays and other compound types transpile to
+        // mangled WGSL functions (e.g. `impl Zeroable for [u32; 4]` emits
+        // `_2array_u32_4_zero`).
+        let self_ty = Type::parse(self_ty.as_ref(), &ctx)?;
 
         // Parse impl items (functions and constants)
         let mut parsed_items = Vec::new();
@@ -5888,7 +5883,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         let mut result = ItemImpl {
             type_params,
             _impl_token: *impl_token,
-            self_ty: self_ty_ident,
+            self_ty,
             _brace_token: *brace_token,
             items: parsed_items,
             attrs: ir_attrs,
@@ -5902,14 +5897,46 @@ impl ItemImpl {
     /// Replace all occurrences of `Self` in the impl block's items with the
     /// actual struct name. WGSL has no `Self` keyword, so these must be
     /// resolved during transpilation.
+    ///
+    /// For impls whose self type is a simple struct (the common case), `Self`
+    /// is replaced with the struct ident. For complex self types like
+    /// `[u32; 4]` there is no single ident to substitute, so `Self` is left
+    /// as-is — callers should avoid `Self` in such impl bodies (use the
+    /// concrete type instead).
     fn resolve_self(&mut self) {
-        let name = &self.self_ty;
+        let Some(name) = self_ty_base_ident(&self.self_ty) else {
+            return;
+        };
         for item in &mut self.items {
             match item {
-                ImplItem::Fn(f) => resolve_self_in_fn(name, f),
-                ImplItem::Const(c) => resolve_self_in_const(name, c),
+                ImplItem::Fn(f) => resolve_self_in_fn(&name, f),
+                ImplItem::Const(c) => resolve_self_in_const(&name, c),
             }
         }
+    }
+}
+
+/// Extract the base ident from a self type, if it has one.
+///
+/// Returns `Some(ident)` for simple types that have a single stable
+/// identifier: `Type::Struct` (with no type args), `Type::Scalar`,
+/// `Type::Vector`, and `Type::Matrix`. This ident is used by
+/// `resolve_self` to substitute `Self` in method bodies.
+///
+/// Returns `None` for complex types like arrays (`[u32; 4]`), runtime
+/// arrays, atomics, pointers, generic struct instantiations
+/// (`Pair<f32>`), and type parameters — where there is no single
+/// meaningful ident to substitute for `Self`. Callers should avoid `Self`
+/// in such impl bodies (use the concrete type instead).
+fn self_ty_base_ident(ty: &Type) -> Option<Ident> {
+    match ty {
+        Type::Struct {
+            ident, type_args, ..
+        } if type_args.is_empty() => Some(ident.clone()),
+        Type::Scalar { ident, .. } | Type::Vector { ident, .. } | Type::Matrix { ident, .. } => {
+            Some(ident.clone())
+        }
+        _ => None,
     }
 }
 
@@ -6366,6 +6393,19 @@ mod test {
     impl ToWgsl for ItemEnum {
         fn to_wgsl(&self) -> String {
             item_to_wgsl(&Item::Enum(self.clone()))
+        }
+    }
+
+    /// Test helper: extract the base ident string from an impl's `self_ty`
+    /// for simple struct/scalar cases. Panics for complex types (arrays etc.)
+    /// — use pattern-matching assertions for those instead.
+    fn self_ty_ident(ty: &Type) -> String {
+        match ty {
+            Type::Struct { ident, .. } => ident.to_string(),
+            Type::Scalar { ident, .. } => ident.to_string(),
+            Type::Vector { ident, .. } => ident.to_string(),
+            Type::Matrix { ident, .. } => ident.to_string(),
+            _ => panic!("self_ty_ident: expected simple type (Struct/Scalar/Vector/Matrix)"),
         }
     }
 
@@ -6878,7 +6918,7 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Impl(item_impl) => {
-                assert_eq!("Light", item_impl.self_ty.to_string());
+                assert_eq!("Light", self_ty_ident(&item_impl.self_ty));
                 assert_eq!(1, item_impl.items.len());
                 match &item_impl.items[0] {
                     ImplItem::Fn(item_fn) => {
@@ -6908,7 +6948,7 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Impl(item_impl) => {
-                assert_eq!("Point", item_impl.self_ty.to_string());
+                assert_eq!("Point", self_ty_ident(&item_impl.self_ty));
                 assert_eq!(2, item_impl.items.len());
                 match &item_impl.items[0] {
                     ImplItem::Fn(item_fn) => assert_eq!("new", item_fn.ident.to_string()),
@@ -6933,7 +6973,7 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Impl(item_impl) => {
-                assert_eq!("Light", item_impl.self_ty.to_string());
+                assert_eq!("Light", self_ty_ident(&item_impl.self_ty));
                 assert_eq!(1, item_impl.items.len());
                 match &item_impl.items[0] {
                     ImplItem::Const(item_const) => {
@@ -6959,7 +6999,7 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Impl(item_impl) => {
-                assert_eq!("Light", item_impl.self_ty.to_string());
+                assert_eq!("Light", self_ty_ident(&item_impl.self_ty));
                 assert_eq!(2, item_impl.items.len());
                 match &item_impl.items[0] {
                     ImplItem::Const(item_const) => {
@@ -6993,6 +7033,67 @@ mod test {
     }
 
     #[test]
+    fn parse_trait_impl_for_array_type() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Zeroable for [u32; 4] {
+                fn zero() -> [u32; 4] {
+                    [0u32, 0u32, 0u32, 0u32]
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match &item {
+            Item::Impl(impl_item) => {
+                assert!(impl_item.type_params.is_empty());
+                match &impl_item.self_ty {
+                    Type::Array { elem, .. } => match elem.as_ref() {
+                        Type::Scalar {
+                            ty: ScalarType::U32,
+                            ..
+                        } => {}
+                        _ => panic!("Expected u32 elem"),
+                    },
+                    _ => panic!("Expected Type::Array self_ty"),
+                }
+                assert_eq!(impl_item.items.len(), 1);
+            }
+            _ => panic!("Expected Item::Impl for array trait impl"),
+        }
+    }
+
+    #[test]
+    fn parse_trait_impl_for_fully_applied_struct() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Zeroable for Pair<f32> {
+                fn zero() -> Pair<f32> {
+                    Pair::<f32> { a: 0.0, b: 0.0 }
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match &item {
+            Item::Impl(impl_item) => {
+                assert!(impl_item.type_params.is_empty());
+                match &impl_item.self_ty {
+                    Type::Struct { ident, type_args } => {
+                        assert_eq!(ident.to_string(), "Pair");
+                        assert_eq!(type_args.len(), 1);
+                        match &type_args[0] {
+                            Type::Scalar {
+                                ty: ScalarType::F32,
+                                ..
+                            } => {}
+                            _ => panic!("Expected f32 type arg"),
+                        }
+                    }
+                    _ => panic!("Expected Type::Struct self_ty"),
+                }
+            }
+            _ => panic!("Expected Item::Impl for fully-applied struct trait impl"),
+        }
+    }
+
+    #[test]
     fn parse_generic_impl_block() {
         let item: syn::Item = syn::parse_quote! {
             impl<T> Light {
@@ -7004,7 +7105,7 @@ mod test {
             Ok(Item::Impl(impl_item)) => {
                 assert_eq!(impl_item.type_params.len(), 1);
                 assert_eq!(impl_item.type_params[0].to_string(), "T");
-                assert_eq!(impl_item.self_ty.to_string(), "Light");
+                assert_eq!(self_ty_ident(&impl_item.self_ty), "Light");
             }
             other => panic!("Expected Ok(Item::Impl), got: {:?}", other.is_err()),
         }
@@ -9195,7 +9296,7 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Impl(impl_item) => {
-                assert_eq!(impl_item.self_ty.to_string(), "f32");
+                assert_eq!(self_ty_ident(&impl_item.self_ty), "f32");
                 assert_eq!(impl_item.items.len(), 1);
                 match &impl_item.items[0] {
                     ImplItem::Fn(f) => {
@@ -9339,7 +9440,7 @@ mod test {
             Item::Impl(impl_item) => {
                 assert_eq!(impl_item.type_params.len(), 1);
                 assert_eq!(impl_item.type_params[0].to_string(), "T");
-                assert_eq!(impl_item.self_ty.to_string(), "Pair");
+                assert_eq!(self_ty_ident(&impl_item.self_ty), "Pair");
                 assert_eq!(impl_item.items.len(), 1);
                 match &impl_item.items[0] {
                     ImplItem::Fn(f) => {

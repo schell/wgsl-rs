@@ -39,3 +39,15 @@ fn typed_literal_f64_suffix_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/typed_literal_f64_suffix.rs");
 }
+
+#[test]
+fn generic_impl_on_array_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/generic_impl_on_array.rs");
+}
+
+#[test]
+fn generic_impl_const_generic_array_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/generic_impl_const_generic_array.rs");
+}

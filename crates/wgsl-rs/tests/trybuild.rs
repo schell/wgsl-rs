@@ -17,6 +17,12 @@ fn extensions_not_impl_is_rejected() {
 }
 
 #[test]
+fn match_mixed_default_selectors_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/match_mixed_default_selectors.rs");
+}
+
+#[test]
 fn linkage_access_in_const_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/linkage_access_in_const.rs");

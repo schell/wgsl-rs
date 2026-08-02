@@ -3391,6 +3391,56 @@ fn parse_match_arm_pattern(pat: &syn::Pat) -> Result<(Vec<CaseSelector>, Vec<Spa
         &mut has_default,
     )?;
 
+    // WGSL requires `default` to be its own switch arm — it cannot be
+    // combined with literal/expression selectors in a single arm (e.g.
+    // `0 | _` would render as the invalid `case 0, default: ...`). Reject
+    // mixed or-patterns at parse time with a clear error so the user
+    // knows to split the arm. See wgsl-rs#57.
+    let has_non_default = selectors
+        .iter()
+        .any(|s| !matches!(s, CaseSelector::Default(_)));
+    if has_default && has_non_default {
+        let default_span = selectors
+            .iter()
+            .rev()
+            .find_map(|s| match s {
+                CaseSelector::Default(span) => Some(*span),
+                _ => None,
+            })
+            .unwrap_or_else(proc_macro2::Span::call_site);
+
+        // Try to reconstruct the literal selectors for a suggested fix.
+        // Only Int/Float literals are cheap to render (via to_string());
+        // Bool and Expr selectors bail to the generic message to keep this
+        // simple. See wgsl-rs#57.
+        let literal_texts: Option<Vec<String>> = selectors
+            .iter()
+            .filter(|s| !matches!(s, CaseSelector::Default(_)))
+            .map(|s| match s {
+                CaseSelector::Literal(Lit::Int(i)) => Some(i.to_string()),
+                CaseSelector::Literal(Lit::Float(f)) => Some(f.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        let note = match literal_texts {
+            Some(lits) if !lits.is_empty() => {
+                let lits_joined = lits.join(" | ");
+                format!(
+                    "WGSL requires 'default' to be its own switch arm — cannot mix '_' with \
+                     literal selectors in an or-pattern. Split '{lits_joined} | _' into separate \
+                     arms: '{lits_joined} => ...' and '_ => ...'"
+                )
+            }
+            _ => "WGSL requires 'default' to be its own switch arm — cannot mix '_' with other \
+                  selectors in an or-pattern. Split this arm into a literal/expression arm and a \
+                  separate '_' arm"
+                .to_string(),
+        };
+
+        return Err(Error::unsupported(default_span, note));
+    }
+
     Ok((selectors, non_literal_spans, has_default))
 }
 

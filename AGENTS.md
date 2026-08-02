@@ -33,7 +33,7 @@ cargo build                                 # Build all crates
 cargo test                                  # Run all tests
 cargo test -p wgsl-rs-macros                # Test specific crate (wgsl-rs-macros in this case)
 cargo test -- test_name                     # Run a single test by name
-cargo fmt && cargo clippy                   # Format and lint
+cargo fmt && cargo clippy                   # Format and lint (note: use `cargo +nightly fmt` — rustfmt.toml uses unstable features)
 cargo run -p roundtrip-tests                # Run the round-trip tests to ensure the "two worlds" agree
 cargo run -p example                        # Run the example, showing help text about subcommands
 cargo run -p example -- show                # Show the names of available example modules
@@ -42,7 +42,7 @@ cargo expand -p example -- examples::{name} # Expand the example which uses the 
 cargo clippy --all-features                 # Show all clippy lints
 ```
 
-Always remember to run `cargo fmt` after making changes.
+Always remember to run `cargo +nightly fmt` after making changes (the `rustfmt.toml` uses unstable features that require the nightly toolchain; stable `cargo fmt` silently skips them and may leave formatting diffs).
 
 ### xtask - development tools for agents
 

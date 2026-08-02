@@ -5855,7 +5855,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         // complex types like arrays (issue #107). Widening to `Type::parse`
         // lets trait impls on arrays and other compound types transpile to
         // mangled WGSL functions (e.g. `impl Zeroable for [u32; 4]` emits
-        // `_1array_u32_4_zero`).
+        // `_2array_u32_4_zero`).
         let self_ty = Type::parse(self_ty.as_ref(), &ctx)?;
 
         // Parse impl items (functions and constants)
@@ -5916,17 +5916,26 @@ impl ItemImpl {
     }
 }
 
-/// Extract the base struct ident from a self type, if it has one.
+/// Extract the base ident from a self type, if it has one.
 ///
-/// Returns `Some(ident)` for `Type::Struct { ident, type_args: [] }` (a
-/// simple struct name suitable for `Self` substitution). Returns `None` for
-/// complex types like arrays, scalars, or generic struct instantiations where
-/// there is no single meaningful ident to substitute for `Self`.
+/// Returns `Some(ident)` for simple types that have a single stable
+/// identifier: `Type::Struct` (with no type args), `Type::Scalar`,
+/// `Type::Vector`, and `Type::Matrix`. This ident is used by
+/// `resolve_self` to substitute `Self` in method bodies.
+///
+/// Returns `None` for complex types like arrays (`[u32; 4]`), runtime
+/// arrays, atomics, pointers, generic struct instantiations
+/// (`Pair<f32>`), and type parameters — where there is no single
+/// meaningful ident to substitute for `Self`. Callers should avoid `Self`
+/// in such impl bodies (use the concrete type instead).
 fn self_ty_base_ident(ty: &Type) -> Option<Ident> {
     match ty {
         Type::Struct {
             ident, type_args, ..
         } if type_args.is_empty() => Some(ident.clone()),
+        Type::Scalar { ident, .. } | Type::Vector { ident, .. } | Type::Matrix { ident, .. } => {
+            Some(ident.clone())
+        }
         _ => None,
     }
 }

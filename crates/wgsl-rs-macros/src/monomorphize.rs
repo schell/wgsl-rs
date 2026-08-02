@@ -1867,16 +1867,8 @@ mod test {
                         [0u32, 0u32, 0u32, 0u32]
                     }
                 }
-
-                pub fn go() -> [u32; 4] {
-                    T::zero()
-                }
             }
         };
-        // This test verifies that the array trait impl emits a mangled
-        // WGSL function. The `T::zero()` call in `go` won't resolve
-        // without a generic entry point, but the impl itself should
-        // still produce `_1array_u32_4_zero`.
         let wgsl = mono_wgsl(input);
         assert!(
             wgsl.contains("_2array_u32_4_zero"),

@@ -68,8 +68,8 @@ fn concrete_scalar_trait_impl_transpiles() {
 fn concrete_array_trait_impl_transpiles() {
     let src = concrete_trait_impls::WGSL_SOURCE.wgsl_source().unwrap();
     assert!(
-        src.contains("array_u32_4_zero"),
-        "expected array_u32_4_zero in WGSL, got:\n{src}"
+        src.contains("_2array_u32_4_zero"),
+        "expected _2array_u32_4_zero in WGSL, got:\n{src}"
     );
 }
 

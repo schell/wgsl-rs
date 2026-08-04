@@ -73,3 +73,4 @@ struct ParticleSystem {
 - `RuntimeArray<T>` transpiles to `array<T>` (unsized) in WGSL.
 - `array_length(&...)` maps to the WGSL `arrayLength` builtin.
 - Runtime arrays may only appear in storage buffers, typically as the last field.
+- The bounds check in the example (`if num_particles < index`) is intentionally verbatim from the source — note the condition is reversed from what you'd typically want (`index < num_particles`). This is a known quirk of the example, preserved for roundtrip-test compatibility.

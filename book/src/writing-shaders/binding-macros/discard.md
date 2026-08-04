@@ -28,7 +28,7 @@ pub mod alpha {
     sampler!(group(0), binding(1), LIN: Sampler);
 
     pub fn threshold(uv: Vec2f, min: f32) {
-        let a = textureSample(MASK, LIN, uv).x;
+        let a = texture_sample(MASK, LIN, uv).x();
         if a < min {
             discard!();
         }

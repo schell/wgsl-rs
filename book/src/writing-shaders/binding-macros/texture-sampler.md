@@ -58,7 +58,7 @@ pub mod texturing {
     pub fn fs_main(
         #[location(0)] uv: Vec2f,
     ) -> Vec4f {
-        textureSample(ALBEDO, LIN, uv)
+        texture_sample(ALBEDO, LIN, uv)
     }
 }
 ```
@@ -69,7 +69,7 @@ Texture and sampler bindings are passed by value (no `&`) — the visible `NAME`
 
 ```rust
 pub fn sample_albedo(uv: Vec2f, tex: Texture2D<f32>, smp: Sampler) -> Vec4f {
-    textureSample(tex, smp, uv)
+    texture_sample(tex, smp, uv)
 }
 ```
 

@@ -51,3 +51,9 @@ fn generic_impl_const_generic_array_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/generic_impl_const_generic_array.rs");
 }
+
+#[test]
+fn const_generics_are_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/const_generics.rs");
+}

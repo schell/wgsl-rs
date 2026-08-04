@@ -1,6 +1,7 @@
-//! This test currently fails because generic impl blocks on array self types
-//! are not yet supported. This WILL pass in the near future when generic
-//! array impls are implemented (see #133).
+//! This test verifies that generic impl blocks on array self types compile
+//! successfully. Previously this was rejected with 'generic impl blocks
+//! require a struct self type'; now supported via the monomorphizer's
+//! array impl template path (see #133).
 
 use wgsl_rs::wgsl;
 

@@ -167,6 +167,11 @@ struct MonoCtx {
     /// Generic impl blocks for generic structs, keyed by struct name.
     /// A single struct can have multiple impl blocks (inherent + trait impls).
     impl_templates: BTreeMap<String, Vec<ItemImpl>>,
+    /// Generic impl blocks for array types, keyed by the array length string
+    /// (e.g. `"4"` for `impl<T> Zeroable for [T; 4]`). The type param(s) in
+    /// the impl block are substituted with the concrete element type when a
+    /// concrete array of the matching length is encountered.
+    array_impl_templates: BTreeMap<String, Vec<ItemImpl>>,
     /// Queue of function instantiations to process.
     queue: VecDeque<InstRequest>,
     /// Queue of struct instantiations to process.
@@ -199,6 +204,7 @@ impl MonoCtx {
         let mut templates = BTreeMap::new();
         let mut struct_templates = BTreeMap::new();
         let mut impl_templates: BTreeMap<String, Vec<ItemImpl>> = BTreeMap::new();
+        let mut array_impl_templates: BTreeMap<String, Vec<ItemImpl>> = BTreeMap::new();
         let mut reserved_names = BTreeSet::new();
 
         for item in &module.content {
@@ -227,22 +233,33 @@ impl MonoCtx {
                 }
                 Item::Impl(impl_item) => {
                     if !impl_item.type_params.is_empty() {
-                        // Generic impl block — store as a template, keyed
-                        // by the base struct ident (e.g. `Pair` for
-                        // `impl<T> Pair<T>`). This matches the lookup in
-                        // `generate_template_macros` which uses
-                        // `template.ident.to_string()`.
-                        let key =
-                            self_ty_base_ident_string(&impl_item.self_ty).ok_or_else(|| {
-                                crate::parse::Error::unsupported(
-                                    proc_macro2::Span::call_site(),
-                                    "generic impl blocks require a struct self type",
-                                )
-                            })?;
-                        impl_templates
-                            .entry(key)
-                            .or_default()
-                            .push(impl_item.clone());
+                        // Generic impl block. Route to the appropriate template
+                        // store based on the self type:
+                        // - `impl<T> Pair<T>` → `impl_templates["Pair"]`
+                        // - `impl<T> Zeroable for [T; 4]` → `array_impl_templates["4"]`
+                        match &impl_item.self_ty {
+                            Type::Array { len, .. } => {
+                                let len_str = len_to_string(len);
+                                array_impl_templates
+                                    .entry(len_str)
+                                    .or_default()
+                                    .push(impl_item.clone());
+                            }
+                            _ => {
+                                let key = self_ty_base_ident_string(&impl_item.self_ty)
+                                    .ok_or_else(|| {
+                                        crate::parse::Error::unsupported(
+                                            proc_macro2::Span::call_site(),
+                                            "generic impl blocks require a struct or array self \
+                                             type",
+                                        )
+                                    })?;
+                                impl_templates
+                                    .entry(key)
+                                    .or_default()
+                                    .push(impl_item.clone());
+                            }
+                        }
                     } else {
                         // Concrete impl block — register reserved names
                         // using the mangled self type (e.g. `Light`,
@@ -287,6 +304,7 @@ impl MonoCtx {
             templates,
             struct_templates,
             impl_templates,
+            array_impl_templates,
             queue: VecDeque::new(),
             struct_queue: VecDeque::new(),
             seen: BTreeSet::new(),
@@ -616,6 +634,100 @@ impl MonoCtx {
         Ok(())
     }
 
+    /// Instantiate a generic array impl block with a concrete element type.
+    ///
+    /// For `impl<T: Zeroable> Zeroable for [T; 4]` with `T = u32`, this
+    /// monomorphizes each method by substituting `T` with `u32` and mangling
+    /// the method name as `array_u32_4_{method}` (using the existing
+    /// `mangle_type` for the concrete array self type).
+    fn instantiate_array_impl(
+        &mut self,
+        impl_template: &ItemImpl,
+        concrete_elem: Type,
+    ) -> Result<(), crate::parse::Error> {
+        // Build the concrete array type for name mangling.
+        let concrete_array_ty = match &impl_template.self_ty {
+            Type::Array {
+                bracket_token,
+                semi_token,
+                len,
+                ..
+            } => Type::Array {
+                bracket_token: *bracket_token,
+                elem: Box::new(concrete_elem.clone()),
+                semi_token: *semi_token,
+                len: len.clone(),
+            },
+            _ => unreachable!("instantiate_array_impl called with non-array self type"),
+        };
+        let mangled_self = mangle_type(&concrete_array_ty)?;
+
+        // Build substitution: type_param_name -> concrete element Type.
+        // Generic array impls typically have a single type param `T` that
+        // corresponds to the array element type. If the impl has multiple
+        // type params, the first one is substituted with the element type.
+        // (This covers the common `impl<T> ... for [T; N]` pattern. More
+        // complex multi-param array impls would need additional matching
+        // logic.)
+        let subst: BTreeMap<String, Type> = impl_template
+            .type_params
+            .first()
+            .map(|tp| (tp.to_string(), concrete_elem.clone()))
+            .into_iter()
+            .collect();
+
+        // Monomorphize each method and constant.
+        for ii in &impl_template.items {
+            match ii {
+                crate::parse::ImplItem::Fn(f) => {
+                    let method_mangled_name = mangle(&[&mangled_self, &f.ident.to_string()]);
+
+                    if self.reserved_names.contains(&method_mangled_name) {
+                        // Already generated for this concrete array type — skip.
+                        continue;
+                    }
+                    self.reserved_names.insert(method_mangled_name.clone());
+
+                    let mut mono_fn = (**f).clone();
+                    mono_fn.ident = Ident::new(&method_mangled_name, f.ident.span());
+
+                    // Substitute types in inputs
+                    for pair in mono_fn.inputs.iter_mut() {
+                        substitute_type(&mut pair.ty, &subst);
+                    }
+                    // Substitute in return type
+                    if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
+                        substitute_type(ty, &subst);
+                    }
+                    // Substitute in block
+                    substitute_block(&mut mono_fn.block, &subst);
+
+                    // Discover any new instantiations from monomorphized body.
+                    self.visit_fn(&mut mono_fn)?;
+
+                    self.generated.push(Item::Fn(Box::new(mono_fn)));
+                }
+                crate::parse::ImplItem::Const(c) => {
+                    let const_mangled_name = mangle(&[&mangled_self, &c.ident.to_string()]);
+
+                    if self.reserved_names.contains(&const_mangled_name) {
+                        continue;
+                    }
+                    self.reserved_names.insert(const_mangled_name.clone());
+
+                    let mut mono_const = (**c).clone();
+                    mono_const.ident = Ident::new(&const_mangled_name, c.ident.span());
+                    substitute_type(&mut mono_const.ty, &subst);
+                    substitute_expr(&mut mono_const.expr, &subst);
+
+                    self.generated.push(Item::Const(Box::new(mono_const)));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Apply the results: remove generic templates, add monomorphized items,
     /// rewrite all types and call sites.
     fn apply(&self, module: &mut ItemMod) -> Result<(), crate::parse::Error> {
@@ -697,6 +809,22 @@ impl ParseVisitorMut for MonoCtx {
                 }
             }
         }
+
+        // Trigger generic array impl instantiation when a concrete array
+        // (no type params in the element) of a matching length is used.
+        // E.g. `[u32; 4]` triggers instantiation of `impl<T> Zeroable for
+        // [T; 4]` with `T = u32`.
+        if let Type::Array { elem, len, .. } = ty
+            && !contains_type_param(elem)
+        {
+            let len_str = len_to_string(len);
+            if let Some(impl_blocks) = self.array_impl_templates.get(&len_str).cloned() {
+                for impl_template in &impl_blocks {
+                    self.instantiate_array_impl(impl_template, elem.as_ref().clone())?;
+                }
+            }
+        }
+
         parse_visitor::walk_type(self, ty)
     }
 
@@ -1402,12 +1530,23 @@ fn collect_template_dependencies(
 
 /// Extract the base struct ident string from a self type, if it has one.
 ///
-/// Returns `Some(name)` for `Type::Struct { ident, .. }` (any type args).
-/// Returns `None` for non-struct types. Used to key generic impl templates
-/// by their base struct name (e.g. `Pair` for `impl<T> Pair<T>`).
+/// Returns `Some(key)` for types that can serve as a generic impl template key.
+///
+/// For `Type::Struct` (the common case), returns the struct ident (e.g. `Pair`
+/// for `impl<T> Pair<T>`).
+///
+/// For `Type::Array`, returns the mangled self type with type params preserved
+/// (e.g. `array_t_4` for `impl<T> Zeroable for [T; 4]`). This enables generic
+/// impl blocks on array types — the monomorphizer keys the template by the
+/// mangled form and triggers instantiation when a concrete array of the same
+/// shape is encountered in `visit_type`.
+///
+/// Returns `None` for other types (scalars, vectors, matrices, etc.) since
+/// those are concrete GPU types that don't need generic impl support.
 fn self_ty_base_ident_string(ty: &Type) -> Option<String> {
     match ty {
         Type::Struct { ident, .. } => Some(ident.to_string()),
+        Type::Array { .. } if contains_type_param(ty) => mangle_type(ty).ok(),
         _ => None,
     }
 }

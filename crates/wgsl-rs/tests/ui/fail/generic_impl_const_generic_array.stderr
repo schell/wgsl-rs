@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       const generic parameters are not yet supported on WGSL impl blocks.'
+  --> tests/ui/fail/generic_impl_const_generic_array.rs:19:29
+   |
+19 |     impl<T: Zeroable, const N: usize> Zeroable for [T; N] {
+   |                             ^

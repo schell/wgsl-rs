@@ -1,0 +1,8 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       generic impl blocks require a struct self type.'
+ --> tests/ui/fail/generic_impl_on_array.rs:7:1
+  |
+7 | #[wgsl(skip_validation)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `wgsl` (in Nightly builds, run with -Z macro-backtrace for more info)

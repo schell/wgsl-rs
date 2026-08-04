@@ -1,6 +1,10 @@
-//! This test currently fails because const generic parameters are not yet
-//! supported on WGSL impl blocks. This WILL pass in the near future when
-//! const generics are added (Gap 2, see #133).
+//! This test exercises a trait impl on an array with both a type param
+//! and a const generic param: `impl<T: Zeroable, const N: usize> Zeroable
+//! for [T; N]`. Const generics on impl blocks are now supported, but
+//! generic impl blocks on array self types (`[T; N]`) are not yet
+//! supported — see issue #133. The parse fails with "generic impl blocks
+//! require a struct self type." When generic-impl-on-arrays lands, this
+//! test should flip to pass.
 
 use wgsl_rs::wgsl;
 

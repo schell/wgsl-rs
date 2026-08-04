@@ -2359,7 +2359,7 @@ mod test {
         };
         let err = mono_err(input);
         assert!(
-            err.contains("requires type arguments"),
+            err.contains("requires generic arguments"),
             "Expected missing turbofish error, got: {err}"
         );
         assert!(

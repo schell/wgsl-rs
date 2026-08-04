@@ -1,15 +1,10 @@
-//! Failing tests for `const N: usize` const generics across every surface
-//! that should eventually support them:
+//! Tests for `const N: usize` const generics across every surface that
+//! should support them:
 //! 1. Free function declared and called locally
 //! 2. Generic struct declared and used locally
 //! 3. Generic impl block over a const-generic struct
 //! 4. Cross-module template instantiation
 //! 5. Entry-point function with a const param (drives `instantiate::<…>()`)
-//!
-//! Today every mod below fails because the `#[wgsl]` proc-macro rejects
-//! `syn::GenericParam::Const` at parse time. When const generics for `u32`
-//! / `usize` land, this file should compile cleanly and the `trybuild.rs`
-//! registration flips from `compile_fail` to `pass`.
 //!
 //! We use `usize` for const params (rather than `u32`) because Rust
 //! requires `usize` for array lengths (`[u32; N]`), which is the sole

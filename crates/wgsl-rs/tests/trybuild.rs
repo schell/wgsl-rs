@@ -53,7 +53,7 @@ fn generic_impl_const_generic_array_is_rejected() {
 }
 
 #[test]
-fn const_generics_are_rejected() {
+fn const_generics_compile() {
     let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/fail/const_generics.rs");
+    t.pass("tests/ui/pass/const_generics.rs");
 }

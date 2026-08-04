@@ -139,6 +139,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
         }
         ir::Item::Struct(s) => {
             let type_params = string_vec(&s.type_params);
+            let const_params = string_vec(&s.const_params);
             let n = &s.name;
             let fs = s.fields.iter().map(|f| {
                 let isi = inter_stage_io_vec(p, &f.inter_stage_io);
@@ -158,6 +159,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             quote! {
                 #p::Item::Struct(#p::ItemStruct {
                     type_params: #type_params,
+                    const_params: #const_params,
                     name: ::std::string::String::from(#n),
                     fields: ::std::vec![#(#fs),*],
                     #attrs,
@@ -166,6 +168,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
         }
         ir::Item::Impl(i) => {
             let type_params = string_vec(&i.type_params);
+            let const_params = string_vec(&i.const_params);
             let n = &i.self_ty;
             let xs = i.items.iter().map(|ii| match ii {
                 ir::ImplItem::Fn(f) => {
@@ -181,6 +184,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             quote! {
                 #p::Item::Impl(#p::ItemImpl {
                     type_params: #type_params,
+                    const_params: #const_params,
                     self_ty: ::std::string::String::from(#n),
                     items: ::std::vec![#(#xs),*],
                     #attrs,
@@ -231,6 +235,7 @@ fn item_const(p: &TokenStream, c: &ir::ItemConst) -> TokenStream {
 
 fn item_fn(p: &TokenStream, f: &ir::ItemFn) -> TokenStream {
     let type_params = string_vec(&f.type_params);
+    let const_params = string_vec(&f.const_params);
     let attrs = fn_attrs(p, &f.fn_attrs);
     let n = &f.name;
     let fn_item_attrs = emit_attrs(p, &f.attrs);
@@ -253,6 +258,7 @@ fn item_fn(p: &TokenStream, f: &ir::ItemFn) -> TokenStream {
     quote! {
         #p::ItemFn {
             type_params: #type_params,
+            const_params: #const_params,
             fn_attrs: #attrs,
             name: ::std::borrow::Cow::Borrowed(#n),
             inputs: ::std::vec![#(#inputs),*],

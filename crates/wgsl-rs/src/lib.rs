@@ -106,14 +106,17 @@ pub struct Source {
 ///
 /// The IR is built lazily by calling `ir_constructor`. The returned items
 /// reference unresolved [`ir::Type::TypeParam`] nodes whose names match
-/// entries in `type_params`; substitution at instantiation time replaces
-/// them with concrete types.
+/// entries in `type_params` and `Expr::Ident` nodes whose names match
+/// entries in `const_params`; substitution at instantiation time replaces
+/// them with concrete types and values.
 #[derive(Debug)]
 pub struct GenericTemplate {
     /// The generic function or struct name (e.g., `"id"`, `"Pair"`).
     pub name: &'static str,
     /// Type parameter names (e.g., `["T"]`, `["M", "L", "N"]`).
     pub type_params: &'static [&'static str],
+    /// `const` parameter names (e.g., `["N"]` for `const N: u32`).
+    pub const_params: &'static [&'static str],
     /// Constructor that builds the un-instantiated IR for this template.
     pub ir_constructor: fn() -> Vec<ir::Item>,
     /// Transitive generic function calls within this template.
@@ -150,6 +153,11 @@ pub struct TemplateInstantiation {
     /// Identifier-safe mangled type argument names, used for deduplication
     /// keys and the `seen` set (e.g. `"array_f32_4"`, `"ptr_function_f32"`).
     pub mangled_type_args: &'static [&'static str],
+    /// Constructor that builds the concrete `u32` const values to
+    /// substitute for the template's const parameters.
+    pub const_args_constructor: fn() -> Vec<u32>,
+    /// Identifier-safe mangled const argument names (e.g. `["4"]`).
+    pub mangled_const_args: &'static [&'static str],
 }
 
 impl Source {
@@ -220,11 +228,19 @@ impl Source {
                 .map(|s| (*s).to_string())
                 .collect();
             let type_args = (inst.type_args_constructor)();
+            let mangled_consts: Vec<String> = inst
+                .mangled_const_args
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let const_args = (inst.const_args_constructor)();
             instantiate_template_into(
                 inst.modules,
                 inst.template_name,
                 &mangled,
                 &type_args,
+                &mangled_consts,
+                &const_args,
                 out,
                 seen,
             )?;
@@ -241,11 +257,14 @@ impl Source {
 /// Returns `Err` with a structured [`SourceError`] for user-facing
 /// configuration errors (template not found, ambiguous match). Returns
 /// `Ok` for a successful instantiation, or for the early-return dedup case.
+#[allow(clippy::too_many_arguments)]
 fn instantiate_template_into<'a>(
     sources: &[&'a Source],
     template_name: &str,
     mangled_type_args: &[String],
     type_args: &[ir::Type],
+    mangled_const_args: &[String],
+    const_args: &[u32],
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>)>,
 ) -> Result<(), SourceError<'a>> {
@@ -317,32 +336,55 @@ fn instantiate_template_into<'a>(
             .iter()
             .map(|&idx| type_args[idx].clone())
             .collect();
-        instantiate_template_into(&[source], dep.callee, &dep_mangled, &dep_args, out, seen)?;
+        // Dependencies currently share the caller's const args by
+        // reference; a full const-param-mapping parallel to
+        // `type_param_mapping` is a future extension. For now we pass
+        // the const args through unchanged.
+        instantiate_template_into(
+            &[source],
+            dep.callee,
+            &dep_mangled,
+            &dep_args,
+            mangled_const_args,
+            const_args,
+            out,
+            seen,
+        )?;
     }
 
-    // Build a substitution map from the template's type params to the
-    // concrete type args, then render the substituted items.
+    // Build substitution maps: type params -> concrete types, const
+    // params -> concrete u32 values.
     let mut subst: HashMap<String, ir::Type> = HashMap::new();
     for (param, arg) in template.type_params.iter().zip(type_args.iter()) {
         subst.insert((*param).to_string(), arg.clone());
     }
+    let mut consts: HashMap<String, u32> = HashMap::new();
+    for (param, arg) in template.const_params.iter().zip(const_args.iter()) {
+        consts.insert((*param).to_string(), *arg);
+    }
 
     let mut items = (template.ir_constructor)();
     ir::substitute_items(&mut items, &subst);
+    ir::substitute_consts_in_items(&mut items, &consts);
 
     // Mangle the template's name to a concrete instance name so multiple
     // monomorphizations can coexist. Uses `ir::mangle` so that names with
     // underscores in either the template name or the type-arg-mangled
     // strings are escaped unambiguously (see issue #112).
-    let instance_name = if mangled_type_args.is_empty() {
+    let instance_name = if mangled_type_args.is_empty() && mangled_const_args.is_empty() {
         template.name.to_string()
     } else {
-        let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_type_args.len());
-        components.push(template.name);
+        let mut components: Vec<String> =
+            Vec::with_capacity(1 + mangled_type_args.len() + mangled_const_args.len());
+        components.push(template.name.to_string());
         for s in mangled_type_args {
-            components.push(s.as_str());
+            components.push(s.clone());
         }
-        ir::mangle(&components)
+        for s in mangled_const_args {
+            components.push(s.clone());
+        }
+        let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+        ir::mangle(&str_components)
     };
     if instance_name != template.name {
         ir::rename_items(&mut items, template.name, &instance_name);
@@ -602,6 +644,7 @@ mod test {
         fn shared_template_items() -> Vec<ir::Item> {
             vec![ir::Item::Fn(ir::ItemFn {
                 type_params: vec![],
+                const_params: vec![],
                 fn_attrs: ir::FnAttrs::None,
                 name: "shared".to_string().into(),
                 inputs: vec![ir::FnArg {
@@ -631,12 +674,14 @@ mod test {
         static A_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
             name: "shared",
             type_params: &["T"],
+            const_params: &[],
             ir_constructor: shared_template_items,
             dependencies: &DEP,
         }];
         static B_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
             name: "shared",
             type_params: &["T"],
+            const_params: &[],
             ir_constructor: shared_template_items,
             dependencies: &DEP,
         }];
@@ -666,6 +711,8 @@ mod test {
             template_name: "shared",
             type_args_constructor: f32_args,
             mangled_type_args: &["f32"],
+            const_args_constructor: || vec![],
+            mangled_const_args: &[],
         }];
         static ROOT: Source = Source {
             id: 2,

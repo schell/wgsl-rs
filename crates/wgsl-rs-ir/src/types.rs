@@ -584,6 +584,13 @@ pub struct ItemFn {
     /// these are usually empty; non-empty values appear only on generic
     /// templates (which need substitution before rendering).
     pub type_params: Vec<String>,
+    /// `const` parameters declared on the function (e.g. `["N"]` for
+    /// `fn foo<const N: u32>`). After monomorphization these are usually
+    /// empty; non-empty values appear only on generic templates, where
+    /// the corresponding `Expr::Ident(name)` nodes in array lengths are
+    /// substituted with concrete `Expr::Lit` values via
+    /// [`crate::substitute_consts`] before rendering.
+    pub const_params: Vec<String>,
     pub fn_attrs: FnAttrs,
     /// The function's identifier. For fresh (non-monomorphized) functions
     /// this is a `Cow::Borrowed` of a `stringify!`-emitted `'static` literal
@@ -614,6 +621,9 @@ pub struct Field {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemStruct {
     pub type_params: Vec<String>,
+    /// `const` parameters declared on the struct (e.g. `["N"]` for
+    /// `struct Grid<const N: u32>`).
+    pub const_params: Vec<String>,
     pub name: String,
     pub fields: Vec<Field>,
     /// Attributes preserved from Rust source.
@@ -632,6 +642,8 @@ pub enum ImplItem {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemImpl {
     pub type_params: Vec<String>,
+    /// `const` parameters declared on the impl block.
+    pub const_params: Vec<String>,
     pub self_ty: String,
     pub items: Vec<ImplItem>,
     /// Attributes preserved from Rust source.

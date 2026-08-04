@@ -140,6 +140,7 @@ fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
 fn item_fn(f: &parse::ItemFn) -> Result<ir::ItemFn> {
     Ok(ir::ItemFn {
         type_params: f.type_params.iter().map(|i| i.to_string()).collect(),
+        const_params: f.const_params.iter().map(|i| i.to_string()).collect(),
         fn_attrs: fn_attrs(&f.fn_attrs)?,
         name: f.ident.to_string().into(),
         inputs: f.inputs.iter().map(fn_arg).collect::<Result<Vec<_>>>()?,
@@ -152,6 +153,7 @@ fn item_fn(f: &parse::ItemFn) -> Result<ir::ItemFn> {
 fn item_struct(s: &parse::ItemStruct) -> Result<ir::ItemStruct> {
     Ok(ir::ItemStruct {
         type_params: s.type_params.iter().map(|i| i.to_string()).collect(),
+        const_params: s.const_params.iter().map(|i| i.to_string()).collect(),
         name: s.ident.to_string(),
         fields: s
             .fields
@@ -191,6 +193,7 @@ fn item_impl(i: &parse::ItemImpl) -> Result<ir::ItemImpl> {
     };
     Ok(ir::ItemImpl {
         type_params: i.type_params.iter().map(|i| i.to_string()).collect(),
+        const_params: i.const_params.iter().map(|i| i.to_string()).collect(),
         self_ty,
         items: i
             .items
@@ -448,7 +451,9 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
         parse::Type::Atomic { elem, .. } => ir::Type::Atomic {
             elem: Box::new(ty_from_parse(elem)?),
         },
-        parse::Type::Struct { ident, type_args } => ir::Type::Struct {
+        parse::Type::Struct {
+            ident, type_args, ..
+        } => ir::Type::Struct {
             name: ident.to_string(),
             type_args: type_args
                 .iter()

@@ -4,6 +4,10 @@
 //! every [`Type::TypeParam`] with the corresponding concrete type from a
 //! caller-supplied map. The replacement is applied recursively into all
 //! nested types, expressions, and statements.
+//!
+//! [`substitute_consts`] is the parallel pass for `const` generic
+//! parameters: it replaces every `Expr::Ident(name)` referencing a const
+//! param with a concrete `Expr::Lit` integer literal.
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -22,6 +26,28 @@ pub fn substitute_types(module: &mut Module, subst: &HashMap<String, Type>) {
 pub fn substitute_items(items: &mut [Item], subst: &HashMap<String, Type>) {
     for item in items {
         sub_item(item, subst);
+    }
+}
+
+/// Substitute every const-param reference (`Expr::Ident(name)`) in
+/// `module` whose name appears in `consts` with a concrete
+/// `Expr::Lit(Lit::Int { ... })`. Mutates in place.
+///
+/// This is the const-generic parallel of [`substitute_types`]. It walks
+/// the same IR tree but rewrites array length expressions (and any other
+/// `Expr::Ident` naming a const param) to integer literals. The two passes
+/// are independent and can be run in either order.
+pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, u32>) {
+    for item in &mut module.items {
+        sub_item_const(item, consts);
+    }
+}
+
+/// Like [`substitute_consts`] but over a slice of items (e.g. a generic
+/// template's body, as used by the cross-module template machinery).
+pub fn substitute_consts_in_items(items: &mut [Item], consts: &HashMap<String, u32>) {
+    for item in items {
+        sub_item_const(item, consts);
     }
 }
 
@@ -604,6 +630,257 @@ fn sub_if(i: &mut StmtIf, s: &HashMap<String, Type>) {
         match eb {
             ElseBranch::Block(b) => sub_block(b, s),
             ElseBranch::If(inner) => sub_if(inner, s),
+        }
+    }
+}
+
+// ===== Const substitution =====
+//
+// Parallel to the type substitution walkers above, but replaces
+// `Expr::Ident(name)` with `Expr::Lit(Lit::Int { ... })` when `name`
+// names a const generic parameter. The substitution target is always a
+// bare ident because stable Rust only allows bare idents (or literals)
+// as const generic arguments in type position.
+
+fn sub_item_const(item: &mut Item, consts: &HashMap<String, u32>) {
+    match item {
+        Item::Const(c) => {
+            sub_type_const(&mut c.ty, consts);
+            sub_expr_const(&mut c.expr, consts);
+        }
+        Item::Uniform(u) => sub_type_const(&mut u.ty, consts),
+        Item::Storage(st) => sub_type_const(&mut st.ty, consts),
+        Item::Workgroup(w) => sub_type_const(&mut w.ty, consts),
+        Item::Sampler(sa) => sub_type_const(&mut sa.ty, consts),
+        Item::Texture(t) => sub_type_const(&mut t.ty, consts),
+        Item::Fn(f) => sub_fn_const(f, consts),
+        Item::Struct(st) => {
+            for f in &mut st.fields {
+                sub_type_const(&mut f.ty, consts);
+            }
+        }
+        Item::Impl(i) => {
+            for ii in &mut i.items {
+                match ii {
+                    ImplItem::Fn(f) => sub_fn_const(f, consts),
+                    ImplItem::Const(c) => {
+                        sub_type_const(&mut c.ty, consts);
+                        sub_expr_const(&mut c.expr, consts);
+                    }
+                }
+            }
+        }
+        Item::Enum(_) => {}
+    }
+}
+
+fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, u32>) {
+    for arg in &mut f.inputs {
+        sub_type_const(&mut arg.ty, consts);
+    }
+    if let ReturnType::Type { ty, .. } = &mut f.return_type {
+        sub_type_const(ty, consts);
+    }
+    sub_block_const(&mut f.block, consts);
+}
+
+fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
+    match ty {
+        Type::Scalar(_)
+        | Type::Sampler
+        | Type::SamplerComparison
+        | Type::Texture { .. }
+        | Type::TextureDepth { .. }
+        | Type::Vector { .. }
+        | Type::Matrix { .. }
+        | Type::TypeParam { .. } => {}
+        Type::Array { elem, len } => {
+            sub_type_const(elem, consts);
+            sub_expr_const(len, consts);
+        }
+        Type::RuntimeArray { elem } | Type::Atomic { elem } => sub_type_const(elem, consts),
+        Type::Struct { type_args, .. } => {
+            for ta in type_args {
+                sub_type_const(ta, consts);
+            }
+        }
+        Type::Ptr { elem, .. } => sub_type_const(elem, consts),
+    }
+}
+
+fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, u32>) {
+    match e {
+        Expr::Ident(name) => {
+            if let Some(&n) = consts.get(name) {
+                *e = Expr::Lit(Lit::Int {
+                    digits: n.to_string(),
+                    suffix: String::new(),
+                });
+            }
+        }
+        Expr::Lit(_) | Expr::TypePath { .. } => {}
+        Expr::Array { elems } => {
+            for x in elems {
+                sub_expr_const(x, consts);
+            }
+        }
+        Expr::Paren(inner) | Expr::Reference(inner) => sub_expr_const(inner, consts),
+        Expr::Binary { lhs, rhs, .. } => {
+            sub_expr_const(lhs, consts);
+            sub_expr_const(rhs, consts);
+        }
+        Expr::Unary { expr, .. } => sub_expr_const(expr, consts),
+        Expr::ArrayIndexing { lhs, index } => {
+            sub_expr_const(lhs, consts);
+            sub_expr_const(index, consts);
+        }
+        Expr::Swizzle { lhs, params, .. } => {
+            sub_expr_const(lhs, consts);
+            if let Some(args) = params {
+                for a in args {
+                    sub_expr_const(a, consts);
+                }
+            }
+        }
+        Expr::Cast { lhs, ty } => {
+            sub_expr_const(lhs, consts);
+            sub_type_const(ty, consts);
+        }
+        Expr::FnCall {
+            path,
+            type_args,
+            params,
+        } => {
+            if let FnPath::TypeMethod { ty, .. } = path
+                && let Some(&n) = consts.get(ty.as_str())
+            {
+                *ty = n.to_string();
+            }
+            for ta in type_args {
+                sub_type_const(ta, consts);
+            }
+            for p in params {
+                sub_expr_const(p, consts);
+            }
+        }
+        Expr::Struct {
+            name,
+            type_args,
+            fields,
+        } => {
+            if let Some(&n) = consts.get(name.as_str()) {
+                *name = n.to_string();
+            }
+            for ta in type_args {
+                sub_type_const(ta, consts);
+            }
+            for f in fields {
+                sub_expr_const(&mut f.expr, consts);
+            }
+        }
+        Expr::FieldAccess { base, .. } => sub_expr_const(base, consts),
+        Expr::ZeroValueArray { elem_type, len } => {
+            sub_type_const(elem_type, consts);
+            sub_expr_const(len, consts);
+        }
+    }
+}
+
+fn sub_block_const(b: &mut Block, consts: &HashMap<String, u32>) {
+    for stmt in &mut b.stmts {
+        sub_stmt_const(stmt, consts);
+    }
+}
+
+fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, u32>) {
+    match st {
+        Stmt::Local(l) => {
+            if let Some(t) = &mut l.ty {
+                sub_type_const(t, consts);
+            }
+            if let Some(e) = &mut l.init {
+                sub_expr_const(e, consts);
+            }
+        }
+        Stmt::Const(c) => {
+            sub_type_const(&mut c.ty, consts);
+            sub_expr_const(&mut c.expr, consts);
+        }
+        Stmt::Assignment { lhs, rhs } => {
+            sub_expr_const(lhs, consts);
+            sub_expr_const(rhs, consts);
+        }
+        Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            sub_expr_const(lhs, consts);
+            sub_expr_const(rhs, consts);
+        }
+        Stmt::While { condition, body } => {
+            sub_expr_const(condition, consts);
+            sub_block_const(body, consts);
+        }
+        Stmt::Loop { body } => sub_block_const(body, consts),
+        Stmt::Expr { expr, .. } => sub_expr_const(expr, consts),
+        Stmt::If(i) => sub_if_const(i, consts),
+        Stmt::Break | Stmt::Continue | Stmt::Discard => {}
+        Stmt::Return(e) => {
+            if let Some(e) = e {
+                sub_expr_const(e, consts);
+            }
+        }
+        Stmt::For(f) => {
+            if let Some(t) = &mut f.var_ty {
+                sub_type_const(t, consts);
+            }
+            sub_expr_const(&mut f.from, consts);
+            sub_expr_const(&mut f.to, consts);
+            sub_block_const(&mut f.body, consts);
+        }
+        Stmt::Switch(sw) => {
+            sub_expr_const(&mut sw.selector, consts);
+            for arm in &mut sw.arms {
+                for sel in &mut arm.selectors {
+                    if let CaseSelector::Expr(e) = sel {
+                        sub_expr_const(e, consts);
+                    }
+                }
+                sub_block_const(&mut arm.body, consts);
+            }
+        }
+        Stmt::Block(b) => sub_block_const(b, consts),
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+        } => {
+            sub_expr_const(slab, consts);
+            sub_expr_const(offset, consts);
+            sub_expr_const(dest, consts);
+            sub_expr_const(size, consts);
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+        } => {
+            sub_expr_const(slab, consts);
+            sub_expr_const(offset, consts);
+            sub_expr_const(src, consts);
+            if let Some(sz) = size {
+                sub_expr_const(sz, consts);
+            }
+        }
+    }
+}
+
+fn sub_if_const(i: &mut StmtIf, consts: &HashMap<String, u32>) {
+    sub_expr_const(&mut i.condition, consts);
+    sub_block_const(&mut i.then_block, consts);
+    if let Some(eb) = &mut i.else_branch {
+        match eb {
+            ElseBranch::Block(b) => sub_block_const(b, consts),
+            ElseBranch::If(inner) => sub_if_const(inner, consts),
         }
     }
 }

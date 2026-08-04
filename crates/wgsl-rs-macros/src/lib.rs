@@ -280,6 +280,13 @@ fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> 
                 params.push(encoded);
             }
         }
+        // Entry-point const params use a separate `{fn}_c{i}` namespace.
+        for (i, _cp) in f.const_params.iter().enumerate() {
+            let encoded = format!("{fn_name}_c{i}");
+            if seen.insert(encoded.clone()) {
+                params.push(encoded);
+            }
+        }
     }
 
     params
@@ -503,6 +510,8 @@ fn gen_wgsl_module(
         .map(|(idx, tmpl)| {
             let name_lit = &tmpl.fn_name;
             let params: Vec<&str> = tmpl.type_param_names.iter().map(|s| s.as_str()).collect();
+            let const_params: Vec<&str> =
+                tmpl.const_param_names.iter().map(|s| s.as_str()).collect();
 
             // Convert the template's items to IR.
             let ir_items =
@@ -540,6 +549,7 @@ fn gen_wgsl_module(
                 #crate_path::GenericTemplate {
                     name: #name_lit,
                     type_params: &[#(#params),*],
+                    const_params: &[#(#const_params),*],
                     ir_constructor: #ctor_ident,
                     dependencies: &[#(#dep_entries),*],
                 }
@@ -561,6 +571,8 @@ fn gen_wgsl_module(
             let tmpl_name_lit = &inst.fn_name;
             let mangled_args: Vec<&str> =
                 inst.mangled_type_args.iter().map(|s| s.as_str()).collect();
+            let mangled_const_args: Vec<&str> =
+                inst.mangled_const_args.iter().map(|s| s.as_str()).collect();
 
             // Build IR types for each type argument.
             let ir_args: Vec<wgsl_rs_ir::Type> = inst
@@ -576,12 +588,26 @@ fn gen_wgsl_module(
                 .map(|t| ir_emit::emit_type(&ir_p, t))
                 .collect();
 
+            // Build the const-args constructor. Const values are known
+            // at macro time (parsed from integer literals in turbofish),
+            // so the constructor is a simple `vec![4, 8, ...]` literal.
+            let const_vals: Vec<u32> = inst.const_args.clone();
+            let const_arg_lit = proc_macro2::Literal::usize_unsuffixed(const_vals.len());
+
             let ctor_ident = quote::format_ident!("__wgsl_inst_{}_ctor", idx);
             inst_constructors.push(quote! {
                 fn #ctor_ident() -> ::std::vec::Vec<#ir_p::Type> {
                     ::std::vec![#(#arg_exprs),*]
                 }
             });
+
+            let const_ctor_ident = quote::format_ident!("__wgsl_inst_const_{}_ctor", idx);
+            inst_constructors.push(quote! {
+                fn #const_ctor_ident() -> ::std::vec::Vec<u32> {
+                    ::std::vec![#(#const_vals),*]
+                }
+            });
+            let _ = const_arg_lit;
 
             let modules: Vec<proc_macro2::TokenStream> = import_paths
                 .iter()
@@ -595,6 +621,8 @@ fn gen_wgsl_module(
                     template_name: #tmpl_name_lit,
                     type_args_constructor: #ctor_ident,
                     mangled_type_args: &[#(#mangled_args),*],
+                    const_args_constructor: #const_ctor_ident,
+                    mangled_const_args: &[#(#mangled_const_args),*],
                 }
             })
         })

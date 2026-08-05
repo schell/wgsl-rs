@@ -136,6 +136,13 @@ pub enum Type {
     /// A type parameter referenced by name. These are replaced by concrete
     /// types via [`crate::substitute_types`] before rendering.
     TypeParam { name: String },
+    /// A `PhantomData<T>` marker field. Retained in the IR so that
+    /// extensions can observe which type parameter each phantom slot
+    /// binds (e.g. `struct Foo<T, A> { x: f32, t: PhantomData<T>,
+    /// a: PhantomData<A> }`). The renderer omits phantom fields from
+    /// the emitted WGSL; this variant should never reach
+    /// [`crate::render::render_items`]'s type writer.
+    Phantom { elem: Box<Type> },
 }
 
 // ===== Literals / operators =====

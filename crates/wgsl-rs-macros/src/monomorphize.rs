@@ -1933,6 +1933,7 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             // This shouldn't happen for fully resolved instantiations
             ident.to_string().to_lowercase()
         }
+        Type::Phantom { elem, .. } => mangle(&["phantom", &mangle_type(elem)?]),
     })
 }
 
@@ -2006,6 +2007,10 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
             ..
         } => TypeKey::Ptr(format!("{:?}", address_space), Box::new(type_to_key(elem)?)),
         Type::TypeParam { ident } => TypeKey::TypeParam(ident.to_string()),
+        // Reuse the inner type's key: two instantiations are distinct iff
+        // their inner types are distinct. The phantom wrapper adds no
+        // distinguishing information of its own.
+        Type::Phantom { elem, .. } => type_to_key(elem)?,
     })
 }
 
@@ -2016,7 +2021,8 @@ pub(crate) fn contains_type_param(ty: &Type) -> bool {
         Type::Array { elem, .. }
         | Type::RuntimeArray { elem, .. }
         | Type::Atomic { elem, .. }
-        | Type::Ptr { elem, .. } => contains_type_param(elem),
+        | Type::Ptr { elem, .. }
+        | Type::Phantom { elem, .. } => contains_type_param(elem),
         Type::Struct { type_args, .. } => type_args.iter().any(contains_type_param),
         Type::Scalar { .. }
         | Type::Vector { .. }

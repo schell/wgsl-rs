@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       PhantomData<T> is only supported as a struct field type, not in function params, return types, locals, or other type positions.'
+  --> tests/ui/fail/phantom_data_in_non_field.rs:15:19
+   |
+15 |     pub fn bad(x: PhantomData<f32>) -> f32 {
+   |                   ^^^^^^^^^^^

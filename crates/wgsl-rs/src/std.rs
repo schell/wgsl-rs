@@ -13,11 +13,17 @@
 use std::{
     any::TypeId,
     collections::HashMap,
-    marker::PhantomData,
     ops::{Deref, DerefMut},
     sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 use wgsl_rs_ir as ir;
+
+// Re-export `PhantomData` so users can write `use wgsl_rs::std::*;` and refer
+// to `PhantomData<T>` as a struct field type. The proc-macro recognizes
+// `PhantomData<_>` fields specially: they are retained in the IR (so
+// extensions can see which type parameter each phantom slot binds) but
+// omitted from the rendered WGSL.
+pub use std::marker::PhantomData;
 
 pub use wgsl_rs_macros::{
     Wgsl, builtin, compute, fragment, ptr, sampler, storage, texture, uniform, vertex, wgsl_allow,

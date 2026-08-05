@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       fully qualified type paths like `std::marker::PhantomData` are not supported; use a `use` import to bring the type into scope.'
+  --> tests/ui/fail/phantom_data_qualified_path.rs:21:22
+   |
+21 |         pub phantom: std::marker::PhantomData<T>,
+   |                      ^^^

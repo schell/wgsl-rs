@@ -1487,7 +1487,8 @@ fn type_layout(ty: &ir::Type, module: &ir::Module) -> TypeLayout {
         | ir::Type::SamplerComparison
         | ir::Type::Texture { .. }
         | ir::Type::TextureDepth { .. }
-        | ir::Type::TypeParam { .. } => TypeLayout { size: 0, align: 1 },
+        | ir::Type::TypeParam { .. }
+        | ir::Type::Phantom { .. } => TypeLayout { size: 0, align: 1 },
     }
 }
 

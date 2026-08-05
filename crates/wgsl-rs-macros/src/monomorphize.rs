@@ -21,7 +21,9 @@ use syn::Ident;
 use wgsl_rs_ir::mangle;
 
 use crate::{
-    parse::{Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, ReturnType, Type},
+    parse::{
+        Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, Lit, ReturnType, Type,
+    },
     parse_visitor::{self, ParseVisitorMut},
 };
 
@@ -42,6 +44,12 @@ pub struct CrossModuleInstantiation {
     /// constructor on the [`crate::Source`] so runtime substitution can
     /// produce a concrete shader source.
     pub type_args: Vec<Type>,
+    /// Identifier-safe mangled const argument names (e.g. `["4"]`).
+    pub mangled_const_args: Vec<String>,
+    /// The original parse-side const arguments. These are shipped as a
+    /// `fn() -> Vec<u32>` constructor on the [`crate::Source`] for
+    /// runtime const substitution.
+    pub const_args: Vec<u32>,
 }
 
 /// Result of the monomorphization pass.
@@ -64,6 +72,8 @@ pub struct TemplateMacro {
     pub fn_name: String,
     /// Type parameter names (e.g., `["M", "L", "N"]`).
     pub type_param_names: Vec<String>,
+    /// `const` parameter names (e.g., `["N"]` for `const N: u32`).
+    pub const_param_names: Vec<String>,
     /// The template's items, with `Type::TypeParam` nodes still in place.
     /// Converted to IR at emission time. For function templates this is
     /// a single `Item::Fn`; for struct templates it's a `Item::Struct`
@@ -128,6 +138,9 @@ const MAX_INSTANTIATIONS: usize = 1024;
 struct InstKey {
     fn_name: String,
     type_args: Vec<TypeKey>,
+    /// Concrete const generic arguments (e.g. `[4]` for `foo::<4>`).
+    /// Included in the key so `foo::<4>` and `foo::<8>` dedup separately.
+    const_args: Vec<u32>,
 }
 
 /// A hashable/orderable representation of a concrete type, for use in dedup
@@ -157,6 +170,9 @@ struct InstRequest {
     span: Span,
     /// The actual `Type` values to substitute (parallel to key.type_args).
     concrete_types: Vec<Type>,
+    /// The actual `u32` const values to substitute (parallel to
+    /// key.const_args).
+    concrete_consts: Vec<u32>,
 }
 
 struct MonoCtx {
@@ -199,6 +215,9 @@ struct StructInstRequest {
     span: Span,
     /// The actual `Type` values to substitute (parallel to key.type_args).
     concrete_types: Vec<Type>,
+    /// The actual `u32` const values to substitute (parallel to
+    /// key.const_args).
+    concrete_consts: Vec<u32>,
 }
 
 impl MonoCtx {
@@ -221,23 +240,26 @@ impl MonoCtx {
                     // `__TP{name}__` placeholders, and the module-level
                     // template machinery substitutes them at instantiation
                     // time via `Module::instantiate`.
-                    let is_generic_entry_point = !f.type_params.is_empty()
+                    let is_generic_entry_point = (!f.type_params.is_empty()
+                        || !f.const_params.is_empty())
                         && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
-                    if f.type_params.is_empty() || is_generic_entry_point {
-                        reserved_names.insert(f.ident.to_string());
-                    } else {
+                    let is_template = (!f.type_params.is_empty() || !f.const_params.is_empty())
+                        && !is_generic_entry_point;
+                    if is_template {
                         templates.insert(f.ident.to_string(), f.as_ref().clone());
+                    } else {
+                        reserved_names.insert(f.ident.to_string());
                     }
                 }
                 Item::Struct(s) => {
-                    if s.type_params.is_empty() {
+                    if s.type_params.is_empty() && s.const_params.is_empty() {
                         reserved_names.insert(s.ident.to_string());
                     } else {
                         struct_templates.insert(s.ident.to_string(), s.clone());
                     }
                 }
                 Item::Impl(impl_item) => {
-                    if !impl_item.type_params.is_empty() {
+                    if !impl_item.type_params.is_empty() || !impl_item.const_params.is_empty() {
                         // Generic impl block. Route to the appropriate template
                         // store based on the self type:
                         // - `impl<T> Pair<T>` → `impl_templates["Pair"]`
@@ -370,6 +392,7 @@ impl MonoCtx {
             // substitution will replace them.
             let mut struct_clone = template.clone();
             struct_clone.type_params.clear();
+            struct_clone.const_params.clear();
 
             let mut items: Vec<Item> = vec![Item::Struct(struct_clone)];
 
@@ -381,12 +404,18 @@ impl MonoCtx {
                 for impl_block in impl_blocks {
                     let mut impl_clone = impl_block.clone();
                     impl_clone.type_params.clear();
+                    impl_clone.const_params.clear();
                     items.push(Item::Impl(impl_clone));
                 }
             }
 
             let type_param_names: Vec<String> = template
                 .type_params
+                .iter()
+                .map(|id| id.to_string())
+                .collect();
+            let const_param_names: Vec<String> = template
+                .const_params
                 .iter()
                 .map(|id| id.to_string())
                 .collect();
@@ -398,6 +427,7 @@ impl MonoCtx {
             macros.push(TemplateMacro {
                 fn_name: original_name,
                 type_param_names,
+                const_param_names,
                 items,
                 dependencies,
             });
@@ -405,14 +435,21 @@ impl MonoCtx {
 
         // --- Generic function templates ---
         for template in self.templates.values() {
-            // Clone and clear `type_params` so the IR conversion sees a
-            // concrete-looking function. `Type::TypeParam` nodes stay in
-            // place; runtime substitution + renaming handle the rest.
+            // Clone and clear `type_params` and `const_params` so the IR
+            // conversion sees a concrete-looking function. `Type::TypeParam`
+            // and `Expr::Ident` (const-param references) stay in place;
+            // runtime substitution + renaming handle the rest.
             let mut fn_clone = template.clone();
             fn_clone.type_params.clear();
+            fn_clone.const_params.clear();
 
             let type_param_names: Vec<String> = template
                 .type_params
+                .iter()
+                .map(|id| id.to_string())
+                .collect();
+            let const_param_names: Vec<String> = template
+                .const_params
                 .iter()
                 .map(|id| id.to_string())
                 .collect();
@@ -426,6 +463,7 @@ impl MonoCtx {
             macros.push(TemplateMacro {
                 fn_name: template.ident.to_string(),
                 type_param_names,
+                const_param_names,
                 items: vec![Item::Fn(Box::new(fn_clone))],
                 dependencies,
             });
@@ -509,7 +547,11 @@ impl MonoCtx {
     /// Instantiate a single generic function with concrete types.
     fn instantiate(&mut self, request: InstRequest) -> Result<(), crate::parse::Error> {
         let template = self.templates[&request.key.fn_name].clone();
-        let mangled_name = mangle_name(&request.key.fn_name, &request.concrete_types)?;
+        let mangled_name = mangle_name(
+            &request.key.fn_name,
+            &request.concrete_types,
+            &request.concrete_consts,
+        )?;
 
         // Check for name collisions
         if self.reserved_names.contains(&mangled_name) {
@@ -523,31 +565,39 @@ impl MonoCtx {
         }
         self.reserved_names.insert(mangled_name.clone());
 
-        // Build substitution map: type_param_name -> concrete Type
+        // Build substitution maps: type_param_name -> concrete Type,
+        // const_param_name -> concrete u32.
         let subst: BTreeMap<String, Type> = template
             .type_params
             .iter()
             .zip(request.concrete_types.iter())
             .map(|(param, ty)| (param.to_string(), ty.clone()))
             .collect();
+        let consts: BTreeMap<String, u32> = template
+            .const_params
+            .iter()
+            .zip(request.concrete_consts.iter())
+            .map(|(param, n)| (param.to_string(), *n))
+            .collect();
 
         // Clone and substitute
         let mut mono_fn = template.clone();
         mono_fn.type_params.clear();
+        mono_fn.const_params.clear();
         mono_fn.ident = Ident::new(&mangled_name, template.ident.span());
 
         // Substitute types in inputs
         for pair in mono_fn.inputs.iter_mut() {
-            substitute_type(&mut pair.ty, &subst);
+            substitute_type(&mut pair.ty, &subst, &consts);
         }
 
         // Substitute in return type
         if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
-            substitute_type(ty, &subst);
+            substitute_type(ty, &subst, &consts);
         }
 
         // Substitute in block (types and call sites)
-        substitute_block(&mut mono_fn.block, &subst);
+        substitute_block(&mut mono_fn.block, &subst, &consts);
 
         // Discover any new instantiations from the monomorphized body.
         self.visit_fn(&mut mono_fn)?;
@@ -563,7 +613,11 @@ impl MonoCtx {
         request: StructInstRequest,
     ) -> Result<(), crate::parse::Error> {
         let template = self.struct_templates[&request.key.fn_name].clone();
-        let mangled_name = mangle_name(&request.key.fn_name, &request.concrete_types)?;
+        let mangled_name = mangle_name(
+            &request.key.fn_name,
+            &request.concrete_types,
+            &request.concrete_consts,
+        )?;
 
         // Check for name collisions
         if self.reserved_names.contains(&mangled_name) {
@@ -577,21 +631,29 @@ impl MonoCtx {
         }
         self.reserved_names.insert(mangled_name.clone());
 
-        // Build substitution map: type_param_name -> concrete Type
+        // Build substitution maps: type_param_name -> concrete Type,
+        // const_param_name -> concrete u32.
         let subst: BTreeMap<String, Type> = template
             .type_params
             .iter()
             .zip(request.concrete_types.iter())
             .map(|(param, ty)| (param.to_string(), ty.clone()))
             .collect();
+        let consts: BTreeMap<String, u32> = template
+            .const_params
+            .iter()
+            .zip(request.concrete_consts.iter())
+            .map(|(param, n)| (param.to_string(), *n))
+            .collect();
 
         // Clone and substitute fields
         let mut mono_struct = template.clone();
         mono_struct.type_params.clear();
+        mono_struct.const_params.clear();
         mono_struct.ident = Ident::new(&mangled_name, template.ident.span());
 
         for pair in mono_struct.fields.named.iter_mut() {
-            substitute_type(&mut pair.ty, &subst);
+            substitute_type(&mut pair.ty, &subst, &consts);
         }
 
         // Discover any new struct instantiations from monomorphized fields.
@@ -605,12 +667,18 @@ impl MonoCtx {
         let original_name = request.key.fn_name.clone();
         if let Some(impl_blocks) = self.impl_templates.get(&original_name).cloned() {
             for impl_template in &impl_blocks {
-                // Build substitution for the impl block's type params
+                // Build substitution maps for the impl block's params
                 let impl_subst: BTreeMap<String, Type> = impl_template
                     .type_params
                     .iter()
                     .zip(request.concrete_types.iter())
                     .map(|(param, ty)| (param.to_string(), ty.clone()))
+                    .collect();
+                let impl_consts: BTreeMap<String, u32> = impl_template
+                    .const_params
+                    .iter()
+                    .zip(request.concrete_consts.iter())
+                    .map(|(param, n)| (param.to_string(), *n))
                     .collect();
 
                 // Monomorphize each method and constant
@@ -636,14 +704,14 @@ impl MonoCtx {
 
                             // Substitute types in inputs
                             for pair in mono_fn.inputs.iter_mut() {
-                                substitute_type(&mut pair.ty, &impl_subst);
+                                substitute_type(&mut pair.ty, &impl_subst, &impl_consts);
                             }
                             // Substitute in return type
                             if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
-                                substitute_type(ty, &impl_subst);
+                                substitute_type(ty, &impl_subst, &impl_consts);
                             }
                             // Substitute in block
-                            substitute_block(&mut mono_fn.block, &impl_subst);
+                            substitute_block(&mut mono_fn.block, &impl_subst, &impl_consts);
 
                             // Discover any new instantiations from monomorphized body.
                             self.visit_fn(&mut mono_fn)?;
@@ -655,8 +723,8 @@ impl MonoCtx {
 
                             let mut mono_const = (**c).clone();
                             mono_const.ident = Ident::new(&const_mangled_name, c.ident.span());
-                            substitute_type(&mut mono_const.ty, &impl_subst);
-                            substitute_expr(&mut mono_const.expr, &impl_subst);
+                            substitute_type(&mut mono_const.ty, &impl_subst, &impl_consts);
+                            substitute_expr(&mut mono_const.expr, &impl_subst, &impl_consts);
 
                             self.generated.push(Item::Const(Box::new(mono_const)));
                         }
@@ -718,6 +786,13 @@ impl MonoCtx {
             .map(|tp| (tp.to_string(), concrete_elem.clone()))
             .into_iter()
             .collect();
+        // Array impl templates with const params (e.g. `impl<T, const N:
+        // usize> ... for [T; N]`) are not yet fully supported — the
+        // concrete const value would need to flow from the usage site.
+        // For now the consts map is empty; the
+        // `generic_impl_const_generic_array` trybuild test covers this
+        // gap (still compile_fail, see #133).
+        let consts: BTreeMap<String, u32> = BTreeMap::new();
 
         // Monomorphize each method and constant.
         for ii in &impl_template.items {
@@ -743,14 +818,14 @@ impl MonoCtx {
 
                     // Substitute types in inputs
                     for pair in mono_fn.inputs.iter_mut() {
-                        substitute_type(&mut pair.ty, &subst);
+                        substitute_type(&mut pair.ty, &subst, &consts);
                     }
                     // Substitute in return type
                     if let ReturnType::Type { ty, .. } = &mut mono_fn.return_type {
-                        substitute_type(ty, &subst);
+                        substitute_type(ty, &subst, &consts);
                     }
                     // Substitute in block
-                    substitute_block(&mut mono_fn.block, &subst);
+                    substitute_block(&mut mono_fn.block, &subst, &consts);
 
                     // Discover any new instantiations from monomorphized body.
                     self.visit_fn(&mut mono_fn)?;
@@ -773,8 +848,8 @@ impl MonoCtx {
 
                     let mut mono_const = (**c).clone();
                     mono_const.ident = Ident::new(&const_mangled_name, c.ident.span());
-                    substitute_type(&mut mono_const.ty, &subst);
-                    substitute_expr(&mut mono_const.expr, &subst);
+                    substitute_type(&mut mono_const.ty, &subst, &consts);
+                    substitute_expr(&mut mono_const.expr, &subst, &consts);
 
                     self.generated.push(Item::Const(Box::new(mono_const)));
                 }
@@ -824,8 +899,13 @@ impl MonoCtx {
 
 impl ParseVisitorMut for MonoCtx {
     fn visit_type(&mut self, ty: &mut Type) -> Result<(), crate::parse::Error> {
-        if let Type::Struct { ident, type_args } = ty
-            && !type_args.is_empty()
+        if let Type::Struct {
+            ident,
+            type_args,
+            const_args,
+            ..
+        } = ty
+            && (!type_args.is_empty() || !const_args.is_empty())
         {
             let struct_name = ident.to_string();
             // We use the ident's span as the diagnostic site — the
@@ -835,14 +915,19 @@ impl ParseVisitorMut for MonoCtx {
             // the actual `Pair<f32>` text.
             let span = ident.span();
             if let Some(template) = self.struct_templates.get(&struct_name) {
-                if type_args.len() != template.type_params.len() {
+                let total_params = template.type_params.len() + template.const_params.len();
+                let total_args = type_args.len() + const_args.len();
+                if total_params != total_args {
                     return Err(crate::parse::Error::unsupported(
                         span,
                         format!(
-                            "'{}' expects {} type argument(s), but {} were provided",
+                            "'{}' expects {} generic argument(s) ({} type + {} const), but {} \
+                             were provided",
                             struct_name,
+                            total_params,
                             template.type_params.len(),
-                            type_args.len()
+                            template.const_params.len(),
+                            total_args
                         ),
                     ));
                 }
@@ -853,6 +938,7 @@ impl ParseVisitorMut for MonoCtx {
                             .iter()
                             .map(type_to_key)
                             .collect::<Result<Vec<_>, _>>()?,
+                        const_args: const_args.clone(),
                     };
                     if !self.struct_seen.contains(&key) {
                         self.struct_seen.insert(key.clone());
@@ -860,6 +946,7 @@ impl ParseVisitorMut for MonoCtx {
                             key,
                             span,
                             concrete_types: type_args.clone(),
+                            concrete_consts: const_args.clone(),
                         });
                     }
                 }
@@ -888,10 +975,11 @@ impl ParseVisitorMut for MonoCtx {
         if let Expr::FnCall {
             path,
             type_args,
+            const_args,
             params,
             ..
         } = expr
-            && !type_args.is_empty()
+            && (!type_args.is_empty() || !const_args.is_empty())
         {
             let fn_name = match path {
                 FnPath::Ident(id) => id.to_string(),
@@ -910,14 +998,20 @@ impl ParseVisitorMut for MonoCtx {
             if let FnPath::TypeMethod { ty, .. } = path {
                 let ty_name = ty.to_string();
                 if let Some(struct_tmpl) = self.struct_templates.get(&ty_name) {
-                    if type_args.len() != struct_tmpl.type_params.len() {
+                    let total_params =
+                        struct_tmpl.type_params.len() + struct_tmpl.const_params.len();
+                    let total_args = type_args.len() + const_args.len();
+                    if total_params != total_args {
                         return Err(crate::parse::Error::unsupported(
                             span,
                             format!(
-                                "'{}' expects {} type argument(s), but {} were provided",
+                                "'{}' expects {} generic argument(s) ({} type + {} const), but {} \
+                                 were provided",
                                 ty_name,
+                                total_params,
                                 struct_tmpl.type_params.len(),
-                                type_args.len()
+                                struct_tmpl.const_params.len(),
+                                total_args
                             ),
                         ));
                     }
@@ -928,6 +1022,7 @@ impl ParseVisitorMut for MonoCtx {
                                 .iter()
                                 .map(type_to_key)
                                 .collect::<Result<Vec<_>, _>>()?,
+                            const_args: const_args.clone(),
                         };
                         if !self.struct_seen.contains(&key) {
                             self.struct_seen.insert(key.clone());
@@ -935,6 +1030,7 @@ impl ParseVisitorMut for MonoCtx {
                                 key,
                                 span,
                                 concrete_types: type_args.clone(),
+                                concrete_consts: const_args.clone(),
                             });
                         }
                     }
@@ -942,13 +1038,18 @@ impl ParseVisitorMut for MonoCtx {
             }
 
             if let Some(template) = self.templates.get(&fn_name) {
-                if type_args.len() != template.type_params.len() {
+                let total_params = template.type_params.len() + template.const_params.len();
+                let total_args = type_args.len() + const_args.len();
+                if total_params != total_args {
                     return Err(crate::parse::Error::unsupported(
                         span,
                         format!(
-                            "'{fn_name}' expects {} type argument(s), but {} were provided",
+                            "'{fn_name}' expects {} generic argument(s) ({} type + {} const), but \
+                             {} were provided",
+                            total_params,
                             template.type_params.len(),
-                            type_args.len()
+                            template.const_params.len(),
+                            total_args
                         ),
                     ));
                 }
@@ -959,6 +1060,7 @@ impl ParseVisitorMut for MonoCtx {
                             .iter()
                             .map(type_to_key)
                             .collect::<Result<Vec<_>, _>>()?,
+                        const_args: const_args.clone(),
                     };
                     if !self.seen.contains(&key) {
                         self.seen.insert(key.clone());
@@ -966,6 +1068,7 @@ impl ParseVisitorMut for MonoCtx {
                             key,
                             span,
                             concrete_types: type_args.clone(),
+                            concrete_consts: const_args.clone(),
                         });
                     }
                 }
@@ -994,22 +1097,28 @@ impl ParseVisitorMut for MonoCtx {
         if let Expr::Struct {
             ident,
             type_args,
+            const_args,
             fields,
             ..
         } = expr
-            && !type_args.is_empty()
+            && (!type_args.is_empty() || !const_args.is_empty())
         {
             let struct_name = ident.to_string();
             let span = ident.span();
             if let Some(template) = self.struct_templates.get(&struct_name) {
-                if type_args.len() != template.type_params.len() {
+                let total_params = template.type_params.len() + template.const_params.len();
+                let total_args = type_args.len() + const_args.len();
+                if total_params != total_args {
                     return Err(crate::parse::Error::unsupported(
                         span,
                         format!(
-                            "'{}' expects {} type argument(s), but {} were provided",
+                            "'{}' expects {} generic argument(s) ({} type + {} const), but {} \
+                             were provided",
                             struct_name,
+                            total_params,
                             template.type_params.len(),
-                            type_args.len()
+                            template.const_params.len(),
+                            total_args
                         ),
                     ));
                 }
@@ -1020,6 +1129,7 @@ impl ParseVisitorMut for MonoCtx {
                             .iter()
                             .map(type_to_key)
                             .collect::<Result<Vec<_>, _>>()?,
+                        const_args: const_args.clone(),
                     };
                     if !self.struct_seen.contains(&key) {
                         self.struct_seen.insert(key.clone());
@@ -1027,6 +1137,7 @@ impl ParseVisitorMut for MonoCtx {
                             key,
                             span,
                             concrete_types: type_args.clone(),
+                            concrete_consts: const_args.clone(),
                         });
                     }
                 }
@@ -1045,10 +1156,13 @@ impl ParseVisitorMut for MonoCtx {
 //
 // Replaces every `Type::TypeParam` (and the equivalent ident references in
 // `FnPath::TypeMethod` and `Expr::Struct`) with its concrete type from a
-// caller-supplied substitution map. Implemented as a [`ParseVisitorMut`].
+// caller-supplied substitution map, AND replaces every `Expr::Ident(name)`
+// referencing a const generic parameter with a concrete integer literal.
+// Implemented as a [`ParseVisitorMut`].
 
 struct SubstituteVisitor<'a> {
     subst: &'a BTreeMap<String, Type>,
+    consts: &'a BTreeMap<String, u32>,
 }
 
 impl ParseVisitorMut for SubstituteVisitor<'_> {
@@ -1063,6 +1177,17 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
     }
 
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        // Const-param substitution: rewrite bare ident references to
+        // const params (e.g. `N` in an array length `[u32; N]` or a
+        // for-loop bound `0..N`) to integer literals. This must happen
+        // before any other matching, since `Expr::Ident` is the leaf
+        // form for const-param references.
+        if let Expr::Ident(ident) = expr
+            && let Some(&n) = self.consts.get(&ident.to_string())
+        {
+            *expr = Expr::Lit(Lit::Int(syn::LitInt::new(&n.to_string(), ident.span())));
+            return Ok(());
+        }
         // Two extra rewrites that the default walker doesn't perform:
         //
         // * `T::method(...)` becomes `f32::method(...)` when `T` is in the substitution
@@ -1090,18 +1215,26 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
     }
 }
 
-fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>) {
-    let mut v = SubstituteVisitor { subst };
+fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>, consts: &BTreeMap<String, u32>) {
+    let mut v = SubstituteVisitor { subst, consts };
     let _ = v.visit_type(ty);
 }
 
-fn substitute_block(block: &mut Block, subst: &BTreeMap<String, Type>) {
-    let mut v = SubstituteVisitor { subst };
+fn substitute_block(
+    block: &mut Block,
+    subst: &BTreeMap<String, Type>,
+    consts: &BTreeMap<String, u32>,
+) {
+    let mut v = SubstituteVisitor { subst, consts };
     let _ = v.visit_block(block);
 }
 
-fn substitute_expr(expr: &mut Expr, subst: &BTreeMap<String, Type>) {
-    let mut v = SubstituteVisitor { subst };
+fn substitute_expr(
+    expr: &mut Expr,
+    subst: &BTreeMap<String, Type>,
+    consts: &BTreeMap<String, u32>,
+) {
+    let mut v = SubstituteVisitor { subst, consts };
     let _ = v.visit_expr(expr);
 }
 
@@ -1122,14 +1255,20 @@ struct RewriteNamesVisitor<'a> {
 
 impl ParseVisitorMut for RewriteNamesVisitor<'_> {
     fn visit_type(&mut self, ty: &mut Type) -> Result<(), crate::parse::Error> {
-        if let Type::Struct { ident, type_args } = ty
-            && !type_args.is_empty()
+        if let Type::Struct {
+            ident,
+            type_args,
+            const_args,
+            ..
+        } = ty
+            && (!type_args.is_empty() || !const_args.is_empty())
             && self.struct_templates.contains_key(&ident.to_string())
         {
-            let mangled = mangle_name(&ident.to_string(), type_args)
+            let mangled = mangle_name(&ident.to_string(), type_args, const_args)
                 .expect("mangle_name should not fail for concrete types");
             *ident = Ident::new(&mangled, ident.span());
             type_args.clear();
+            const_args.clear();
         }
         parse_visitor::walk_type(self, ty)
     }
@@ -1137,8 +1276,11 @@ impl ParseVisitorMut for RewriteNamesVisitor<'_> {
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
         match expr {
             Expr::FnCall {
-                path, type_args, ..
-            } if !type_args.is_empty() => {
+                path,
+                type_args,
+                const_args,
+                ..
+            } if !type_args.is_empty() || !const_args.is_empty() => {
                 // First try fn-template name mangling (covers both
                 // free generic functions and `Type::method` calls
                 // where `Type::method` is a known template fn).
@@ -1149,7 +1291,7 @@ impl ParseVisitorMut for RewriteNamesVisitor<'_> {
                     }
                 };
                 if self.fn_templates.contains_key(&fn_name) {
-                    let mangled = mangle_name(&fn_name, type_args)
+                    let mangled = mangle_name(&fn_name, type_args, const_args)
                         .expect("mangle_name should not fail for concrete types");
                     let span = match &*path {
                         FnPath::Ident(id) => id.span(),
@@ -1157,29 +1299,37 @@ impl ParseVisitorMut for RewriteNamesVisitor<'_> {
                     };
                     *path = FnPath::Ident(Ident::new(&mangled, span));
                     type_args.clear();
+                    const_args.clear();
                 } else if let FnPath::TypeMethod { ty, method, .. } = path {
                     // Then check for `StructTemplate::method(...)` calls
                     // where `StructTemplate` is a known generic struct.
                     let ty_name = ty.to_string();
-                    if self.struct_templates.contains_key(&ty_name) && !type_args.is_empty() {
-                        let mangled_struct = mangle_name(&ty_name, type_args)
+                    if self.struct_templates.contains_key(&ty_name)
+                        && (!type_args.is_empty() || !const_args.is_empty())
+                    {
+                        let mangled_struct = mangle_name(&ty_name, type_args, const_args)
                             .expect("mangle_name should not fail for concrete types");
                         let mangled_fn = mangle(&[&mangled_struct, &method.to_string()]);
                         let span = ty.span();
                         *path = FnPath::Ident(Ident::new(&mangled_fn, span));
                         type_args.clear();
+                        const_args.clear();
                     }
                 }
             }
             Expr::Struct {
-                ident, type_args, ..
-            } if !type_args.is_empty()
+                ident,
+                type_args,
+                const_args,
+                ..
+            } if (!type_args.is_empty() || !const_args.is_empty())
                 && self.struct_templates.contains_key(&ident.to_string()) =>
             {
-                let mangled = mangle_name(&ident.to_string(), type_args)
+                let mangled = mangle_name(&ident.to_string(), type_args, const_args)
                     .expect("mangle_name should not fail for concrete types");
                 *ident = Ident::new(&mangled, ident.span());
                 type_args.clear();
+                const_args.clear();
             }
             _ => {}
         }
@@ -1212,19 +1362,27 @@ struct CheckUnresolvedVisitor<'a> {
 impl ParseVisitorMut for CheckUnresolvedVisitor<'_> {
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
         if let Expr::FnCall {
-            path, type_args, ..
+            path,
+            type_args,
+            const_args,
+            ..
         } = expr
             && type_args.is_empty()
+            && const_args.is_empty()
             && let FnPath::Ident(id) = path
         {
             let name = id.to_string();
             if let Some(template) = self.templates.get(&name) {
-                let param_names: Vec<_> =
+                // Build the expected turbofish args hint from the
+                // template's params. Type params appear as their names;
+                // const params appear as `N` (their names).
+                let mut param_names: Vec<String> =
                     template.type_params.iter().map(|p| p.to_string()).collect();
+                param_names.extend(template.const_params.iter().map(|p| p.to_string()));
                 return Err(crate::parse::Error::unsupported(
                     id.span(),
                     format!(
-                        "calling generic function '{name}' requires type arguments, e.g., \
+                        "calling generic function '{name}' requires generic arguments, e.g., \
                          {name}::<{}>(...)",
                         param_names.join(", ")
                     ),
@@ -1311,8 +1469,13 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
         // Cross-module generic struct usage: `OtherMod::Pair<f32>`.
         // We detect a `Type::Struct` that has type args but is *not* a
         // local struct template — it must come from an imported module.
-        if let Type::Struct { ident, type_args } = ty
-            && !type_args.is_empty()
+        if let Type::Struct {
+            ident,
+            type_args,
+            const_args,
+            ..
+        } = ty
+            && (!type_args.is_empty() || !const_args.is_empty())
         {
             let struct_name = ident.to_string();
             if !self.local_struct_templates.contains_key(&struct_name) {
@@ -1320,11 +1483,15 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
-                let mangled_name = mangle_name(&struct_name, type_args)?;
+                let mangled_const_args: Vec<String> =
+                    const_args.iter().map(|n| n.to_string()).collect();
+                let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
                 let parse_type_args: Vec<Type> = type_args.clone();
+                let parse_const_args: Vec<u32> = const_args.clone();
 
                 *ident = Ident::new(&mangled_name, ident.span());
                 type_args.clear();
+                const_args.clear();
 
                 if self.seen.insert(mangled_name) {
                     self.out.push(CrossModuleInstantiation {
@@ -1332,6 +1499,8 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                         fn_name: struct_name,
                         mangled_type_args,
                         type_args: parse_type_args,
+                        mangled_const_args,
+                        const_args: parse_const_args,
                     });
                 }
                 // type_args has been cleared; nothing left to recurse into.
@@ -1346,9 +1515,10 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
             Expr::FnCall {
                 path,
                 type_args,
+                const_args,
                 params,
                 ..
-            } if !type_args.is_empty() => {
+            } if !type_args.is_empty() || !const_args.is_empty() => {
                 // First check for `OtherStruct::method(...)` calls where
                 // `OtherStruct` is a cross-module generic struct.
                 if let FnPath::TypeMethod { ty, method, .. } = &*path {
@@ -1361,12 +1531,16 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .iter()
                             .map(mangle_type)
                             .collect::<Result<_, _>>()?;
+                        let mangled_const_args: Vec<String> =
+                            const_args.iter().map(|n| n.to_string()).collect();
                         let parse_type_args: Vec<Type> = type_args.clone();
-                        let mangled_struct = mangle_name(&ty_name, type_args)?;
+                        let parse_const_args: Vec<u32> = const_args.clone();
+                        let mangled_struct = mangle_name(&ty_name, type_args, const_args)?;
                         let mangled_fn = mangle(&[&mangled_struct, &method.to_string()]);
                         let span = ty.span();
                         *path = FnPath::Ident(Ident::new(&mangled_fn, span));
                         type_args.clear();
+                        const_args.clear();
 
                         if self.seen.insert(mangled_struct) {
                             self.out.push(CrossModuleInstantiation {
@@ -1374,6 +1548,8 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                                 fn_name: ty_name,
                                 mangled_type_args,
                                 type_args: parse_type_args,
+                                mangled_const_args,
+                                const_args: parse_const_args,
                             });
                         }
                     }
@@ -1383,7 +1559,7 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                 // the `TypeMethod` path above, the path may have been
                 // rewritten to an `Ident`; double-check `type_args` still
                 // has entries before continuing.
-                if !type_args.is_empty() {
+                if !type_args.is_empty() || !const_args.is_empty() {
                     let fn_name = match &*path {
                         FnPath::Ident(id) => id.to_string(),
                         FnPath::TypeMethod { ty, method, .. } => {
@@ -1410,8 +1586,11 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .iter()
                             .map(mangle_type)
                             .collect::<Result<Vec<_>, _>>()?;
+                        let mangled_const_args: Vec<String> =
+                            const_args.iter().map(|n| n.to_string()).collect();
                         let parse_type_args: Vec<Type> = type_args.clone();
-                        let mangled_name = mangle_name(&fn_name, type_args)?;
+                        let parse_const_args: Vec<u32> = const_args.clone();
+                        let mangled_name = mangle_name(&fn_name, type_args, const_args)?;
 
                         let span = match &*path {
                             FnPath::Ident(id) => id.span(),
@@ -1419,6 +1598,7 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                         };
                         *path = FnPath::Ident(Ident::new(&mangled_name, span));
                         type_args.clear();
+                        const_args.clear();
 
                         if self.seen.insert(mangled_name) {
                             self.out.push(CrossModuleInstantiation {
@@ -1426,6 +1606,8 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                                 fn_name,
                                 mangled_type_args,
                                 type_args: parse_type_args,
+                                mangled_const_args,
+                                const_args: parse_const_args,
                             });
                         }
                     }
@@ -1440,20 +1622,25 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
             Expr::Struct {
                 ident,
                 type_args,
+                const_args,
                 fields,
                 ..
-            } if !type_args.is_empty() => {
+            } if !type_args.is_empty() || !const_args.is_empty() => {
                 let struct_name = ident.to_string();
                 if !self.local_struct_templates.contains_key(&struct_name) {
                     let mangled_type_args: Vec<String> = type_args
                         .iter()
                         .map(mangle_type)
                         .collect::<Result<_, _>>()?;
+                    let mangled_const_args: Vec<String> =
+                        const_args.iter().map(|n| n.to_string()).collect();
                     let parse_type_args: Vec<Type> = type_args.clone();
-                    let mangled_name = mangle_name(&struct_name, type_args)?;
+                    let parse_const_args: Vec<u32> = const_args.clone();
+                    let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
 
                     *ident = Ident::new(&mangled_name, ident.span());
                     type_args.clear();
+                    const_args.clear();
 
                     if self.seen.insert(mangled_name) {
                         self.out.push(CrossModuleInstantiation {
@@ -1461,6 +1648,8 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             fn_name: struct_name,
                             mangled_type_args,
                             type_args: parse_type_args,
+                            mangled_const_args,
+                            const_args: parse_const_args,
                         });
                     }
                 }
@@ -1642,17 +1831,27 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
 /// `argN_mangled` is itself the output of [`mangle_type`] and is treated
 /// here as a single opaque component (the outer [`mangle`] will re-escape
 /// any internal underscores).
-fn mangle_name(base: &str, type_args: &[Type]) -> Result<String, crate::parse::Error> {
+fn mangle_name(
+    base: &str,
+    type_args: &[Type],
+    const_args: &[u32],
+) -> Result<String, crate::parse::Error> {
     let mangled_args: Vec<String> = type_args
         .iter()
         .map(mangle_type)
         .collect::<Result<_, _>>()?;
-    let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
-    components.push(base);
+    let mangled_consts: Vec<String> = const_args.iter().map(|n| n.to_string()).collect();
+    let mut components: Vec<String> =
+        Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
+    components.push(base.to_string());
     for s in &mangled_args {
-        components.push(s.as_str());
+        components.push(s.clone());
     }
-    Ok(mangle(&components))
+    for s in &mangled_consts {
+        components.push(s.clone());
+    }
+    let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+    Ok(mangle(&str_components))
 }
 
 /// Mangle a [`Type`] to a single component string suitable for use as a
@@ -1668,21 +1867,33 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             ..
         } => format!("vec{}{}", elements, scalar_ty.short_name()),
         Type::Matrix { columns, rows, .. } => format!("mat{}x{}f", columns, rows),
-        Type::Struct { ident, type_args } => {
-            if type_args.is_empty() {
+        Type::Struct {
+            ident,
+            type_args,
+            const_args,
+            ..
+        } => {
+            if type_args.is_empty() && const_args.is_empty() {
                 ident.to_string()
             } else {
                 let mangled_args: Vec<String> = type_args
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
+                let mangled_consts: Vec<String> =
+                    const_args.iter().map(|n| n.to_string()).collect();
                 let ident_str = ident.to_string();
-                let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
-                components.push(&ident_str);
+                let mut components: Vec<String> =
+                    Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
+                components.push(ident_str);
                 for s in &mangled_args {
-                    components.push(s.as_str());
+                    components.push(s.clone());
                 }
-                mangle(&components)
+                for s in &mangled_consts {
+                    components.push(s.clone());
+                }
+                let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+                mangle(&str_components)
             }
         }
         Type::Array { elem, len, .. } => {
@@ -1748,23 +1959,36 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
             Box::new(TypeKey::Scalar(scalar_ty.wgsl_name().to_string())),
         ),
         Type::Matrix { columns, rows, .. } => TypeKey::Matrix(*columns, *rows),
-        Type::Struct { ident, type_args } => {
-            if type_args.is_empty() {
+        Type::Struct {
+            ident,
+            type_args,
+            const_args,
+            ..
+        } => {
+            if type_args.is_empty() && const_args.is_empty() {
                 TypeKey::Struct(ident.to_string())
             } else {
                 // For generic struct instantiations, include the mangled name
-                // so different instantiations get different keys.
+                // so different instantiations get different keys. Include
+                // const args too so `Grid::<4>` and `Grid::<8>` differ.
                 let mangled_args: Vec<String> = type_args
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
+                let mangled_consts: Vec<String> =
+                    const_args.iter().map(|n| n.to_string()).collect();
                 let ident_str = ident.to_string();
-                let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
-                components.push(&ident_str);
+                let mut components: Vec<String> =
+                    Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
+                components.push(ident_str);
                 for s in &mangled_args {
-                    components.push(s.as_str());
+                    components.push(s.clone());
                 }
-                TypeKey::Struct(mangle(&components))
+                for s in &mangled_consts {
+                    components.push(s.clone());
+                }
+                let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+                TypeKey::Struct(mangle(&str_components))
             }
         }
         Type::Array { elem, len, .. } => {
@@ -2156,7 +2380,7 @@ mod test {
         };
         let err = mono_err(input);
         assert!(
-            err.contains("requires type arguments"),
+            err.contains("requires generic arguments"),
             "Expected missing turbofish error, got: {err}"
         );
         assert!(

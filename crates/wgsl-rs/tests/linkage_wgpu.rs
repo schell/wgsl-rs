@@ -547,6 +547,7 @@ fn compute_workgroup_size_defaults_to_one() {
         name: "default_ws",
         items: vec![ir::Item::Fn(ir::ItemFn {
             type_params: vec![],
+            const_params: vec![],
             fn_attrs: FnAttrs::Compute {
                 workgroup_size: ir::WorkgroupSize {
                     x: 32,
@@ -780,6 +781,7 @@ fn linkage_with_no_groups() -> wg::WgpuLinkage {
         name: "no_groups",
         items: vec![ir::Item::Fn(ir::ItemFn {
             type_params: vec![],
+            const_params: vec![],
             fn_attrs: ir::FnAttrs::Vertex,
             name: std::borrow::Cow::Borrowed("vtx_main"),
             inputs: vec![],

@@ -37,6 +37,7 @@ fn renders_simple_function() {
         name: "test",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
+            const_params: vec![],
             fn_attrs: FnAttrs::None,
             name: "double".to_string().into(),
             inputs: vec![FnArg {
@@ -76,6 +77,7 @@ fn renders_compute_entry_point() {
         name: "test",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
+            const_params: vec![],
             fn_attrs: FnAttrs::Compute {
                 workgroup_size: WorkgroupSize {
                     x: 64,
@@ -105,6 +107,7 @@ fn renders_struct_and_impl() {
         items: vec![
             Item::Struct(ItemStruct {
                 type_params: vec![],
+                const_params: vec![],
                 name: "Point".to_string(),
                 fields: vec![
                     Field {
@@ -124,9 +127,11 @@ fn renders_struct_and_impl() {
             }),
             Item::Impl(ItemImpl {
                 type_params: vec![],
+                const_params: vec![],
                 self_ty: "Point".to_string(),
                 items: vec![ImplItem::Fn(ItemFn {
                     type_params: vec![],
+                    const_params: vec![],
                     fn_attrs: FnAttrs::None,
                     name: "x_only".to_string().into(),
                     inputs: vec![FnArg {
@@ -239,6 +244,7 @@ fn substitute_replaces_type_params() {
         name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec!["T".to_string()],
+            const_params: vec![],
             fn_attrs: FnAttrs::None,
             name: "id".to_string().into(),
             inputs: vec![FnArg {
@@ -279,6 +285,7 @@ fn substitute_propagates_into_arrays_and_pointers() {
         name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec!["T".to_string()],
+            const_params: vec![],
             fn_attrs: FnAttrs::None,
             name: "f".to_string().into(),
             inputs: vec![FnArg {
@@ -317,6 +324,7 @@ fn fn_call_translates_builtin_names() {
         name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
+            const_params: vec![],
             fn_attrs: FnAttrs::None,
             name: "f".to_string().into(),
             inputs: vec![FnArg {
@@ -353,6 +361,7 @@ fn slab_read_lowers_to_for_loop() {
         name: "t",
         items: vec![Item::Fn(ItemFn {
             type_params: vec![],
+            const_params: vec![],
             fn_attrs: FnAttrs::None,
             name: "f".to_string().into(),
             inputs: vec![],
@@ -383,6 +392,7 @@ fn attrs_are_not_rendered_in_wgsl() {
         name: "test",
         items: vec![Item::Struct(ItemStruct {
             type_params: vec![],
+            const_params: vec![],
             name: "Foo".to_string(),
             fields: vec![Field {
                 inter_stage_io: vec![],
@@ -421,6 +431,7 @@ fn substitute_preserves_attrs() {
         name: "t",
         items: vec![Item::Struct(ItemStruct {
             type_params: vec![],
+            const_params: vec![],
             name: "Pair".to_string(),
             fields: vec![Field {
                 inter_stage_io: vec![],

@@ -31,5 +31,8 @@ pub use mangle::{mangle, unmangle};
 pub use render::{
     render_block, render_expr, render_item, render_items, render_module, render_stmt, render_type,
 };
-pub use substitute::{rename_items, substitute_items, substitute_types, type_to_ident};
+pub use substitute::{
+    rename_items, substitute_consts, substitute_consts_in_items, substitute_items,
+    substitute_types, type_to_ident,
+};
 pub use types::*;

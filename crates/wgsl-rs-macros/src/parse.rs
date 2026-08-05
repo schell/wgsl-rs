@@ -137,20 +137,50 @@ use crate::parse::util::in_progress;
 pub struct ParseContext {
     /// Names of type parameters currently in scope (e.g., `"T"`, `"U"`).
     pub type_params: HashSet<String>,
+    /// Names of `const` parameters currently in scope (e.g., `"N"` from
+    /// `const N: u32`). These are recognized in array length position and
+    /// other const-expression contexts, where they emit `Expr::Ident(name)`
+    /// and are later substituted with concrete `u32` values during
+    /// monomorphization.
+    pub const_params: HashSet<String>,
     /// Optional name map applied when emitting `Type::TypeParam`. When a
     /// source-level name (`"T"`) is present in this map, the resulting
     /// `Type::TypeParam` carries the mapped name instead. Empty by
     /// default, which preserves source-level names.
     pub type_param_renames: HashMap<String, String>,
+    /// Optional name map applied when emitting `Expr::Ident` for a
+    /// const-param reference. When a source-level name (`"N"`) is
+    /// present in this map, the resulting `Expr::Ident` carries the
+    /// mapped name instead (e.g. `"main_c0"`). Empty by default, which
+    /// preserves source-level names (the non-entry-point path).
+    pub const_param_renames: HashMap<String, String>,
 }
 
 impl ParseContext {
     /// Build a context from an iterator of type parameter identifiers.
     /// No renames are applied; source-level names are used in the IR.
+    /// No const parameters are in scope.
     pub fn from_type_params<I: IntoIterator<Item = Ident>>(iter: I) -> Self {
         Self {
             type_params: iter.into_iter().map(|id| id.to_string()).collect(),
+            const_params: HashSet::new(),
             type_param_renames: HashMap::new(),
+            const_param_renames: HashMap::new(),
+        }
+    }
+
+    /// Build a context from an iterator of type parameter identifiers and
+    /// an iterator of const parameter identifiers. No renames are applied.
+    pub fn from_params<I, J>(type_iter: I, const_iter: J) -> Self
+    where
+        I: IntoIterator<Item = Ident>,
+        J: IntoIterator<Item = Ident>,
+    {
+        Self {
+            type_params: type_iter.into_iter().map(|id| id.to_string()).collect(),
+            const_params: const_iter.into_iter().map(|id| id.to_string()).collect(),
+            type_param_renames: HashMap::new(),
+            const_param_renames: HashMap::new(),
         }
     }
 
@@ -174,14 +204,48 @@ impl ParseContext {
         }
         Self {
             type_params,
+            const_params: HashSet::new(),
             type_param_renames: renames,
+            const_param_renames: HashMap::new(),
         }
+    }
+
+    /// Like [`Self::from_renamed_type_params`] but also registers const
+    /// parameter renames. The `const_iter` yields `(source_name,
+    /// encoded_name)` pairs so that `Expr::Ident` references to const
+    /// params in the body get the encoded name (e.g. `N` → `main_c0`).
+    pub fn from_renamed_type_params_with_consts<I, S, E, J, K>(iter: I, const_iter: J) -> Self
+    where
+        I: IntoIterator<Item = (S, E)>,
+        S: Into<String>,
+        E: Into<String>,
+        J: IntoIterator<Item = (K, K)>,
+        K: Into<String>,
+    {
+        let mut ctx = Self::from_renamed_type_params(iter);
+        for (source, encoded) in const_iter {
+            let source = source.into();
+            let encoded = encoded.into();
+            ctx.const_params.insert(encoded.clone());
+            ctx.const_param_renames.insert(source, encoded);
+        }
+        ctx
     }
 
     /// Apply any rename in the context to `name`, returning the encoded
     /// name to be stored in `Type::TypeParam`.
     pub fn encode_type_param(&self, name: &str) -> String {
         self.type_param_renames
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Apply any const-param rename in the context to `name`, returning
+    /// the encoded name to be stored in `Expr::Ident`. For non-entry-
+    /// point functions (no const renames), this returns `name` unchanged.
+    pub fn encode_const_param(&self, name: &str) -> String {
+        self.const_param_renames
             .get(name)
             .cloned()
             .unwrap_or_else(|| name.to_string())
@@ -736,8 +800,14 @@ pub enum Type {
     ///
     /// `type_args` is empty for non-generic struct types. For generic struct
     /// types, it contains the concrete type arguments (e.g., `[f32]` for
-    /// `Pair<f32>`).
-    Struct { ident: Ident, type_args: Vec<Type> },
+    /// `Pair<f32>`). `const_args` carries concrete `u32` values for any
+    /// const generic arguments (e.g., `[4]` for `Grid::<4>`); it is empty
+    /// for type-only generics or non-generic structs.
+    Struct {
+        ident: Ident,
+        type_args: Vec<Type>,
+        const_args: Vec<u32>,
+    },
 
     /// Pointer type: ptr<address_space, T>
     /// Created from `ptr!(address_space, T)` macro invocations.
@@ -999,6 +1069,7 @@ impl Type {
                                 Type::Struct {
                                     ident: ident.clone(),
                                     type_args: vec![],
+                                    const_args: vec![],
                                 }
                             }
                         }
@@ -1172,12 +1243,17 @@ impl Type {
                     } else {
                         // Not a known builtin — treat as a generic struct
                         // instantiation (e.g., `Pair<f32>`, `Wrapper<i32,
-                        // u32>`).
+                        // u32>`, `Grid<u32, 4>`).
                         let mut type_args = Vec::new();
+                        let mut const_args = Vec::new();
                         for arg in args {
                             match arg {
                                 syn::GenericArgument::Type(ty) => {
                                     type_args.push(Type::parse(ty, ctx)?);
+                                }
+                                syn::GenericArgument::Const(expr) => {
+                                    let n = eval_const_u32_arg(expr)?;
+                                    const_args.push(n);
                                 }
                                 other => {
                                     return UnsupportedSnafu {
@@ -1194,6 +1270,7 @@ impl Type {
                         Ok(Type::Struct {
                             ident: ident.clone(),
                             type_args,
+                            const_args,
                         })
                     }
                 }
@@ -1722,18 +1799,26 @@ pub enum Expr {
         /// Concrete type arguments from turbofish syntax (e.g., `foo::<f32,
         /// u32>`). Empty for non-generic calls.
         type_args: Vec<Type>,
+        /// Concrete const arguments from turbofish syntax (e.g.,
+        /// `foo::<4>` for a `const N: u32` parameter). Empty for
+        /// non-const-generic calls. Values are `u32` literal integers
+        /// parsed at macro time.
+        const_args: Vec<u32>,
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
     },
     /// Struct constructor.
     ///
     /// `type_args` carries concrete type arguments for generic struct
-    /// construction (e.g., `Pair::<f32> { ... }`). Empty for non-generic
-    /// structs. After monomorphization, the ident is rewritten to the mangled
-    /// name and type_args is cleared.
+    /// construction (e.g., `Pair::<f32> { ... }`). `const_args` carries
+    /// concrete `u32` values for any const generic arguments (e.g.,
+    /// `Grid::<4> { ... }`). Both are empty for non-generic structs.
+    /// After monomorphization, the ident is rewritten to the mangled
+    /// name and both args vecs are cleared.
     Struct {
         ident: Ident,
         type_args: Vec<Type>,
+        const_args: Vec<u32>,
         brace_token: syn::token::Brace,
         fields: syn::punctuated::Punctuated<FieldValue, syn::Token![,]>,
     },
@@ -1829,8 +1914,24 @@ impl Expr {
                 util::some_is_unsupported(qself.as_ref(), "QSelf is unsupported")?;
 
                 if let Some(ident) = path.get_ident() {
-                    // Simple identifier: `foo`
-                    Self::Ident(ident.clone())
+                    // Simple identifier: `foo`. If this is a const-param
+                    // reference (e.g. `N` in an array length or a for-loop
+                    // bound), apply any positional rename so entry-point
+                    // const params get their `{fn}_c{i}` encoding.
+                    let ident_str = ident.to_string();
+                    if ctx.const_params.contains(&ident_str)
+                        || ctx.const_param_renames.contains_key(&ident_str)
+                    {
+                        let encoded = ctx.encode_const_param(&ident_str);
+                        let encoded_ident = if encoded == ident_str {
+                            ident.clone()
+                        } else {
+                            Ident::new(&encoded, ident.span())
+                        };
+                        Self::Ident(encoded_ident)
+                    } else {
+                        Self::Ident(ident.clone())
+                    }
                 } else if path.segments.len() == 2 {
                     // Type::member path: `Light::CONSTANT`
                     let ty = path.segments[0].ident.clone();
@@ -2049,32 +2150,36 @@ impl Expr {
                     util::some_is_unsupported(expr_path.qself.as_ref(), "QSelf unsupported")?;
 
                     let syn_path = &expr_path.path;
-                    let (fn_path, type_args) = if syn_path.segments.len() == 1 {
+                    let (fn_path, type_args, const_args) = if syn_path.segments.len() == 1 {
                         let seg = &syn_path.segments[0];
                         match &seg.arguments {
                             syn::PathArguments::None => {
                                 // Simple function call: foo(args)
-                                (FnPath::Ident(seg.ident.clone()), vec![])
+                                (FnPath::Ident(seg.ident.clone()), vec![], vec![])
                             }
                             syn::PathArguments::AngleBracketed(angle_args) => {
-                                // Turbofish call: foo::<T1, T2>(args)
+                                // Turbofish call: foo::<T1, T2, 4>(args)
                                 let mut ta = Vec::new();
+                                let mut ca = Vec::new();
                                 for arg in &angle_args.args {
                                     match arg {
                                         syn::GenericArgument::Type(ty) => {
                                             ta.push(Type::parse(ty, ctx)?);
                                         }
+                                        syn::GenericArgument::Const(expr) => {
+                                            ca.push(eval_const_u32_arg(expr)?);
+                                        }
                                         other => {
                                             return UnsupportedSnafu {
                                                 span: other.span(),
-                                                note: "only type arguments are supported in \
-                                                       turbofish",
+                                                note: "only type and const arguments are \
+                                                       supported in turbofish",
                                             }
                                             .fail();
                                         }
                                     }
                                 }
-                                (FnPath::Ident(seg.ident.clone()), ta)
+                                (FnPath::Ident(seg.ident.clone()), ta, ca)
                             }
                             other => {
                                 return UnsupportedSnafu {
@@ -2090,9 +2195,11 @@ impl Expr {
                         let ty = syn_path.segments[0].ident.clone();
                         let method = syn_path.segments[1].ident.clone();
 
-                        // Extract type args from the first segment (the type)
-                        // for generic struct method calls like Pair::<f32>::first()
+                        // Extract type and const args from the first segment
+                        // (the type) for generic struct method calls like
+                        // Pair::<f32>::first() or Grid::<4>::first().
                         let mut type_args = Vec::new();
+                        let mut const_args = Vec::new();
                         if let syn::PathArguments::AngleBracketed(angle_args) =
                             &syn_path.segments[0].arguments
                         {
@@ -2101,10 +2208,13 @@ impl Expr {
                                     syn::GenericArgument::Type(ty) => {
                                         type_args.push(Type::parse(ty, ctx)?);
                                     }
+                                    syn::GenericArgument::Const(expr) => {
+                                        const_args.push(eval_const_u32_arg(expr)?);
+                                    }
                                     other => {
                                         return UnsupportedSnafu {
                                             span: other.span(),
-                                            note: "only type arguments are supported in \
+                                            note: "only type and const arguments are supported in \
                                                    type::method paths",
                                         }
                                         .fail();
@@ -2127,6 +2237,7 @@ impl Expr {
                                 method,
                             },
                             type_args,
+                            const_args,
                         )
                     } else {
                         return UnsupportedSnafu {
@@ -2149,6 +2260,7 @@ impl Expr {
                     Self::FnCall {
                         path: fn_path,
                         type_args,
+                        const_args,
                         paren_token,
                         params,
                     }
@@ -2192,6 +2304,7 @@ impl Expr {
 
                 let struct_ident = segment.ident.clone();
                 let mut type_args = Vec::new();
+                let mut const_args = Vec::new();
                 if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
                     args,
                     ..
@@ -2201,6 +2314,9 @@ impl Expr {
                         match arg {
                             syn::GenericArgument::Type(ty) => {
                                 type_args.push(Type::parse(ty, ctx)?);
+                            }
+                            syn::GenericArgument::Const(expr) => {
+                                const_args.push(eval_const_u32_arg(expr)?);
                             }
                             other => {
                                 return UnsupportedSnafu {
@@ -2229,6 +2345,7 @@ impl Expr {
                 Expr::Struct {
                     ident: struct_ident,
                     type_args,
+                    const_args,
                     brace_token: *brace_token,
                     fields: parsed_fields,
                 }
@@ -3100,12 +3217,16 @@ impl ForLoop {
         // Parse the range expression
         let (from, inclusive, range_span, to) = parse_range_expr(expr, ctx)?;
 
-        // Check for non-literal bounds and emit warning/error if not suppressed
+        // Check for non-literal bounds and emit warning/error if not
+        // suppressed. Const-param names (e.g. `N` from `const N: u32`) are
+        // treated as literal here because they'll be substituted with
+        // concrete integer literals during monomorphization before the
+        // WGSL is rendered.
         let mut non_literal_spans = vec![];
-        if !from.is_literal() {
+        if !from.is_literal() && !is_const_param_ref(&from, ctx) {
             non_literal_spans.push(from.span());
         }
-        if !to.is_literal() {
+        if !to.is_literal() && !is_const_param_ref(&to, ctx) {
             non_literal_spans.push(to.span());
         }
 
@@ -4214,6 +4335,10 @@ impl syn::parse::Parse for WorkgroupSizeArgs {
 pub struct ItemFn {
     /// Type parameters for generic functions (empty for non-generic).
     pub type_params: Vec<Ident>,
+    /// `const` parameters for generic functions (empty for non-generic).
+    /// Each entry is the ident of a `const N: u32` parameter; the value
+    /// is substituted into array length positions during monomorphization.
+    pub const_params: Vec<Ident>,
     /// The full Rust generics from the source signature, including trait
     /// bounds and where-clause predicates. Preserved on entry-point
     /// functions so that the typestate builder can replay the original
@@ -4253,8 +4378,10 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 
         ensure_ident_is_not_shadowing_builtin(&sig.ident)?;
 
-        // Extract type parameters from generics (ignore bounds and where clauses)
+        // Extract type and const parameters from generics (ignore bounds
+        // and where clauses — those are Rust-only).
         let mut type_params = Vec::new();
+        let mut const_params = Vec::new();
         for param in &sig.generics.params {
             match param {
                 syn::GenericParam::Type(tp) => {
@@ -4268,11 +4395,17 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
                     .fail();
                 }
                 syn::GenericParam::Const(cp) => {
-                    return UnsupportedSnafu {
-                        span: cp.ident.span(),
-                        note: "const generic parameters are not yet supported in WGSL",
+                    // Only `u32` and `usize` const params are supported.
+                    // Other types have no WGSL analog.
+                    if !is_u32_or_usize_const_param(&cp.ty) {
+                        return UnsupportedSnafu {
+                            span: cp.ty.span(),
+                            note: "only `u32` and `usize` const generic parameters are supported \
+                                   in WGSL",
+                        }
+                        .fail();
                     }
-                    .fail();
+                    const_params.push(cp.ident.clone());
                 }
             }
         }
@@ -4284,7 +4417,9 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
         // parameters become module-level type parameters using a positional
         // encoding (`fn_name_0`, `fn_name_1`, ...) so that the same source
         // name (e.g. `T`) appearing on multiple entry points doesn't
-        // collide. The whole module's WGSL becomes a template with
+        // collide. Const parameters get a parallel positional encoding
+        // (`fn_name_c0`, `fn_name_c1`, ...) so they don't collide with type
+        // params. The whole module's WGSL becomes a template with
         // `__TP{encoded_name}__` placeholders that the runtime builder /
         // `instantiate()` replaces with concrete types.
         //
@@ -4294,7 +4429,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
         // instantiation.
 
         let ctx = if matches!(fn_attrs, FnAttrs::None) {
-            ParseContext::from_type_params(type_params.iter().cloned())
+            ParseContext::from_params(type_params.iter().cloned(), const_params.iter().cloned())
         } else {
             let fn_name = sig.ident.to_string();
             // Entry-point type-param slot encoding: `{fn}_{i}`. This is
@@ -4302,12 +4437,27 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
             // the public slot-name surface used by the dispatch APIs stays
             // stable. Collisions with user identifiers are caught by the
             // reserved-names check in `monomorphize`. See issue #112.
+            //
+            // Const params use a separate `{fn}_c{i}` namespace so a fn
+            // can have both `T` and `N` without index collision.
             let renamed = type_params.iter().enumerate().map(|(i, id)| {
                 let source = id.to_string();
                 let encoded = format!("{fn_name}_{i}");
                 (source, encoded)
             });
-            ParseContext::from_renamed_type_params(renamed)
+            let const_renamed: Vec<(String, String)> = const_params
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    let source = id.to_string();
+                    let encoded = format!("{fn_name}_c{i}");
+                    (source, encoded)
+                })
+                .collect();
+            ParseContext::from_renamed_type_params_with_consts(
+                renamed,
+                const_renamed.iter().cloned(),
+            )
         };
 
         let mut inputs = syn::punctuated::Punctuated::new();
@@ -4355,6 +4505,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
 
         Ok(ItemFn {
             type_params,
+            const_params,
             syn_generics,
             fn_attrs,
             fn_token: sig.fn_token,
@@ -4459,6 +4610,7 @@ impl ItemFn {
 
         Ok(ItemFn {
             type_params: vec![],
+            const_params: vec![],
             syn_generics: None,
             fn_attrs,
             fn_token: sig.fn_token,
@@ -4485,6 +4637,61 @@ fn ensure_ident_is_not_shadowing_builtin(ident: &Ident) -> Result<(), Error> {
     } else {
         Ok(())
     }
+}
+
+/// Check whether a const generic parameter's type is `u32` or `usize` —
+/// the only const-param types supported in WGSL (they're the only types
+/// that make sense as array lengths, the sole legitimate use case).
+fn is_u32_or_usize_const_param(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(type_path) = ty
+        && type_path.qself.is_none()
+        && type_path.path.segments.len() == 1
+    {
+        let ident = type_path.path.segments[0].ident.to_string();
+        return matches!(ident.as_str(), "u32" | "usize");
+    }
+    false
+}
+
+/// Evaluate a const generic argument expression to a `u32`. Only integer
+/// literals (and parenthesized integer literals) are supported — on
+/// stable Rust a const generic argument in type position must be a bare
+/// literal or a path, never an arbitrary expression. We support literals
+/// here and reject everything else with a clear error.
+fn eval_const_u32_arg(expr: &syn::Expr) -> Result<u32, Error> {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit { lit, .. }) => {
+            if let syn::Lit::Int(int_lit) = lit {
+                int_lit.base10_parse::<u32>().map_err(|_| {
+                    UnsupportedSnafu {
+                        span: int_lit.span(),
+                        note: "const generic argument out of range for u32",
+                    }
+                    .build()
+                })
+            } else {
+                UnsupportedSnafu {
+                    span: lit.span(),
+                    note: "only integer literals are supported as const generic arguments",
+                }
+                .fail()
+            }
+        }
+        syn::Expr::Paren(syn::ExprParen { expr, .. }) => eval_const_u32_arg(expr),
+        other => UnsupportedSnafu {
+            span: other.span(),
+            note: "only integer literals are supported as const generic arguments",
+        }
+        .fail(),
+    }
+}
+
+/// Check whether `expr` is a bare identifier naming a const parameter in
+/// scope (e.g. `N` from `const N: u32`). Used to treat const-param
+/// references as literal in contexts (like for-loop bounds) where the
+/// value will be substituted with a concrete literal before rendering.
+fn is_const_param_ref(expr: &Expr, ctx: &ParseContext) -> bool {
+    matches!(expr, Expr::Ident(ident) if ctx.const_params.contains(&ident.to_string()))
 }
 
 #[derive(Clone)]
@@ -5495,6 +5702,8 @@ impl TryFrom<&syn::FieldsNamed> for FieldsNamed {
 pub struct ItemStruct {
     /// Type parameters for generic structs (empty for non-generic).
     pub type_params: Vec<Ident>,
+    /// `const` parameters for generic structs (empty for non-generic).
+    pub const_params: Vec<Ident>,
     pub struct_token: Token![struct],
     pub ident: Ident,
     pub fields: FieldsNamed,
@@ -5525,9 +5734,10 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
                 item: "Structs"
             }
         );
-        // Extract type parameters from generics (ignore bounds and where
-        // clauses — those are Rust-only).
+        // Extract type and const parameters from generics (ignore bounds
+        // and where clauses — those are Rust-only).
         let mut type_params = Vec::new();
+        let mut const_params = Vec::new();
         for param in &generics.params {
             match param {
                 syn::GenericParam::Type(tp) => {
@@ -5541,11 +5751,15 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
                     .fail();
                 }
                 syn::GenericParam::Const(cp) => {
-                    return UnsupportedSnafu {
-                        span: cp.ident.span(),
-                        note: "const generic parameters are not yet supported on WGSL structs",
+                    if !is_u32_or_usize_const_param(&cp.ty) {
+                        return UnsupportedSnafu {
+                            span: cp.ty.span(),
+                            note: "only `u32` and `usize` const generic parameters are supported \
+                                   on WGSL structs",
+                        }
+                        .fail();
                     }
-                    .fail();
+                    const_params.push(cp.ident.clone());
                 }
             }
         }
@@ -5564,14 +5778,17 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
             .fail()?,
         };
 
-        // Build parse context with type params so field types containing T
-        // resolve to Type::TypeParam. Generic structs go through same-module
-        // monomorphization and keep source-level names.
-        let ctx = ParseContext::from_type_params(type_params.iter().cloned());
+        // Build parse context with type and const params so field types
+        // containing T resolve to Type::TypeParam and array lengths
+        // containing N resolve to Expr::Ident(N). Generic structs go
+        // through same-module monomorphization and keep source-level names.
+        let ctx =
+            ParseContext::from_params(type_params.iter().cloned(), const_params.iter().cloned());
         let fields = FieldsNamed::parse(fields, &ctx)?;
 
         Ok(ItemStruct {
             type_params,
+            const_params,
             struct_token: *struct_token,
             ident: ident.clone(),
             fields,
@@ -5773,6 +5990,8 @@ pub enum ImplItem {
 pub struct ItemImpl {
     /// Type parameters for generic impl blocks (empty for non-generic).
     pub type_params: Vec<Ident>,
+    /// `const` parameters for generic impl blocks (empty for non-generic).
+    pub const_params: Vec<Ident>,
     pub _impl_token: Token![impl],
     /// The `Self` type of this impl block. For simple struct impls this is
     /// `Type::Struct { ident, type_args: [] }`; for trait impls on complex
@@ -5811,9 +6030,10 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         )?;
         util::some_is_unsupported(unsafety.as_ref(), "unsafe impls are not supported in WGSL")?;
 
-        // Extract type parameters from generics (ignore bounds and where
-        // clauses — those are Rust-only).
+        // Extract type and const parameters from generics (ignore bounds
+        // and where clauses — those are Rust-only).
         let mut type_params = Vec::new();
+        let mut const_params = Vec::new();
         for param in &generics.params {
             match param {
                 syn::GenericParam::Type(tp) => {
@@ -5827,11 +6047,15 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
                     .fail();
                 }
                 syn::GenericParam::Const(cp) => {
-                    return UnsupportedSnafu {
-                        span: cp.ident.span(),
-                        note: "const generic parameters are not yet supported on WGSL impl blocks",
+                    if !is_u32_or_usize_const_param(&cp.ty) {
+                        return UnsupportedSnafu {
+                            span: cp.ty.span(),
+                            note: "only `u32` and `usize` const generic parameters are supported \
+                                   on WGSL impl blocks",
+                        }
+                        .fail();
                     }
-                    .fail();
+                    const_params.push(cp.ident.clone());
                 }
             }
         }
@@ -5840,10 +6064,11 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         // trait path and just use the self_ty + methods, same as inherent impls.
         let is_trait_impl = trait_.is_some();
 
-        // Build parse context with type params so method bodies and signatures
-        // can reference them. Generic impls go through same-module
-        // monomorphization and keep source-level names.
-        let ctx = ParseContext::from_type_params(type_params.iter().cloned());
+        // Build parse context with type and const params so method bodies
+        // and signatures can reference them. Generic impls go through
+        // same-module monomorphization and keep source-level names.
+        let ctx =
+            ParseContext::from_params(type_params.iter().cloned(), const_params.iter().cloned());
 
         // Parse the self type. This reuses the general `Type::parse` machinery,
         // which handles simple idents (`Light`, `f32`), fully-applied generic
@@ -5882,6 +6107,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
 
         let mut result = ItemImpl {
             type_params,
+            const_params,
             _impl_token: *impl_token,
             self_ty,
             _brace_token: *brace_token,
@@ -7075,7 +7301,9 @@ mod test {
             Item::Impl(impl_item) => {
                 assert!(impl_item.type_params.is_empty());
                 match &impl_item.self_ty {
-                    Type::Struct { ident, type_args } => {
+                    Type::Struct {
+                        ident, type_args, ..
+                    } => {
                         assert_eq!(ident.to_string(), "Pair");
                         assert_eq!(type_args.len(), 1);
                         match &type_args[0] {
@@ -9394,7 +9622,9 @@ mod test {
                     Stmt::Local(local) => {
                         let (_, ty) = local.ty.as_ref().expect("local should have type");
                         match ty {
-                            Type::Struct { ident, type_args } => {
+                            Type::Struct {
+                                ident, type_args, ..
+                            } => {
                                 assert_eq!(ident.to_string(), "Pair");
                                 assert_eq!(type_args.len(), 1);
                                 assert!(matches!(
@@ -9448,7 +9678,9 @@ mod test {
                         // The parameter type should be Struct with TypeParam args
                         let param_ty = &f.inputs.first().unwrap().ty;
                         match param_ty {
-                            Type::Struct { ident, type_args } => {
+                            Type::Struct {
+                                ident, type_args, ..
+                            } => {
                                 assert_eq!(ident.to_string(), "Pair");
                                 assert_eq!(type_args.len(), 1);
                                 assert!(matches!(

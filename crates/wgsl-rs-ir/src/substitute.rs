@@ -138,6 +138,7 @@ fn rename_type(ty: &mut Type, from: &str, to: &str) {
         Type::RuntimeArray { elem } | Type::Atomic { elem } | Type::Ptr { elem, .. } => {
             rename_type(elem, from, to)
         }
+        Type::Phantom { elem } => rename_type(elem, from, to),
         _ => {}
     }
 }
@@ -403,6 +404,7 @@ fn sub_type(ty: &mut Type, s: &HashMap<String, Type>) {
             }
         }
         Type::Ptr { elem, .. } => sub_type(elem, s),
+        Type::Phantom { elem } => sub_type(elem, s),
         Type::TypeParam { .. } => unreachable!("handled above"),
     }
 }
@@ -524,6 +526,7 @@ pub fn type_to_ident(t: &Type) -> String {
         Type::Texture { .. } => "texture".to_string(),
         Type::TextureDepth { .. } => "texture_depth".to_string(),
         Type::TypeParam { name } => name.clone(),
+        Type::Phantom { elem } => format!("phantom_{}", type_to_ident(elem)),
     }
 }
 

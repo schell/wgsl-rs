@@ -852,6 +852,14 @@ pub enum Type {
     /// During monomorphization this is resolved to a concrete type.
     /// Must not survive to code generation.
     TypeParam { ident: Ident },
+
+    /// A `PhantomData<T>` marker field type. Recognized when the parsed
+    /// path segment is `PhantomData` with exactly one type argument.
+    /// Carries the `PhantomData` ident for span reporting. Retained
+    /// through IR conversion (becomes `ir::Type::Phantom`) so extensions
+    /// can observe which type parameter each phantom slot binds; omitted
+    /// from rendered WGSL by `render::write_struct`.
+    Phantom { ident: Ident, elem: Box<Type> },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -1240,6 +1248,35 @@ impl Type {
                             }
                             .fail(),
                         }
+                    } else if ident_str == "PhantomData" {
+                        // `PhantomData<T>` marker field type. Retained in
+                        // the IR for extension visibility but omitted from
+                        // rendered WGSL. Requires exactly one type argument.
+                        snafu::ensure!(
+                            args.len() == 1,
+                            UnsupportedSnafu {
+                                span: args.span(),
+                                note: "PhantomData takes exactly one type argument",
+                            }
+                        );
+                        let arg = args.first().expect("checked that len was 1");
+                        let elem = match arg {
+                            syn::GenericArgument::Type(ty) => Type::parse(ty, ctx)?,
+                            other => {
+                                return UnsupportedSnafu {
+                                    span: other.span(),
+                                    note: format!(
+                                        "unsupported generic argument '{}' on PhantomData",
+                                        other.into_token_stream()
+                                    ),
+                                }
+                                .fail();
+                            }
+                        };
+                        Ok(Type::Phantom {
+                            ident: ident.clone(),
+                            elem: Box::new(elem),
+                        })
                     } else {
                         // Not a known builtin — treat as a generic struct
                         // instantiation (e.g., `Pair<f32>`, `Wrapper<i32,
@@ -2336,6 +2373,17 @@ impl Expr {
                 for pair in fields.pairs() {
                     let field = pair.value();
                     let parsed = FieldValue::parse(field, ctx)?;
+                    // Skip `PhantomData` marker values so the rendered
+                    // positional constructor has the same arity as the
+                    // non-phantom fields in the struct definition. Only
+                    // the bare `PhantomData` form (no turbofish) is
+                    // recognized; the type parameter is inferred from the
+                    // struct context.
+                    let is_phantom =
+                        matches!(&parsed.expr, Expr::Ident(ident) if ident == "PhantomData");
+                    if is_phantom {
+                        continue;
+                    }
                     parsed_fields.push_value(parsed);
                     if let Some(comma) = pair.punct() {
                         parsed_fields.push_punct(**comma);
@@ -2513,6 +2561,7 @@ impl Expr {
                     Type::Texture { ident, .. } => ident.span(),
                     Type::TextureDepth { ident, .. } => ident.span(),
                     Type::TypeParam { ident } => ident.span(),
+                    Type::Phantom { ident, .. } => ident.span(),
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }
@@ -6209,6 +6258,7 @@ fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
         Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
             resolve_self_in_type(name, elem);
         }
+        Type::Phantom { elem, .. } => resolve_self_in_type(name, elem),
         Type::Scalar { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }
@@ -9719,5 +9769,71 @@ mod test {
             err.contains("lifetime"),
             "Expected error about lifetimes, got: {err}"
         );
+    }
+
+    #[test]
+    fn parse_phantom_data_field_type() {
+        let item: syn::Item = syn::parse_quote! {
+            pub struct Id<T> {
+                pub index: u32,
+                pub phantom: PhantomData<T>,
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Struct(s) => {
+                assert_eq!(s.ident.to_string(), "Id");
+                assert_eq!(s.fields.named.len(), 2);
+                let mut iter = s.fields.named.iter();
+                let first = iter.next().unwrap();
+                assert_eq!(first.ident.to_string(), "index");
+                assert!(matches!(first.ty, Type::Scalar { .. }));
+                let second = iter.next().unwrap();
+                assert_eq!(second.ident.to_string(), "phantom");
+                match &second.ty {
+                    Type::Phantom { elem, .. } => match elem.as_ref() {
+                        Type::TypeParam { ident } => {
+                            assert_eq!(ident.to_string(), "T");
+                        }
+                        _ => panic!("Expected Type::TypeParam inside Phantom"),
+                    },
+                    _ => panic!("Expected Type::Phantom"),
+                }
+            }
+            _ => panic!("Expected Item::Struct"),
+        }
+    }
+
+    #[test]
+    fn parse_struct_construction_drops_phantom_value() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn make() -> f32 {
+                let p = Id { x: 1.0, phantom: PhantomData };
+                p.x
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        match item {
+            Item::Fn(f) => {
+                let first_stmt = &f.block.stmt[0];
+                match first_stmt {
+                    Stmt::Local(local) => {
+                        let init = local.init.as_ref().expect("local should have init");
+                        match &init.expr {
+                            Expr::Struct { fields, .. } => {
+                                // The `phantom: PhantomData` field-value
+                                // should have been stripped; only `x` remains.
+                                assert_eq!(fields.len(), 1, "phantom field-value not stripped");
+                                let fv = fields.first().unwrap();
+                                assert_eq!(fv.member.to_string(), "x");
+                            }
+                            _ => panic!("Expected Expr::Struct"),
+                        }
+                    }
+                    _ => panic!("Expected Stmt::Local"),
+                }
+            }
+            _ => panic!("Expected Item::Fn"),
+        }
     }
 }

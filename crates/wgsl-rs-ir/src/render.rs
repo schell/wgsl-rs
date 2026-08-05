@@ -320,8 +320,12 @@ fn write_struct(w: &mut Writer, s: &ItemStruct) {
     w.write(" {");
     w.newline();
     w.indent += 1;
-    let n = s.fields.len();
-    for (i, f) in s.fields.iter().enumerate() {
+    // Omit phantom fields from the rendered WGSL. They are retained in the
+    // IR for extension visibility (so an extension can see which type
+    // parameter each phantom slot binds) but have no WGSL representation.
+    let renderable: Vec<&Field> = s.fields.iter().filter(|f| !is_phantom(&f.ty)).collect();
+    let n = renderable.len();
+    for (i, f) in renderable.iter().enumerate() {
         w.start_line();
         for io in &f.inter_stage_io {
             write_inter_stage_io(w, io);
@@ -339,6 +343,12 @@ fn write_struct(w: &mut Writer, s: &ItemStruct) {
     w.start_line();
     w.write("}");
     w.newline();
+}
+
+/// Returns true if `ty` is a `PhantomData<_>` marker that should be omitted
+/// from rendered WGSL.
+fn is_phantom(ty: &Type) -> bool {
+    matches!(ty, Type::Phantom { .. })
 }
 
 fn write_fn(w: &mut Writer, f: &ItemFn, override_name: Option<&str>) {
@@ -588,6 +598,12 @@ fn write_type(w: &mut Writer, ty: &Type) {
             // placeholder. This should not normally be reached when
             // rendering instantiated modules.
             w.write(&format!("__TP{name}__"));
+        }
+        Type::Phantom { .. } => {
+            unreachable!(
+                "phantom types are filtered out of struct fields by `write_struct` and have no \
+                 WGSL representation"
+            )
         }
     }
 }

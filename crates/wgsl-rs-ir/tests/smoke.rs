@@ -467,3 +467,88 @@ fn substitute_preserves_attrs() {
         _ => panic!("expected struct"),
     }
 }
+
+#[test]
+fn renders_struct_omits_phantom_fields() {
+    let m = Module {
+        name: "test",
+        items: vec![Item::Struct(ItemStruct {
+            type_params: vec![],
+            name: "Id".to_string(),
+            fields: vec![
+                Field {
+                    inter_stage_io: vec![],
+                    name: "index".to_string(),
+                    ty: Type::Scalar(ScalarType::U32),
+                    attrs: vec![],
+                },
+                Field {
+                    inter_stage_io: vec![],
+                    name: "phantom".to_string(),
+                    ty: Type::Phantom {
+                        elem: Box::new(Type::TypeParam {
+                            name: "T".to_string(),
+                        }),
+                    },
+                    attrs: vec![],
+                },
+            ],
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    };
+    let wgsl = render_module(&m);
+    // The phantom field must be omitted from the rendered WGSL.
+    assert!(wgsl.contains("index: u32"), "got: {wgsl}");
+    assert!(!wgsl.contains("phantom"), "phantom field leaked: {wgsl}");
+    assert!(!wgsl.contains("Phantom"), "Phantom type leaked: {wgsl}");
+}
+
+#[test]
+fn substitutes_type_param_inside_phantom() {
+    let mut m = Module {
+        name: "test",
+        items: vec![Item::Struct(ItemStruct {
+            type_params: vec!["T".to_string()],
+            name: "Tagged".to_string(),
+            fields: vec![
+                Field {
+                    inter_stage_io: vec![],
+                    name: "x".to_string(),
+                    ty: Type::Scalar(ScalarType::F32),
+                    attrs: vec![],
+                },
+                Field {
+                    inter_stage_io: vec![],
+                    name: "t".to_string(),
+                    ty: Type::Phantom {
+                        elem: Box::new(Type::TypeParam {
+                            name: "T".to_string(),
+                        }),
+                    },
+                    attrs: vec![],
+                },
+            ],
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    };
+    let mut subst = HashMap::new();
+    subst.insert("T".to_string(), Type::Scalar(ScalarType::F32));
+    substitute_types(&mut m, &subst);
+    // The phantom field should remain (extensions still see the binding),
+    // with its inner TypeParam substituted to the concrete type.
+    match &m.items[0] {
+        Item::Struct(s) => {
+            assert_eq!(s.fields.len(), 2, "phantom field should be retained in IR");
+            match &s.fields[1].ty {
+                Type::Phantom { elem } => match elem.as_ref() {
+                    Type::Scalar(ScalarType::F32) => {}
+                    other => panic!("expected Scalar(F32) after substitution, got {other:?}"),
+                },
+                other => panic!("expected Type::Phantom, got {other:?}"),
+            }
+        }
+        _ => panic!("expected struct"),
+    }
+}

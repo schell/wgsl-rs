@@ -510,6 +510,14 @@ fn ty(p: &TokenStream, t: &ir::Type) -> TokenStream {
         ir::Type::TypeParam { name } => {
             quote! { #p::Type::TypeParam { name: ::std::string::String::from(#name) } }
         }
+        ir::Type::Phantom { elem } => {
+            let e = ty(p, elem);
+            quote! {
+                #p::Type::Phantom {
+                    elem: ::std::boxed::Box::new(#e),
+                }
+            }
+        }
     }
 }
 

@@ -39,6 +39,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &generic_structs::WGSL_SOURCE,
     &shared_inter_stage::WGSL_SOURCE,
     &hello_triangle_generic::WGSL_SOURCE,
+    &phantom_data::WGSL_SOURCE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
@@ -1844,5 +1845,58 @@ pub mod hello_triangle_generic {
     pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
         let frame_t = get!(FRAME, T);
         vec4f(1.0, sin(f32(frame_t) / 128.0), 0.0, 1.0)
+    }
+}
+
+/// Demonstrates `PhantomData<T>` marker fields on `#[wgsl]` structs.
+///
+/// `PhantomData` is re-exported from `wgsl_rs::std`. The proc-macro
+/// recognizes `PhantomData<_>` fields specially: they are retained in
+/// the IR (so extensions can observe which type parameter each phantom
+/// slot binds) but omitted from the rendered WGSL. Construction
+/// expressions using the bare `PhantomData` value are likewise stripped
+/// so the rendered positional constructor has the correct arity.
+#[wgsl(skip_validation)]
+pub mod phantom_data {
+    use wgsl_rs::std::*;
+
+    /// A typed identifier carrying a phantom type tag. The `phantom`
+    /// field is dropped from the WGSL output, leaving only `index`.
+    pub struct Id<T> {
+        pub index: u32,
+        pub phantom: PhantomData<T>,
+    }
+
+    /// A struct binding two type parameters to two phantom slots. An
+    /// extension inspecting the IR sees `t: PhantomData<T>` and
+    /// `a: PhantomData<A>` and can reconstruct which field binds which
+    /// parameter.
+    pub struct Tagged<T, A> {
+        pub x: f32,
+        pub t: PhantomData<T>,
+        pub a: PhantomData<A>,
+    }
+
+    pub fn make_id() -> Id<f32> {
+        Id {
+            index: 0u32,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn make_tagged() -> Tagged<f32, u32> {
+        Tagged {
+            x: 1.0,
+            t: PhantomData,
+            a: PhantomData,
+        }
+    }
+
+    pub fn read_id(i: Id<f32>) -> u32 {
+        i.index
+    }
+
+    pub fn read_tagged(t: Tagged<f32, u32>) -> f32 {
+        t.x
     }
 }

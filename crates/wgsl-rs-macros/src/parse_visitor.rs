@@ -388,6 +388,9 @@ pub(crate) fn walk_type<V: ParseVisitorMut + ?Sized>(v: &mut V, t: &mut Type) ->
         Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
             v.visit_type(elem)?;
         }
+        Type::Phantom { elem, .. } => {
+            v.visit_type(elem)?;
+        }
         Type::Struct { type_args, .. } => {
             for ta in type_args.iter_mut() {
                 v.visit_type(ta)?;

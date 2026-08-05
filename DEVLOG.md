@@ -504,3 +504,53 @@ because the monomorphization pass clears `type_params` before IR conversion.
 yet supported — only `T::method()` (resolved via monomorphization). Tracked in
 GitHub issue #131.
 
+### 2026-08-05: `PhantomData<T>` marker fields are retained in the IR, omitted from WGSL
+
+**Problem:** A `#[wgsl]` struct carrying `PhantomData<T>` (e.g. for a slab-id
+type tag) had no way to declare that field — `PhantomData` wasn't a recognized
+WGSL type, and the parser fell through to the generic-struct branch, emitting
+invalid WGSL referencing a nonexistent `PhantomData` struct. Naively skipping
+the field at parse time would also discard the T↔field binding that extensions
+need: for `struct Foo<T, A> { x: f32, t: PhantomData<T>, a: PhantomData<A> }`,
+an extension inspecting the IR would see `type_params: ["T", "A"]` but only
+`{ x: f32 }`, with no way to recover which phantom slot bound which parameter.
+
+**Decision:** Add a dedicated `Type::Phantom { elem: Box<Type> }` variant to
+**both** the parse-side `Type` (in `wgsl-rs-macros/src/parse.rs`) and the IR
+`Type` (in `wgsl-rs-ir/src/types.rs`). `PhantomData<T>` is recognized in
+`Type::parse`'s angle-bracketed arm (single segment `PhantomData` with one
+type arg) and converted to `Type::Phantom`. The field is retained through
+IR conversion and monomorphization so extensions can observe which type
+parameter each phantom slot binds; substitution recurses into `Phantom.elem`.
+
+The rendered WGSL omits phantom fields: `render::write_struct` filters out
+fields whose type is `Type::Phantom(_)`, and `render::write_type` arms
+`Phantom` with `unreachable!` (defensive — phantom types should never reach
+the type writer since `write_struct` strips them first).
+
+Struct construction expressions (`Foo { x: 1.0, m: PhantomData }`) are
+handled at parse time: the `syn::Expr::Struct` arm skips any `FieldValue`
+whose `expr` is `Expr::Ident("PhantomData")` (bare form only — the type
+parameter is inferred from the struct context, so the turbofish form
+`PhantomData::<T>` is unnecessary and remains unsupported). This keeps the
+rendered positional constructor's arity correct.
+
+**Why both parse-side and IR variants:** Adding the variant to both enums
+makes the special-casing explicit at parse time (rather than letting
+`PhantomData<T>` fall through to the generic-struct branch and converting
+inline at IR conversion). This mirrors how `Type::TypeParam` is treated —
+the parse-side carries it, monomorphization recognizes it, and `ty_from_parse`
+maps it to the IR variant.
+
+**Why retain in the IR rather than skip at parse time:** The IR is the
+extension boundary. Extensions consuming the IR via `WgslExtension::modify_ir`
+must be able to see the full type-parameter binding structure of a generic
+struct; parse-side skipping would destroy the T↔field provenance before any
+extension runs. The `wgsl-rs-layout` crate's reflection-based approach doesn't
+need this, but downstream extensions that manipulate generic instantiations do.
+
+**Re-export:** `PhantomData` is re-exported from `wgsl_rs::std` so
+`use wgsl_rs::std::*` brings it into scope. Fully-qualified
+`std::marker::PhantomData<T>` continues to be rejected by the existing
+single-segment-path rule (a `use` import is required).
+

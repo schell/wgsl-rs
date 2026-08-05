@@ -486,6 +486,9 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
         parse::Type::TypeParam { ident } => ir::Type::TypeParam {
             name: ident.to_string(),
         },
+        parse::Type::Phantom { elem, .. } => ir::Type::Phantom {
+            elem: Box::new(ty_from_parse(elem)?),
+        },
     })
 }
 

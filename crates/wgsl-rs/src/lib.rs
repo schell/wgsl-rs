@@ -185,7 +185,7 @@ impl Source {
         }
         let mut out = String::new();
         let mut visited_sources: HashSet<u64> = HashSet::new();
-        let mut seen: HashSet<(u64, String, Vec<String>)> = HashSet::new();
+        let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         self.collect(&mut out, &mut visited_sources, &mut seen, None)?;
         Ok(out)
     }
@@ -197,13 +197,15 @@ impl Source {
     ///
     /// `visited_sources` tracks source IDs that have already been emitted,
     /// preventing duplicate definitions in diamond import graphs.
-    /// `seen` tracks `(source_id, template_name, mangled_type_args)` triples
-    /// to deduplicate cross-source template instantiations.
+    /// `seen` tracks `(source_id, template_name, mangled_type_args,
+    /// mangled_const_args)` 4-tuples to deduplicate cross-source template
+    /// instantiations. Including const args ensures `foo::<4>` and
+    /// `foo::<8>` aren't incorrectly deduplicated.
     fn collect(
         &self,
         out: &mut String,
         visited_sources: &mut HashSet<u64>,
-        seen: &mut HashSet<(u64, String, Vec<String>)>,
+        seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
@@ -266,7 +268,7 @@ fn instantiate_template_into<'a>(
     mangled_const_args: &[String],
     const_args: &[u32],
     out: &mut String,
-    seen: &mut HashSet<(u64, String, Vec<String>)>,
+    seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
 ) -> Result<(), SourceError<'a>> {
     let available_templates: Vec<String> = sources
         .iter()
@@ -319,6 +321,7 @@ fn instantiate_template_into<'a>(
         source.id,
         template_name.to_string(),
         mangled_type_args.to_vec(),
+        mangled_const_args.to_vec(),
     );
     if !seen.insert(key) {
         return Ok(()); // Already instantiated

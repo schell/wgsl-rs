@@ -747,15 +747,17 @@ fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, u32>) {
             sub_type_const(ty, consts);
         }
         Expr::FnCall {
-            path,
+            path: _,
             type_args,
             params,
         } => {
-            if let FnPath::TypeMethod { ty, .. } = path
-                && let Some(&n) = consts.get(ty.as_str())
-            {
-                *ty = n.to_string();
-            }
+            // Note: do NOT rewrite `FnPath::TypeMethod.ty` here — that's
+            // a type name, not a const-param reference. Const
+            // substitution targets only bare `Expr::Ident` nodes (e.g.
+            // `N` in an array length `[u32; N]`), which are handled at the
+            // top of `sub_expr_const`. Rewriting type/method paths here
+            // would corrupt them if a type name happened to match a
+            // const-param name.
             for ta in type_args {
                 sub_type_const(ta, consts);
             }
@@ -764,13 +766,13 @@ fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, u32>) {
             }
         }
         Expr::Struct {
-            name,
+            name: _,
             type_args,
             fields,
         } => {
-            if let Some(&n) = consts.get(name.as_str()) {
-                *name = n.to_string();
-            }
+            // Note: do NOT rewrite `name` here — it's a struct type
+            // name, not a const-param reference (see the note on
+            // `Expr::FnCall` above).
             for ta in type_args {
                 sub_type_const(ta, consts);
             }

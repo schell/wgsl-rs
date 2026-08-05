@@ -592,7 +592,6 @@ fn gen_wgsl_module(
             // at macro time (parsed from integer literals in turbofish),
             // so the constructor is a simple `vec![4, 8, ...]` literal.
             let const_vals: Vec<u32> = inst.const_args.clone();
-            let const_arg_lit = proc_macro2::Literal::usize_unsuffixed(const_vals.len());
 
             let ctor_ident = quote::format_ident!("__wgsl_inst_{}_ctor", idx);
             inst_constructors.push(quote! {
@@ -607,7 +606,6 @@ fn gen_wgsl_module(
                     ::std::vec![#(#const_vals),*]
                 }
             });
-            let _ = const_arg_lit;
 
             let modules: Vec<proc_macro2::TokenStream> = import_paths
                 .iter()

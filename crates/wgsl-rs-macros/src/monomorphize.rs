@@ -1868,22 +1868,32 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
         } => format!("vec{}{}", elements, scalar_ty.short_name()),
         Type::Matrix { columns, rows, .. } => format!("mat{}x{}f", columns, rows),
         Type::Struct {
-            ident, type_args, ..
+            ident,
+            type_args,
+            const_args,
+            ..
         } => {
-            if type_args.is_empty() {
+            if type_args.is_empty() && const_args.is_empty() {
                 ident.to_string()
             } else {
                 let mangled_args: Vec<String> = type_args
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
+                let mangled_consts: Vec<String> =
+                    const_args.iter().map(|n| n.to_string()).collect();
                 let ident_str = ident.to_string();
-                let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
-                components.push(&ident_str);
+                let mut components: Vec<String> =
+                    Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
+                components.push(ident_str);
                 for s in &mangled_args {
-                    components.push(s.as_str());
+                    components.push(s.clone());
                 }
-                mangle(&components)
+                for s in &mangled_consts {
+                    components.push(s.clone());
+                }
+                let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+                mangle(&str_components)
             }
         }
         Type::Array { elem, len, .. } => {
@@ -1950,24 +1960,35 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
         ),
         Type::Matrix { columns, rows, .. } => TypeKey::Matrix(*columns, *rows),
         Type::Struct {
-            ident, type_args, ..
+            ident,
+            type_args,
+            const_args,
+            ..
         } => {
-            if type_args.is_empty() {
+            if type_args.is_empty() && const_args.is_empty() {
                 TypeKey::Struct(ident.to_string())
             } else {
                 // For generic struct instantiations, include the mangled name
-                // so different instantiations get different keys.
+                // so different instantiations get different keys. Include
+                // const args too so `Grid::<4>` and `Grid::<8>` differ.
                 let mangled_args: Vec<String> = type_args
                     .iter()
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
+                let mangled_consts: Vec<String> =
+                    const_args.iter().map(|n| n.to_string()).collect();
                 let ident_str = ident.to_string();
-                let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_args.len());
-                components.push(&ident_str);
+                let mut components: Vec<String> =
+                    Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
+                components.push(ident_str);
                 for s in &mangled_args {
-                    components.push(s.as_str());
+                    components.push(s.clone());
                 }
-                TypeKey::Struct(mangle(&components))
+                for s in &mangled_consts {
+                    components.push(s.clone());
+                }
+                let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+                TypeKey::Struct(mangle(&str_components))
             }
         }
         Type::Array { elem, len, .. } => {

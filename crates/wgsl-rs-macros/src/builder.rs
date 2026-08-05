@@ -214,8 +214,11 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
 
     // Add entry-point const parameter generic params (e.g.
     // `<const N_FRAG_MAIN_C0: u32>`). Const params cannot have trait
-    // bounds, so no Wgsl bound is added. We only support `u32` const
-    // params (the parse layer rejects other types).
+    // bounds, so no Wgsl bound is added. The parse layer accepts both
+    // `u32` and `usize` const params; here they're represented as `u32`
+    // on the `instantiate` function (a `usize` value is a valid `u32`
+    // for all realistic array lengths, and the IR substitution map uses
+    // `u32`).
     for slot in &ep_const_slots {
         let cp = syn::ConstParam {
             attrs: Vec::new(),

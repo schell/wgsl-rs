@@ -148,6 +148,12 @@ pub struct ParseContext {
     /// `Type::TypeParam` carries the mapped name instead. Empty by
     /// default, which preserves source-level names.
     pub type_param_renames: HashMap<String, String>,
+    /// Optional name map applied when emitting `Expr::Ident` for a
+    /// const-param reference. When a source-level name (`"N"`) is
+    /// present in this map, the resulting `Expr::Ident` carries the
+    /// mapped name instead (e.g. `"main_c0"`). Empty by default, which
+    /// preserves source-level names (the non-entry-point path).
+    pub const_param_renames: HashMap<String, String>,
 }
 
 impl ParseContext {
@@ -159,6 +165,7 @@ impl ParseContext {
             type_params: iter.into_iter().map(|id| id.to_string()).collect(),
             const_params: HashSet::new(),
             type_param_renames: HashMap::new(),
+            const_param_renames: HashMap::new(),
         }
     }
 
@@ -173,6 +180,7 @@ impl ParseContext {
             type_params: type_iter.into_iter().map(|id| id.to_string()).collect(),
             const_params: const_iter.into_iter().map(|id| id.to_string()).collect(),
             type_param_renames: HashMap::new(),
+            const_param_renames: HashMap::new(),
         }
     }
 
@@ -198,20 +206,29 @@ impl ParseContext {
             type_params,
             const_params: HashSet::new(),
             type_param_renames: renames,
+            const_param_renames: HashMap::new(),
         }
     }
 
-    /// Like [`Self::from_renamed_type_params`] but also registers the given
-    /// const parameter names (un-renamed) as in scope.
-    pub fn from_renamed_type_params_with_consts<I, S, E, J>(iter: I, const_iter: J) -> Self
+    /// Like [`Self::from_renamed_type_params`] but also registers const
+    /// parameter renames. The `const_iter` yields `(source_name,
+    /// encoded_name)` pairs so that `Expr::Ident` references to const
+    /// params in the body get the encoded name (e.g. `N` → `main_c0`).
+    pub fn from_renamed_type_params_with_consts<I, S, E, J, K>(iter: I, const_iter: J) -> Self
     where
         I: IntoIterator<Item = (S, E)>,
         S: Into<String>,
         E: Into<String>,
-        J: IntoIterator<Item = Ident>,
+        J: IntoIterator<Item = (K, K)>,
+        K: Into<String>,
     {
         let mut ctx = Self::from_renamed_type_params(iter);
-        ctx.const_params = const_iter.into_iter().map(|id| id.to_string()).collect();
+        for (source, encoded) in const_iter {
+            let source = source.into();
+            let encoded = encoded.into();
+            ctx.const_params.insert(encoded.clone());
+            ctx.const_param_renames.insert(source, encoded);
+        }
         ctx
     }
 
@@ -219,6 +236,16 @@ impl ParseContext {
     /// name to be stored in `Type::TypeParam`.
     pub fn encode_type_param(&self, name: &str) -> String {
         self.type_param_renames
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Apply any const-param rename in the context to `name`, returning
+    /// the encoded name to be stored in `Expr::Ident`. For non-entry-
+    /// point functions (no const renames), this returns `name` unchanged.
+    pub fn encode_const_param(&self, name: &str) -> String {
+        self.const_param_renames
             .get(name)
             .cloned()
             .unwrap_or_else(|| name.to_string())
@@ -1887,8 +1914,24 @@ impl Expr {
                 util::some_is_unsupported(qself.as_ref(), "QSelf is unsupported")?;
 
                 if let Some(ident) = path.get_ident() {
-                    // Simple identifier: `foo`
-                    Self::Ident(ident.clone())
+                    // Simple identifier: `foo`. If this is a const-param
+                    // reference (e.g. `N` in an array length or a for-loop
+                    // bound), apply any positional rename so entry-point
+                    // const params get their `{fn}_c{i}` encoding.
+                    let ident_str = ident.to_string();
+                    if ctx.const_params.contains(&ident_str)
+                        || ctx.const_param_renames.contains_key(&ident_str)
+                    {
+                        let encoded = ctx.encode_const_param(&ident_str);
+                        let encoded_ident = if encoded == ident_str {
+                            ident.clone()
+                        } else {
+                            Ident::new(&encoded, ident.span())
+                        };
+                        Self::Ident(encoded_ident)
+                    } else {
+                        Self::Ident(ident.clone())
+                    }
                 } else if path.segments.len() == 2 {
                     // Type::member path: `Light::CONSTANT`
                     let ty = path.segments[0].ident.clone();
@@ -4411,10 +4454,10 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
                     (source, encoded)
                 })
                 .collect();
-            let const_idents = const_renamed
-                .iter()
-                .map(|(_, encoded)| Ident::new(encoded, proc_macro2::Span::call_site()));
-            ParseContext::from_renamed_type_params_with_consts(renamed, const_idents)
+            ParseContext::from_renamed_type_params_with_consts(
+                renamed,
+                const_renamed.iter().cloned(),
+            )
         };
 
         let mut inputs = syn::punctuated::Punctuated::new();

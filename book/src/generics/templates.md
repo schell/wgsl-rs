@@ -9,6 +9,7 @@ Use a template module when the type of an entry point, a linkage binding, or a s
 A module becomes a template when **any** of the following appear:
 
 - An entry-point function with type parameters.
+- An entry-point function with const parameters (`const N: usize` or `const N: u32`).
 - A linkage macro (`uniform!`, `storage!`, ...) whose declared type uses `impl Trait`.
 - A `get!(VAR, T)` accessor that introduces a fresh type variable bound to a linkage variable.
 
@@ -97,3 +98,29 @@ If you omit both, the template is never validated by `cargo test`.
 ## Multiple Type Parameters & Transitive Use
 
 Templates support multiple type parameters and transitive generic calls just like monomorphized generics. Each `instantiate` call substitutes the full tuple of type arguments through the module's IR; the runtime performs deduplication of any shared monomorphized pieces inside the resulting module.
+
+## Const Parameters on Entry Points
+
+Entry points can also take `const N: usize` (or `const N: u32`) parameters. The module becomes a template and is instantiated with a concrete integer:
+
+```rust
+#[wgsl(skip_validation)]
+pub mod entry_point {
+    use wgsl_rs::std::*;
+
+    #[compute]
+    #[workgroup_size(1)]
+    pub fn main<const N: usize>() -> u32 {
+        let arr: [u32; N] = [0u32; N];
+        arr[0]
+    }
+}
+```
+
+Instantiate with the concrete const value:
+
+```rust
+let module: ir::Module = entry_point::instantiate::<4>();
+```
+
+Const params use a separate positional namespace (`{fn}_c{i}`) so type and const params on the same entry point don't collide. The `instantiate::<...>()` turbofish accepts both type and const arguments in the order they're declared on the entry point.

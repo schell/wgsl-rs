@@ -120,3 +120,50 @@ pub struct Cell<K: Copy, V: Copy> {
 ```
 
 `Cell::<u32, f32>` produces `Cell_u32_f32`.
+
+## Const Generic Parameters
+
+Structs can also take `const N: usize` or `const N: u32` parameters, which are substituted with concrete integer literals at monomorphization time. This is the natural way to express arrays whose length varies per instantiation:
+
+```rust
+pub struct Grid<const N: usize> {
+    pub cells: [u32; N],
+}
+
+impl<const N: usize> Grid<N> {
+    pub fn first(cells: [u32; N]) -> u32 {
+        cells[0]
+    }
+}
+
+pub fn run() -> u32 {
+    let g = Grid::<4> { cells: [0, 0, 0, 0] };
+    g.cells[0]
+}
+```
+
+`Grid::<4>` produces a WGSL struct `Grid_4` with `cells: array<u32, 4>`, and `Grid::<4>::first` becomes `Grid_4_first`.
+
+## Generic Trait Impls on Array Types
+
+Generic impl blocks on array self types (`impl<T: Trait> Trait for [T; N]`) are supported. The monomorphizer substitutes the concrete element type and mangles the methods:
+
+```rust
+pub trait Zeroable {
+    fn zero() -> Self;
+}
+
+impl<T: Zeroable> Zeroable for [T; 4] {
+    fn zero() -> [T; 4] {
+        [T::zero(), T::zero(), T::zero(), T::zero()]
+    }
+}
+
+pub fn caller_u32_array() -> [u32; 4] {
+    Zeroable::zero::<[u32; 4]>()
+}
+```
+
+The call with `[u32; 4]` produces a WGSL function `_2array_u32_4_zero` (the `_2` prefix is the bijective mangled encoding of `array_u32_4`). Similarly, `[f32; 4]` produces `_2array_f32_4_zero`.
+
+> **Limitation:** Direct `<[u32; 4]>::method()` call syntax (QSelf paths) is not yet supported — only `T::method()` resolved via monomorphization. Tracked in [GitHub issue #131](https://github.com/schell/wgsl-rs/issues/131).

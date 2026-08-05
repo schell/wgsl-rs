@@ -708,6 +708,7 @@ fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
             }
         }
         Type::Ptr { elem, .. } => sub_type_const(elem, consts),
+        Type::Phantom { elem } => sub_type_const(elem, consts),
     }
 }
 

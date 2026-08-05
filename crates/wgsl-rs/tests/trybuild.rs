@@ -69,3 +69,9 @@ fn phantom_data_qualified_path_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/phantom_data_qualified_path.rs");
 }
+
+#[test]
+fn phantom_data_in_non_field_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/phantom_data_in_non_field.rs");
+}

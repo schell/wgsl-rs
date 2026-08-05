@@ -154,6 +154,13 @@ pub struct ParseContext {
     /// mapped name instead (e.g. `"main_c0"`). Empty by default, which
     /// preserves source-level names (the non-entry-point path).
     pub const_param_renames: HashMap<String, String>,
+    /// Whether `PhantomData<T>` is accepted as a type in this position.
+    /// Only true when parsing a struct field's type — `PhantomData` is
+    /// a marker, not a WGSL type, and is rejected everywhere else
+    /// (function params, return types, locals, const types, etc.) so
+    /// that `render::write_type`'s `Type::Phantom` arm is truly
+    /// unreachable in practice.
+    allow_phantom: bool,
 }
 
 impl ParseContext {
@@ -166,6 +173,7 @@ impl ParseContext {
             const_params: HashSet::new(),
             type_param_renames: HashMap::new(),
             const_param_renames: HashMap::new(),
+            allow_phantom: false,
         }
     }
 
@@ -181,6 +189,7 @@ impl ParseContext {
             const_params: const_iter.into_iter().map(|id| id.to_string()).collect(),
             type_param_renames: HashMap::new(),
             const_param_renames: HashMap::new(),
+            allow_phantom: false,
         }
     }
 
@@ -207,6 +216,7 @@ impl ParseContext {
             const_params: HashSet::new(),
             type_param_renames: renames,
             const_param_renames: HashMap::new(),
+            allow_phantom: false,
         }
     }
 
@@ -249,6 +259,14 @@ impl ParseContext {
             .get(name)
             .cloned()
             .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Returns a copy of this context with `PhantomData<T>` accepted as
+    /// a type. Used when parsing a struct field's type — the only
+    /// position where `PhantomData` is meaningful.
+    fn allowing_phantom(mut self) -> Self {
+        self.allow_phantom = true;
+        self
     }
 }
 
@@ -1252,6 +1270,19 @@ impl Type {
                         // `PhantomData<T>` marker field type. Retained in
                         // the IR for extension visibility but omitted from
                         // rendered WGSL. Requires exactly one type argument.
+                        // Only accepted in struct-field position (gated by
+                        // `ParseContext::allow_phantom`); rejected everywhere
+                        // else so that `render::write_type`'s `Phantom` arm
+                        // is truly unreachable.
+                        if !ctx.allow_phantom {
+                            return UnsupportedSnafu {
+                                span: ident.span(),
+                                note: "PhantomData<T> is only supported as a struct field type, \
+                                       not in function params, return types, locals, or other \
+                                       type positions",
+                            }
+                            .fail();
+                        }
                         snafu::ensure!(
                             args.len() == 1,
                             UnsupportedSnafu {
@@ -1260,8 +1291,17 @@ impl Type {
                             }
                         );
                         let arg = args.first().expect("checked that len was 1");
+                        // The inner type is parsed with `allow_phantom`
+                        // reset, so `PhantomData<PhantomData<T>>` is
+                        // rejected — nested phantom markers are
+                        // nonsensical and have no meaningful WGSL.
+                        let inner_ctx = {
+                            let mut c = ctx.clone();
+                            c.allow_phantom = false;
+                            c
+                        };
                         let elem = match arg {
-                            syn::GenericArgument::Type(ty) => Type::parse(ty, ctx)?,
+                            syn::GenericArgument::Type(ty) => Type::parse(ty, &inner_ctx)?,
                             other => {
                                 return UnsupportedSnafu {
                                     span: other.span(),
@@ -2379,6 +2419,20 @@ impl Expr {
                     // the bare `PhantomData` form (no turbofish) is
                     // recognized; the type parameter is inferred from the
                     // struct context.
+                    //
+                    // This is sound because `PhantomData` is a unit
+                    // struct with no other inhabitants: in a struct
+                    // literal `Foo { x: PhantomData }`, Rust's type
+                    // checker requires `x`'s declared type to be
+                    // `PhantomData<_>`. A non-phantom field cannot hold
+                    // a `PhantomData` value (it would fail to type-check),
+                    // so this skip never drops a value from a non-phantom
+                    // field. We do not consult the struct definition
+                    // here because the transpiler has no
+                    // struct-definition lookup for construction
+                    // expressions today (the renderer emits field
+                    // values positionally in source order), and the
+                    // Rust type system already enforces the invariant.
                     let is_phantom =
                         matches!(&parsed.expr, Expr::Ident(ident) if ident == "PhantomData");
                     if is_phantom {
@@ -5690,7 +5744,12 @@ impl Field {
             .clone()
             .expect("only named fields are supported, and we checked for that before parsing this");
         let colon_token = value.colon_token;
-        let ty = Type::parse(&value.ty, ctx)?;
+        // `PhantomData<T>` is only permitted as a struct field type —
+        // see `Type::parse`'s `allow_phantom` gating. The inner type
+        // args of a `PhantomData<T>` are parsed with `allow_phantom`
+        // reset, so nested phantom markers are rejected.
+        let field_ctx = ctx.clone().allowing_phantom();
+        let ty = Type::parse(&value.ty, &field_ctx)?;
         let ir_attrs = syn_attrs_to_ir(&value.attrs);
         let mut inter_stage_io = vec![];
         for attr in value.attrs.iter() {

@@ -474,6 +474,7 @@ fn renders_struct_omits_phantom_fields() {
         name: "test",
         items: vec![Item::Struct(ItemStruct {
             type_params: vec![],
+            const_params: vec![],
             name: "Id".to_string(),
             fields: vec![
                 Field {
@@ -510,6 +511,7 @@ fn substitutes_type_param_inside_phantom() {
         name: "test",
         items: vec![Item::Struct(ItemStruct {
             type_params: vec!["T".to_string()],
+            const_params: vec![],
             name: "Tagged".to_string(),
             fields: vec![
                 Field {

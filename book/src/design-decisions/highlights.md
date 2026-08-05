@@ -44,3 +44,13 @@ This chapter curates the key architectural decisions behind wgsl-rs. The full na
 |--------------|-------------------------------------------------------------------------------------------|
 | 2026-05-29   | **`wgsl-rs-layout` is a standalone extension crate**, dogfooding the extension mechanism to compute WGSL memory layout. |
 | 2026-06-06   | **Runtime wgpu linkage via IR traversal** reflects bind groups and bindings by walking the IR rather than parsing generated WGSL text. |
+
+## Generics & Monomorphization
+
+| Date         | Decision                                                                                  |
+|--------------|-------------------------------------------------------------------------------------------|
+| 2026-04-08   | **Generic functions monomorphized at macro time.** Each turbofish call-site produces a mangled, concrete WGSL function. |
+| 2026-04-17   | **Generic structs monomorphized** to concrete WGSL structs with mangled names. |
+| 2026-08-02   | **Trait impls on complex types** (e.g. `impl Zeroable for [u32; 4]`) transpile to mangled WGSL functions. |
+| 2026-08-04   | **Generic trait impls on array types** (`impl<T: Trait> Trait for [T; N]`) supported via monomorphizer widening (#133). |
+| 2026-08-04   | **Const generics for `u32`/`usize`** supported on functions, structs, impl blocks, and template entry points (#137). The substitution target is always a bare ident (stable Rust requires bare idents or literals), so no new IR variant is needed. |

@@ -72,6 +72,28 @@ pub fn mix<A: Copy, B: Copy>(a: A, b: B) -> A {
 
 A call `mix::<f32, u32>(x, y)` produces `mix_f32_u32`.
 
+## Const Generic Parameters
+
+Functions can also take `const` generic parameters of type `u32` or `usize` — the only const param types that make sense in WGSL (they're used as array lengths). The const param is substituted with a concrete integer literal at monomorphization time:
+
+```rust
+pub fn sum_n<const N: usize>(arr: [u32; N]) -> u32 {
+    let mut total: u32 = 0;
+    for i in 0..N {
+        total += arr[i];
+    }
+    total
+}
+
+pub fn run() -> u32 {
+    sum_n::<4>([1, 2, 3, 4])
+}
+```
+
+The call `sum_n::<4>` produces a WGSL function `sum_n_4` with `N` replaced by the literal `4` throughout (including the array type and loop bound). Const and type params can coexist on the same function; they're monomorphized over the full tuple of arguments.
+
+> Const param references are always bare identifiers (e.g. `N`), per stable Rust's const generics syntax. They're substituted to `Expr::Lit` at monomorphization time — no new IR variant is needed.
+
 ## Trait Bounds are Rust-Only
 
 `Copy`, `Clone`, `Add`, `PartialEq`, custom traits — all bounds exist solely for the Rust type checker. They generate no WGSL output. This is the "two worlds" split in action: Rust validates the generic body once on the CPU; WGSL receives fully concrete, monomorphized code for the GPU with no notion of traits or generics.

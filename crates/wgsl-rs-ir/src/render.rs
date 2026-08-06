@@ -24,11 +24,35 @@ pub mod builtin_lookup;
 
 /// Render a [`Module`] to a complete WGSL source string.
 pub fn render_module(module: &Module) -> String {
-    let mut w = Writer::new();
-    for item in &module.items {
-        write_item(&mut w, item);
+    render_items(&module.items)
+}
+
+/// Whether any storage texture in the given items uses a tier-1 texel
+/// format (WGSL §6.6.1), requiring the `texture_formats_tier1` language
+/// extension to be enabled. Callers that assemble WGSL from multiple
+/// rendered chunks should check this and prepend `enable
+/// texture_formats_tier1;` once at the very start of the final source.
+pub fn items_need_tier1_extension(items: &[Item]) -> bool {
+    fn type_uses_tier1(ty: &Type) -> bool {
+        match ty {
+            Type::TextureStorage { format, .. } => format.requires_tier1(),
+            Type::Array { elem, .. }
+            | Type::RuntimeArray { elem }
+            | Type::Atomic { elem }
+            | Type::Ptr { elem, .. } => type_uses_tier1(elem),
+            Type::Struct { type_args, .. } => type_args.iter().any(type_uses_tier1),
+            _ => false,
+        }
     }
-    w.finish()
+    items.iter().any(|item| match item {
+        Item::Texture(t) => type_uses_tier1(&t.ty),
+        Item::Fn(f) => {
+            f.inputs.iter().any(|p| type_uses_tier1(&p.ty))
+                || matches!(&f.return_type, ReturnType::Type { ty, .. } if type_uses_tier1(ty))
+        }
+        Item::Struct(s) => s.fields.iter().any(|f| type_uses_tier1(&f.ty)),
+        _ => false,
+    })
 }
 
 /// Render a slice of [`Item`]s (e.g. an instantiated generic template) to
@@ -592,6 +616,18 @@ fn write_type(w: &mut Writer, ty: &Type) {
         }
         Type::TextureDepth { kind } => {
             w.write(texture_depth_kind_name(*kind));
+        }
+        Type::TextureStorage {
+            kind,
+            format,
+            access,
+        } => {
+            w.write(kind.wgsl_name());
+            w.write("<");
+            w.write(format.wgsl_name());
+            w.write(", ");
+            w.write(access.wgsl_name());
+            w.write(">");
         }
         Type::TypeParam { name } => {
             // Templates leave TypeParam unresolved; we render a unique
@@ -1157,5 +1193,90 @@ mod tests {
             scalar_ty: None,
         };
         assert_eq!(render_type(&m_short), "mat4x2f");
+    }
+
+    /// Storage texture types render as `texture_storage_Nd<format, access>`.
+    #[test]
+    fn renders_storage_texture_2d_write() {
+        let ty = Type::TextureStorage {
+            kind: crate::types::TextureStorageKind::Storage2D,
+            format: crate::types::TexelFormat::Rgba8unorm,
+            access: crate::types::StorageTextureAccess::Write,
+        };
+        assert_eq!(render_type(&ty), "texture_storage_2d<rgba8unorm, write>");
+    }
+
+    #[test]
+    fn renders_storage_texture_1d_read() {
+        let ty = Type::TextureStorage {
+            kind: crate::types::TextureStorageKind::Storage1D,
+            format: crate::types::TexelFormat::Rgba8uint,
+            access: crate::types::StorageTextureAccess::Read,
+        };
+        assert_eq!(render_type(&ty), "texture_storage_1d<rgba8uint, read>");
+    }
+
+    #[test]
+    fn renders_storage_texture_3d_read_write() {
+        let ty = Type::TextureStorage {
+            kind: crate::types::TextureStorageKind::Storage3D,
+            format: crate::types::TexelFormat::R32float,
+            access: crate::types::StorageTextureAccess::ReadWrite,
+        };
+        assert_eq!(render_type(&ty), "texture_storage_3d<r32float, read_write>");
+    }
+
+    /// A module with a tier-1 storage texture format is detected by
+    /// `items_need_tier1_extension`.
+    #[test]
+    fn module_emits_tier1_directive() {
+        use crate::types::{ItemTexture, TextureStorageKind};
+
+        let module = Module {
+            name: "test",
+            items: vec![Item::Texture(ItemTexture {
+                group: 0,
+                binding: 0,
+                name: "TEX".to_string(),
+                ty: Type::TextureStorage {
+                    kind: TextureStorageKind::Storage2D,
+                    format: crate::types::TexelFormat::R16float,
+                    access: crate::types::StorageTextureAccess::Write,
+                },
+                attrs: vec![],
+            })],
+            attrs: vec![],
+        };
+        assert!(
+            items_need_tier1_extension(&module.items),
+            "Expected tier-1 detection for R16float format"
+        );
+    }
+
+    /// A module with only core (non-tier-1) storage textures is NOT
+    /// flagged by `items_need_tier1_extension`.
+    #[test]
+    fn module_no_tier1_directive_for_core_format() {
+        use crate::types::{ItemTexture, TextureStorageKind};
+
+        let module = Module {
+            name: "test",
+            items: vec![Item::Texture(ItemTexture {
+                group: 0,
+                binding: 0,
+                name: "TEX".to_string(),
+                ty: Type::TextureStorage {
+                    kind: TextureStorageKind::Storage2D,
+                    format: crate::types::TexelFormat::Rgba8unorm,
+                    access: crate::types::StorageTextureAccess::Write,
+                },
+                attrs: vec![],
+            })],
+            attrs: vec![],
+        };
+        assert!(
+            !items_need_tier1_extension(&module.items),
+            "Did not expect tier-1 detection for Rgba8unorm (core format)"
+        );
     }
 }

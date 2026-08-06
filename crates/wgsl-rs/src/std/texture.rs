@@ -14,6 +14,8 @@ use crate::std::{
     WgslTextureScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
 };
 
+use std::marker::PhantomData;
+
 mod builtins;
 pub use builtins::*;
 use wgsl_rs_ir as ir;
@@ -2294,6 +2296,270 @@ impl TextureDimensionsQuery for TextureDepthMultisampled2D {
 impl TextureNumSamplesQuery for TextureDepthMultisampled2D {
     fn query_num_samples(&self) -> u32 {
         self.get().num_samples()
+    }
+}
+
+// ===== Storage textures =====
+
+/// Trait for texel format marker types used as the type parameter of
+/// storage texture types (e.g. `TextureStorage2D<Rgba8unorm, Write>`).
+///
+/// Each implementor is a unit struct that carries the IR-level format and
+/// the shader-side value type (always `vec4<f32>`, `vec4<u32>`, or
+/// `vec4<i32>` depending on the format's channel type — see WGSL §6.6.1).
+pub trait WgslTexelFormat: crate::std::AnySendSync {
+    /// The IR-level texel format.
+    fn to_ir() -> wgsl_rs_ir::TexelFormat;
+    /// The shader-side value type returned by `textureLoad` and accepted by
+    /// `textureStore` for this format.
+    type Value: Copy + Default;
+    /// Whether this format requires the `texture_formats_tier1` extension.
+    fn requires_tier1() -> bool;
+}
+
+/// Trait for storage texture access mode marker types (`Read`, `Write`,
+/// `ReadWrite`).
+pub trait WgslStorageAccess: crate::std::AnySendSync {
+    /// The IR-level access mode.
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess;
+}
+
+// ===== Access mode markers =====
+
+/// Read-only storage texture access mode. WGSL §14.2.
+#[allow(dead_code)]
+pub struct Read;
+impl WgslStorageAccess for Read {
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess {
+        wgsl_rs_ir::StorageTextureAccess::Read
+    }
+}
+
+/// Write-only storage texture access mode. WGSL §14.2.
+#[allow(dead_code)]
+pub struct Write;
+impl WgslStorageAccess for Write {
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess {
+        wgsl_rs_ir::StorageTextureAccess::Write
+    }
+}
+
+/// Read-write storage texture access mode. WGSL §14.2.
+#[allow(dead_code)]
+pub struct ReadWrite;
+impl WgslStorageAccess for ReadWrite {
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess {
+        wgsl_rs_ir::StorageTextureAccess::ReadWrite
+    }
+}
+
+// ===== Texel format marker types =====
+
+// This macro generates a unit-struct marker type + WgslTexelFormat impl for
+// each storage texel format. The `Value` associated type is chosen based on
+// the channel format's shader type (f32/u32/i32) per WGSL §6.6.1.
+macro_rules! impl_texel_format {
+    ($i:ident, $v:ty, $tier1:expr) => {
+        /// Texel format marker.
+        #[allow(dead_code)]
+        pub struct $i;
+        impl WgslTexelFormat for $i {
+            fn to_ir() -> wgsl_rs_ir::TexelFormat {
+                wgsl_rs_ir::TexelFormat::$i
+            }
+            type Value = $v;
+            fn requires_tier1() -> bool {
+                $tier1
+            }
+        }
+    };
+}
+
+// Core formats (no extension required)
+impl_texel_format!(Rgba8unorm, Vec4f, false);
+impl_texel_format!(Rgba8snorm, Vec4f, false);
+impl_texel_format!(Rgba8uint, Vec4u, false);
+impl_texel_format!(Rgba8sint, Vec4i, false);
+impl_texel_format!(Rgba16uint, Vec4u, false);
+impl_texel_format!(Rgba16sint, Vec4i, false);
+impl_texel_format!(Rgba16float, Vec4f, false);
+impl_texel_format!(R32uint, Vec4u, false);
+impl_texel_format!(R32sint, Vec4i, false);
+impl_texel_format!(R32float, Vec4f, false);
+impl_texel_format!(Rg32uint, Vec4u, false);
+impl_texel_format!(Rg32sint, Vec4i, false);
+impl_texel_format!(Rg32float, Vec4f, false);
+impl_texel_format!(Rgba32uint, Vec4u, false);
+impl_texel_format!(Rgba32sint, Vec4i, false);
+impl_texel_format!(Rgba32float, Vec4f, false);
+impl_texel_format!(Bgra8unorm, Vec4f, false);
+// Tier-1 extension formats
+impl_texel_format!(Rgba16unorm, Vec4f, true);
+impl_texel_format!(Rgba16snorm, Vec4f, true);
+impl_texel_format!(Rg8unorm, Vec4f, true);
+impl_texel_format!(Rg8snorm, Vec4f, true);
+impl_texel_format!(Rg8uint, Vec4u, true);
+impl_texel_format!(Rg8sint, Vec4i, true);
+impl_texel_format!(Rg16unorm, Vec4f, true);
+impl_texel_format!(Rg16snorm, Vec4f, true);
+impl_texel_format!(Rg16uint, Vec4u, true);
+impl_texel_format!(Rg16sint, Vec4i, true);
+impl_texel_format!(Rg16float, Vec4f, true);
+impl_texel_format!(R8unorm, Vec4f, true);
+impl_texel_format!(R8snorm, Vec4f, true);
+impl_texel_format!(R8uint, Vec4u, true);
+impl_texel_format!(R8sint, Vec4i, true);
+impl_texel_format!(R16unorm, Vec4f, true);
+impl_texel_format!(R16snorm, Vec4f, true);
+impl_texel_format!(R16uint, Vec4u, true);
+impl_texel_format!(R16sint, Vec4i, true);
+impl_texel_format!(R16float, Vec4f, true);
+impl_texel_format!(Rgb10a2unorm, Vec4f, true);
+impl_texel_format!(Rgb10a2uint, Vec4u, true);
+impl_texel_format!(Rg11b10ufloat, Vec4f, true);
+
+// ===== Storage texture structs =====
+
+/// A 1D storage texture. WGSL `texture_storage_1d<F, A>`.
+///
+/// Parameterized by a texel format marker (`F`) and an access mode marker
+/// (`A`). See WGSL §6.6.5.
+pub struct TextureStorage1D<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    _phantom: PhantomData<(F, A)>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage1D<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage1D,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage1D<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 2D storage texture. WGSL `texture_storage_2d<F, A>`.
+pub struct TextureStorage2D<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    _phantom: PhantomData<(F, A)>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage2D<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage2D,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2D<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 2D array storage texture. WGSL `texture_storage_2d_array<F, A>`.
+pub struct TextureStorage2DArray<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    _phantom: PhantomData<(F, A)>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage2DArray<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage2DArray,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2DArray<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+}
+
+/// A 3D storage texture. WGSL `texture_storage_3d<F, A>`.
+pub struct TextureStorage3D<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    _phantom: PhantomData<(F, A)>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage3D<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage3D,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage3D<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
     }
 }
 

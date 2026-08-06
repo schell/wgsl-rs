@@ -391,6 +391,7 @@ fn sub_type(ty: &mut Type, s: &HashMap<String, Type>) {
         | Type::SamplerComparison
         | Type::Texture { .. }
         | Type::TextureDepth { .. }
+        | Type::TextureStorage { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. } => {}
         Type::Array { elem, len } => {
@@ -525,6 +526,7 @@ pub fn type_to_ident(t: &Type) -> String {
         Type::SamplerComparison => "sampler_comparison".to_string(),
         Type::Texture { .. } => "texture".to_string(),
         Type::TextureDepth { .. } => "texture_depth".to_string(),
+        Type::TextureStorage { format, .. } => format!("texture_storage_{}", format.wgsl_name()),
         Type::TypeParam { name } => name.clone(),
         Type::Phantom { elem } => format!("phantom_{}", type_to_ident(elem)),
     }
@@ -694,6 +696,7 @@ fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
         | Type::SamplerComparison
         | Type::Texture { .. }
         | Type::TextureDepth { .. }
+        | Type::TextureStorage { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }
         | Type::TypeParam { .. } => {}

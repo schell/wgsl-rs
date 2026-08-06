@@ -507,6 +507,22 @@ fn ty(p: &TokenStream, t: &ir::Type) -> TokenStream {
             let k = tex_depth_kind(p, *kind);
             quote! { #p::Type::TextureDepth { kind: #k } }
         }
+        ir::Type::TextureStorage {
+            kind,
+            format,
+            access,
+        } => {
+            let k = tex_storage_kind(p, *kind);
+            let f = texel_format(p, *format);
+            let a = storage_texture_access(p, *access);
+            quote! {
+                #p::Type::TextureStorage {
+                    kind: #k,
+                    format: #f,
+                    access: #a,
+                }
+            }
+        }
         ir::Type::TypeParam { name } => {
             quote! { #p::Type::TypeParam { name: ::std::string::String::from(#name) } }
         }
@@ -553,6 +569,71 @@ fn tex_depth_kind(p: &TokenStream, k: ir::TextureDepthKind) -> TokenStream {
         ir::TextureDepthKind::DepthMultisampled2D => quote! { DepthMultisampled2D },
     };
     quote! { #p::TextureDepthKind::#v }
+}
+
+fn tex_storage_kind(p: &TokenStream, k: ir::TextureStorageKind) -> TokenStream {
+    let v = match k {
+        ir::TextureStorageKind::Storage1D => quote! { Storage1D },
+        ir::TextureStorageKind::Storage2D => quote! { Storage2D },
+        ir::TextureStorageKind::Storage2DArray => quote! { Storage2DArray },
+        ir::TextureStorageKind::Storage3D => quote! { Storage3D },
+    };
+    quote! { #p::TextureStorageKind::#v }
+}
+
+fn texel_format(p: &TokenStream, f: ir::TexelFormat) -> TokenStream {
+    let v = match f {
+        ir::TexelFormat::Rgba8unorm => quote! { Rgba8unorm },
+        ir::TexelFormat::Rgba8snorm => quote! { Rgba8snorm },
+        ir::TexelFormat::Rgba8uint => quote! { Rgba8uint },
+        ir::TexelFormat::Rgba8sint => quote! { Rgba8sint },
+        ir::TexelFormat::Rgba16uint => quote! { Rgba16uint },
+        ir::TexelFormat::Rgba16sint => quote! { Rgba16sint },
+        ir::TexelFormat::Rgba16float => quote! { Rgba16float },
+        ir::TexelFormat::R32uint => quote! { R32uint },
+        ir::TexelFormat::R32sint => quote! { R32sint },
+        ir::TexelFormat::R32float => quote! { R32float },
+        ir::TexelFormat::Rg32uint => quote! { Rg32uint },
+        ir::TexelFormat::Rg32sint => quote! { Rg32sint },
+        ir::TexelFormat::Rg32float => quote! { Rg32float },
+        ir::TexelFormat::Rgba32uint => quote! { Rgba32uint },
+        ir::TexelFormat::Rgba32sint => quote! { Rgba32sint },
+        ir::TexelFormat::Rgba32float => quote! { Rgba32float },
+        ir::TexelFormat::Bgra8unorm => quote! { Bgra8unorm },
+        ir::TexelFormat::Rgba16unorm => quote! { Rgba16unorm },
+        ir::TexelFormat::Rgba16snorm => quote! { Rgba16snorm },
+        ir::TexelFormat::Rg8unorm => quote! { Rg8unorm },
+        ir::TexelFormat::Rg8snorm => quote! { Rg8snorm },
+        ir::TexelFormat::Rg8uint => quote! { Rg8uint },
+        ir::TexelFormat::Rg8sint => quote! { Rg8sint },
+        ir::TexelFormat::Rg16unorm => quote! { Rg16unorm },
+        ir::TexelFormat::Rg16snorm => quote! { Rg16snorm },
+        ir::TexelFormat::Rg16uint => quote! { Rg16uint },
+        ir::TexelFormat::Rg16sint => quote! { Rg16sint },
+        ir::TexelFormat::Rg16float => quote! { Rg16float },
+        ir::TexelFormat::R8unorm => quote! { R8unorm },
+        ir::TexelFormat::R8snorm => quote! { R8snorm },
+        ir::TexelFormat::R8uint => quote! { R8uint },
+        ir::TexelFormat::R8sint => quote! { R8sint },
+        ir::TexelFormat::R16unorm => quote! { R16unorm },
+        ir::TexelFormat::R16snorm => quote! { R16snorm },
+        ir::TexelFormat::R16uint => quote! { R16uint },
+        ir::TexelFormat::R16sint => quote! { R16sint },
+        ir::TexelFormat::R16float => quote! { R16float },
+        ir::TexelFormat::Rgb10a2unorm => quote! { Rgb10a2unorm },
+        ir::TexelFormat::Rgb10a2uint => quote! { Rgb10a2uint },
+        ir::TexelFormat::Rg11b10ufloat => quote! { Rg11b10ufloat },
+    };
+    quote! { #p::TexelFormat::#v }
+}
+
+fn storage_texture_access(p: &TokenStream, a: ir::StorageTextureAccess) -> TokenStream {
+    let v = match a {
+        ir::StorageTextureAccess::Read => quote! { Read },
+        ir::StorageTextureAccess::Write => quote! { Write },
+        ir::StorageTextureAccess::ReadWrite => quote! { ReadWrite },
+    };
+    quote! { #p::StorageTextureAccess::#v }
 }
 
 // ===== Expressions =====

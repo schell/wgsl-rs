@@ -167,3 +167,49 @@ pub fn caller_u32_array() -> [u32; 4] {
 The call with `[u32; 4]` produces a WGSL function `_2array_u32_4_zero` (the `_2` prefix is the bijective mangled encoding of `array_u32_4`). Similarly, `[f32; 4]` produces `_2array_f32_4_zero`.
 
 > **Limitation:** Direct `<[u32; 4]>::method()` call syntax (QSelf paths) is not yet supported — only `T::method()` resolved via monomorphization. Tracked in [GitHub issue #131](https://github.com/schell/wgsl-rs/issues/131).
+
+## `PhantomData<T>` Marker Fields
+
+A generic struct may carry `PhantomData<T>` fields as type-parameter markers (e.g. for slab-id tags or type-level metadata). `PhantomData` is re-exported from `wgsl_rs::std` so the glob import brings it into scope. The proc-macro recognizes `PhantomData<_>` fields specially: they are **retained in the IR** (so extensions can observe which type parameter each phantom slot binds) but **omitted from the rendered WGSL**:
+
+```rust
+#[wgsl]
+pub mod phantom_example {
+    use wgsl_rs::std::*;
+
+    pub struct Id<T> {
+        pub index: u32,
+        pub phantom: PhantomData<T>,
+    }
+
+    pub struct Tagged<T, A> {
+        pub x: f32,
+        pub t: PhantomData<T>,
+        pub a: PhantomData<A>,
+    }
+
+    pub fn make_id() -> Id<f32> {
+        Id { index: 0u32, phantom: PhantomData }
+    }
+
+    pub fn make_tagged() -> Tagged<f32, u32> {
+        Tagged { x: 1.0, t: PhantomData, a: PhantomData }
+    }
+}
+```
+
+The rendered WGSL drops phantom fields entirely — `Id_f32` has only `index: u32`, and `Tagged_f32_u32` has only `x: f32`:
+
+```wgsl
+struct Id_f32 {
+    index: u32
+}
+
+struct Tagged_f32_u32 {
+    x: f32
+}
+```
+
+Construction expressions use the bare `PhantomData` value (no turbofish). The macro strips `PhantomData` from the positional constructor call so the rendered arity matches the non-phantom field count: `Id { index: 0u32, phantom: PhantomData }` becomes `Id_f32(0u)`.
+
+> **Why retain phantom fields in the IR?** Extensions consuming the IR via [`WgslExtension::modify_ir`](../extensions/trait.md) must be able to see the full type-parameter binding structure of a generic struct. If phantom fields were skipped at parse time, an extension inspecting `struct Tagged<T, A>` would see `type_params: ["T", "A"]` but only `{ x: f32 }`, with no way to recover which phantom slot bound which parameter. Keeping `Type::Phantom { elem }` in the IR preserves the T↔field provenance.

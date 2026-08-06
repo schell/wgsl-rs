@@ -54,3 +54,4 @@ This chapter curates the key architectural decisions behind wgsl-rs. The full na
 | 2026-08-02   | **Trait impls on complex types** (e.g. `impl Zeroable for [u32; 4]`) transpile to mangled WGSL functions. |
 | 2026-08-04   | **Generic trait impls on array types** (`impl<T: Trait> Trait for [T; N]`) supported via monomorphizer widening (#133). |
 | 2026-08-04   | **Const generics for `u32`/`usize`** supported on functions, structs, impl blocks, and template entry points (#137). The substitution target is always a bare ident (stable Rust requires bare idents or literals), so no new IR variant is needed. |
+| 2026-08-05   | **`PhantomData<T>` marker fields** are retained in the IR (so extensions can see which type parameter each phantom slot binds) but omitted from the rendered WGSL (#138). |

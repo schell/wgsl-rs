@@ -121,6 +121,7 @@
 - [Renderer Specialization (Simple)](./examples/renderer-specialization-simple.md)
 - [Generic Structs](./examples/generic-structs.md)
 - [Shared Inter-stage](./examples/shared-inter-stage.md)
+- [PhantomData](./examples/phantom-data.md)
 
 # Reference
 

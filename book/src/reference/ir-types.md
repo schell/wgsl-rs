@@ -58,3 +58,4 @@ The `wgsl_rs::ir` module exposes the intermediate representation that extensions
 | `Texture`            | Sampled texture                                      |
 | `TextureDepth`       | Depth texture                                        |
 | `TypeParam`          | Generic type parameter (substituted at instantiation)|
+| `Phantom`            | `PhantomData<T>` marker — retained in IR, omitted from WGSL |

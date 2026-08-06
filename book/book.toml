@@ -1,0 +1,23 @@
+[book]
+title = "wgsl-rs Operator's Manual"
+authors = ["Schell Scivally"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "ayu"
+git-repository-url = "https://github.com/schell/wgsl-rs"
+edit-url-template = "https://github.com/schell/wgsl-rs/edit/main/book/src/{path}"
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 0
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1

@@ -42,3 +42,4 @@ The `example` crate provides two subcommands for inspecting examples:
 | `renderer_specialization_simple` | A second specialization of the shared renderer pipeline | [renderer-specialization-simple](./renderer-specialization-simple.md) |
 | `generic_structs` | Generic structs with `#[wgsl(skip_validation)]` (known bug) | [generic-structs](./generic-structs.md) |
 | `shared_inter_stage` | A single struct shared between vertex and fragment stages | [shared-inter-stage](./shared-inter-stage.md) |
+| `phantom_data` | `PhantomData<T>` marker fields (retained in IR, omitted from WGSL) | [phantom-data](./phantom-data.md) |

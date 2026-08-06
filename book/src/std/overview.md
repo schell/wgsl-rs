@@ -28,15 +28,16 @@ modules.
 | Constructors | `vec2f(...)`, `vec3f(...)`, `vec4f(...)`, `mat4x4f(...)` | [Matrix & Vector Functions](./matrix-vector.md) |
 | Numeric builtins | `abs`, `sin`, `cos`, `pow`, `clamp`, `dot`, `cross`, ... | [Numeric Builtins](./numeric.md) |
 | Matrix builtins | `determinant`, `transpose` | [Matrix & Vector Functions](./matrix-vector.md) |
-| Texture functions | `textureSample`, `textureLoad`, `textureStore`, ... | [Texture & Sampler Functions](./texture-sampler.md) |
+| Texture functions | `texture_sample`, `texture_load`, `texture_store`, ... | [Texture & Sampler Functions](./texture-sampler.md) |
 | Derivatives | `dpdx`, `dpdy`, `fwidth`, ... | [Derivatives](./derivatives.md) |
 | Bitcast | `bitcast_f32`, `bitcast_u32`, `bitcast_vec4i`, ... | [Bitcast](./bitcast.md) |
 | Packing | `pack4x8snorm`, `unpack2x16float`, ... | [Packing](./packing.md) |
-| Synchronization | `workgroupBarrier`, `storageBarrier`, `workgroupUniformLoad` | [Synchronization](./synchronization.md) |
+| Synchronization | `workgroup_barrier`, `storage_barrier`, `workgroup_uniform_load` | [Synchronization](./synchronization.md) |
 | Control | `discard!()` | [`discard!()`](./discard.md) |
 | Binding macros | `uniform!`, `storage!`, `workgroup!`, `texture!`, `sampler!`, `ptr!` | [Binding Macros](../writing-shaders/binding-macros.md) |
 | Entry-point attributes | `#[vertex]`, `#[fragment]`, `#[compute]` | [Vertex / Fragment / Compute](../entry-points/stages.md) |
 | Runtime macros | `get!`, `get_mut!`, `discard!`, `slab_read_array!`, `slab_write_array!` | — |
+| Marker types | `PhantomData<T>` | [Generic Structs: `PhantomData`](../generics/generic-structs.md#phantomdatat-marker-fields) |
 
 ## The `Wgsl` trait
 

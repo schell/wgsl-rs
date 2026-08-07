@@ -49,6 +49,8 @@
 //!   `texture_sample` on 2D sampled textures
 //! - [`advanced_texture_operations`] — Advanced texture builtins:
 //!   `texture_sample_grad/level/bias`, offsets, gather, and 2D-array variants
+//! - [`storage_texture_operations`] — Storage texture builtins:
+//!   `texture_store`, `texture_load_storage` on `texture_storage_2d`
 //!
 //! ## Planned coverage
 //!
@@ -73,6 +75,7 @@ pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
 pub mod select_operations;
+pub mod storage_texture_operations;
 pub mod synchronization;
 pub mod texture_operations;
 pub mod trig;
@@ -104,5 +107,6 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(derivative_operations::DerivativeOperationsTest),
         Box::new(texture_operations::TextureOperationsTest),
         Box::new(advanced_texture_operations::AdvancedTextureOperationsTest),
+        Box::new(storage_texture_operations::StorageTextureOperationsTest),
     ]
 }

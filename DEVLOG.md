@@ -554,3 +554,29 @@ need this, but downstream extensions that manipulate generic instantiations do.
 `std::marker::PhantomData<T>` continues to be rejected by the existing
 single-segment-path rule (a `use` import is required).
 
+### 2026-08-07: Trait-impl associated consts may omit `pub`
+
+Associated constants provided by a trait impl (`impl Trait for Type {
+const N: usize = 1; ... }`) are now accepted without a `pub` visibility
+qualifier, matching the relaxation already applied to trait-impl
+methods.
+
+**Problem:** Rust forbids `pub` on any item in a trait impl (`E0449:
+visibility qualifiers are not permitted here`), so trait-impl methods
+were long ago exempted from wgsl-rs's "impl items must be `pub`" rule
+(`ItemFn::try_from_impl_fn` gates the `pub` requirement on
+`!is_trait_impl`). The same exemption was never added for
+`ItemConst::try_from_impl_const`, which always required `pub`. The
+result: `impl SlabItem for u32 { const SLAB_SIZE: usize = 1; ... }`
+was unrepresentable — Rust rejects `pub`, wgsl-rs required `pub`.
+
+**Decision:** Thread `is_trait_impl` into `try_from_impl_const` and gate
+the `pub` requirement the same way `try_from_impl_fn` does. Inherent
+impl consts (`impl Type { pub const ... }`) are unchanged — they still
+require `pub`. The trait definition itself remains Rust-only passthrough
+(`Item::Trait` produces no WGSL); only the trait impl's const value is
+emitted, mangled to `Type_MEMBER` (escaped per `wgsl_rs_ir::mangle`
+when the member name contains underscores, e.g. `SLAB_SIZE` →
+`u32__1SLAB_SIZE`).
+
+

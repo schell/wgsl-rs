@@ -4849,7 +4849,10 @@ impl ItemConst {
     ///
     /// This is similar to `TryFrom<&syn::ItemConst>` but handles the slightly
     /// different structure of `syn::ImplItemConst`.
-    pub fn try_from_impl_const(value: &syn::ImplItemConst) -> Result<Self, Error> {
+    pub fn try_from_impl_const(
+        value: &syn::ImplItemConst,
+        is_trait_impl: bool,
+    ) -> Result<Self, Error> {
         let syn::ImplItemConst {
             attrs,
             vis,
@@ -4871,13 +4874,17 @@ impl ItemConst {
             "default constants are not supported in WGSL",
         )?;
 
-        snafu::ensure!(
-            matches!(vis, syn::Visibility::Public(_)),
-            VisibilitySnafu {
-                span: const_token.span(),
-                item: "Impl constants"
-            }
-        );
+        // Trait impl consts have inherited visibility (no `pub` keyword), so
+        // we only require `pub` on inherent impl consts.
+        if !is_trait_impl {
+            snafu::ensure!(
+                matches!(vis, syn::Visibility::Public(_)),
+                VisibilitySnafu {
+                    span: const_token.span(),
+                    item: "Impl constants"
+                }
+            );
+        }
 
         // Reject generics on constants
         if !generics.params.is_empty() {
@@ -6200,7 +6207,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
                     parsed_items.push(ImplItem::Fn(Box::new(item_fn)));
                 }
                 syn::ImplItem::Const(impl_const) => {
-                    let item_const = ItemConst::try_from_impl_const(impl_const)?;
+                    let item_const = ItemConst::try_from_impl_const(impl_const, is_trait_impl)?;
                     parsed_items.push(ImplItem::Const(Box::new(item_const)));
                 }
                 other => {
@@ -7368,6 +7375,35 @@ mod test {
     }
 
     #[test]
+    fn parse_trait_impl_with_const() {
+        // Trait impl items have inherited visibility (no `pub`), so an
+        // associated const provided by a trait impl must be accepted
+        // without `pub` — mirroring the existing relaxation for trait
+        // impl methods.
+        let item: syn::Item = syn::parse_quote! {
+            impl SomeTrait for Light {
+                const N: usize = 1;
+                fn foo() {}
+            }
+        };
+        let result = Item::try_from(&item).expect("trait impl with const should parse");
+        match &result {
+            Item::Impl(impl_item) => {
+                assert_eq!(2, impl_item.items.len());
+                match &impl_item.items[0] {
+                    ImplItem::Const(c) => assert_eq!(c.ident, "N"),
+                    _ => panic!("Expected ImplItem::Const"),
+                }
+                match &impl_item.items[1] {
+                    ImplItem::Fn(f) => assert_eq!(f.ident, "foo"),
+                    _ => panic!("Expected ImplItem::Fn"),
+                }
+            }
+            _ => panic!("Expected Item::Impl"),
+        }
+    }
+
+    #[test]
     fn parse_trait_impl_for_array_type() {
         let item: syn::Item = syn::parse_quote! {
             impl Zeroable for [u32; 4] {
@@ -7565,6 +7601,25 @@ mod test {
         assert!(
             wgsl.contains("const Light_INTENSITY"),
             "Expected 'const Light_INTENSITY' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn trait_impl_const_generates_mangled_name() {
+        // Trait impl consts have no `pub` (Rust E0449 forbids it). The
+        // const should still render as `Type_MEMBER` at module scope,
+        // the same as an inherent impl const. `usize` is lowered to `u32`.
+        let item: syn::Item = syn::parse_quote! {
+            impl SomeTrait for u32 {
+                const N: usize = 1;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("const u32_N: u32 = 1"),
+            "Expected 'const u32_N: u32 = 1' in WGSL output, got: {}",
             wgsl
         );
     }

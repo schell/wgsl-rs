@@ -715,13 +715,13 @@ pub enum Stmt {
     /// When the `#[wgsl]` parser encounters a statement macro that is not
     /// one of its builtins (`slab_read_array!`, `slab_write_array!`,
     /// `discard!`), it emits this variant instead of rejecting the macro.
-    /// A [`WgslExtension`](wgsl_rs::WgslExtension) can then recognize the
-    /// macro by name in [`modify_ir`](wgsl_rs::WgslExtension::modify_ir) and
-    /// replace this statement with lowered IR.
+    /// A `WgslExtension` (in the `wgsl-rs` crate) can then recognize the
+    /// macro by name in its `modify_ir` method and replace this statement
+    /// with lowered IR.
     ///
-    /// The `#[wgsl]` macro emits a compile-time `const` check verifying that
-    /// at least one listed extension claims the macro name via
-    /// [`WgslExtension::MACROS`], so a typo or missing extension is a
+    /// The `#[wgsl]` macro emits a compile-time `const` check verifying
+    /// that at least one listed extension claims the macro name via its
+    /// `MACROS` associated const, so a typo or missing extension is a
     /// compile error, not a runtime error.
     ///
     /// If this statement survives to render time (no extension claimed it),

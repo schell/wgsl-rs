@@ -18,7 +18,7 @@
 //!
 //! When the `#[wgsl]` parser encounters a statement macro that is not one of
 //! its builtins (`slab_read_array!`, `slab_write_array!`, `discard!`), it
-//! passes it through as an [`ir::Stmt::Macro`] variant instead of rejecting
+//! passes it through as a [`crate::ir::Stmt::Macro`] variant instead of rejecting
 //! it. An extension can then recognize the macro by name in `modify_ir` and
 //! replace the `Stmt::Macro` with lowered IR.
 //!
@@ -36,7 +36,7 @@
 ///
 /// # Statement macro lowering
 ///
-/// Extensions that lower statement macros (see [`ir::Stmt::Macro`]) should
+/// Extensions that lower statement macros (see [`crate::ir::Stmt::Macro`]) should
 /// declare the macro names they handle in [`MACROS`](Self::MACROS). The
 /// `#[wgsl]` macro reads this const at compile time to verify every
 /// `Stmt::Macro` in the module is claimed by at least one listed extension.
@@ -76,7 +76,7 @@ pub trait WgslExtension {
     /// [`modify_ir`](Self::modify_ir).
     ///
     /// The `#[wgsl]` macro emits a compile-time `const` check ensuring every
-    /// [`ir::Stmt::Macro`] in the module is claimed by at least one listed
+    /// [`crate::ir::Stmt::Macro`] in the module is claimed by at least one listed
     /// extension. If a macro name is used in the module but no listed
     /// extension declares it in `MACROS`, the result is a compile error
     /// (`E0080`), not a runtime error.

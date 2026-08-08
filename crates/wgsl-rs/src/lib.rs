@@ -7,7 +7,7 @@ pub mod extension;
 pub mod linkage;
 pub mod source_error;
 
-pub use extension::WgslExtension;
+pub use extension::{WgslExtension, any_ext_claims, contains_str};
 
 pub use source_error::SourceError;
 

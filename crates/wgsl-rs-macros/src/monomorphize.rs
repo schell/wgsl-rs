@@ -22,7 +22,8 @@ use wgsl_rs_ir::mangle;
 
 use crate::{
     parse::{
-        Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, Lit, ReturnType, Type,
+        Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, Lit, ReturnType,
+        ScalarType, Stmt, Type,
     },
     parse_visitor::{self, ParseVisitorMut},
 };
@@ -348,6 +349,12 @@ impl MonoCtx {
                                         ));
                                     }
                                 }
+                                crate::parse::ImplItem::Type(_) => {
+                                    // Associated type aliases don't need name
+                                    // reservation here — they're emitted as
+                                    // WGSL
+                                    // aliases during rendering.
+                                }
                             }
                         }
                     }
@@ -669,12 +676,22 @@ impl MonoCtx {
         if let Some(impl_blocks) = self.impl_templates.get(&original_name).cloned() {
             for impl_template in &impl_blocks {
                 // Build substitution maps for the impl block's params
-                let impl_subst: BTreeMap<String, Type> = impl_template
+                let mut impl_subst: BTreeMap<String, Type> = impl_template
                     .type_params
                     .iter()
                     .zip(request.concrete_types.iter())
                     .map(|(param, ty)| (param.to_string(), ty.clone()))
                     .collect();
+                // Add `Self` → mangled struct name so `Self` in method
+                // signatures and bodies is replaced during substitution.
+                impl_subst.insert(
+                    "Self".to_string(),
+                    Type::Struct {
+                        ident: Ident::new(&mangled_name, proc_macro2::Span::call_site()),
+                        type_args: vec![],
+                        const_args: vec![],
+                    },
+                );
                 let impl_consts: BTreeMap<String, u32> = impl_template
                     .const_params
                     .iter()
@@ -729,6 +746,36 @@ impl MonoCtx {
 
                             self.generated.push(Item::Const(Box::new(mono_const)));
                         }
+                        crate::parse::ImplItem::Type(t) => {
+                            // Substitute type params in the associated type
+                            // alias's type, then emit as a synthetic impl
+                            // block containing a single `ImplItem::Type` so
+                            // the IR renderer emits a module-scope WGSL
+                            // `alias <MangledSelf>_<member> = <ty>;`.
+                            let mut mono_ty = (*t.ty).clone();
+                            substitute_type(&mut mono_ty, &impl_subst, &impl_consts);
+
+                            let alias_item = crate::parse::ImplItem::Type(Box::new(
+                                crate::parse::ItemTypeAlias {
+                                    ident: t.ident.clone(),
+                                    ty: Box::new(mono_ty),
+                                },
+                            ));
+                            let alias_impl = crate::parse::ItemImpl {
+                                type_params: Vec::new(),
+                                const_params: Vec::new(),
+                                _impl_token: <syn::Token![impl]>::default(),
+                                self_ty: crate::parse::Type::Struct {
+                                    ident: Ident::new(&mangled_name, t.ident.span()),
+                                    type_args: Vec::new(),
+                                    const_args: Vec::new(),
+                                },
+                                _brace_token: syn::token::Brace::default(),
+                                items: vec![alias_item],
+                                attrs: Vec::new(),
+                            };
+                            self.generated.push(Item::Impl(alias_impl));
+                        }
                     }
                 }
             }
@@ -781,12 +828,15 @@ impl MonoCtx {
         // (This covers the common `impl<T> ... for [T; N]` pattern. More
         // complex multi-param array impls would need additional matching
         // logic.)
-        let subst: BTreeMap<String, Type> = impl_template
+        let mut subst: BTreeMap<String, Type> = impl_template
             .type_params
             .first()
             .map(|tp| (tp.to_string(), concrete_elem.clone()))
             .into_iter()
             .collect();
+        // Add `Self` → concrete array type so `Self` in method bodies
+        // is replaced during substitution.
+        subst.insert("Self".to_string(), concrete_array_ty.clone());
         // Array impl templates with const params (e.g. `impl<T, const N:
         // usize> ... for [T; N]`) are not yet fully supported — the
         // concrete const value would need to flow from the usage site.
@@ -853,6 +903,11 @@ impl MonoCtx {
                     substitute_expr(&mut mono_const.expr, &subst, &consts);
 
                     self.generated.push(Item::Const(Box::new(mono_const)));
+                }
+                crate::parse::ImplItem::Type(_) => {
+                    // Associated type aliases on array impls are not yet
+                    // monomorphized — they're rare and would need the same
+                    // alias emission logic as struct impls.
                 }
             }
         }
@@ -1174,6 +1229,22 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
             *ty = concrete.clone();
             return Ok(());
         }
+        // Replace `Self` with the concrete self type when "Self" is in
+        // the substitution map (used during generic impl block
+        // monomorphization).
+        if let Type::Struct {
+            ident,
+            type_args,
+            const_args,
+        } = ty
+            && ident == "Self"
+            && type_args.is_empty()
+            && const_args.is_empty()
+            && let Some(concrete) = self.subst.get("Self")
+        {
+            *ty = concrete.clone();
+            return Ok(());
+        }
         parse_visitor::walk_type(self, ty)
     }
 
@@ -1208,6 +1279,14 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
             Expr::Struct { ident, .. } => {
                 if let Some(concrete) = self.subst.get(&ident.to_string()) {
                     *ident = type_to_ident(concrete, ident.span());
+                }
+            }
+            // `T::SLAB_SIZE` → `f32::SLAB_SIZE` (or `Self::SLAB_SIZE` →
+            // `Wrapper_f32::SLAB_SIZE`) when the base type is in the
+            // substitution map.
+            Expr::TypePath { ty, .. } => {
+                if let Some(concrete) = self.subst.get(&ty.to_string()) {
+                    *ty = type_to_ident(concrete, ty.span());
                 }
             }
             _ => {}
@@ -1946,6 +2025,7 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             ident.to_string().to_lowercase()
         }
         Type::Phantom { elem, .. } => mangle(&["phantom", &mangle_type(elem)?]),
+        Type::AssocType { ty, member, .. } => mangle(&[&mangle_type(ty)?, &member.to_string()]),
     })
 }
 
@@ -2033,6 +2113,9 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
         // their inner types are distinct. The phantom wrapper adds no
         // distinguishing information of its own.
         Type::Phantom { elem, .. } => type_to_key(elem)?,
+        Type::AssocType { ty, member, .. } => {
+            TypeKey::Struct(mangle(&[&mangle_type(ty)?, &member.to_string()]))
+        }
     })
 }
 
@@ -2045,6 +2128,7 @@ pub(crate) fn contains_type_param(ty: &Type) -> bool {
         | Type::Atomic { elem, .. }
         | Type::Ptr { elem, .. }
         | Type::Phantom { elem, .. } => contains_type_param(elem),
+        Type::AssocType { ty, .. } => contains_type_param(ty),
         Type::Struct { type_args, .. } => type_args.iter().any(contains_type_param),
         Type::Scalar { .. }
         | Type::Vector { .. }
@@ -2055,6 +2139,430 @@ pub(crate) fn contains_type_param(ty: &Type) -> bool {
         | Type::TextureDepth { .. }
         | Type::TextureStorage { .. } => false,
     }
+}
+
+// ===== Associated type resolution =====
+//
+// After monomorphization, `Type::AssocType { ty, member }` projections
+// may remain (e.g. `Self::Array` → `Id_f32::Array` after `Self` →
+// `Id_f32` substitution). This pass builds an index of all
+// `ImplItem::Type` aliases across all impl blocks in the module, then
+// resolves every `Type::AssocType` to the concrete type from the index.
+// Resolves transitively (e.g. `Something_f32::Array` → `f32::Array` →
+// `[u32; 1]`) by iterating to fixpoint.
+
+/// Build an index of `(self_ty_name, assoc_type_name) → Type` from all
+/// `ImplItem::Type` in all impl blocks in the module.
+fn build_assoc_type_index(module: &ItemMod) -> BTreeMap<(String, String), Type> {
+    let mut index = BTreeMap::new();
+    for item in &module.content {
+        if let Item::Impl(impl_block) = item {
+            let self_ty_name = self_ty_base_ident_string(&impl_block.self_ty)
+                .or_else(|| mangle_type(&impl_block.self_ty).ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "impl block self_ty is not a named type: {}",
+                        mangle_type(&impl_block.self_ty)
+                            .unwrap_or_else(|_| "<unmangleable>".to_string())
+                    )
+                });
+            for ii in &impl_block.items {
+                if let crate::parse::ImplItem::Type(t) = ii {
+                    index.insert((self_ty_name.clone(), t.ident.to_string()), (*t.ty).clone());
+                }
+            }
+        }
+    }
+    index
+}
+
+/// Resolve the base name of a `Type` for assoc-type lookup.
+/// This is the string used as a key in the assoc-type index.
+fn type_name_for_assoc(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Struct {
+            ident, type_args, ..
+        } => {
+            if type_args.is_empty() {
+                Some(ident.to_string())
+            } else {
+                // Mangled generic struct name (e.g. Something_f32)
+                let mut components = vec![ident.to_string()];
+                for ta in type_args {
+                    components.push(type_name_for_assoc(ta)?);
+                }
+                let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+                Some(mangle(&str_components))
+            }
+        }
+        Type::Scalar { ty, .. } => Some(scalar_wgsl_name(ty).to_string()),
+        Type::TypeParam { ident } => Some(ident.to_string()),
+        Type::AssocType { ty, member, .. } => {
+            let inner = type_name_for_assoc(ty)?;
+            Some(mangle(&[&inner, &member.to_string()]))
+        }
+        _ => None,
+    }
+}
+
+/// WGSL name for a scalar type (for assoc-type lookup keys).
+fn scalar_wgsl_name(s: &ScalarType) -> &'static str {
+    match s {
+        ScalarType::I32 => "i32",
+        ScalarType::U32 => "u32",
+        ScalarType::F32 => "f32",
+        ScalarType::Bool => "bool",
+    }
+}
+
+/// Resolve all `Type::AssocType` references in the module by looking
+/// up the associated type index. Iterates to fixpoint for transitive
+/// projections.
+pub fn resolve_assoc_types(module: &mut ItemMod) -> Result<(), crate::parse::Error> {
+    let index = build_assoc_type_index(module);
+    if index.is_empty() {
+        return Ok(());
+    }
+
+    // Iterate until no more AssocType nodes can be resolved.
+    loop {
+        let mut resolved_any = false;
+        for item in &mut module.content {
+            if resolve_assoc_types_in_item(item, &index) {
+                resolved_any = true;
+            }
+        }
+        if !resolved_any {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Resolve `Type::AssocType` in a single item. Returns true if any
+/// resolution occurred.
+fn resolve_assoc_types_in_item(item: &mut Item, index: &BTreeMap<(String, String), Type>) -> bool {
+    match item {
+        Item::Fn(f) => {
+            let mut changed = false;
+            for arg in f.inputs.iter_mut() {
+                if resolve_assoc_type(&mut arg.ty, index) {
+                    changed = true;
+                }
+            }
+            if let ReturnType::Type { ty, .. } = &mut f.return_type
+                && resolve_assoc_type(ty, index)
+            {
+                changed = true;
+            }
+            if resolve_assoc_in_block(&mut f.block, index) {
+                changed = true;
+            }
+            changed
+        }
+        Item::Struct(s) => {
+            let mut changed = false;
+            for field in s.fields.named.iter_mut() {
+                if resolve_assoc_type(&mut field.ty, index) {
+                    changed = true;
+                }
+            }
+            changed
+        }
+        Item::Impl(i) => {
+            let mut changed = false;
+            for ii in &mut i.items {
+                match ii {
+                    crate::parse::ImplItem::Fn(f) => {
+                        for arg in f.inputs.iter_mut() {
+                            if resolve_assoc_type(&mut arg.ty, index) {
+                                changed = true;
+                            }
+                        }
+                        if let ReturnType::Type { ty, .. } = &mut f.return_type
+                            && resolve_assoc_type(ty, index)
+                        {
+                            changed = true;
+                        }
+                        if resolve_assoc_in_block(&mut f.block, index) {
+                            changed = true;
+                        }
+                    }
+                    crate::parse::ImplItem::Const(c) => {
+                        if resolve_assoc_type(&mut c.ty, index) {
+                            changed = true;
+                        }
+                        if resolve_assoc_in_expr(&mut c.expr, index) {
+                            changed = true;
+                        }
+                    }
+                    crate::parse::ImplItem::Type(t) => {
+                        if resolve_assoc_type(&mut t.ty, index) {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
+/// Resolve `Type::AssocType` in a type tree. Returns true if any
+/// resolution occurred.
+fn resolve_assoc_type(ty: &mut Type, index: &BTreeMap<(String, String), Type>) -> bool {
+    let mut changed = false;
+    match ty {
+        Type::AssocType {
+            ty: base, member, ..
+        } => {
+            // First, try to resolve the base type itself (it may be an
+            // AssocType that needs resolving first).
+            if resolve_assoc_type(base, index) {
+                changed = true;
+            }
+            // Now try to resolve this AssocType.
+            if let Some(base_name) = type_name_for_assoc(base)
+                && let Some(concrete) = index.get(&(base_name, member.to_string()))
+            {
+                *ty = concrete.clone();
+                // Recurse into the replacement in case it contains
+                // more AssocType nodes.
+                resolve_assoc_type(ty, index);
+                return true;
+            }
+        }
+        Type::Struct { type_args, .. } => {
+            for ta in type_args.iter_mut() {
+                if resolve_assoc_type(ta, index) {
+                    changed = true;
+                }
+            }
+        }
+        Type::Array { elem, len, .. } => {
+            if resolve_assoc_type(elem, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(len, index) {
+                changed = true;
+            }
+        }
+        Type::RuntimeArray { elem, .. }
+        | Type::Atomic { elem, .. }
+        | Type::Ptr { elem, .. }
+        | Type::Phantom { elem, .. } => {
+            if resolve_assoc_type(elem, index) {
+                changed = true;
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+/// Resolve `Type::AssocType` in all statements in a block.
+fn resolve_assoc_in_block(block: &mut Block, index: &BTreeMap<(String, String), Type>) -> bool {
+    let mut changed = false;
+    for stmt in block.stmt.iter_mut() {
+        if resolve_assoc_in_stmt(stmt, index) {
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn resolve_assoc_in_stmt(stmt: &mut Stmt, index: &BTreeMap<(String, String), Type>) -> bool {
+    let mut changed = false;
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some((_, t)) = &mut local.ty
+                && resolve_assoc_type(t, index)
+            {
+                changed = true;
+            }
+            if let Some(init) = &mut local.init
+                && resolve_assoc_in_expr(&mut init.expr, index)
+            {
+                changed = true;
+            }
+        }
+        Stmt::Const(c) => {
+            if resolve_assoc_type(&mut c.ty, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(&mut c.expr, index) {
+                changed = true;
+            }
+        }
+        Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            if resolve_assoc_in_expr(lhs, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(rhs, index) {
+                changed = true;
+            }
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            if resolve_assoc_in_expr(condition, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_block(body, index) {
+                changed = true;
+            }
+        }
+        Stmt::Loop { body, .. } => {
+            if resolve_assoc_in_block(body, index) {
+                changed = true;
+            }
+        }
+        Stmt::Expr { expr, .. } => {
+            if resolve_assoc_in_expr(expr, index) {
+                changed = true;
+            }
+        }
+        Stmt::If(i) => {
+            if resolve_assoc_in_expr(&mut i.condition, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_block(&mut i.then_block, index) {
+                changed = true;
+            }
+            if let Some(eb) = &mut i.else_branch {
+                match &mut eb.body {
+                    crate::parse::ElseBody::Block(b) => {
+                        if resolve_assoc_in_block(b, index) {
+                            changed = true;
+                        }
+                    }
+                    crate::parse::ElseBody::If(inner) => {
+                        if resolve_assoc_in_stmt(&mut Stmt::If(inner.clone()), index) {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        Stmt::For(f) => {
+            if let Some((_, t)) = &mut f.ty
+                && resolve_assoc_type(t, index)
+            {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(&mut f.from, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(&mut f.to, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_block(&mut f.body, index) {
+                changed = true;
+            }
+        }
+        Stmt::Switch(sw) => {
+            if resolve_assoc_in_expr(&mut sw.selector, index) {
+                changed = true;
+            }
+            for arm in sw.arms.iter_mut() {
+                for sel in &mut arm.selectors {
+                    if let crate::parse::CaseSelector::Expr(e) = sel
+                        && resolve_assoc_in_expr(e, index)
+                    {
+                        changed = true;
+                    }
+                }
+                if resolve_assoc_in_block(&mut arm.body, index) {
+                    changed = true;
+                }
+            }
+        }
+        Stmt::Block(b) => {
+            if resolve_assoc_in_block(b, index) {
+                changed = true;
+            }
+        }
+        Stmt::SlabRead {
+            slab,
+            offset,
+            dest,
+            size,
+            ..
+        } => {
+            if resolve_assoc_in_expr(slab, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(offset, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(dest, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(size, index) {
+                changed = true;
+            }
+        }
+        Stmt::SlabWrite {
+            slab,
+            offset,
+            src,
+            size,
+            ..
+        } => {
+            if resolve_assoc_in_expr(slab, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(offset, index) {
+                changed = true;
+            }
+            if resolve_assoc_in_expr(src, index) {
+                changed = true;
+            }
+            if let Some(s) = size
+                && resolve_assoc_in_expr(s, index)
+            {
+                changed = true;
+            }
+        }
+        Stmt::Macro { .. }
+        | Stmt::Break { .. }
+        | Stmt::Continue { .. }
+        | Stmt::Discard { .. }
+        | Stmt::Return { .. } => {}
+    }
+    changed
+}
+
+fn resolve_assoc_in_expr(expr: &mut Expr, index: &BTreeMap<(String, String), Type>) -> bool {
+    // Expressions don't contain Type::AssocType directly, but they may
+    // contain casts with type arguments or struct constructors with
+    // type args that contain AssocType. Walk recursively.
+    let mut changed = false;
+    match expr {
+        Expr::Cast { ty, .. } => {
+            if resolve_assoc_type(ty, index) {
+                changed = true;
+            }
+        }
+        Expr::Struct { type_args, .. } => {
+            for ta in type_args.iter_mut() {
+                if resolve_assoc_type(ta, index) {
+                    changed = true;
+                }
+            }
+        }
+        Expr::ZeroValueArray { elem_type, .. } => {
+            if resolve_assoc_type(elem_type, index) {
+                changed = true;
+            }
+        }
+        _ => {}
+    }
+    // Also walk into nested expressions
+    // (The default walk would handle this, but we're not using the
+    // visitor here. For now, handle the common cases above.)
+    changed
 }
 
 #[cfg(test)]

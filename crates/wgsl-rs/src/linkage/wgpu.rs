@@ -1099,7 +1099,11 @@ fn collect_idents_in_stmt(out: &mut std::collections::HashSet<String>, stmt: &ir
                 collect_idents_in_expr(out, s);
             }
         }
-        ir::Stmt::Break | ir::Stmt::Continue | ir::Stmt::Discard | ir::Stmt::Return(None) => {}
+        ir::Stmt::Break
+        | ir::Stmt::Continue
+        | ir::Stmt::Discard
+        | ir::Stmt::Return(None)
+        | ir::Stmt::Macro { .. } => {}
     }
 }
 
@@ -1572,7 +1576,8 @@ fn type_layout(ty: &ir::Type, module: &ir::Module) -> TypeLayout {
         | ir::Type::TextureDepth { .. }
         | ir::Type::TextureStorage { .. }
         | ir::Type::TypeParam { .. }
-        | ir::Type::Phantom { .. } => TypeLayout { size: 0, align: 1 },
+        | ir::Type::Phantom { .. }
+        | ir::Type::AssocType { .. } => TypeLayout { size: 0, align: 1 },
     }
 }
 

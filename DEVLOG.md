@@ -629,3 +629,45 @@ and `TextureStore` impls to `Write`/`ReadWrite` at compile time. A separate
 `texture_load_storage` builtin function (mapping to `textureLoad` in WGSL)
 is used for storage texture loads because the WGSL storage overload takes no
 `level` parameter, unlike the sampled texture `textureLoad` overload.
+### 2026-08-07: Extensible statement macros via `Stmt::Macro` passthrough
+
+**Problem:** The `#[wgsl]` parser hardcodes a whitelist of statement macros
+(`slab_read_array!`, `slab_write_array!`, `discard!`) and rejects unknown
+ones at parse time. Downstream crates like crabslab cannot register their
+own statement macros (e.g. `slab_read!`, `slab_write!`) without either
+wrapping `#[wgsl]` in a competing attribute macro (which doesn't compose
+with other downstream wrappers) or hardcoding their macros into wgsl-rs
+(which couples wgsl-rs to crabslab).
+
+**Decision:** Pass unrecognized statement macros through the parser as
+`ir::Stmt::Macro { name, args }` instead of rejecting them. A
+`WgslExtension` can then claim the macro by name (via a new
+`const MACROS: &[&str]` associated const) and lower it in `modify_ir` to
+real IR statements. The `#[wgsl]` macro emits compile-time `const _: ()`
+blocks that read each listed extension's `MACROS` const and verify every
+`Stmt::Macro` name is claimed — so a typo or missing extension is a
+compile error (`E0080`), not a runtime error.
+
+**Justification:**
+- Composable: multiple extensions stack in `extensions = [A, B, C]`; each
+  handles its own macro names. No wrapper-macro monopoly.
+- Compile-time safety: `str::PartialEq` is not yet const-stable, so we
+  use a hand-written `const fn` byte comparison. `panic!` with a string
+  literal IS const-stable and gives a clear `E0080` error naming the
+  unclaimed macro. `format!` is not const, so the macro name is baked into
+  a per-macro `panic!` string literal.
+- Backward-compatible: `MACROS` defaults to `&[]`; existing extensions
+  that don't lower macros are unaffected.
+- The `args` field is `String` (the syn-free IR crate can't hold
+  `proc_macro2::TokenStream`); extensions re-parse with their own `syn`
+  dependency. See crabslab issue schell-hw9.1 for the args-representation
+  trade-off.
+
+**Why not expression-position macros?** `#[wgsl]` runs before
+`macro_rules!` expand, so expression-position macros are untyped black
+boxes — the parser can only accept ones it recognizes by name and knows
+the return type of (like `get!`/`get_mut!`). Statement-position macros
+don't need return types, so they can be passed through as `Stmt::Macro`.
+This is why crabslab's `slab_read!`/`slab_write!` are statement macros
+(4 args including a dest name) rather than expressions.
+

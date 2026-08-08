@@ -56,6 +56,7 @@ pub fn items_need_tier1_extension(items: &[Item]) -> bool {
         Item::Impl(i) => i.items.iter().any(|impl_item| match impl_item {
             ImplItem::Fn(f) => fn_uses_tier1(f),
             ImplItem::Const(c) => type_uses_tier1(&c.ty),
+            ImplItem::Type(_) => false,
         }),
         _ => false,
     })
@@ -301,6 +302,17 @@ fn write_item(w: &mut Writer, item: &Item) {
                         let mangled = mangle(&[&i.self_ty, &f.name]);
                         w.blank_line();
                         write_fn(w, f, Some(&mangled));
+                    }
+                    ImplItem::Type(t) => {
+                        // Emit as a module-scope WGSL `alias`.
+                        let mangled = mangle(&[&i.self_ty, &t.name]);
+                        w.start_line();
+                        w.write("alias ");
+                        w.write(&mangled);
+                        w.write(" = ");
+                        write_type(w, &t.ty);
+                        w.write(";");
+                        w.newline();
                     }
                 }
             }
@@ -647,6 +659,61 @@ fn write_type(w: &mut Writer, ty: &Type) {
                  WGSL representation"
             )
         }
+        Type::AssocType { ty, member } => {
+            // Render as `Type_member` (mangled). If an `alias` was emitted
+            // from a matching `ImplItem::Type`, this name resolves at the
+            // WGSL level.
+            let ty_name = type_base_name(ty);
+            w.write(&crate::mangle::mangle(&[&ty_name, member]));
+        }
+    }
+}
+
+/// Extract the base name string from a type for use in mangling.
+fn type_base_name(ty: &Type) -> String {
+    match ty {
+        Type::Scalar(s) => scalar_name(*s).to_string(),
+        Type::Vector {
+            elements,
+            scalar_ty,
+            ..
+        } => {
+            let suffix = match scalar_ty {
+                Some(st) => scalar_short(*st).to_string(),
+                None => String::new(),
+            };
+            format!("vec{elements}{suffix}")
+        }
+        Type::Matrix { columns, rows, .. } => format!("mat{columns}x{rows}f"),
+        Type::Struct {
+            name, type_args, ..
+        } => {
+            if type_args.is_empty() {
+                name.clone()
+            } else {
+                // Mangled generic struct name (e.g. Something_f32)
+                let mut components: Vec<String> = vec![name.clone()];
+                for ta in type_args {
+                    components.push(type_base_name(ta));
+                }
+                let str_components: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
+                crate::mangle::mangle(&str_components)
+            }
+        }
+        Type::Array { elem, len, .. } => {
+            let elem_name = type_base_name(elem);
+            let len_str = match len {
+                Expr::Lit(Lit::Int { digits, .. }) => digits.clone(),
+                _ => "N".to_string(),
+            };
+            crate::mangle::mangle(&["array", &elem_name, &len_str])
+        }
+        Type::AssocType { ty, member } => {
+            let inner = type_base_name(ty);
+            crate::mangle::mangle(&[&inner, member])
+        }
+        Type::TypeParam { name } => name.clone(),
+        _ => "unknown".to_string(),
     }
 }
 
@@ -1091,6 +1158,14 @@ fn write_stmt(w: &mut Writer, s: &Stmt) {
             w.start_line();
             w.write("discard;");
             w.newline();
+        }
+        Stmt::Macro { name, args } => {
+            panic!(
+                "unclaimed statement macro `{}!({})` survived to render time — no extension that \
+                 claims this macro in `MACROS` lowered it in `modify_ir`. This is an \
+                 extension-author bug.",
+                name, args,
+            );
         }
     }
 }

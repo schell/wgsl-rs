@@ -496,6 +496,67 @@ fn analyze_texture_and_sampler_bindings() {
     ));
 }
 
+#[test]
+fn analyze_storage_texture_bindings() {
+    use wgsl_rs::ir::{StorageTextureAccess, TexelFormat, TextureStorageKind};
+
+    let ir_module = ir::Module {
+        name: "storage_tex",
+        items: vec![
+            ir::Item::Texture(ir::ItemTexture {
+                group: 0,
+                binding: 0,
+                name: "OUT_TEX".to_string(),
+                ty: ir::Type::TextureStorage {
+                    kind: TextureStorageKind::Storage2D,
+                    format: TexelFormat::Rgba8unorm,
+                    access: StorageTextureAccess::Write,
+                },
+                attrs: vec![],
+            }),
+            ir::Item::Texture(ir::ItemTexture {
+                group: 0,
+                binding: 1,
+                name: "IN_TEX".to_string(),
+                ty: ir::Type::TextureStorage {
+                    kind: TextureStorageKind::Storage2D,
+                    format: TexelFormat::Rgba8uint,
+                    access: StorageTextureAccess::Read,
+                },
+                attrs: vec![],
+            }),
+            ir::Item::Texture(ir::ItemTexture {
+                group: 0,
+                binding: 2,
+                name: "RW_TEX".to_string(),
+                ty: ir::Type::TextureStorage {
+                    kind: TextureStorageKind::Storage2D,
+                    format: TexelFormat::R32float,
+                    access: StorageTextureAccess::ReadWrite,
+                },
+                attrs: vec![],
+            }),
+        ],
+        attrs: vec![],
+    };
+    let linkage = ir_module.generate_linkage();
+    let bg = linkage.bind_group(0).unwrap();
+    assert_eq!(bg.bindings.len(), 3);
+
+    assert!(matches!(
+        bg.bindings[0].kind,
+        wg::BindingKind::StorageTexture { read_write: false }
+    ));
+    assert!(matches!(
+        bg.bindings[1].kind,
+        wg::BindingKind::StorageTexture { read_write: false }
+    ));
+    assert!(matches!(
+        bg.bindings[2].kind,
+        wg::BindingKind::StorageTexture { read_write: true }
+    ));
+}
+
 // ===== Storage access mode preserved =====
 
 #[test]

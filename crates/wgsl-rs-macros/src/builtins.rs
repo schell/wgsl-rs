@@ -103,6 +103,8 @@ pub const BUILTIN_CASE_NAME_MAP: &[(&str, &str)] = &[
     ("texture_load", "textureLoad"),
     ("texture_load_array", "textureLoad"),
     ("texture_load_multisampled", "textureLoad"),
+    ("texture_load_storage", "textureLoad"),
+    ("texture_load_storage_array", "textureLoad"),
     // Query functions
     ("texture_num_layers", "textureNumLayers"),
     ("texture_num_levels", "textureNumLevels"),

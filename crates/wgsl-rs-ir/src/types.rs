@@ -86,6 +86,287 @@ pub enum TextureDepthKind {
     DepthMultisampled2D,
 }
 
+/// Storage texture kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextureStorageKind {
+    Storage1D,
+    Storage2D,
+    Storage2DArray,
+    Storage3D,
+}
+
+/// Storage texture access modes. WGSL §14.2.
+///
+/// Unlike [`StorageAccess`] (used for storage buffers, which only allow
+/// `read` and `read_write`), storage textures also support `write`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageTextureAccess {
+    Read,
+    Write,
+    ReadWrite,
+}
+
+/// Texel formats for storage textures. WGSL §6.6.1.
+///
+/// Each variant maps 1:1 to a `wgpu::TextureFormat` of the same name. The
+/// `requires_tier1` method reports whether the `texture_formats_tier1`
+/// language extension must be enabled to use the format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TexelFormat {
+    // ===== Core formats (no extension required) =====
+    Rgba8unorm,
+    Rgba8snorm,
+    Rgba8uint,
+    Rgba8sint,
+    Rgba16uint,
+    Rgba16sint,
+    Rgba16float,
+    R32uint,
+    R32sint,
+    R32float,
+    Rg32uint,
+    Rg32sint,
+    Rg32float,
+    Rgba32uint,
+    Rgba32sint,
+    Rgba32float,
+    Bgra8unorm,
+    // ===== Tier-1 extension formats =====
+    Rgba16unorm,
+    Rgba16snorm,
+    Rg8unorm,
+    Rg8snorm,
+    Rg8uint,
+    Rg8sint,
+    Rg16unorm,
+    Rg16snorm,
+    Rg16uint,
+    Rg16sint,
+    Rg16float,
+    R8unorm,
+    R8snorm,
+    R8uint,
+    R8sint,
+    R16unorm,
+    R16snorm,
+    R16uint,
+    R16sint,
+    R16float,
+    Rgb10a2unorm,
+    Rgb10a2uint,
+    Rg11b10ufloat,
+}
+
+impl TexelFormat {
+    /// Whether this format requires the `texture_formats_tier1` language
+    /// extension (WGSL §6.6.1, last column of the storage texel formats
+    /// table).
+    pub fn requires_tier1(&self) -> bool {
+        matches!(
+            self,
+            TexelFormat::Rgba16unorm
+                | TexelFormat::Rgba16snorm
+                | TexelFormat::Rg8unorm
+                | TexelFormat::Rg8snorm
+                | TexelFormat::Rg8uint
+                | TexelFormat::Rg8sint
+                | TexelFormat::Rg16unorm
+                | TexelFormat::Rg16snorm
+                | TexelFormat::Rg16uint
+                | TexelFormat::Rg16sint
+                | TexelFormat::Rg16float
+                | TexelFormat::R8unorm
+                | TexelFormat::R8snorm
+                | TexelFormat::R8uint
+                | TexelFormat::R8sint
+                | TexelFormat::R16unorm
+                | TexelFormat::R16snorm
+                | TexelFormat::R16uint
+                | TexelFormat::R16sint
+                | TexelFormat::R16float
+                | TexelFormat::Rgb10a2unorm
+                | TexelFormat::Rgb10a2uint
+                | TexelFormat::Rg11b10ufloat
+        )
+    }
+
+    /// The shader-side scalar type (`f32`, `u32`, or `i32`) that
+    /// `textureLoad` returns / `textureStore` accepts for this format.
+    /// Derived from the channel format table in WGSL §6.6.1.
+    pub fn shader_scalar(&self) -> ScalarType {
+        match self {
+            TexelFormat::Rgba8unorm
+            | TexelFormat::Rgba8snorm
+            | TexelFormat::Rgba16float
+            | TexelFormat::Rgba16unorm
+            | TexelFormat::Rgba16snorm
+            | TexelFormat::R32float
+            | TexelFormat::Rg32float
+            | TexelFormat::Rgba32float
+            | TexelFormat::Bgra8unorm
+            | TexelFormat::Rg8unorm
+            | TexelFormat::Rg8snorm
+            | TexelFormat::Rg16unorm
+            | TexelFormat::Rg16snorm
+            | TexelFormat::Rg16float
+            | TexelFormat::R8unorm
+            | TexelFormat::R8snorm
+            | TexelFormat::R16unorm
+            | TexelFormat::R16snorm
+            | TexelFormat::R16float
+            | TexelFormat::Rgb10a2unorm
+            | TexelFormat::Rg11b10ufloat => ScalarType::F32,
+            TexelFormat::Rgba8uint
+            | TexelFormat::Rgba16uint
+            | TexelFormat::R32uint
+            | TexelFormat::Rg32uint
+            | TexelFormat::Rgba32uint
+            | TexelFormat::Rg8uint
+            | TexelFormat::Rg16uint
+            | TexelFormat::R8uint
+            | TexelFormat::R16uint
+            | TexelFormat::Rgb10a2uint => ScalarType::U32,
+            TexelFormat::Rgba8sint
+            | TexelFormat::Rgba16sint
+            | TexelFormat::R32sint
+            | TexelFormat::Rg32sint
+            | TexelFormat::Rgba32sint
+            | TexelFormat::Rg8sint
+            | TexelFormat::Rg16sint
+            | TexelFormat::R8sint
+            | TexelFormat::R16sint => ScalarType::I32,
+        }
+    }
+
+    /// The WGSL enumerant name (lowercase, as written in WGSL source).
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            TexelFormat::Rgba8unorm => "rgba8unorm",
+            TexelFormat::Rgba8snorm => "rgba8snorm",
+            TexelFormat::Rgba8uint => "rgba8uint",
+            TexelFormat::Rgba8sint => "rgba8sint",
+            TexelFormat::Rgba16uint => "rgba16uint",
+            TexelFormat::Rgba16sint => "rgba16sint",
+            TexelFormat::Rgba16float => "rgba16float",
+            TexelFormat::R32uint => "r32uint",
+            TexelFormat::R32sint => "r32sint",
+            TexelFormat::R32float => "r32float",
+            TexelFormat::Rg32uint => "rg32uint",
+            TexelFormat::Rg32sint => "rg32sint",
+            TexelFormat::Rg32float => "rg32float",
+            TexelFormat::Rgba32uint => "rgba32uint",
+            TexelFormat::Rgba32sint => "rgba32sint",
+            TexelFormat::Rgba32float => "rgba32float",
+            TexelFormat::Bgra8unorm => "bgra8unorm",
+            TexelFormat::Rgba16unorm => "rgba16unorm",
+            TexelFormat::Rgba16snorm => "rgba16snorm",
+            TexelFormat::Rg8unorm => "rg8unorm",
+            TexelFormat::Rg8snorm => "rg8snorm",
+            TexelFormat::Rg8uint => "rg8uint",
+            TexelFormat::Rg8sint => "rg8sint",
+            TexelFormat::Rg16unorm => "rg16unorm",
+            TexelFormat::Rg16snorm => "rg16snorm",
+            TexelFormat::Rg16uint => "rg16uint",
+            TexelFormat::Rg16sint => "rg16sint",
+            TexelFormat::Rg16float => "rg16float",
+            TexelFormat::R8unorm => "r8unorm",
+            TexelFormat::R8snorm => "r8snorm",
+            TexelFormat::R8uint => "r8uint",
+            TexelFormat::R8sint => "r8sint",
+            TexelFormat::R16unorm => "r16unorm",
+            TexelFormat::R16snorm => "r16snorm",
+            TexelFormat::R16uint => "r16uint",
+            TexelFormat::R16sint => "r16sint",
+            TexelFormat::R16float => "r16float",
+            TexelFormat::Rgb10a2unorm => "rgb10a2unorm",
+            TexelFormat::Rgb10a2uint => "rgb10a2uint",
+            TexelFormat::Rg11b10ufloat => "rg11b10ufloat",
+        }
+    }
+
+    /// Parse a WGSL texel format name (lowercase) into a `TexelFormat`.
+    /// Returns `None` if the name is not a recognized storage texel format.
+    pub fn from_wgsl_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "rgba8unorm" => TexelFormat::Rgba8unorm,
+            "rgba8snorm" => TexelFormat::Rgba8snorm,
+            "rgba8uint" => TexelFormat::Rgba8uint,
+            "rgba8sint" => TexelFormat::Rgba8sint,
+            "rgba16uint" => TexelFormat::Rgba16uint,
+            "rgba16sint" => TexelFormat::Rgba16sint,
+            "rgba16float" => TexelFormat::Rgba16float,
+            "r32uint" => TexelFormat::R32uint,
+            "r32sint" => TexelFormat::R32sint,
+            "r32float" => TexelFormat::R32float,
+            "rg32uint" => TexelFormat::Rg32uint,
+            "rg32sint" => TexelFormat::Rg32sint,
+            "rg32float" => TexelFormat::Rg32float,
+            "rgba32uint" => TexelFormat::Rgba32uint,
+            "rgba32sint" => TexelFormat::Rgba32sint,
+            "rgba32float" => TexelFormat::Rgba32float,
+            "bgra8unorm" => TexelFormat::Bgra8unorm,
+            "rgba16unorm" => TexelFormat::Rgba16unorm,
+            "rgba16snorm" => TexelFormat::Rgba16snorm,
+            "rg8unorm" => TexelFormat::Rg8unorm,
+            "rg8snorm" => TexelFormat::Rg8snorm,
+            "rg8uint" => TexelFormat::Rg8uint,
+            "rg8sint" => TexelFormat::Rg8sint,
+            "rg16unorm" => TexelFormat::Rg16unorm,
+            "rg16snorm" => TexelFormat::Rg16snorm,
+            "rg16uint" => TexelFormat::Rg16uint,
+            "rg16sint" => TexelFormat::Rg16sint,
+            "rg16float" => TexelFormat::Rg16float,
+            "r8unorm" => TexelFormat::R8unorm,
+            "r8snorm" => TexelFormat::R8snorm,
+            "r8uint" => TexelFormat::R8uint,
+            "r8sint" => TexelFormat::R8sint,
+            "r16unorm" => TexelFormat::R16unorm,
+            "r16snorm" => TexelFormat::R16snorm,
+            "r16uint" => TexelFormat::R16uint,
+            "r16sint" => TexelFormat::R16sint,
+            "r16float" => TexelFormat::R16float,
+            "rgb10a2unorm" => TexelFormat::Rgb10a2unorm,
+            "rgb10a2uint" => TexelFormat::Rgb10a2uint,
+            "rg11b10ufloat" => TexelFormat::Rg11b10ufloat,
+            _ => return None,
+        })
+    }
+}
+
+impl StorageTextureAccess {
+    /// The WGSL enumerant name (lowercase).
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            StorageTextureAccess::Read => "read",
+            StorageTextureAccess::Write => "write",
+            StorageTextureAccess::ReadWrite => "read_write",
+        }
+    }
+
+    /// Parse a WGSL access mode name (lowercase) into a
+    /// `StorageTextureAccess`. Returns `None` if unrecognized.
+    pub fn from_wgsl_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "read" => StorageTextureAccess::Read,
+            "write" => StorageTextureAccess::Write,
+            "read_write" => StorageTextureAccess::ReadWrite,
+            _ => return None,
+        })
+    }
+}
+
+impl TextureStorageKind {
+    /// The WGSL type name (e.g. `texture_storage_2d`).
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            TextureStorageKind::Storage1D => "texture_storage_1d",
+            TextureStorageKind::Storage2D => "texture_storage_2d",
+            TextureStorageKind::Storage2DArray => "texture_storage_2d_array",
+            TextureStorageKind::Storage3D => "texture_storage_3d",
+        }
+    }
+}
+
 // ===== Type =====
 
 /// WGSL type expression.
@@ -133,6 +414,13 @@ pub enum Type {
     },
     /// A depth texture, e.g. `texture_depth_2d`.
     TextureDepth { kind: TextureDepthKind },
+    /// A storage texture, e.g. `texture_storage_2d<rgba8unorm, write>`.
+    /// WGSL §6.6.5.
+    TextureStorage {
+        kind: TextureStorageKind,
+        format: TexelFormat,
+        access: StorageTextureAccess,
+    },
     /// A type parameter referenced by name. These are replaced by concrete
     /// types via [`crate::substitute_types`] before rendering.
     TypeParam { name: String },

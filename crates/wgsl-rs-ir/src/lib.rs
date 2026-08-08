@@ -29,7 +29,8 @@ mod types;
 
 pub use mangle::{mangle, unmangle};
 pub use render::{
-    render_block, render_expr, render_item, render_items, render_module, render_stmt, render_type,
+    items_need_tier1_extension, render_block, render_expr, render_item, render_items,
+    render_module, render_stmt, render_type,
 };
 pub use substitute::{
     rename_items, substitute_consts, substitute_consts_in_items, substitute_items,

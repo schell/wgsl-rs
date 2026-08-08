@@ -158,6 +158,7 @@ enum TypeKey {
     SamplerComparison,
     Texture(String),
     TextureDepth(String),
+    TextureStorage(String, String, String),
     Ptr(String, Box<TypeKey>),
     /// Should not appear in a fully resolved key.
     TypeParam(String),
@@ -1913,6 +1914,17 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
         Type::SamplerComparison { .. } => "sampler_comparison".to_string(),
         Type::Texture { kind, .. } => kind.wgsl_name().replace("texture_", "tex_"),
         Type::TextureDepth { kind, .. } => kind.wgsl_name().replace("texture_", "tex_"),
+        Type::TextureStorage {
+            kind,
+            format,
+            access,
+            ..
+        } => {
+            let k = kind.wgsl_name().replace("texture_", "tex_");
+            let f = format.wgsl_name();
+            let a = access.wgsl_name();
+            mangle(&[&k, f, a])
+        }
         // Include address space so that e.g. `ptr<function, f32>` and
         // `ptr<private, f32>` produce distinct mangled names and don't
         // falsely collide.
@@ -2001,6 +2013,16 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
         Type::SamplerComparison { .. } => TypeKey::SamplerComparison,
         Type::Texture { kind, .. } => TypeKey::Texture(kind.wgsl_name().to_string()),
         Type::TextureDepth { kind, .. } => TypeKey::TextureDepth(kind.wgsl_name().to_string()),
+        Type::TextureStorage {
+            kind,
+            format,
+            access,
+            ..
+        } => TypeKey::TextureStorage(
+            kind.wgsl_name().to_string(),
+            format.wgsl_name().to_string(),
+            access.wgsl_name().to_string(),
+        ),
         Type::Ptr {
             address_space,
             elem,
@@ -2030,7 +2052,8 @@ pub(crate) fn contains_type_param(ty: &Type) -> bool {
         | Type::Sampler { .. }
         | Type::SamplerComparison { .. }
         | Type::Texture { .. }
-        | Type::TextureDepth { .. } => false,
+        | Type::TextureDepth { .. }
+        | Type::TextureStorage { .. } => false,
     }
 }
 

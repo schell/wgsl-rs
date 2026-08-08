@@ -732,11 +732,270 @@ impl TextureDepthKind {
     }
 }
 
+/// Storage texture dimensionality/kind.
+/// These correspond to WGSL's texture_storage_* types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureStorageKind {
+    /// texture_storage_1d<F, A>
+    Storage1D,
+    /// texture_storage_2d<F, A>
+    Storage2D,
+    /// texture_storage_2d_array<F, A>
+    Storage2DArray,
+    /// texture_storage_3d<F, A>
+    Storage3D,
+}
+
+impl TextureStorageKind {
+    /// Returns the WGSL type name for this storage texture kind.
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            TextureStorageKind::Storage1D => "texture_storage_1d",
+            TextureStorageKind::Storage2D => "texture_storage_2d",
+            TextureStorageKind::Storage2DArray => "texture_storage_2d_array",
+            TextureStorageKind::Storage3D => "texture_storage_3d",
+        }
+    }
+
+    /// Parse a Rust type name into a TextureStorageKind.
+    pub fn from_rust_name(name: &str) -> Option<Self> {
+        match name {
+            "TextureStorage1D" => Some(TextureStorageKind::Storage1D),
+            "TextureStorage2D" => Some(TextureStorageKind::Storage2D),
+            "TextureStorage2DArray" => Some(TextureStorageKind::Storage2DArray),
+            "TextureStorage3D" => Some(TextureStorageKind::Storage3D),
+            _ => None,
+        }
+    }
+}
+
+/// Storage texture access mode (WGSL §14.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageTextureAccess {
+    Read,
+    Write,
+    ReadWrite,
+}
+
+impl StorageTextureAccess {
+    /// Returns the WGSL enumerant name.
+    pub fn wgsl_name(&self) -> &'static str {
+        match self {
+            StorageTextureAccess::Read => "read",
+            StorageTextureAccess::Write => "write",
+            StorageTextureAccess::ReadWrite => "read_write",
+        }
+    }
+
+    /// Parse a Rust type name into a StorageTextureAccess.
+    pub fn from_rust_name(name: &str) -> Option<Self> {
+        match name {
+            "Read" => Some(StorageTextureAccess::Read),
+            "Write" => Some(StorageTextureAccess::Write),
+            "ReadWrite" => Some(StorageTextureAccess::ReadWrite),
+            _ => None,
+        }
+    }
+}
+
+/// Texel formats for storage textures (WGSL §6.6.1).
+///
+/// This parse-level enum mirrors `wgsl_rs_ir::TexelFormat` and is used during
+/// macro parsing. The variant names are the PascalCase equivalents of the
+/// WGSL enumerant names (e.g. `rgba8unorm` → `Rgba8unorm`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TexelFormat {
+    // Core formats
+    Rgba8unorm,
+    Rgba8snorm,
+    Rgba8uint,
+    Rgba8sint,
+    Rgba16uint,
+    Rgba16sint,
+    Rgba16float,
+    R32uint,
+    R32sint,
+    R32float,
+    Rg32uint,
+    Rg32sint,
+    Rg32float,
+    Rgba32uint,
+    Rgba32sint,
+    Rgba32float,
+    Bgra8unorm,
+    // Tier-1 extension formats
+    Rgba16unorm,
+    Rgba16snorm,
+    Rg8unorm,
+    Rg8snorm,
+    Rg8uint,
+    Rg8sint,
+    Rg16unorm,
+    Rg16snorm,
+    Rg16uint,
+    Rg16sint,
+    Rg16float,
+    R8unorm,
+    R8snorm,
+    R8uint,
+    R8sint,
+    R16unorm,
+    R16snorm,
+    R16uint,
+    R16sint,
+    R16float,
+    Rgb10a2unorm,
+    Rgb10a2uint,
+    Rg11b10ufloat,
+}
+
+impl TexelFormat {
+    /// Parse a Rust type name (PascalCase) into a TexelFormat.
+    pub fn from_rust_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "Rgba8unorm" => TexelFormat::Rgba8unorm,
+            "Rgba8snorm" => TexelFormat::Rgba8snorm,
+            "Rgba8uint" => TexelFormat::Rgba8uint,
+            "Rgba8sint" => TexelFormat::Rgba8sint,
+            "Rgba16uint" => TexelFormat::Rgba16uint,
+            "Rgba16sint" => TexelFormat::Rgba16sint,
+            "Rgba16float" => TexelFormat::Rgba16float,
+            "R32uint" => TexelFormat::R32uint,
+            "R32sint" => TexelFormat::R32sint,
+            "R32float" => TexelFormat::R32float,
+            "Rg32uint" => TexelFormat::Rg32uint,
+            "Rg32sint" => TexelFormat::Rg32sint,
+            "Rg32float" => TexelFormat::Rg32float,
+            "Rgba32uint" => TexelFormat::Rgba32uint,
+            "Rgba32sint" => TexelFormat::Rgba32sint,
+            "Rgba32float" => TexelFormat::Rgba32float,
+            "Bgra8unorm" => TexelFormat::Bgra8unorm,
+            "Rgba16unorm" => TexelFormat::Rgba16unorm,
+            "Rgba16snorm" => TexelFormat::Rgba16snorm,
+            "Rg8unorm" => TexelFormat::Rg8unorm,
+            "Rg8snorm" => TexelFormat::Rg8snorm,
+            "Rg8uint" => TexelFormat::Rg8uint,
+            "Rg8sint" => TexelFormat::Rg8sint,
+            "Rg16unorm" => TexelFormat::Rg16unorm,
+            "Rg16snorm" => TexelFormat::Rg16snorm,
+            "Rg16uint" => TexelFormat::Rg16uint,
+            "Rg16sint" => TexelFormat::Rg16sint,
+            "Rg16float" => TexelFormat::Rg16float,
+            "R8unorm" => TexelFormat::R8unorm,
+            "R8snorm" => TexelFormat::R8snorm,
+            "R8uint" => TexelFormat::R8uint,
+            "R8sint" => TexelFormat::R8sint,
+            "R16unorm" => TexelFormat::R16unorm,
+            "R16snorm" => TexelFormat::R16snorm,
+            "R16uint" => TexelFormat::R16uint,
+            "R16sint" => TexelFormat::R16sint,
+            "R16float" => TexelFormat::R16float,
+            "Rgb10a2unorm" => TexelFormat::Rgb10a2unorm,
+            "Rgb10a2uint" => TexelFormat::Rgb10a2uint,
+            "Rg11b10ufloat" => TexelFormat::Rg11b10ufloat,
+            _ => return None,
+        })
+    }
+
+    /// Convert to the IR-level texel format.
+    pub fn to_ir(self) -> ir::TexelFormat {
+        match self {
+            TexelFormat::Rgba8unorm => ir::TexelFormat::Rgba8unorm,
+            TexelFormat::Rgba8snorm => ir::TexelFormat::Rgba8snorm,
+            TexelFormat::Rgba8uint => ir::TexelFormat::Rgba8uint,
+            TexelFormat::Rgba8sint => ir::TexelFormat::Rgba8sint,
+            TexelFormat::Rgba16uint => ir::TexelFormat::Rgba16uint,
+            TexelFormat::Rgba16sint => ir::TexelFormat::Rgba16sint,
+            TexelFormat::Rgba16float => ir::TexelFormat::Rgba16float,
+            TexelFormat::R32uint => ir::TexelFormat::R32uint,
+            TexelFormat::R32sint => ir::TexelFormat::R32sint,
+            TexelFormat::R32float => ir::TexelFormat::R32float,
+            TexelFormat::Rg32uint => ir::TexelFormat::Rg32uint,
+            TexelFormat::Rg32sint => ir::TexelFormat::Rg32sint,
+            TexelFormat::Rg32float => ir::TexelFormat::Rg32float,
+            TexelFormat::Rgba32uint => ir::TexelFormat::Rgba32uint,
+            TexelFormat::Rgba32sint => ir::TexelFormat::Rgba32sint,
+            TexelFormat::Rgba32float => ir::TexelFormat::Rgba32float,
+            TexelFormat::Bgra8unorm => ir::TexelFormat::Bgra8unorm,
+            TexelFormat::Rgba16unorm => ir::TexelFormat::Rgba16unorm,
+            TexelFormat::Rgba16snorm => ir::TexelFormat::Rgba16snorm,
+            TexelFormat::Rg8unorm => ir::TexelFormat::Rg8unorm,
+            TexelFormat::Rg8snorm => ir::TexelFormat::Rg8snorm,
+            TexelFormat::Rg8uint => ir::TexelFormat::Rg8uint,
+            TexelFormat::Rg8sint => ir::TexelFormat::Rg8sint,
+            TexelFormat::Rg16unorm => ir::TexelFormat::Rg16unorm,
+            TexelFormat::Rg16snorm => ir::TexelFormat::Rg16snorm,
+            TexelFormat::Rg16uint => ir::TexelFormat::Rg16uint,
+            TexelFormat::Rg16sint => ir::TexelFormat::Rg16sint,
+            TexelFormat::Rg16float => ir::TexelFormat::Rg16float,
+            TexelFormat::R8unorm => ir::TexelFormat::R8unorm,
+            TexelFormat::R8snorm => ir::TexelFormat::R8snorm,
+            TexelFormat::R8uint => ir::TexelFormat::R8uint,
+            TexelFormat::R8sint => ir::TexelFormat::R8sint,
+            TexelFormat::R16unorm => ir::TexelFormat::R16unorm,
+            TexelFormat::R16snorm => ir::TexelFormat::R16snorm,
+            TexelFormat::R16uint => ir::TexelFormat::R16uint,
+            TexelFormat::R16sint => ir::TexelFormat::R16sint,
+            TexelFormat::R16float => ir::TexelFormat::R16float,
+            TexelFormat::Rgb10a2unorm => ir::TexelFormat::Rgb10a2unorm,
+            TexelFormat::Rgb10a2uint => ir::TexelFormat::Rgb10a2uint,
+            TexelFormat::Rg11b10ufloat => ir::TexelFormat::Rg11b10ufloat,
+        }
+    }
+
+    /// Returns the WGSL enumerant name (lowercase, as written in WGSL source).
+    pub fn wgsl_name(&self) -> &'static str {
+        self.to_ir().wgsl_name()
+    }
+}
+
 /// Helper struct for parsing `ptr!(address_space, Type)` macro arguments.
 struct PtrMacroArgs {
     address_space: Ident,
     _comma: Token![,],
     store_type: syn::Type,
+}
+
+/// Extract the string name of a type argument that is expected to be a
+/// simple single-segment path (e.g. `Rgba8unorm`, `Write`). Used for
+/// storage texture format and access mode parsing.
+fn extract_type_ident(arg: &syn::GenericArgument) -> Result<String, Error> {
+    match arg {
+        syn::GenericArgument::Type(syn::Type::Path(type_path)) => {
+            util::some_is_unsupported(
+                type_path.qself.as_ref(),
+                "QSelf not allowed in storage texture type argument",
+            )?;
+            snafu::ensure!(
+                type_path.path.segments.len() == 1,
+                UnsupportedSnafu {
+                    span: type_path.path.segments.span(),
+                    note: "storage texture type arguments must be simple single-segment paths \
+                           (e.g. Rgba8unorm, Write)",
+                }
+            );
+            let segment = type_path.path.segments.first().context(UnsupportedSnafu {
+                span: type_path.path.segments.span(),
+                note: "Unexpected empty type path",
+            })?;
+            snafu::ensure!(
+                segment.arguments.is_empty(),
+                UnsupportedSnafu {
+                    span: segment.span(),
+                    note: "storage texture type arguments must not have generic parameters",
+                }
+            );
+            Ok(segment.ident.to_string())
+        }
+        other => UnsupportedSnafu {
+            span: other.span(),
+            note: format!(
+                "Expected a simple type name, got '{}'",
+                other.into_token_stream()
+            ),
+        }
+        .fail(),
+    }
 }
 
 impl Parse for PtrMacroArgs {
@@ -862,6 +1121,15 @@ pub enum Type {
     /// No type parameter (implicitly f32 for depth values).
     TextureDepth {
         kind: TextureDepthKind,
+        ident: Ident,
+    },
+
+    /// Storage texture types: texture_storage_1d/2d/2d_array/3d.
+    /// Parameterized by a texel format and an access mode.
+    TextureStorage {
+        kind: TextureStorageKind,
+        format: TexelFormat,
+        access: StorageTextureAccess,
         ident: Ident,
     },
 
@@ -1108,6 +1376,55 @@ impl Type {
                     gt_token,
                 }) => {
                     let ident_str = ident.to_string();
+
+                    // Storage textures take two type arguments (format +
+                    // access), so they're handled before the one-arg
+                    // builtin-generic check below.
+                    if let Some(storage_kind) = TextureStorageKind::from_rust_name(&ident_str) {
+                        snafu::ensure!(
+                            args.len() == 2,
+                            UnsupportedSnafu {
+                                span: args.span(),
+                                note: "Storage texture types take exactly two type arguments: a \
+                                       texel format and an access mode (e.g. \
+                                       TextureStorage2D<Rgba8unorm, Write>)",
+                            }
+                        );
+                        let mut args_iter = args.iter();
+                        let format_arg = args_iter.next().expect("checked len == 2");
+                        let access_arg = args_iter.next().expect("checked len == 2");
+                        let format_name = extract_type_ident(format_arg)?;
+                        let access_name = extract_type_ident(access_arg)?;
+                        let format =
+                            TexelFormat::from_rust_name(&format_name).ok_or_else(|| {
+                                UnsupportedSnafu {
+                                    span: format_arg.span(),
+                                    note: format!(
+                                        "'{format_name}' is not a recognized storage texel \
+                                         format. See WGSL §6.6.1 for the list of valid texel \
+                                         formats."
+                                    ),
+                                }
+                                .build()
+                            })?;
+                        let access = StorageTextureAccess::from_rust_name(&access_name)
+                            .ok_or_else(|| {
+                                UnsupportedSnafu {
+                                    span: access_arg.span(),
+                                    note: format!(
+                                        "'{access_name}' is not a valid storage texture access \
+                                         mode. Use one of: Read, Write, ReadWrite."
+                                    ),
+                                }
+                                .build()
+                            })?;
+                        return Ok(Type::TextureStorage {
+                            kind: storage_kind,
+                            format,
+                            access,
+                            ident: ident.clone(),
+                        });
+                    }
 
                     // Check for known builtin generic types first (these all
                     // take exactly one type argument).
@@ -2614,6 +2931,7 @@ impl Expr {
                     Type::SamplerComparison { ident } => ident.span(),
                     Type::Texture { ident, .. } => ident.span(),
                     Type::TextureDepth { ident, .. } => ident.span(),
+                    Type::TextureStorage { ident, .. } => ident.span(),
                     Type::TypeParam { ident } => ident.span(),
                     Type::Phantom { ident, .. } => ident.span(),
                 };
@@ -5591,11 +5909,12 @@ impl syn::parse::Parse for ItemTexture {
 
         // Validate that the type is a texture type
         match &ty {
-            Type::Texture { .. } | Type::TextureDepth { .. } => {}
+            Type::Texture { .. } | Type::TextureDepth { .. } | Type::TextureStorage { .. } => {}
             _ => {
                 return Err(syn::Error::new(
                     rust_ty.span(),
-                    "texture! macro requires a texture type (Texture2D<f32>, TextureDepth2D, etc.)",
+                    "texture! macro requires a texture type (Texture2D<f32>, TextureDepth2D, \
+                     TextureStorage2D<Rgba8unorm, Write>, etc.)",
                 ));
             }
         }
@@ -6332,6 +6651,7 @@ fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
         | Type::SamplerComparison { .. }
         | Type::Texture { .. }
         | Type::TextureDepth { .. }
+        | Type::TextureStorage { .. }
         | Type::TypeParam { .. } => {}
     }
 }
@@ -9159,6 +9479,96 @@ mod test {
         let ty: syn::Type = syn::parse_str("TextureDepthMultisampled2D").unwrap();
         let ty = Type::try_from(&ty).unwrap();
         assert_eq!("texture_depth_multisampled_2d", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_2d_write() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<Rgba8unorm, Write>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert!(
+            matches!(ty, Type::TextureStorage { .. }),
+            "Expected Type::TextureStorage variant"
+        );
+        assert_eq!("texture_storage_2d<rgba8unorm, write>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_2d_read() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<Rgba8uint, Read>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_storage_2d<rgba8uint, read>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_2d_read_write() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<R32float, ReadWrite>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_storage_2d<r32float, read_write>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_1d() {
+        let ty: syn::Type = syn::parse_str("TextureStorage1D<Rgba8sint, Write>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_storage_1d<rgba8sint, write>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_2d_array() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2DArray<Rgba16float, Read>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_storage_2d_array<rgba16float, read>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_3d() {
+        let ty: syn::Type = syn::parse_str("TextureStorage3D<Rgba32float, Write>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_storage_3d<rgba32float, write>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_tier1_format() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<R16float, ReadWrite>").unwrap();
+        let ty = Type::try_from(&ty).unwrap();
+        assert_eq!("texture_storage_2d<r16float, read_write>", ty.to_wgsl());
+    }
+
+    #[test]
+    fn parse_texture_storage_rejects_bad_format() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<NotAFormat, Write>").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(result.is_err(), "Expected error for unknown texel format");
+    }
+
+    #[test]
+    fn parse_texture_storage_rejects_bad_access() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<Rgba8unorm, NotAnAccess>").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(result.is_err(), "Expected error for unknown access mode");
+    }
+
+    #[test]
+    fn parse_texture_storage_rejects_wrong_arity() {
+        let ty: syn::Type = syn::parse_str("TextureStorage2D<Rgba8unorm>").unwrap();
+        let result = Type::try_from(&ty);
+        assert!(
+            result.is_err(),
+            "Expected error for storage texture with only one type argument"
+        );
+    }
+
+    #[test]
+    fn texture_storage_to_wgsl() {
+        let texture: ItemTexture =
+            syn::parse_str("group(0), binding(5), OUT_TEX: TextureStorage2D<Rgba8unorm, Write>")
+                .unwrap();
+        let wgsl = texture.to_wgsl();
+        assert!(
+            wgsl.contains(": texture_storage_2d<rgba8unorm, write>;"),
+            "Expected ': texture_storage_2d<rgba8unorm, write>;' in WGSL, got: {}",
+            wgsl
+        );
     }
 
     #[test]

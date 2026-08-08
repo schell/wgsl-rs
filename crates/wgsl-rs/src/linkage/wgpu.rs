@@ -452,6 +452,9 @@ pub enum BindingKind {
     Texture,
     /// A depth texture.
     DepthTexture,
+    /// A storage texture. The `read_write` flag distinguishes
+    /// `read_write` access from `read`-only or `write`-only.
+    StorageTexture { read_write: bool },
 }
 
 impl BindGroupInfo {
@@ -1351,6 +1354,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
     let view_dimension = match &item.ty {
         ir::Type::Texture { kind, .. } => texture_kind_view_dimension(*kind),
         ir::Type::TextureDepth { kind } => texture_depth_view_dimension(*kind),
+        ir::Type::TextureStorage { kind, .. } => texture_storage_kind_view_dimension(*kind),
         _ => unreachable!("ItemTexture validated to be a texture type"),
     };
     let multisampled = match &item.ty {
@@ -1358,6 +1362,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
         ir::Type::TextureDepth { kind } => {
             matches!(kind, ir::TextureDepthKind::DepthMultisampled2D)
         }
+        ir::Type::TextureStorage { .. } => false,
         _ => unreachable!(),
     };
     match &item.ty {
@@ -1395,7 +1400,85 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
             },
             BindingKind::DepthTexture,
         ),
+        ir::Type::TextureStorage { format, access, .. } => {
+            let wgpu_format = texel_format_to_wgpu(*format);
+            let wgpu_access = match access {
+                ir::StorageTextureAccess::Read => wgpu::StorageTextureAccess::ReadOnly,
+                ir::StorageTextureAccess::Write => wgpu::StorageTextureAccess::WriteOnly,
+                ir::StorageTextureAccess::ReadWrite => wgpu::StorageTextureAccess::ReadWrite,
+            };
+            let read_write = matches!(access, ir::StorageTextureAccess::ReadWrite);
+            (
+                wgpu::BindGroupLayoutEntry {
+                    binding: item.binding,
+                    visibility: wgpu::ShaderStages::all(),
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu_access,
+                        format: wgpu_format,
+                        view_dimension,
+                    },
+                    count: None,
+                },
+                BindingKind::StorageTexture { read_write },
+            )
+        }
         _ => unreachable!(),
+    }
+}
+
+fn texture_storage_kind_view_dimension(kind: ir::TextureStorageKind) -> wgpu::TextureViewDimension {
+    match kind {
+        ir::TextureStorageKind::Storage1D => wgpu::TextureViewDimension::D1,
+        ir::TextureStorageKind::Storage2D => wgpu::TextureViewDimension::D2,
+        ir::TextureStorageKind::Storage2DArray => wgpu::TextureViewDimension::D2Array,
+        ir::TextureStorageKind::Storage3D => wgpu::TextureViewDimension::D3,
+    }
+}
+
+/// Map an IR texel format to the corresponding wgpu texture format.
+fn texel_format_to_wgpu(f: ir::TexelFormat) -> wgpu::TextureFormat {
+    use ir::TexelFormat::*;
+    match f {
+        Rgba8unorm => wgpu::TextureFormat::Rgba8Unorm,
+        Rgba8snorm => wgpu::TextureFormat::Rgba8Snorm,
+        Rgba8uint => wgpu::TextureFormat::Rgba8Uint,
+        Rgba8sint => wgpu::TextureFormat::Rgba8Sint,
+        Rgba16uint => wgpu::TextureFormat::Rgba16Uint,
+        Rgba16sint => wgpu::TextureFormat::Rgba16Sint,
+        Rgba16float => wgpu::TextureFormat::Rgba16Float,
+        R32uint => wgpu::TextureFormat::R32Uint,
+        R32sint => wgpu::TextureFormat::R32Sint,
+        R32float => wgpu::TextureFormat::R32Float,
+        Rg32uint => wgpu::TextureFormat::Rg32Uint,
+        Rg32sint => wgpu::TextureFormat::Rg32Sint,
+        Rg32float => wgpu::TextureFormat::Rg32Float,
+        Rgba32uint => wgpu::TextureFormat::Rgba32Uint,
+        Rgba32sint => wgpu::TextureFormat::Rgba32Sint,
+        Rgba32float => wgpu::TextureFormat::Rgba32Float,
+        Bgra8unorm => wgpu::TextureFormat::Bgra8Unorm,
+        Rgba16unorm => wgpu::TextureFormat::Rgba16Unorm,
+        Rgba16snorm => wgpu::TextureFormat::Rgba16Snorm,
+        Rg8unorm => wgpu::TextureFormat::Rg8Unorm,
+        Rg8snorm => wgpu::TextureFormat::Rg8Snorm,
+        Rg8uint => wgpu::TextureFormat::Rg8Uint,
+        Rg8sint => wgpu::TextureFormat::Rg8Sint,
+        Rg16unorm => wgpu::TextureFormat::Rg16Unorm,
+        Rg16snorm => wgpu::TextureFormat::Rg16Snorm,
+        Rg16uint => wgpu::TextureFormat::Rg16Uint,
+        Rg16sint => wgpu::TextureFormat::Rg16Sint,
+        Rg16float => wgpu::TextureFormat::Rg16Float,
+        R8unorm => wgpu::TextureFormat::R8Unorm,
+        R8snorm => wgpu::TextureFormat::R8Snorm,
+        R8uint => wgpu::TextureFormat::R8Uint,
+        R8sint => wgpu::TextureFormat::R8Sint,
+        R16unorm => wgpu::TextureFormat::R16Unorm,
+        R16snorm => wgpu::TextureFormat::R16Snorm,
+        R16uint => wgpu::TextureFormat::R16Uint,
+        R16sint => wgpu::TextureFormat::R16Sint,
+        R16float => wgpu::TextureFormat::R16Float,
+        Rgb10a2unorm => wgpu::TextureFormat::Rgb10a2Unorm,
+        Rgb10a2uint => wgpu::TextureFormat::Rgb10a2Uint,
+        Rg11b10ufloat => wgpu::TextureFormat::Rg11b10Ufloat,
     }
 }
 
@@ -1487,6 +1570,7 @@ fn type_layout(ty: &ir::Type, module: &ir::Module) -> TypeLayout {
         | ir::Type::SamplerComparison
         | ir::Type::Texture { .. }
         | ir::Type::TextureDepth { .. }
+        | ir::Type::TextureStorage { .. }
         | ir::Type::TypeParam { .. }
         | ir::Type::Phantom { .. } => TypeLayout { size: 0, align: 1 },
     }

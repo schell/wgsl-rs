@@ -14,6 +14,8 @@ use crate::std::{
     WgslTextureScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
 };
 
+use std::marker::PhantomData;
+
 mod builtins;
 pub use builtins::*;
 use wgsl_rs_ir as ir;
@@ -2297,9 +2299,633 @@ impl TextureNumSamplesQuery for TextureDepthMultisampled2D {
     }
 }
 
+// ===== Storage textures =====
+
+/// Trait for texel format marker types used as the type parameter of
+/// storage texture types (e.g. `TextureStorage2D<Rgba8unorm, Write>`).
+///
+/// Each implementor is a unit struct that carries the IR-level format and
+/// the shader-side value type (always `vec4<f32>`, `vec4<u32>`, or
+/// `vec4<i32>` depending on the format's channel type — see WGSL §6.6.1).
+pub trait WgslTexelFormat: crate::std::AnySendSync {
+    /// The IR-level texel format.
+    fn to_ir() -> wgsl_rs_ir::TexelFormat;
+    /// The shader-side value type returned by `textureLoad` and accepted by
+    /// `textureStore` for this format.
+    type Value: Copy + Default + Into<[Self::Scalar; 4]> + From<[Self::Scalar; 4]>;
+    /// The scalar element type (`f32`, `u32`, or `i32`) underlying
+    /// [`Value`](Self::Value). Used for CPU-side storage.
+    type Scalar: Copy + Default + crate::std::AnySendSync;
+    /// Whether this format requires the `texture_formats_tier1` extension.
+    fn requires_tier1() -> bool;
+}
+
+/// Trait for storage texture access mode marker types (`Read`, `Write`,
+/// `ReadWrite`).
+pub trait WgslStorageAccess: crate::std::AnySendSync {
+    /// The IR-level access mode.
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess;
+}
+
+/// Marker trait for access modes that allow reading (`Read`, `ReadWrite`).
+pub trait ReadableStorageAccess: WgslStorageAccess {}
+/// Marker trait for access modes that allow writing (`Write`, `ReadWrite`).
+pub trait WritableStorageAccess: WgslStorageAccess {}
+
+// ===== Access mode trait impls =====
+// The `Read`, `Write`, and `ReadWrite` marker types are defined in
+// `std.rs` (shared with storage buffer access modes). Here we implement
+// the storage-texture-specific traits on them.
+
+impl WgslStorageAccess for crate::std::Read {
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess {
+        wgsl_rs_ir::StorageTextureAccess::Read
+    }
+}
+impl ReadableStorageAccess for crate::std::Read {}
+
+impl WgslStorageAccess for crate::std::Write {
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess {
+        wgsl_rs_ir::StorageTextureAccess::Write
+    }
+}
+impl WritableStorageAccess for crate::std::Write {}
+
+impl WgslStorageAccess for crate::std::ReadWrite {
+    fn to_ir() -> wgsl_rs_ir::StorageTextureAccess {
+        wgsl_rs_ir::StorageTextureAccess::ReadWrite
+    }
+}
+impl ReadableStorageAccess for crate::std::ReadWrite {}
+impl WritableStorageAccess for crate::std::ReadWrite {}
+
+// ===== Texel format marker types =====
+
+// This macro generates a unit-struct marker type + WgslTexelFormat impl for
+// each storage texel format. The `Value` associated type is chosen based on
+// the channel format's shader type (f32/u32/i32) per WGSL §6.6.1.
+macro_rules! impl_texel_format {
+    ($i:ident, $val:ty, $scalar:ty, $tier1:expr) => {
+        /// Texel format marker.
+        #[allow(dead_code)]
+        pub struct $i;
+        impl WgslTexelFormat for $i {
+            fn to_ir() -> wgsl_rs_ir::TexelFormat {
+                wgsl_rs_ir::TexelFormat::$i
+            }
+            type Value = $val;
+            type Scalar = $scalar;
+            fn requires_tier1() -> bool {
+                $tier1
+            }
+        }
+    };
+}
+
+// Core formats (no extension required)
+impl_texel_format!(Rgba8unorm, Vec4f, f32, false);
+impl_texel_format!(Rgba8snorm, Vec4f, f32, false);
+impl_texel_format!(Rgba8uint, Vec4u, u32, false);
+impl_texel_format!(Rgba8sint, Vec4i, i32, false);
+impl_texel_format!(Rgba16uint, Vec4u, u32, false);
+impl_texel_format!(Rgba16sint, Vec4i, i32, false);
+impl_texel_format!(Rgba16float, Vec4f, f32, false);
+impl_texel_format!(R32uint, Vec4u, u32, false);
+impl_texel_format!(R32sint, Vec4i, i32, false);
+impl_texel_format!(R32float, Vec4f, f32, false);
+impl_texel_format!(Rg32uint, Vec4u, u32, false);
+impl_texel_format!(Rg32sint, Vec4i, i32, false);
+impl_texel_format!(Rg32float, Vec4f, f32, false);
+impl_texel_format!(Rgba32uint, Vec4u, u32, false);
+impl_texel_format!(Rgba32sint, Vec4i, i32, false);
+impl_texel_format!(Rgba32float, Vec4f, f32, false);
+impl_texel_format!(Bgra8unorm, Vec4f, f32, false);
+// Tier-1 extension formats
+impl_texel_format!(Rgba16unorm, Vec4f, f32, true);
+impl_texel_format!(Rgba16snorm, Vec4f, f32, true);
+impl_texel_format!(Rg8unorm, Vec4f, f32, true);
+impl_texel_format!(Rg8snorm, Vec4f, f32, true);
+impl_texel_format!(Rg8uint, Vec4u, u32, true);
+impl_texel_format!(Rg8sint, Vec4i, i32, true);
+impl_texel_format!(Rg16unorm, Vec4f, f32, true);
+impl_texel_format!(Rg16snorm, Vec4f, f32, true);
+impl_texel_format!(Rg16uint, Vec4u, u32, true);
+impl_texel_format!(Rg16sint, Vec4i, i32, true);
+impl_texel_format!(Rg16float, Vec4f, f32, true);
+impl_texel_format!(R8unorm, Vec4f, f32, true);
+impl_texel_format!(R8snorm, Vec4f, f32, true);
+impl_texel_format!(R8uint, Vec4u, u32, true);
+impl_texel_format!(R8sint, Vec4i, i32, true);
+impl_texel_format!(R16unorm, Vec4f, f32, true);
+impl_texel_format!(R16snorm, Vec4f, f32, true);
+impl_texel_format!(R16uint, Vec4u, u32, true);
+impl_texel_format!(R16sint, Vec4i, i32, true);
+impl_texel_format!(R16float, Vec4f, f32, true);
+impl_texel_format!(Rgb10a2unorm, Vec4f, f32, true);
+impl_texel_format!(Rgb10a2uint, Vec4u, u32, true);
+impl_texel_format!(Rg11b10ufloat, Vec4f, f32, true);
+
+// ===== Storage texture structs =====
+
+/// A 1D storage texture. WGSL `texture_storage_1d<F, A>`.
+///
+/// Parameterized by a texel format marker (`F`) and an access mode marker
+/// (`A`). See WGSL §6.6.5.
+pub struct TextureStorage1D<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    data: ModuleVar<TextureData1D<F::Scalar>>,
+    _phantom: PhantomData<A>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage1D<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage1D,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage1D<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            data: ModuleVar::new(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+
+    /// Returns a reference to the inner texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData1D<F::Scalar>> {
+        self.data.read()
+    }
+
+    /// Set the texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn set(&self, data: TextureData1D<F::Scalar>) {
+        self.data.set(data);
+    }
+
+    /// Initialize the texture with the given width.
+    pub fn init(&self, width: u32) {
+        self.set(TextureData1D::new(width));
+    }
+}
+
+/// A 2D storage texture. WGSL `texture_storage_2d<F, A>`.
+pub struct TextureStorage2D<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    data: ModuleVar<TextureData2D<F::Scalar>>,
+    _phantom: PhantomData<A>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage2D<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage2D,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2D<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            data: ModuleVar::new(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+
+    /// Returns a reference to the inner texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData2D<F::Scalar>> {
+        self.data.read()
+    }
+
+    /// Set the texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn set(&self, data: TextureData2D<F::Scalar>) {
+        self.data.set(data);
+    }
+
+    /// Initialize the texture with the given dimensions.
+    pub fn init(&self, width: u32, height: u32) {
+        self.set(TextureData2D::new(width, height));
+    }
+
+    /// Set a pixel value on the CPU side.
+    ///
+    /// Not available in WGSL.
+    pub fn set_pixel(&self, x: u32, y: u32, value: F::Value) {
+        let mut data = self.data.write();
+        data.set_pixel(x, y, 0, value.into());
+    }
+}
+
+/// A 2D array storage texture. WGSL `texture_storage_2d_array<F, A>`.
+pub struct TextureStorage2DArray<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    data: ModuleVar<TextureData2DArray<F::Scalar>>,
+    _phantom: PhantomData<A>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage2DArray<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage2DArray,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2DArray<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            data: ModuleVar::new(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+
+    /// Returns a reference to the inner texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData2DArray<F::Scalar>> {
+        self.data.read()
+    }
+
+    /// Set the texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn set(&self, data: TextureData2DArray<F::Scalar>) {
+        self.data.set(data);
+    }
+
+    /// Initialize the texture with the given dimensions and layer count.
+    pub fn init(&self, width: u32, height: u32, layers: u32) {
+        self.set(TextureData2DArray::new(width, height, layers));
+    }
+}
+
+/// A 3D storage texture. WGSL `texture_storage_3d<F, A>`.
+pub struct TextureStorage3D<F: WgslTexelFormat, A: WgslStorageAccess> {
+    group: u32,
+    binding: u32,
+    data: ModuleVar<TextureData3D<F::Scalar>>,
+    _phantom: PhantomData<A>,
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage3D<F, A> {
+    fn to_ir() -> wgsl_rs_ir::Type {
+        wgsl_rs_ir::Type::TextureStorage {
+            kind: wgsl_rs_ir::TextureStorageKind::Storage3D,
+            format: F::to_ir(),
+            access: A::to_ir(),
+        }
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage3D<F, A> {
+    pub const fn new(group: u32, binding: u32) -> Self {
+        Self {
+            group,
+            binding,
+            data: ModuleVar::new(),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+
+    pub fn binding(&self) -> u32 {
+        self.binding
+    }
+
+    /// Returns a reference to the inner texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData3D<F::Scalar>> {
+        self.data.read()
+    }
+
+    /// Set the texture data.
+    ///
+    /// Not available in WGSL.
+    pub fn set(&self, data: TextureData3D<F::Scalar>) {
+        self.data.set(data);
+    }
+
+    /// Initialize the texture with the given dimensions.
+    pub fn init(&self, width: u32, height: u32, depth: u32) {
+        self.set(TextureData3D::new(width, height, depth));
+    }
+}
+
+// ===== Trait impls: TextureLoadStorage (read / read_write) =====
+
+impl<F, A> TextureLoadStorage<u32> for TextureStorage1D<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage(&self, coords: u32) -> Self::Output {
+        self.get()
+            .get_pixel(coords, 0)
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+impl<F, A> TextureLoadStorage<i32> for TextureStorage1D<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage(&self, coords: i32) -> Self::Output {
+        let x = coords.max(0) as u32;
+        self.get()
+            .get_pixel(x, 0)
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+impl<F, A> TextureLoadStorage<Vec2u> for TextureStorage2D<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage(&self, coords: Vec2u) -> Self::Output {
+        self.get()
+            .get_pixel(coords.x(), coords.y(), 0)
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+impl<F, A> TextureLoadStorage<Vec2i> for TextureStorage2D<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage(&self, coords: Vec2i) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.get()
+            .get_pixel(x, y, 0)
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+impl<F, A> TextureLoadStorageArray<Vec2u, u32> for TextureStorage2DArray<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage_array(&self, coords: Vec2u, array_index: u32) -> Self::Output {
+        let data = self.get();
+        data.layers
+            .get(array_index as usize)
+            .and_then(|layer| layer.get_pixel(coords.x(), coords.y(), 0))
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+impl<F, A> TextureLoadStorageArray<Vec2i, i32> for TextureStorage2DArray<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage_array(&self, coords: Vec2i, array_index: i32) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        let layer = array_index.max(0) as u32;
+        let data = self.get();
+        data.layers
+            .get(layer as usize)
+            .and_then(|l| l.get_pixel(x, y, 0))
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+impl<F, A> TextureLoadStorage<Vec3u> for TextureStorage3D<F, A>
+where
+    F: WgslTexelFormat,
+    A: ReadableStorageAccess,
+{
+    type Output = F::Value;
+
+    fn load_storage(&self, coords: Vec3u) -> Self::Output {
+        let data = self.get();
+        data.mips
+            .first()
+            .and_then(|mip| mip.get(coords.z() as usize))
+            .and_then(|slice| slice.get(coords.y() as usize))
+            .and_then(|row| row.get(coords.x() as usize))
+            .map(|p| F::Value::from(*p))
+            .unwrap_or_default()
+    }
+}
+
+// ===== Trait impls: TextureStore (write / read_write) =====
+
+impl<F, A> TextureStore<u32, F::Value> for TextureStorage1D<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store(&self, coords: u32, value: F::Value) {
+        self.data.write().set_pixel(coords, 0, value.into());
+    }
+}
+
+impl<F, A> TextureStore<i32, F::Value> for TextureStorage1D<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store(&self, coords: i32, value: F::Value) {
+        let x = coords.max(0) as u32;
+        self.data.write().set_pixel(x, 0, value.into());
+    }
+}
+
+impl<F, A> TextureStore<Vec2u, F::Value> for TextureStorage2D<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store(&self, coords: Vec2u, value: F::Value) {
+        self.data
+            .write()
+            .set_pixel(coords.x(), coords.y(), 0, value.into());
+    }
+}
+
+impl<F, A> TextureStore<Vec2i, F::Value> for TextureStorage2D<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store(&self, coords: Vec2i, value: F::Value) {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        self.data.write().set_pixel(x, y, 0, value.into());
+    }
+}
+
+impl<F, A> TextureStoreArray<Vec2u, u32, F::Value> for TextureStorage2DArray<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store_array(&self, coords: Vec2u, array_index: u32, value: F::Value) {
+        let mut data = self.data.write();
+        if let Some(layer) = data.layers.get_mut(array_index as usize) {
+            layer.set_pixel(coords.x(), coords.y(), 0, value.into());
+        }
+    }
+}
+
+impl<F, A> TextureStoreArray<Vec2i, i32, F::Value> for TextureStorage2DArray<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store_array(&self, coords: Vec2i, array_index: i32, value: F::Value) {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        let layer = array_index.max(0) as u32;
+        let mut data = self.data.write();
+        if let Some(l) = data.layers.get_mut(layer as usize) {
+            l.set_pixel(x, y, 0, value.into());
+        }
+    }
+}
+
+impl<F, A> TextureStore<Vec3u, F::Value> for TextureStorage3D<F, A>
+where
+    F: WgslTexelFormat,
+    A: WritableStorageAccess,
+{
+    fn store(&self, coords: Vec3u, value: F::Value) {
+        let mut data = self.data.write();
+        if let Some(mip) = data.mips.first_mut()
+            && let Some(slice) = mip.get_mut(coords.z() as usize)
+            && let Some(row) = slice.get_mut(coords.y() as usize)
+            && let Some(pixel) = row.get_mut(coords.x() as usize)
+        {
+            *pixel = value.into();
+        }
+    }
+}
+
+// ===== Trait impls: TextureDimensionsQuery =====
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureDimensionsQuery for TextureStorage1D<F, A> {
+    type Output = u32;
+
+    fn query_dimensions(&self, _level: u32) -> Self::Output {
+        self.get().width(0)
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureDimensionsQuery for TextureStorage2D<F, A> {
+    type Output = Vec2u;
+
+    fn query_dimensions(&self, _level: u32) -> Self::Output {
+        let (w, h) = self.get().dimensions(0);
+        vec2u(w, h)
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureDimensionsQuery
+    for TextureStorage2DArray<F, A>
+{
+    type Output = Vec2u;
+
+    fn query_dimensions(&self, _level: u32) -> Self::Output {
+        let (w, h) = self.get().dimensions(0);
+        vec2u(w, h)
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureNumLayersQuery
+    for TextureStorage2DArray<F, A>
+{
+    fn query_num_layers(&self) -> u32 {
+        self.get().num_layers()
+    }
+}
+
+impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureDimensionsQuery for TextureStorage3D<F, A> {
+    type Output = Vec3u;
+
+    fn query_dimensions(&self, _level: u32) -> Self::Output {
+        let (w, h, d) = self.get().dimensions(0);
+        vec3u(w, h, d)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::std::{vec2f, vec2i};
+    use crate::std::{ReadWrite, Write, vec2f, vec2i};
 
     use super::*;
 
@@ -2987,5 +3613,96 @@ mod tests {
         let result =
             texture_sample_compare_level_offset(&tex, &sampler, vec2f(0.5, 0.5), 0.3, vec2i(0, 0));
         assert!((result - 1.0).abs() < 0.001); // 0.3 < 0.5 => pass
+    }
+
+    #[test]
+    fn test_storage_texture_2d_store_and_load() {
+        let tex: TextureStorage2D<Rgba8unorm, ReadWrite> = TextureStorage2D::new(0, 0);
+        tex.init(4, 4);
+
+        // Store a value
+        texture_store(&tex, vec2u(1, 2), vec4f(0.5, 0.25, 0.125, 1.0));
+
+        // Load it back
+        let pixel = texture_load_storage(&tex, vec2u(1, 2));
+        assert!((pixel.x() - 0.5).abs() < 0.001);
+        assert!((pixel.y() - 0.25).abs() < 0.001);
+        assert!((pixel.z() - 0.125).abs() < 0.001);
+        assert!((pixel.w() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_storage_texture_2d_dimensions() {
+        let tex: TextureStorage2D<Rgba8unorm, Write> = TextureStorage2D::new(0, 0);
+        tex.init(8, 4);
+
+        let dims = texture_dimensions(&tex);
+        assert_eq!(dims.x(), 8);
+        assert_eq!(dims.y(), 4);
+    }
+
+    #[test]
+    fn test_storage_texture_2d_store_i32_coords() {
+        let tex: TextureStorage2D<Rgba8uint, ReadWrite> = TextureStorage2D::new(0, 0);
+        tex.init(4, 4);
+
+        texture_store(&tex, vec2i(1, 2), vec4u(10, 20, 30, 40));
+
+        let pixel = texture_load_storage(&tex, vec2u(1, 2));
+        assert_eq!(pixel.x(), 10);
+        assert_eq!(pixel.y(), 20);
+        assert_eq!(pixel.z(), 30);
+        assert_eq!(pixel.w(), 40);
+    }
+
+    #[test]
+    fn test_storage_texture_2d_array_store_and_load() {
+        let tex: TextureStorage2DArray<Rgba8sint, ReadWrite> = TextureStorage2DArray::new(0, 0);
+        tex.init(4, 4, 2);
+
+        texture_store_array(&tex, vec2u(1, 2), 0u32, vec4i(10, -20, 30, -40));
+        texture_store_array(&tex, vec2u(3, 0), 1u32, vec4i(100, 200, -300, 400));
+
+        let p0 = texture_load_storage_array(&tex, vec2u(1, 2), 0u32);
+        assert_eq!(p0.x(), 10);
+        assert_eq!(p0.y(), -20);
+        assert_eq!(p0.z(), 30);
+        assert_eq!(p0.w(), -40);
+
+        let p1 = texture_load_storage_array(&tex, vec2u(3, 0), 1u32);
+        assert_eq!(p1.x(), 100);
+        assert_eq!(p1.y(), 200);
+        assert_eq!(p1.z(), -300);
+        assert_eq!(p1.w(), 400);
+
+        assert_eq!(texture_num_layers(&tex), 2);
+    }
+
+    #[test]
+    fn test_storage_texture_3d_store_and_load() {
+        let tex: TextureStorage3D<Rgba32float, ReadWrite> = TextureStorage3D::new(0, 0);
+        tex.init(4, 4, 4);
+
+        texture_store(&tex, vec3u(1, 2, 3), vec4f(0.1, 0.2, 0.3, 0.4));
+
+        let pixel = texture_load_storage(&tex, vec3u(1, 2, 3));
+        assert!((pixel.x() - 0.1).abs() < 0.001);
+        assert!((pixel.y() - 0.2).abs() < 0.001);
+        assert!((pixel.z() - 0.3).abs() < 0.001);
+        assert!((pixel.w() - 0.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_storage_texture_1d_store_and_load() {
+        let tex: TextureStorage1D<Rgba8uint, ReadWrite> = TextureStorage1D::new(0, 0);
+        tex.init(8);
+
+        texture_store(&tex, 3u32, vec4u(10, 20, 30, 40));
+
+        let pixel = texture_load_storage(&tex, 3u32);
+        assert_eq!(pixel.x(), 10);
+        assert_eq!(pixel.y(), 20);
+        assert_eq!(pixel.z(), 30);
+        assert_eq!(pixel.w(), 40);
     }
 }

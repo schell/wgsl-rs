@@ -1285,6 +1285,27 @@ pub trait TextureStoreArray<Coords, ArrayIndex, Value> {
     fn store_array(&self, coords: Coords, array_index: ArrayIndex, value: Value);
 }
 
+/// Trait for storage textures that support `textureLoad` (no mip level
+/// parameter, unlike [`TextureLoad`]). WGSL §17.7.4 storage overloads.
+pub trait TextureLoadStorage<Coords> {
+    /// The output type (`vec4<f32>`, `vec4<u32>`, or `vec4<i32>` depending on
+    /// the texel format).
+    type Output;
+
+    /// Load a texel at the given coordinates.
+    fn load_storage(&self, coords: Coords) -> Self::Output;
+}
+
+/// Trait for storage array textures that support `textureLoad` with array
+/// index (no mip level). WGSL §17.7.4 storage overloads.
+pub trait TextureLoadStorageArray<Coords, ArrayIndex> {
+    /// The output type.
+    type Output;
+
+    /// Load a texel at the given coordinates and array index.
+    fn load_storage_array(&self, coords: Coords, array_index: ArrayIndex) -> Self::Output;
+}
+
 /// Trait for types that can be used as texture coordinates.
 pub trait IntoCoord {
     fn into_i32(self) -> i32;
@@ -2152,6 +2173,37 @@ where
     T: TextureStoreArray<C, A, V>,
 {
     t.store_array(coords, array_index, value)
+}
+
+/// Reads a single texel from a storage texture without a mip level.
+///
+/// Unlike [`texture_load`], this overload takes no `level` parameter —
+/// storage textures have no mip levels (WGSL §17.7.4).
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let texel = textureLoad(my_storage_texture, coords);
+/// ```
+pub fn texture_load_storage<T, C>(t: &T, coords: C) -> T::Output
+where
+    T: TextureLoadStorage<C>,
+{
+    t.load_storage(coords)
+}
+
+/// Reads a single texel from a storage array texture without a mip level.
+///
+/// # WGSL Equivalent
+///
+/// ```wgsl
+/// let texel = textureLoad(my_storage_array_texture, coords, array_index);
+/// ```
+pub fn texture_load_storage_array<T, C, A>(t: &T, coords: C, array_index: A) -> T::Output
+where
+    T: TextureLoadStorageArray<C, A>,
+{
+    t.load_storage_array(coords, array_index)
 }
 
 /// Helper function for bilinear interpolation.

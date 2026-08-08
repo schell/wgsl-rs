@@ -483,6 +483,16 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
         parse::Type::TextureDepth { kind, .. } => ir::Type::TextureDepth {
             kind: tex_depth_kind(*kind),
         },
+        parse::Type::TextureStorage {
+            kind,
+            format,
+            access,
+            ..
+        } => ir::Type::TextureStorage {
+            kind: tex_storage_kind(*kind),
+            format: format.to_ir(),
+            access: storage_access_from_parse(*access),
+        },
         parse::Type::TypeParam { ident } => ir::Type::TypeParam {
             name: ident.to_string(),
         },
@@ -534,6 +544,23 @@ fn tex_depth_kind(k: parse::TextureDepthKind) -> ir::TextureDepthKind {
         parse::TextureDepthKind::DepthCube => ir::TextureDepthKind::DepthCube,
         parse::TextureDepthKind::DepthCubeArray => ir::TextureDepthKind::DepthCubeArray,
         parse::TextureDepthKind::DepthMultisampled2D => ir::TextureDepthKind::DepthMultisampled2D,
+    }
+}
+
+fn tex_storage_kind(k: parse::TextureStorageKind) -> ir::TextureStorageKind {
+    match k {
+        parse::TextureStorageKind::Storage1D => ir::TextureStorageKind::Storage1D,
+        parse::TextureStorageKind::Storage2D => ir::TextureStorageKind::Storage2D,
+        parse::TextureStorageKind::Storage2DArray => ir::TextureStorageKind::Storage2DArray,
+        parse::TextureStorageKind::Storage3D => ir::TextureStorageKind::Storage3D,
+    }
+}
+
+fn storage_access_from_parse(a: parse::StorageTextureAccess) -> ir::StorageTextureAccess {
+    match a {
+        parse::StorageTextureAccess::Read => ir::StorageTextureAccess::Read,
+        parse::StorageTextureAccess::Write => ir::StorageTextureAccess::Write,
+        parse::StorageTextureAccess::ReadWrite => ir::StorageTextureAccess::ReadWrite,
     }
 }
 

@@ -186,7 +186,21 @@ impl Source {
         let mut out = String::new();
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
-        self.collect(&mut out, &mut visited_sources, &mut seen, None)?;
+        let mut needs_tier1 = false;
+        self.collect(
+            &mut out,
+            &mut visited_sources,
+            &mut seen,
+            None,
+            &mut needs_tier1,
+        )?;
+        // WGSL requires `enable` directives at the very start of the
+        // translation unit, before any other declarations. Since `collect`
+        // assembles multiple modules / instantiations by concatenation, we
+        // prepend the directive here after all chunks have been rendered.
+        if needs_tier1 {
+            out.insert_str(0, "enable texture_formats_tier1;\n\n");
+        }
         Ok(out)
     }
 
@@ -207,11 +221,12 @@ impl Source {
         visited_sources: &mut HashSet<u64>,
         seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
+        needs_tier1: &mut bool,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
             if visited_sources.insert(m.id) {
-                m.collect(out, visited_sources, seen, None)?;
+                m.collect(out, visited_sources, seen, None, needs_tier1)?;
             }
         }
 
@@ -219,6 +234,9 @@ impl Source {
         let mut ir_module = (self.ir_constructor)();
         if let Some(s) = subst {
             ir::substitute_types(&mut ir_module, s);
+        }
+        if ir::items_need_tier1_extension(&ir_module.items) {
+            *needs_tier1 = true;
         }
         out.push_str(&ir::render_module(&ir_module));
 
@@ -245,6 +263,7 @@ impl Source {
                 &const_args,
                 out,
                 seen,
+                needs_tier1,
             )?;
         }
         Ok(())
@@ -269,6 +288,7 @@ fn instantiate_template_into<'a>(
     const_args: &[u32],
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
+    needs_tier1: &mut bool,
 ) -> Result<(), SourceError<'a>> {
     let available_templates: Vec<String> = sources
         .iter()
@@ -352,6 +372,7 @@ fn instantiate_template_into<'a>(
             const_args,
             out,
             seen,
+            needs_tier1,
         )?;
     }
 
@@ -393,6 +414,9 @@ fn instantiate_template_into<'a>(
         ir::rename_items(&mut items, template.name, &instance_name);
     }
 
+    if ir::items_need_tier1_extension(&items) {
+        *needs_tier1 = true;
+    }
     out.push_str(&ir::render_items(&items));
     Ok(())
 }

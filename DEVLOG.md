@@ -580,3 +580,52 @@ when the member name contains underscores, e.g. `SLAB_SIZE` →
 `u32__1SLAB_SIZE`).
 
 
+
+### 2026-08-06: Storage texture support (texture_storage_*)
+
+**Problem:** A user asked if storage textures (`texture_storage_*`) were
+supported — they were not. wgsl-rs covered sampled, multisampled, and depth
+textures, but the four WGSL storage texture types (`texture_storage_1d`,
+`texture_storage_2d`, `texture_storage_2d_array`, `texture_storage_3d`) were
+missing from the IR, the macro parser, the runtime std types, and the wgpu
+linkage. The `TextureStore`/`TextureStoreArray` traits and
+`texture_store`/`texture_store_array` builtins existed but had no legal
+receiver type.
+
+**Decision:** Add storage textures as a new `Type::TextureStorage` IR variant
+(rather than extending the existing `Type::Texture`), mirroring the
+`Type::TextureDepth` precedent. Storage textures are parameterized by three
+things: a dimensionality kind (`TextureStorageKind`), a texel format
+(`TexelFormat` — all ~30 formats from WGSL §6.6.1), and an access mode
+(`StorageTextureAccess` — `Read`/`Write`/`ReadWrite`).
+
+A new `StorageTextureAccess` enum was added rather than extending the existing
+`StorageAccess` (used for storage buffers, which only allow `Read`/
+`ReadWrite`). This keeps the storage-buffer invariant intact — the type system
+prevents invalid write-only storage buffers at IR construction rather than
+deferring to render-time validation.
+
+On the Rust side, the API uses unit-struct format markers (e.g. `Rgba8unorm`,
+`R32float`) and access mode markers (`Read`, `Write`, `ReadWrite` — shared
+with storage buffer access modes in `std.rs`) as type parameters:
+`TextureStorage2D<Rgba8unorm, Write>`. This mirrors the existing
+sampled-texture convention where the Rust generic IS the WGSL parameter
+(`Texture2D<f32>` ↔ `texture_2d<f32>`), just with marker types standing in for
+WGSL enumerants instead of Rust scalars. The `WgslTexelFormat` trait carries
+an associated `Value` type (`Vec4f`/`Vec4u`/`Vec4i`) and `Scalar` type
+(`f32`/`u32`/`i32`) so the shader-side value type and CPU-side storage type are
+compile-time known from the format.
+
+The `enable texture_formats_tier1;` directive is hoisted to the very start of
+the final assembled WGSL translation unit in `Source::wgsl_source()`, rather
+than being emitted per-chunk inside `render_module`/`render_items`. A
+`needs_tier1` flag is threaded through `collect` and
+`instantiate_template_into`, ensuring valid placement regardless of
+import/instantiation order.
+
+Access mode gating uses `ReadableStorageAccess` and `WritableStorageAccess`
+marker traits to constrain `TextureLoadStorage` impls to `Read`/`ReadWrite`
+and `TextureStore` impls to `Write`/`ReadWrite` at compile time. A separate
+`texture_load_storage` builtin function (mapping to `textureLoad` in WGSL)
+is used for storage texture loads because the WGSL storage overload takes no
+`level` parameter, unlike the sampled texture `textureLoad` overload.

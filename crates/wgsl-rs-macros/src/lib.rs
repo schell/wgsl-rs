@@ -1066,6 +1066,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// ```ignore
 /// texture!(group(0), binding(4), DIFFUSE: Texture2D<f32>);
 /// texture!(group(0), binding(5), SHADOW_MAP: TextureDepth2D);
+/// texture!(group(0), binding(6), OUT: TextureStorage2D<Rgba8unorm, Write>);
 /// ```
 ///
 /// **Sampled textures** (with type parameter `f32`, `i32`, or `u32`):
@@ -1075,6 +1076,12 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// **Depth textures** (no type parameter):
 /// `TextureDepth2D`, `TextureDepth2DArray`, `TextureDepthCube`,
 /// `TextureDepthCubeArray`, `TextureDepthMultisampled2D`.
+///
+/// **Storage textures** (with texel format and access mode parameters):
+/// `TextureStorage1D`, `TextureStorage2D`, `TextureStorage2DArray`,
+/// `TextureStorage3D`. The first type parameter is a texel format marker
+/// (e.g. `Rgba8unorm`, `R32float` — see WGSL §6.6.1) and the second is an
+/// access mode (`Read`, `Write`, `ReadWrite`).
 ///
 /// ## `workgroup!`
 ///
@@ -1501,6 +1508,10 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// // Depth textures (no type parameter)
 /// texture!(group(G), binding(B), NAME: TextureDepth2D);
 /// texture!(group(G), binding(B), NAME: TextureDepthCube);
+///
+/// // Storage textures (texel format + access mode)
+/// texture!(group(G), binding(B), NAME: TextureStorage2D<Rgba8unorm, Write>);
+/// texture!(group(G), binding(B), NAME: TextureStorage2D<R32float, ReadWrite>);
 /// ```
 ///
 /// # Supported Texture Types
@@ -1523,10 +1534,23 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// - `TextureDepthCubeArray` - Cube depth texture array
 /// - `TextureDepthMultisampled2D` - Multisampled 2D depth texture
 ///
+/// ## Storage Textures
+/// - `TextureStorage1D<F, A>` - 1D storage texture
+/// - `TextureStorage2D<F, A>` - 2D storage texture
+/// - `TextureStorage2DArray<F, A>` - 2D array storage texture
+/// - `TextureStorage3D<F, A>` - 3D storage texture
+///
+/// Where `F` is a texel format marker (e.g. `Rgba8unorm`, `R32float`,
+/// `Rgba32uint`) and `A` is an access mode (`Read`, `Write`, `ReadWrite`). See
+/// WGSL §6.6.1 for the full list of texel formats and §6.6.5 for storage
+/// texture types.
+///
 /// # WGSL Output
 /// The macro transpiles to:
 /// - `@group(G) @binding(B) var NAME: texture_2d<f32>;` for sampled textures
 /// - `@group(G) @binding(B) var NAME: texture_depth_2d;` for depth textures
+/// - `@group(G) @binding(B) var NAME: texture_storage_2d<rgba8unorm, write>;`
+///   for storage textures
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:

@@ -467,6 +467,9 @@ impl Uniform<WgslTypeVariable> {
 /// Marker type for read-only access-mode.
 pub struct Read;
 
+/// Marker type for write-only access-mode.
+pub struct Write;
+
 /// Marker type for readwrite access-mode.
 pub struct ReadWrite;
 

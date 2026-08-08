@@ -44,13 +44,19 @@ pub fn items_need_tier1_extension(items: &[Item]) -> bool {
             _ => false,
         }
     }
+    fn fn_uses_tier1(f: &ItemFn) -> bool {
+        f.inputs.iter().any(|p| type_uses_tier1(&p.ty))
+            || matches!(&f.return_type, ReturnType::Type { ty, .. } if type_uses_tier1(ty))
+    }
     items.iter().any(|item| match item {
         Item::Texture(t) => type_uses_tier1(&t.ty),
-        Item::Fn(f) => {
-            f.inputs.iter().any(|p| type_uses_tier1(&p.ty))
-                || matches!(&f.return_type, ReturnType::Type { ty, .. } if type_uses_tier1(ty))
-        }
+        Item::Fn(f) => fn_uses_tier1(f),
         Item::Struct(s) => s.fields.iter().any(|f| type_uses_tier1(&f.ty)),
+        Item::Const(c) => type_uses_tier1(&c.ty),
+        Item::Impl(i) => i.items.iter().any(|impl_item| match impl_item {
+            ImplItem::Fn(f) => fn_uses_tier1(f),
+            ImplItem::Const(c) => type_uses_tier1(&c.ty),
+        }),
         _ => false,
     })
 }
@@ -1277,6 +1283,47 @@ mod tests {
         assert!(
             !items_need_tier1_extension(&module.items),
             "Did not expect tier-1 detection for Rgba8unorm (core format)"
+        );
+    }
+
+    /// A tier-1 storage texture format used only inside an impl method
+    /// signature is detected by `items_need_tier1_extension`.
+    #[test]
+    fn tier1_detected_in_impl_method() {
+        use crate::types::{ImplItem, ItemFn, ItemImpl, TextureStorageKind};
+
+        let module = Module {
+            name: "test",
+            items: vec![Item::Impl(ItemImpl {
+                type_params: vec![],
+                const_params: vec![],
+                self_ty: "MyStruct".to_string(),
+                items: vec![ImplItem::Fn(ItemFn {
+                    type_params: vec![],
+                    const_params: vec![],
+                    fn_attrs: crate::types::FnAttrs::None,
+                    name: "method".into(),
+                    inputs: vec![crate::types::FnArg {
+                        inter_stage_io: vec![],
+                        name: "tex".to_string(),
+                        ty: Type::TextureStorage {
+                            kind: TextureStorageKind::Storage2D,
+                            format: crate::types::TexelFormat::R16float,
+                            access: crate::types::StorageTextureAccess::Write,
+                        },
+                        attrs: vec![],
+                    }],
+                    return_type: crate::types::ReturnType::Default,
+                    block: crate::types::Block { stmts: vec![] },
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            })],
+            attrs: vec![],
+        };
+        assert!(
+            items_need_tier1_extension(&module.items),
+            "Expected tier-1 detection for R16float format in impl method param"
         );
     }
 }

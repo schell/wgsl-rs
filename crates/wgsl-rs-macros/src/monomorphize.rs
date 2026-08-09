@@ -2243,9 +2243,9 @@ pub fn resolve_assoc_types(module: &mut ItemMod) -> Result<(), crate::parse::Err
 
     Err(crate::parse::Error::unsupported(
         proc_macro2::Span::call_site(),
-        "cyclic associated type definition detected — associated type \
-         projections could not be resolved within 32 iterations. Check \
-         for circular `type` aliases across impl blocks.".to_string(),
+        "cyclic associated type definition detected — associated type projections could not be \
+         resolved within 32 iterations. Check for circular `type` aliases across impl blocks."
+            .to_string(),
     ))
 }
 

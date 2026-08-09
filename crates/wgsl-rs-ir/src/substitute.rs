@@ -99,6 +99,7 @@ fn rename_item(item: &mut Item, from: &str, to: &str) {
                 match ii {
                     ImplItem::Fn(f) => rename_fn(f, from, to),
                     ImplItem::Const(c) => rename_const(c, from, to),
+                    ImplItem::Type(t) => rename_type(&mut t.ty, from, to),
                 }
             }
         }
@@ -139,6 +140,7 @@ fn rename_type(ty: &mut Type, from: &str, to: &str) {
             rename_type(elem, from, to)
         }
         Type::Phantom { elem } => rename_type(elem, from, to),
+        Type::AssocType { ty, .. } => rename_type(ty, from, to),
         _ => {}
     }
 }
@@ -312,6 +314,7 @@ fn rename_stmt(s: &mut Stmt, from: &str, to: &str) {
                 rename_expr(sz, from, to);
             }
         }
+        Stmt::Macro { .. } => {}
     }
 }
 
@@ -347,6 +350,7 @@ fn sub_item(item: &mut Item, s: &HashMap<String, Type>) {
                 match ii {
                     ImplItem::Fn(f) => sub_fn(f, s),
                     ImplItem::Const(c) => sub_const(c, s),
+                    ImplItem::Type(t) => sub_type(&mut t.ty, s),
                 }
             }
         }
@@ -406,6 +410,7 @@ fn sub_type(ty: &mut Type, s: &HashMap<String, Type>) {
         }
         Type::Ptr { elem, .. } => sub_type(elem, s),
         Type::Phantom { elem } => sub_type(elem, s),
+        Type::AssocType { ty, .. } => sub_type(ty, s),
         Type::TypeParam { .. } => unreachable!("handled above"),
     }
 }
@@ -529,6 +534,7 @@ pub fn type_to_ident(t: &Type) -> String {
         Type::TextureStorage { format, .. } => format!("texture_storage_{}", format.wgsl_name()),
         Type::TypeParam { name } => name.clone(),
         Type::Phantom { elem } => format!("phantom_{}", type_to_ident(elem)),
+        Type::AssocType { ty, member } => format!("{}_{}", type_to_ident(ty), member),
     }
 }
 
@@ -625,6 +631,7 @@ fn sub_stmt(st: &mut Stmt, s: &HashMap<String, Type>) {
                 sub_expr(sz, s);
             }
         }
+        Stmt::Macro { .. } => {}
     }
 }
 
@@ -672,6 +679,7 @@ fn sub_item_const(item: &mut Item, consts: &HashMap<String, u32>) {
                         sub_type_const(&mut c.ty, consts);
                         sub_expr_const(&mut c.expr, consts);
                     }
+                    ImplItem::Type(t) => sub_type_const(&mut t.ty, consts),
                 }
             }
         }
@@ -712,6 +720,7 @@ fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
         }
         Type::Ptr { elem, .. } => sub_type_const(elem, consts),
         Type::Phantom { elem } => sub_type_const(elem, consts),
+        Type::AssocType { ty, .. } => sub_type_const(ty, consts),
     }
 }
 
@@ -880,6 +889,7 @@ fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, u32>) {
                 sub_expr_const(sz, consts);
             }
         }
+        Stmt::Macro { .. } => {}
     }
 }
 

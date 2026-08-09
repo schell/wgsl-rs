@@ -179,6 +179,11 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                     let inner = item_const(p, c);
                     quote! { #p::ImplItem::Const(#inner) }
                 }
+                ir::ImplItem::Type(t) => {
+                    let name = &t.name;
+                    let ty_inner = ty(p, &t.ty);
+                    quote! { #p::ImplItem::Type(#p::ItemTypeAlias { name: #name.to_string(), ty: #ty_inner }) }
+                }
             });
             let attrs = emit_attrs(p, &i.attrs);
             quote! {
@@ -531,6 +536,19 @@ fn ty(p: &TokenStream, t: &ir::Type) -> TokenStream {
             quote! {
                 #p::Type::Phantom {
                     elem: ::std::boxed::Box::new(#e),
+                }
+            }
+        }
+        ir::Type::AssocType {
+            ty: inner_ty,
+            member,
+        } => {
+            let inner = ty(p, inner_ty);
+            let m = member.clone();
+            quote! {
+                #p::Type::AssocType {
+                    ty: ::std::boxed::Box::new(#inner),
+                    member: #m.to_string(),
                 }
             }
         }
@@ -1038,6 +1056,11 @@ fn stmt(p: &TokenStream, s: &ir::Stmt) -> TokenStream {
             }
         }
         ir::Stmt::Discard => quote! { #p::Stmt::Discard },
+        ir::Stmt::Macro { name, args } => {
+            let n = name.clone();
+            let a = args.clone();
+            quote! { #p::Stmt::Macro { name: #n.to_string(), args: #a.to_string() } }
+        }
     }
 }
 

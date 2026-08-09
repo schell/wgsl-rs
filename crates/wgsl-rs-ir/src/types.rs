@@ -431,6 +431,18 @@ pub enum Type {
     /// the emitted WGSL; this variant should never reach
     /// [`crate::render::render_items`]'s type writer.
     Phantom { elem: Box<Type> },
+    /// An associated type projection, e.g. `Self::Array` or `T::Array`.
+    ///
+    /// The `ty` is the base type (which may be a `TypeParam` before
+    /// monomorphization or a concrete `Struct` after); `member` is the
+    /// associated type name.
+    ///
+    /// The associated-type resolution pass (in `wgsl-rs-macros`) resolves
+    /// these to concrete types after monomorphization. If a projection
+    /// survives to render time, it renders as `Type_member` (mangled),
+    /// relying on a WGSL `alias` declaration (from `ImplItem::Type`) to
+    /// provide the definition.
+    AssocType { ty: Box<Type>, member: String },
 }
 
 // ===== Literals / operators =====
@@ -698,6 +710,29 @@ pub enum Stmt {
         size: Option<Expr>,
     },
     Discard,
+    /// An unrecognized statement macro, preserved for extension lowering.
+    ///
+    /// When the `#[wgsl]` parser encounters a statement macro that is not
+    /// one of its builtins (`slab_read_array!`, `slab_write_array!`,
+    /// `discard!`), it emits this variant instead of rejecting the macro.
+    /// A `WgslExtension` (in the `wgsl-rs` crate) can then recognize the
+    /// macro by name in its `modify_ir` method and replace this statement
+    /// with lowered IR.
+    ///
+    /// The `#[wgsl]` macro emits a compile-time `const` check verifying
+    /// that at least one listed extension claims the macro name via its
+    /// `MACROS` associated const, so a typo or missing extension is a
+    /// compile error, not a runtime error.
+    ///
+    /// If this statement survives to render time (no extension claimed it),
+    /// the renderer emits a hard error — this is an extension-author bug.
+    Macro {
+        /// The macro invocation name (e.g. `"slab_read"`).
+        name: String,
+        /// The macro arguments as a stringified token stream. Extensions
+        /// re-parse this with their own `syn` dependency.
+        args: String,
+    },
 }
 
 // ===== Function attrs / args / return =====
@@ -930,6 +965,16 @@ pub struct ItemStruct {
 pub enum ImplItem {
     Fn(ItemFn),
     Const(ItemConst),
+    /// An associated type alias, e.g. `type Array = [u32; 4];`.
+    /// Renders as a module-scope WGSL `alias Type_Member = <ty>;`.
+    Type(ItemTypeAlias),
+}
+
+/// An associated type alias defined in an impl block.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ItemTypeAlias {
+    pub name: String,
+    pub ty: Type,
 }
 
 /// An `impl` block. Methods and associated constants are name-mangled to

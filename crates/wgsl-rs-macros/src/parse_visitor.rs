@@ -153,6 +153,7 @@ pub(crate) fn walk_impl<V: ParseVisitorMut + ?Sized>(
         match ii {
             crate::parse::ImplItem::Fn(f) => v.visit_fn(f)?,
             crate::parse::ImplItem::Const(c) => v.visit_const(c)?,
+            crate::parse::ImplItem::Type(t) => v.visit_type(&mut t.ty)?,
         }
     }
     Ok(())
@@ -285,7 +286,7 @@ pub(crate) fn walk_stmt<V: ParseVisitorMut + ?Sized>(v: &mut V, s: &mut Stmt) ->
                 v.visit_expr(s)?;
             }
         }
-        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } | Stmt::Macro { .. } => {}
     }
     Ok(())
 }
@@ -390,6 +391,9 @@ pub(crate) fn walk_type<V: ParseVisitorMut + ?Sized>(v: &mut V, t: &mut Type) ->
         }
         Type::Phantom { elem, .. } => {
             v.visit_type(elem)?;
+        }
+        Type::AssocType { ty, .. } => {
+            v.visit_type(ty)?;
         }
         Type::Struct { type_args, .. } => {
             for ta in type_args.iter_mut() {

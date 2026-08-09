@@ -731,6 +731,9 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
     let mono_result = monomorphize::run(&mut wgsl_module)?;
+    // Resolve associated type projections (e.g. `Self::Array`, `T::Array`)
+    // to concrete types using the impl-block index.
+    monomorphize::resolve_assoc_types(&mut wgsl_module)?;
     let imports = wgsl_module.imports(&crate_path);
 
     // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
@@ -852,6 +855,17 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // types and validates the resulting WGSL source with naga.
     let _ = &attrs;
 
+    // Emit compile-time `const` checks verifying every `Stmt::Macro` name
+    // in the module is claimed by at least one listed extension's `MACROS`
+    // const. This catches typos and missing extensions at compile time
+    // (E0080), not at runtime.
+    let macro_checks = gen_macro_claim_checks(&wgsl_module, &attrs.extensions, &crate_path);
+    if let Some((_, content)) = input_mod.content.as_mut()
+        && let Ok(item) = syn::parse2::<syn::Item>(macro_checks)
+    {
+        content.push(item);
+    }
+
     // Strip #[wgsl_allow] attributes before emitting Rust code.
     // These attributes are used during parsing but must be removed from the output
     // because statement-level attributes require the unstable stmt_expr_attributes
@@ -864,6 +878,114 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     StripIoAttrs.visit_item_mod_mut(&mut input_mod);
 
     Ok(input_mod.into_token_stream().into())
+}
+
+/// Collect all unique `Stmt::Macro` names from function bodies in the
+/// parse tree, then emit a `const _: () = { ... }` block that verifies
+/// each name is claimed by at least one listed extension's `MACROS` const.
+///
+/// If there are no `Stmt::Macro` invocations or no extensions listed,
+/// this returns an empty token stream (no checks needed).
+fn gen_macro_claim_checks(
+    wgsl_module: &parse::ItemMod,
+    extensions: &[syn::Path],
+    crate_path: &syn::Path,
+) -> proc_macro2::TokenStream {
+    if extensions.is_empty() {
+        return quote! {};
+    }
+
+    // Collect unique Stmt::Macro names from all function bodies.
+    let mut macro_names: Vec<String> = Vec::new();
+    for item in &wgsl_module.content {
+        if let parse::Item::Fn(f) = item {
+            collect_macro_names(&f.block, &mut macro_names);
+        }
+    }
+
+    if macro_names.is_empty() {
+        return quote! {};
+    }
+
+    // Deduplicate (preserve order for deterministic output).
+    macro_names.dedup();
+    let unique_names: Vec<&str> = macro_names.iter().map(|s| s.as_str()).collect();
+
+    // Build the extension MACROS array references.
+    let ext_macros_refs: Vec<proc_macro2::TokenStream> = extensions
+        .iter()
+        .map(|ext| {
+            quote! { <#ext as #crate_path::WgslExtension>::MACROS }
+        })
+        .collect();
+
+    // Build one assert per unique macro name.
+    let checks: Vec<proc_macro2::TokenStream> = unique_names
+        .iter()
+        .map(|name| {
+            let panic_msg = format!(
+                "no extension claims the `{name}!` statement macro; ensure the extension that \
+                 handles it is listed in `extensions = [...]`"
+            );
+            quote! {
+                if !#crate_path::any_ext_claims(exts, #name) {
+                    panic!(#panic_msg);
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        const _: () = {
+            let exts: &[&[&str]] = &[
+                #(#ext_macros_refs),*
+            ];
+            #(#checks)*
+        };
+    }
+}
+
+/// Recursively collect `Stmt::Macro` names from a block's statements.
+fn collect_macro_names(block: &parse::Block, names: &mut Vec<String>) {
+    for stmt in &block.stmt {
+        collect_macro_names_from_stmt(stmt, names);
+    }
+}
+
+fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
+    match stmt {
+        parse::Stmt::Macro { name, .. } => {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        parse::Stmt::While { body, .. } | parse::Stmt::Loop { body, .. } => {
+            collect_macro_names(body, names);
+        }
+        parse::Stmt::If(i) => {
+            collect_macro_names(&i.then_block, names);
+            if let Some(parse::ElseBranch { body, .. }) = &i.else_branch {
+                match body {
+                    parse::ElseBody::Block(b) => collect_macro_names(b, names),
+                    parse::ElseBody::If(inner) => {
+                        collect_macro_names_from_stmt(&parse::Stmt::If(inner.clone()), names);
+                    }
+                }
+            }
+        }
+        parse::Stmt::For(f) => {
+            collect_macro_names(&f.body, names);
+        }
+        parse::Stmt::Switch(sw) => {
+            for arm in &sw.arms {
+                collect_macro_names(&arm.body, names);
+            }
+        }
+        parse::Stmt::Block(b) => {
+            collect_macro_names(b, names);
+        }
+        _ => {}
+    }
 }
 
 /// Transpiles a Rust module to WGSL.
@@ -881,7 +1003,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
 /// | `#[wgsl(skip_validation)]` | Skip the auto-generated `__validate_wgsl` test. |
 /// | `#[wgsl(crate_path = path::to::crate)]` | Override the path to the `wgsl_rs` crate. |
 /// | `#[wgsl(validate_with_instantiation_types(T1, T2, ...))]` | For template (generic) modules: validate WGSL output after instantiating with the given concrete types. Can be repeated. |
-/// | `#[wgsl(extensions = [path1::Ext1, path2::Ext2])]` | Call `Ext1::modify_ir(&mut module)` etc. on the IR after construction. Each path must implement `wgsl_rs::WgslExtension`. |
+/// | `#[wgsl(extensions = [path1::Ext1, path2::Ext2])]` | Call `Ext1::modify_ir(&mut module)` etc. on the IR after construction. Each path must implement `wgsl_rs::WgslExtension`. Extensions that declare `const MACROS` in their impl also enable compile-time verification that every `Stmt::Macro` in the module is claimed by at least one listed extension. |
 ///
 /// Options can be combined: `#[wgsl(crate_path = my_crate::wgsl_rs,
 /// skip_validation)]`.

@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: no extension claims the `unclaimed_macro!` statement macro; ensure the extension that handles it is listed in `extensions = [...]`
+  --> tests/ui/fail/extension_unclaimed_macro.rs:20:1
+   |
+20 | #[wgsl(crate_path = wgsl_rs, extensions = [super::NoopExt])]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `ext_macro_shader::_` failed here

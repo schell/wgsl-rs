@@ -202,6 +202,10 @@ fn item_impl(i: &parse::ItemImpl) -> Result<ir::ItemImpl> {
                 Ok(match ii {
                     parse::ImplItem::Fn(f) => ir::ImplItem::Fn(item_fn(f)?),
                     parse::ImplItem::Const(c) => ir::ImplItem::Const(item_const(c)?),
+                    parse::ImplItem::Type(t) => ir::ImplItem::Type(ir::ItemTypeAlias {
+                        name: t.ident.to_string(),
+                        ty: ty_from_parse(&t.ty)?,
+                    }),
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -498,6 +502,10 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
         },
         parse::Type::Phantom { elem, .. } => ir::Type::Phantom {
             elem: Box::new(ty_from_parse(elem)?),
+        },
+        parse::Type::AssocType { ty, member, .. } => ir::Type::AssocType {
+            ty: Box::new(ty_from_parse(ty)?),
+            member: member.to_string(),
         },
     })
 }
@@ -866,6 +874,10 @@ fn stmt_from_parse(s: &parse::Stmt) -> Result<ir::Stmt> {
             size: size.as_ref().map(expr_from_parse).transpose()?,
         },
         parse::Stmt::Discard { .. } => ir::Stmt::Discard,
+        parse::Stmt::Macro { name, args, .. } => ir::Stmt::Macro {
+            name: name.clone(),
+            args: args.clone(),
+        },
     })
 }
 

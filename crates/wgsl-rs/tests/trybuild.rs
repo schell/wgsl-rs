@@ -75,3 +75,27 @@ fn phantom_data_in_non_field_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/phantom_data_in_non_field.rs");
 }
+
+#[test]
+fn extension_stmt_macro_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/extension_stmt_macro.rs");
+}
+
+#[test]
+fn extension_unclaimed_macro_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/extension_unclaimed_macro.rs");
+}
+
+#[test]
+fn assoc_type_basic_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/assoc_type_basic.rs");
+}
+
+#[test]
+fn assoc_type_generic_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/assoc_type_generic.rs");
+}

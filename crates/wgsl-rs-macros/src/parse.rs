@@ -1146,6 +1146,21 @@ pub enum Type {
     /// can observe which type parameter each phantom slot binds; omitted
     /// from rendered WGSL by `render::write_struct`.
     Phantom { ident: Ident, elem: Box<Type> },
+
+    /// An associated type projection, e.g. `Self::Array`, `T::Array`, or
+    /// `Id::Array`. The `ty` is the base type (which may be `Self`, a
+    /// `TypeParam`, or a concrete `Struct`); `member` is the associated
+    /// type name.
+    ///
+    /// During monomorphization, `TypeParam` and `Self` in `ty` are
+    /// replaced with concrete types. The associated-type resolution pass
+    /// then resolves the projection to a concrete type by looking up the
+    /// matching `type` alias in the appropriate impl block.
+    AssocType {
+        ty: Box<Type>,
+        colon2_token: Token![::],
+        member: Ident,
+    },
 }
 
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
@@ -1221,10 +1236,29 @@ impl Type {
                 type_path.qself.as_ref(),
                 "QSelf not allowed in scalar type",
             )?;
-            // Reject multi-segment paths in type position. WGSL struct
-            // names must be simple identifiers; a Rust path like
-            // `std::marker::PhantomData` has no WGSL equivalent. Bring
-            // the type into scope with a `use` import first.
+            // Reject multi-segment paths in type position, EXCEPT for
+            // associated type projections like `Self::Array` or `T::Array`
+            // (2 segments, no generic args on the second segment).
+            if type_path.path.segments.len() == 2 {
+                let seg0 = &type_path.path.segments[0];
+                let seg1 = &type_path.path.segments[1];
+                if seg1.arguments.is_empty() {
+                    // Parse the first segment as a type (handles Self, T, Id, etc.)
+                    let base_ty = Type::parse(
+                        &syn::Type::Path(syn::TypePath {
+                            qself: None,
+                            path: syn::Path::from(seg0.clone()),
+                        }),
+                        ctx,
+                    )?;
+                    return Ok(Type::AssocType {
+                        ty: Box::new(base_ty),
+                        colon2_token: Token![::](type_path.path.span()),
+                        member: seg1.ident.clone(),
+                    });
+                }
+            }
+
             snafu::ensure!(
                 type_path.path.segments.len() == 1,
                 UnsupportedSnafu {
@@ -2934,6 +2968,7 @@ impl Expr {
                     Type::TextureStorage { ident, .. } => ident.span(),
                     Type::TypeParam { ident } => ident.span(),
                     Type::Phantom { ident, .. } => ident.span(),
+                    Type::AssocType { colon2_token, .. } => colon2_token.spans[0],
                 };
                 lhs.span().join(ty_span).unwrap_or_else(|| lhs.span())
             }
@@ -3290,6 +3325,17 @@ pub enum Stmt {
     Discard {
         span: Span,
     },
+    /// An unrecognized statement macro, preserved for extension lowering.
+    ///
+    /// When the `#[wgsl]` parser encounters a statement macro that is not
+    /// one of its builtins, it emits this variant instead of rejecting the
+    /// macro. A `WgslExtension` can then recognize the macro by name in
+    /// `modify_ir` and replace this statement with lowered IR.
+    Macro {
+        name: String,
+        args: String,
+        span: Span,
+    },
 }
 
 impl TryFrom<&syn::Stmt> for Stmt {
@@ -3520,11 +3566,11 @@ impl Stmt {
                         })
                     }
                     "discard" => Ok(Stmt::Discard { span }),
-                    _ => UnsupportedSnafu {
+                    _ => Ok(Stmt::Macro {
+                        name: macro_name,
+                        args: mac.tokens.to_string(),
                         span,
-                        note: format!("Unsupported statement macro '{macro_name}!'"),
-                    }
-                    .fail(),
+                    }),
                 }
             }
         }
@@ -6384,13 +6430,29 @@ impl TryFrom<&syn::ItemEnum> for ItemEnum {
 
 /// An item that can appear inside an impl block.
 ///
-/// Currently supports functions and constants.
+/// Supports functions, constants, and associated type aliases.
 #[derive(Clone)]
 pub enum ImplItem {
     /// A function defined in an impl block.
     Fn(Box<ItemFn>),
     /// A constant defined in an impl block.
     Const(Box<ItemConst>),
+    /// An associated type alias defined in an impl block, e.g.
+    /// `type Array = [u32; 4];`.
+    Type(Box<ItemTypeAlias>),
+}
+
+/// An associated type alias inside an impl block.
+///
+/// In WGSL, this emits a module-scope `alias Type_Member = <ty>;` so
+/// that `Type::Member` references (parsed as [`Type::AssocType`]) can
+/// resolve. When the associated type is a projection (e.g. `type Array =
+/// T::Array`), the [`AssocTypeResolver`](crate::monomorphize) pass
+/// resolves it to a concrete type after monomorphization.
+#[derive(Clone)]
+pub struct ItemTypeAlias {
+    pub ident: Ident,
+    pub ty: Box<Type>,
 }
 
 /// An impl block for a struct.
@@ -6517,7 +6579,7 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         // `_2array_u32_4_zero`).
         let self_ty = Type::parse(self_ty.as_ref(), &ctx)?;
 
-        // Parse impl items (functions and constants)
+        // Parse impl items (functions, constants, and type aliases)
         let mut parsed_items = Vec::new();
         for item in items {
             match item {
@@ -6529,10 +6591,18 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
                     let item_const = ItemConst::try_from_impl_const(impl_const, is_trait_impl)?;
                     parsed_items.push(ImplItem::Const(Box::new(item_const)));
                 }
+                syn::ImplItem::Type(impl_type) => {
+                    let alias = ItemTypeAlias {
+                        ident: impl_type.ident.clone(),
+                        ty: Box::new(Type::parse(&impl_type.ty, &ctx)?),
+                    };
+                    parsed_items.push(ImplItem::Type(Box::new(alias)));
+                }
                 other => {
                     return UnsupportedSnafu {
                         span: other.span(),
-                        note: "only functions and constants are supported in impl blocks",
+                        note: "only functions, constants, and type aliases are supported in impl \
+                               blocks",
                     }
                     .fail();
                 }
@@ -6571,6 +6641,7 @@ impl ItemImpl {
             match item {
                 ImplItem::Fn(f) => resolve_self_in_fn(&name, f),
                 ImplItem::Const(c) => resolve_self_in_const(&name, c),
+                ImplItem::Type(t) => resolve_self_in_type(&name, &mut t.ty),
             }
         }
     }
@@ -6644,6 +6715,7 @@ fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
             resolve_self_in_type(name, elem);
         }
         Type::Phantom { elem, .. } => resolve_self_in_type(name, elem),
+        Type::AssocType { ty, .. } => resolve_self_in_type(name, ty),
         Type::Scalar { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }
@@ -6803,6 +6875,7 @@ fn resolve_self_in_stmt(name: &Ident, stmt: &mut Stmt) {
                 resolve_self_in_expr(name, size);
             }
         }
+        Stmt::Macro { .. } => {}
     }
 }
 
@@ -9820,15 +9893,22 @@ mod test {
     }
 
     #[test]
-    fn slab_unsupported_macro_rejected() {
+    fn unknown_statement_macro_passes_through_as_stmt_macro() {
         let stmt: syn::Stmt = syn::parse_quote! {
             unknown_macro!(a, b, c, d);
         };
-        let result = Stmt::try_from(&stmt);
-        assert!(
-            result.is_err(),
-            "Unknown statement macros should be rejected"
-        );
+        let result = Stmt::try_from(&stmt)
+            .expect("Unknown statement macros should pass through as Stmt::Macro, not be rejected");
+        match &result {
+            Stmt::Macro { name, args, .. } => {
+                assert_eq!(name, "unknown_macro");
+                assert_eq!(args, "a , b , c , d");
+            }
+            other => panic!(
+                "Expected Stmt::Macro, got discriminant: {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
     }
 
     // --- discard! statement macro tests ---

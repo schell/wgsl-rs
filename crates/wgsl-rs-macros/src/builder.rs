@@ -637,7 +637,8 @@ fn walk_expr_for_linkage_constraints(
             | Stmt::Const(_) // `get!`/`get_mut!` in const initializers would
                             // produce invalid WGSL (const exprs can't access
                             // storage/uniform buffers); the parser rejects this.
-            | Stmt::Discard { .. } => {}
+            | Stmt::Discard { .. }
+            | Stmt::Macro { .. } => {}
             Stmt::SlabRead { slab, offset, dest, size, .. } => {
                 for expr in [slab, offset, dest, size] {
                     walk_expr_for_constraints_recursive(

@@ -2225,7 +2225,11 @@ pub fn resolve_assoc_types(module: &mut ItemMod) -> Result<(), crate::parse::Err
     }
 
     // Iterate until no more AssocType nodes can be resolved.
-    loop {
+    // Cap at a reasonable bound to prevent infinite loops from
+    // cyclic associated type definitions (e.g. `type A = B::X;`
+    // / `type X = A::Y;`).
+    const MAX_ITERATIONS: usize = 32;
+    for _ in 0..MAX_ITERATIONS {
         let mut resolved_any = false;
         for item in &mut module.content {
             if resolve_assoc_types_in_item(item, &index) {
@@ -2233,10 +2237,16 @@ pub fn resolve_assoc_types(module: &mut ItemMod) -> Result<(), crate::parse::Err
             }
         }
         if !resolved_any {
-            break;
+            return Ok(());
         }
     }
-    Ok(())
+
+    Err(crate::parse::Error::unsupported(
+        proc_macro2::Span::call_site(),
+        "cyclic associated type definition detected — associated type \
+         projections could not be resolved within 32 iterations. Check \
+         for circular `type` aliases across impl blocks.".to_string(),
+    ))
 }
 
 /// Resolve `Type::AssocType` in a single item. Returns true if any

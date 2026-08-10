@@ -849,29 +849,19 @@ fn stmt_from_parse(s: &parse::Stmt) -> Result<ir::Stmt> {
             has_explicit_default: s.has_explicit_default,
         }),
         parse::Stmt::Block(b) => ir::Stmt::Block(block_from_parse(b)?),
-        parse::Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => ir::Stmt::SlabRead {
-            slab: expr_from_parse(slab)?,
-            offset: expr_from_parse(offset)?,
-            dest: expr_from_parse(dest)?,
-            size: expr_from_parse(size)?,
-        },
-        parse::Stmt::SlabWrite {
-            slab,
-            offset,
+        parse::Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
             ..
-        } => ir::Stmt::SlabWrite {
-            slab: expr_from_parse(slab)?,
-            offset: expr_from_parse(offset)?,
+        } => ir::Stmt::SlabCopy {
             src: expr_from_parse(src)?,
-            size: size.as_ref().map(expr_from_parse).transpose()?,
+            src_offset: expr_from_parse(src_offset)?,
+            dest: expr_from_parse(dest)?,
+            dest_offset: expr_from_parse(dest_offset)?,
+            size: expr_from_parse(size)?,
         },
         parse::Stmt::Discard { .. } => ir::Stmt::Discard,
         parse::Stmt::Macro { name, args, .. } => ir::Stmt::Macro {

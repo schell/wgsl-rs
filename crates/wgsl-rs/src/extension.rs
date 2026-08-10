@@ -17,7 +17,7 @@
 //! # Statement macro lowering
 //!
 //! When the `#[wgsl]` parser encounters a statement macro that is not one of
-//! its builtins (`slab_read_array!`, `slab_write_array!`, `discard!`), it
+//! its builtins (`slab_copy!`, `discard!`), it
 //! passes it through as a [`crate::ir::Stmt::Macro`] variant instead of
 //! rejecting it. An extension can then recognize the macro by name in
 //! `modify_ir` and replace the `Stmt::Macro` with lowered IR.

@@ -356,7 +356,7 @@ fn fn_call_translates_builtin_names() {
 }
 
 #[test]
-fn slab_read_lowers_to_for_loop() {
+fn slab_copy_lowers_to_for_loop() {
     let m = Module {
         name: "t",
         items: vec![Item::Fn(ItemFn {
@@ -367,10 +367,11 @@ fn slab_read_lowers_to_for_loop() {
             inputs: vec![],
             return_type: ReturnType::Default,
             block: Block {
-                stmts: vec![Stmt::SlabRead {
-                    slab: ident("slab"),
-                    offset: ident("o"),
+                stmts: vec![Stmt::SlabCopy {
+                    src: ident("slab"),
+                    src_offset: ident("o"),
                     dest: ident("d"),
+                    dest_offset: lit_u(0),
                     size: lit_u(4),
                 }],
             },
@@ -383,7 +384,7 @@ fn slab_read_lowers_to_for_loop() {
         wgsl.contains("for (var _i: u32 = 0u; _i < 4u; _i++)"),
         "got: {wgsl}"
     );
-    assert!(wgsl.contains("d[_i] = slab[o + _i];"), "got: {wgsl}");
+    assert!(wgsl.contains("d[0u + _i] = slab[o + _i];"), "got: {wgsl}");
 }
 
 #[test]

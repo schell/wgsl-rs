@@ -260,31 +260,19 @@ pub(crate) fn walk_stmt<V: ParseVisitorMut + ?Sized>(v: &mut V, s: &mut Stmt) ->
         Stmt::Block(block) => {
             v.visit_block(block)?;
         }
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            v.visit_expr(slab)?;
-            v.visit_expr(offset)?;
-            v.visit_expr(dest)?;
-            v.visit_expr(size)?;
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
+        Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
             ..
         } => {
-            v.visit_expr(slab)?;
-            v.visit_expr(offset)?;
             v.visit_expr(src)?;
-            if let Some(s) = size {
-                v.visit_expr(s)?;
-            }
+            v.visit_expr(src_offset)?;
+            v.visit_expr(dest)?;
+            v.visit_expr(dest_offset)?;
+            v.visit_expr(size)?;
         }
         Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } | Stmt::Macro { .. } => {}
     }

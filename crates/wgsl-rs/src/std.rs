@@ -30,7 +30,7 @@ pub use wgsl_rs_macros::{
     wgsl_ignore, workgroup, workgroup_size,
 };
 
-pub use crate::{discard, get, get_mut, slab_read_array, slab_write_array};
+pub use crate::{discard, get, get_mut, slab_copy};
 
 mod atomic;
 mod bitcast;
@@ -640,58 +640,30 @@ macro_rules! get_mut {
     };
 }
 
-/// Copy `$size` elements from `$slab` starting at `$offset` into `$dst`.
+/// Copy `$size` elements from `$src` starting at `$src_offset` into `$dest`
+/// starting at `$dest_offset`.
 ///
 /// On the GPU side (inside `#[wgsl]` modules), this emits a WGSL `for` loop
-/// that copies from a storage buffer into a local `array<u32, N>`.
+/// of the form `dest[dest_offset + i] = src[src_offset + i]`.
 ///
 /// On the CPU side, this is a simple element-by-element copy.
+///
+/// The macro is bidirectional: pass the slab as `$src` to read from a storage
+/// buffer into a local array, or pass the slab as `$dest` to write from a
+/// local array into a storage buffer.
 ///
 /// # Example
 /// ```ignore
 /// let mut raw = [0u32; 4];
-/// slab_read_array!(get!(SLAB), offset, raw, 4);
+/// slab_copy!(get!(SLAB), offset, raw, 0, 4);
 /// ```
 #[macro_export]
-macro_rules! slab_read_array {
-    ($slab:expr, $offset:expr, $dst:expr, $size:expr) => {{
-        let offset = $offset as usize;
+macro_rules! slab_copy {
+    ($src:expr, $src_offset:expr, $dest:expr, $dest_offset:expr, $size:expr) => {{
+        let src_offset = $src_offset as usize;
+        let dest_offset = $dest_offset as usize;
         for i in 0..$size as usize {
-            $dst[i] = $slab[offset + i];
-        }
-    }};
-}
-
-/// Copy `$size` elements from `$src` into `$slab` starting at `$offset`.
-///
-/// On the GPU side (inside `#[wgsl]` modules), this emits a WGSL `for` loop
-/// that copies from a local `array<u32, N>` into a storage buffer.
-///
-/// On the CPU side, this is a simple element-by-element copy.
-///
-/// # Example
-/// ```ignore
-/// let arr = [1u32, 2, 3, 4];
-/// slab_write_array!(get_mut!(SLAB), offset, arr, 4);
-/// ```
-///
-/// The last parameter is optional. When omitted, the proc-macro emits
-/// `arrayLength(&slab)` as the loop bound in WGSL. On the CPU side, this
-/// form uses the source array's `.len()`:
-/// ```ignore
-/// let arr = [1u32, 2, 3, 4];
-/// slab_write_array!(get_mut!(SLAB), offset, arr);
-/// ```
-#[macro_export]
-macro_rules! slab_write_array {
-    ($slab:expr, $offset:expr, $src:expr) => {
-        slab_write_array!($slab, $offset, $src, $src.len())
-    };
-
-    ($slab:expr, $offset:expr, $src:expr, $size:expr) => {{
-        let offset = $offset as usize;
-        for i in 0..$size as usize {
-            $slab[offset + i] = $src[i];
+            $dest[dest_offset + i] = $src[src_offset + i];
         }
     }};
 }

@@ -3187,11 +3187,14 @@ impl Local {
     }
 }
 
-/// Helper for parsing the four comma-separated arguments of `slab_read_array!`
-/// and `slab_write_array!` statement macros.
-struct SlabMacroArgs(syn::Expr, syn::Expr, syn::Expr, syn::Expr);
+/// Helper for parsing the five comma-separated arguments of `slab_copy!`:
+///
+/// ```ignore
+/// slab_copy!(src, src_offset, dest, dest_offset, size);
+/// ```
+struct SlabCopyMacroArgs(syn::Expr, syn::Expr, syn::Expr, syn::Expr, syn::Expr);
 
-impl Parse for SlabMacroArgs {
+impl Parse for SlabCopyMacroArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let a = input.parse()?;
         input.parse::<Token![,]>()?;
@@ -3200,40 +3203,16 @@ impl Parse for SlabMacroArgs {
         let c = input.parse()?;
         input.parse::<Token![,]>()?;
         let d = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let e = input.parse()?;
         // Allow optional trailing comma
         let _ = input.parse::<Option<Token![,]>>();
-        Ok(SlabMacroArgs(a, b, c, d))
-    }
-}
-
-/// Helper for parsing the arguments of `slab_write_array!`, where the fourth
-/// (size) argument is optional:
-///
-/// ```ignore
-/// slab_write_array!(slab, offset, src, size);  // 4-arg form
-/// slab_write_array!(slab, offset, src);        // 3-arg form, size = arrayLength(&slab)
-/// ```
-struct SlabWriteMacroArgs(syn::Expr, syn::Expr, syn::Expr, Option<syn::Expr>);
-
-impl Parse for SlabWriteMacroArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let a = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let b = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let c = input.parse()?;
-        let d = if input.parse::<Option<Token![,]>>()?.is_some() && !input.is_empty() {
-            Some(input.parse()?)
-        } else {
-            None
-        };
-        // Allow optional trailing comma
-        let _ = input.parse::<Option<Token![,]>>();
-        Ok(SlabWriteMacroArgs(a, b, c, d))
+        Ok(SlabCopyMacroArgs(a, b, c, d, e))
     }
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Stmt {
     Local(Box<Local>),
     Const(Box<ItemConst>),
@@ -3297,25 +3276,18 @@ pub enum Stmt {
     ///
     /// Transpiles to a WGSL compound statement.
     Block(Block),
-    /// `slab_read_array!(slab, offset, dest, size);` -- copy from storage
-    /// buffer to local array.
-    SlabRead {
-        slab: Expr,
-        offset: Expr,
-        dest: Expr,
-        size: Expr,
-        span: Span,
-    },
-    /// `slab_write_array!(slab, offset, src, size);` -- copy from local array
-    /// to storage buffer.
+    /// `slab_copy!(src, src_offset, dest, dest_offset, size);` -- copy
+    /// `size` elements from `src[src_offset..]` to `dest[dest_offset..]`.
     ///
-    /// When `size` is `None` (3-arg form), the WGSL code generator emits
-    /// `arrayLength(&slab)` as the loop bound.
-    SlabWrite {
-        slab: Expr,
-        offset: Expr,
+    /// Bidirectional: pass a slab as `src` to read from a storage buffer
+    /// into a local array, or pass a slab as `dest` to write from a local
+    /// array into a storage buffer.
+    SlabCopy {
         src: Expr,
-        size: Option<Expr>,
+        src_offset: Expr,
+        dest: Expr,
+        dest_offset: Expr,
+        size: Expr,
         span: Span,
     },
     /// `discard!();` -- discard the current fragment (fragment shaders only).
@@ -3537,31 +3509,18 @@ impl Stmt {
                     .unwrap_or_default();
                 let span = mac.path.span();
                 match macro_name.as_str() {
-                    "slab_read_array" => {
-                        let args: SlabMacroArgs =
+                    "slab_copy" => {
+                        let args: SlabCopyMacroArgs =
                             syn::parse2(mac.tokens.clone()).map_err(|e| Error::Unsupported {
                                 span,
-                                note: format!("slab_read_array! parse error: {e}"),
+                                note: format!("slab_copy! parse error: {e}"),
                             })?;
-                        Ok(Stmt::SlabRead {
-                            slab: Expr::parse(&args.0, ctx)?,
-                            offset: Expr::parse(&args.1, ctx)?,
+                        Ok(Stmt::SlabCopy {
+                            src: Expr::parse(&args.0, ctx)?,
+                            src_offset: Expr::parse(&args.1, ctx)?,
                             dest: Expr::parse(&args.2, ctx)?,
-                            size: Expr::parse(&args.3, ctx)?,
-                            span,
-                        })
-                    }
-                    "slab_write_array" => {
-                        let args: SlabWriteMacroArgs =
-                            syn::parse2(mac.tokens.clone()).map_err(|e| Error::Unsupported {
-                                span,
-                                note: format!("slab_write_array! parse error: {e}"),
-                            })?;
-                        Ok(Stmt::SlabWrite {
-                            slab: Expr::parse(&args.0, ctx)?,
-                            offset: Expr::parse(&args.1, ctx)?,
-                            src: Expr::parse(&args.2, ctx)?,
-                            size: args.3.as_ref().map(|e| Expr::parse(e, ctx)).transpose()?,
+                            dest_offset: Expr::parse(&args.3, ctx)?,
+                            size: Expr::parse(&args.4, ctx)?,
                             span,
                         })
                     }
@@ -6849,31 +6808,19 @@ fn resolve_self_in_stmt(name: &Ident, stmt: &mut Stmt) {
                 resolve_self_in_block(name, &mut arm.body);
             }
         }
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-            ..
-        } => {
-            resolve_self_in_expr(name, slab);
-            resolve_self_in_expr(name, offset);
-            resolve_self_in_expr(name, dest);
-            resolve_self_in_expr(name, size);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
+        Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
             ..
         } => {
-            resolve_self_in_expr(name, slab);
-            resolve_self_in_expr(name, offset);
             resolve_self_in_expr(name, src);
-            if let Some(size) = size {
-                resolve_self_in_expr(name, size);
-            }
+            resolve_self_in_expr(name, src_offset);
+            resolve_self_in_expr(name, dest);
+            resolve_self_in_expr(name, dest_offset);
+            resolve_self_in_expr(name, size);
         }
         Stmt::Macro { .. } => {}
     }
@@ -9770,17 +9717,17 @@ mod test {
         );
     }
 
-    // --- slab_read_array! / slab_write_array! statement macro tests ---
+    // --- slab_copy! statement macro tests ---
 
     #[test]
-    fn slab_read_parses_and_generates_wgsl() {
+    fn slab_copy_read_parses_and_generates_wgsl() {
         let stmt: syn::Stmt = syn::parse_quote! {
-            slab_read_array!(SLAB, offset, raw, 4);
+            slab_copy!(SLAB, offset, raw, 0, 4);
         };
         let stmt = Stmt::try_from(&stmt).unwrap();
         assert!(
-            matches!(&stmt, Stmt::SlabRead { .. }),
-            "Expected Stmt::SlabRead, got: {:#?}",
+            matches!(&stmt, Stmt::SlabCopy { .. }),
+            "Expected Stmt::SlabCopy, got: {:#?}",
             std::mem::discriminant(&stmt)
         );
         let wgsl = stmt.to_wgsl();
@@ -9790,21 +9737,22 @@ mod test {
             wgsl
         );
         assert!(
-            wgsl.contains("raw[_i] = SLAB[offset + _i];"),
+            wgsl.contains("raw[0u + _i] = SLAB[offset + _i];")
+                || wgsl.contains("raw[0 + _i] = SLAB[offset + _i];"),
             "Expected read body in WGSL, got: {}",
             wgsl
         );
     }
 
     #[test]
-    fn slab_write_parses_and_generates_wgsl() {
+    fn slab_copy_write_parses_and_generates_wgsl() {
         let stmt: syn::Stmt = syn::parse_quote! {
-            slab_write_array!(_arraySLAB, offset, arr, 4);
+            slab_copy!(arr, 0, _arraySLAB, offset, 4);
         };
         let stmt = Stmt::try_from(&stmt).unwrap();
         assert!(
-            matches!(&stmt, Stmt::SlabWrite { .. }),
-            "Expected Stmt::SlabWrite, got: {:#?}",
+            matches!(&stmt, Stmt::SlabCopy { .. }),
+            "Expected Stmt::SlabCopy, got: {:#?}",
             std::mem::discriminant(&stmt)
         );
         let wgsl = stmt.to_wgsl();
@@ -9814,16 +9762,17 @@ mod test {
             wgsl
         );
         assert!(
-            wgsl.contains("SLAB[offset + _i] = arr[_i];"),
+            wgsl.contains("SLAB[offset + _i] = arr[0u + _i];")
+                || wgsl.contains("SLAB[offset + _i] = arr[0 + _i];"),
             "Expected write body in WGSL, got: {}",
             wgsl
         );
     }
 
     #[test]
-    fn slab_read_with_get_macro_strips_get() {
+    fn slab_copy_read_with_get_macro_strips_get() {
         let stmt: syn::Stmt = syn::parse_quote! {
-            slab_read_array!(get!(SLAB), offset, raw, DATA_SIZE);
+            slab_copy!(get!(SLAB), offset, raw, 0, DATA_SIZE);
         };
         let stmt = Stmt::try_from(&stmt).unwrap();
         let wgsl = stmt.to_wgsl();
@@ -9836,9 +9785,9 @@ mod test {
     }
 
     #[test]
-    fn slab_write_with_get_mut_macro_strips_get_mut() {
+    fn slab_copy_write_with_get_mut_macro_strips_get_mut() {
         let stmt: syn::Stmt = syn::parse_quote! {
-            slab_write_array!(get_mut!(SLAB), offset, arr, DATA_SIZE);
+            slab_copy!(arr, 0, get_mut!(SLAB), offset, DATA_SIZE);
         };
         let stmt = Stmt::try_from(&stmt).unwrap();
         let wgsl = stmt.to_wgsl();
@@ -9851,32 +9800,9 @@ mod test {
     }
 
     #[test]
-    fn slab_write_three_arg_emits_array_length() {
+    fn slab_copy_read_with_const_size_emits_const_name() {
         let stmt: syn::Stmt = syn::parse_quote! {
-            slab_write_array!(get_mut!(SLAB), offset, arr);
-        };
-        let stmt = Stmt::try_from(&stmt).unwrap();
-        assert!(
-            matches!(&stmt, Stmt::SlabWrite { size: None, .. }),
-            "Expected Stmt::SlabWrite with size=None"
-        );
-        let wgsl = stmt.to_wgsl();
-        assert!(
-            wgsl.contains("_i < arrayLength(&SLAB)"),
-            "Expected arrayLength(&SLAB) as loop bound, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("SLAB[offset + _i] = arr[_i];"),
-            "Expected write body in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn slab_read_with_const_size_emits_const_name() {
-        let stmt: syn::Stmt = syn::parse_quote! {
-            slab_read_array!(SLAB, id.inner, raw, MY_STRUCT_SLAB_SIZE);
+            slab_copy!(SLAB, id.inner, raw, 0, MY_STRUCT_SLAB_SIZE);
         };
         let stmt = Stmt::try_from(&stmt).unwrap();
         let wgsl = stmt.to_wgsl();

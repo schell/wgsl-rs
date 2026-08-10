@@ -1097,10 +1097,11 @@ fn write_stmt(w: &mut Writer, s: &Stmt) {
             write_block(w, b);
             w.newline();
         }
-        Stmt::SlabRead {
-            slab,
-            offset,
+        Stmt::SlabCopy {
+            src,
+            src_offset,
             dest,
+            dest_offset,
             size,
         } => {
             w.start_line();
@@ -1111,43 +1112,13 @@ fn write_stmt(w: &mut Writer, s: &Stmt) {
             w.indent += 1;
             w.start_line();
             write_expr(w, dest);
-            w.write("[_i] = ");
-            write_expr(w, slab);
             w.write("[");
-            write_expr(w, offset);
-            w.write(" + _i];");
-            w.newline();
-            w.indent -= 1;
-            w.start_line();
-            w.write("}");
-            w.newline();
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-        } => {
-            w.start_line();
-            w.write("for (var _i: u32 = 0u; _i < ");
-            match size {
-                Some(sz) => write_expr(w, sz),
-                None => {
-                    w.write("arrayLength(&");
-                    write_expr(w, slab);
-                    w.write(")");
-                }
-            }
-            w.write("; _i++) {");
-            w.newline();
-            w.indent += 1;
-            w.start_line();
-            write_expr(w, slab);
-            w.write("[");
-            write_expr(w, offset);
+            write_expr(w, dest_offset);
             w.write(" + _i] = ");
             write_expr(w, src);
-            w.write("[_i];");
+            w.write("[");
+            write_expr(w, src_offset);
+            w.write(" + _i];");
             w.newline();
             w.indent -= 1;
             w.start_line();

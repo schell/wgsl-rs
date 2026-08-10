@@ -28,6 +28,8 @@ pub struct Module {
 
 `ir::Item` is an enum with variants: `Struct`, `Fn`, `Const`, `Uniform`, `Storage`, `Workgroup`, `Sampler`, `Texture`, `Impl`, `Enum`.
 
+Inside function bodies, `ir::Stmt` includes a `Macro { name, args }` variant for unrecognized statement macros (see [Statement Macro Lowering](./trait.md#statement-macro-lowering)). Extensions that claim macros via `MACROS` walk function blocks and replace `Stmt::Macro` nodes with lowered IR.
+
 To iterate and mutate items, match on the variant:
 
 ```rust

@@ -73,3 +73,57 @@ fn build_slab_write(struct_name: &str) -> Item {
 `wgsl-rs-layout` is the first real-world extension crate. It is a standalone crate that depends on `wgsl-rs` for its types and implements `WgslExtension` to compute WGSL memory layout for Rust structs. It demonstrates that the extension mechanism is sufficient to build a non-trivial, redistributable tool on top of `wgsl-rs` without forking the transpiler.
 
 See the [Memory Layout](../layout/overview.md) section for full coverage of `wgsl-rs-layout`.
+
+## Statement Macro Lowering: `LowerMyMacro`
+
+An extension can claim a custom statement macro via `MACROS` and replace `Stmt::Macro` nodes with lowered IR. This example from the trybuild test suite defines `my_macro!()` and an extension that lowers it to `let result: u32 = 42;`:
+
+```rust
+use wgsl_rs::{ir, wgsl, WgslExtension};
+
+pub struct LowerMyMacro;
+
+impl WgslExtension for LowerMyMacro {
+    const MACROS: &'static [&'static str] = &["my_macro"];
+
+    fn modify_ir(module: &mut ir::Module) {
+        for item in &mut module.items {
+            if let ir::Item::Fn(f) = item {
+                lower_in_block(&mut f.block);
+            }
+        }
+    }
+}
+
+fn lower_in_block(block: &mut ir::Block) {
+    for i in 0..block.stmts.len() {
+        if let ir::Stmt::Macro { name, .. } = &block.stmts[i] {
+            if name == "my_macro" {
+                block.stmts[i] = ir::Stmt::Local(ir::Local {
+                    mutable: false,
+                    name: "result".to_string(),
+                    ty: Some(ir::Type::Scalar(ir::ScalarType::U32)),
+                    init: Some(ir::Expr::Lit(ir::Lit::Int {
+                        digits: "42".to_string(),
+                        suffix: "u32".to_string(),
+                    })),
+                });
+            }
+        }
+    }
+}
+```
+
+The shader module uses `my_macro!()` in statement position, and the extension's `modify_ir` replaces it before rendering:
+
+```rust
+#[wgsl(extensions = [super::LowerMyMacro])]
+mod ext_macro_shader {
+    pub fn main() -> u32 {
+        my_macro!();
+        42u32
+    }
+}
+```
+
+After `modify_ir` runs, the `Stmt::Macro` is replaced by `Stmt::Local`, and the rendered WGSL contains no trace of `my_macro`.

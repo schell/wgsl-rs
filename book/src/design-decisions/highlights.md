@@ -55,3 +55,7 @@ This chapter curates the key architectural decisions behind wgsl-rs. The full na
 | 2026-08-04   | **Generic trait impls on array types** (`impl<T: Trait> Trait for [T; N]`) supported via monomorphizer widening (#133). |
 | 2026-08-04   | **Const generics for `u32`/`usize`** supported on functions, structs, impl blocks, and template entry points (#137). The substitution target is always a bare ident (stable Rust requires bare idents or literals), so no new IR variant is needed. |
 | 2026-08-05   | **`PhantomData<T>` marker fields** are retained in the IR (so extensions can see which type parameter each phantom slot binds) but omitted from the rendered WGSL (#138). |
+| 2026-08-06   | **Storage texture support** (`texture_storage_*`) added as `Type::TextureStorage` IR variant, with texel format markers and access mode traits (#140). |
+| 2026-08-07   | **Extensible statement macros** via `Stmt::Macro` passthrough — extensions claim macros via `MACROS` const and lower them in `modify_ir`, with compile-time `E0080` safety check (#143). |
+| 2026-08-07   | **Associated types in trait impls** resolve to concrete WGSL types and emit `alias` declarations (#143). |
+| 2026-08-07   | **Non-`pub` associated consts in trait impls** — matches the existing exemption for trait-impl methods (#142). |

@@ -46,9 +46,16 @@ pub fn add_delta() {
 
 ## Slab Helpers
 
-For packed slab buffers, use the slab helpers:
+For packed slab buffers, use the `slab_copy!` macro. It is bidirectional — pass the slab as the source to read from a storage buffer into a local array, or pass the slab as the destination to write from a local array into a storage buffer:
 
-- `slab_read_array!(slab, offset, dest, size)` — read `size` elements from `slab` at `offset` into `dest`.
-- `slab_write_array!(slab, offset, src, size)` — write `size` elements from `src` into `slab` at `offset`.
+```rust
+slab_copy!(src, src_offset, dest, dest_offset, size)
+```
 
-Both `slab`, `dest`, `src` refer to declared `storage!` bindings.
+Copies `size` elements from `src[src_offset..]` into `dest[dest_offset..]`. On the GPU this emits a WGSL `for` loop; on the CPU it is a simple element-by-element copy.
+
+```rust
+let mut raw = [0u32; 4];
+slab_copy!(get!(SLAB), index, raw, 0, 4);
+slab_copy!(raw, 0, get_mut!(SLAB), index, 4);
+```

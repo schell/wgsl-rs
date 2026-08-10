@@ -89,6 +89,66 @@ impl Packed for Vec4f {
 
 The `pack` method transpiles to `Vec4f_pack`.
 
+### Non-`pub` items in trait impls
+
+Rust forbids `pub` on any item inside a trait impl (`E0449`), so wgsl-rs does not require `pub` on trait-impl methods or associated constants — only inherent impl blocks require `pub`. This matches Rust's own visibility rules:
+
+```rust
+pub trait SlabItem {
+    const SLAB_SIZE: usize;
+    fn read_at(slab_index: u32) -> Self;
+}
+
+impl SlabItem for u32 {
+    const SLAB_SIZE: usize = 1;  // no `pub` — correct for a trait impl
+    fn read_at(slab_index: u32) -> u32 {
+        slab_index
+    }
+}
+```
+
+The associated const is mangled to `u32__1SLAB_SIZE` in WGSL (the `_1` escapes the underscore in `SLAB_SIZE` per the bijective mangling scheme).
+
+### Associated Types in Trait Impls
+
+Trait impls may include associated type definitions (`type Array = ...;`). The concrete type is resolved at monomorphization time and emitted as a WGSL `alias`:
+
+```rust
+pub trait SlabItem {
+    const SLAB_SIZE: usize;
+    type Array: Default;
+    fn to_array(data: Self) -> Self::Array;
+    fn from_array(arr: Self::Array) -> Self;
+}
+
+impl SlabItem for u32 {
+    const SLAB_SIZE: usize = 1;
+    type Array = [u32; 1];
+    fn to_array(data: Self) -> Self::Array {
+        [data]
+    }
+    fn from_array(arr: Self::Array) -> Self {
+        arr[0]
+    }
+}
+```
+
+This produces:
+
+```wgsl
+alias u32_Array = array<u32, 1>;
+
+fn u32__1to_array(data: u32) -> array<u32, 1> {
+    return array(data);
+}
+
+fn u32__1from_array(arr: array<u32, 1>) -> u32 {
+    return arr[0];
+}
+```
+
+`Self::Array` in method signatures is resolved to the concrete type (`[u32; 1]` → `array<u32, 1>`) before rendering.
+
 ## Enums
 
 `#[repr(u32)]` enums with explicit discriminants transpile to a `u32` alias plus `const` variants:

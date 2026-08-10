@@ -1,6 +1,6 @@
 # Slab Read/Write
 
-Demonstrates `wgsl-rs` macros for reading from and writing to u32 "slabs". The slab can be any indexable item such as an array, `RuntimeArray`, or storage pointer. The `slab_read_array!` and `slab_write_array!` macros expand to element-wise copy loops in WGSL.
+Demonstrates `wgsl-rs` macros for reading from and writing to u32 "slabs". The slab can be any indexable item such as an array, `RuntimeArray`, or storage pointer. The `slab_copy!` macro expands to an element-wise copy loop in WGSL.
 
 ## Rust Source
 
@@ -63,7 +63,7 @@ pub mod slab_read_write {
         {
             // Extract the u32 data from the slab
             let mut array_data = Data::array_container();
-            slab_read_array!(get!(SLAB), index, array_data, Data::SLAB_SIZE);
+            slab_copy!(get!(SLAB), index, array_data, 0, Data::SLAB_SIZE);
             data = Data::from_array(array_data);
         }
 
@@ -72,7 +72,7 @@ pub mod slab_read_write {
 
         // Write the modified `Data` struct back to the slab
         let out_array = Data::to_array(data);
-        slab_write_array!(get_mut!(SLAB), index, out_array, Data::SLAB_SIZE);
+        slab_copy!(out_array, 0, get_mut!(SLAB), index, Data::SLAB_SIZE);
     }
 }
 ```
@@ -106,20 +106,19 @@ fn Data__1to_array(data: Data) -> array<u32, Data__1SLAB_SIZE> {
     {
         var array_data = Data__1array_container();
         for (var _i: u32 = 0u; _i < Data__1SLAB_SIZE; _i++) {
-            array_data[_i] = SLAB[index + _i];
+            array_data[0 + _i] = SLAB[index + _i];
         }
         data = Data__1from_array(array_data);
     }
     data.three_four.x = 123.0;
     let out_array = Data__1to_array(data);
     for (var _i: u32 = 0u; _i < Data__1SLAB_SIZE; _i++) {
-        SLAB[index + _i] = out_array[_i];
+        SLAB[index + _i] = out_array[0 + _i];
     }
 }
 ```
 
 ## Notes
 
-- `slab_read_array!(slab, index, dest, size)` expands to a for-loop copying `size` u32 elements from `slab[index]` onward into `dest`.
-- `slab_write_array!(slab, index, src, size)` does the reverse.
-- `Self::SLAB_SIZE` (an associated const) is mangled to `Data__1SLAB_SIZE` in WGSL.
+- `slab_copy!(src, src_offset, dest, dest_offset, size)` is bidirectional: pass the slab as `src` to read, or as `dest` to write.
+- `Self::SLAB_SIZE` (an associated const) is mangled to `Data__1SLAB_SIZE` in WGSL (the `_1` is the bijective mangle escaping the underscore in `SLAB_SIZE`).

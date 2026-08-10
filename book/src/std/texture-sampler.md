@@ -44,12 +44,24 @@ transpiler picks the right overload from argument types.
 | `texture_load(tex, coords)` | `textureLoad` | Load texel at integer coords. |
 | `texture_load(tex, coords, level)` | `textureLoad` | With mip level (2D/3D/array). |
 | `texture_load(tex, coords, sample)` | `textureLoad` | Multisample load. |
-| `texture_store(tex, coords, value)` | `textureStore` | Write texel (storage textures). |
+| `texture_load_storage(tex, coords)` | `textureLoad` | Load from a storage texture (`Read`/`ReadWrite`). |
+| `texture_store(tex, coords, value)` | `textureStore` | Write texel to a storage texture (`Write`/`ReadWrite`). |
 | `texture_dimensions(tex)` | `textureDimensions` | Dimensions at mip 0. |
 | `texture_dimensions(tex, level)` | `textureDimensions` | Dimensions at given mip level. |
 | `texture_num_layers(tex)` | `textureNumLayers` | Array layer count. |
 | `texture_num_levels(tex)` | `textureNumLevels` | Mip level count. |
 | `texture_num_samples(tex)` | `textureNumSamples` | Sample count (multisample). |
+
+### Storage texture access
+
+`texture_load_storage` and `texture_store` are gated by the `ReadableStorageAccess` and `WritableStorageAccess` traits respectively, so the access mode of the storage texture is enforced at compile time:
+
+| Function | Trait bound | Access modes allowed |
+|----------|------------|---------------------|
+| `texture_load_storage(tex, coords)` | `ReadableStorageAccess` | `Read`, `ReadWrite` |
+| `texture_store(tex, coords, value)` | `WritableStorageAccess` | `Write`, `ReadWrite` |
+
+A separate `texture_load_storage` function (rather than overloading `texture_load`) is used because the WGSL storage overload of `textureLoad` takes no `level` parameter, unlike the sampled texture overload.
 
 ## Example
 

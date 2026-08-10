@@ -66,4 +66,4 @@ pub mod prefix {
 
 - Use arrays in `Type` (e.g. `array<f32, N>`) for large buffers.
 - `read_write` storage requires the binding to be created with the `read_write` access flag on the host side.
-- Slab helpers (`slab_read_array!`, `slab_write_array!`) operate on `storage!` bindings (see [Binding Macros](../binding-macros.md)).
+- The `slab_copy!` helper operates on `storage!` bindings (see [Binding Macros](../binding-macros.md)).

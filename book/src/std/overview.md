@@ -36,7 +36,7 @@ modules.
 | Control | `discard!()` | [`discard!()`](./discard.md) |
 | Binding macros | `uniform!`, `storage!`, `workgroup!`, `texture!`, `sampler!`, `ptr!` | [Binding Macros](../writing-shaders/binding-macros.md) |
 | Entry-point attributes | `#[vertex]`, `#[fragment]`, `#[compute]` | [Vertex / Fragment / Compute](../entry-points/stages.md) |
-| Runtime macros | `get!`, `get_mut!`, `discard!`, `slab_read_array!`, `slab_write_array!` | — |
+| Runtime macros | `get!`, `get_mut!`, `discard!`, `slab_copy!` | — |
 | Marker types | `PhantomData<T>` | [Generic Structs: `PhantomData`](../generics/generic-structs.md#phantomdatat-marker-fields) |
 
 ## The `Wgsl` trait

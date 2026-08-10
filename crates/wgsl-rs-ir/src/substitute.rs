@@ -290,29 +290,18 @@ fn rename_stmt(s: &mut Stmt, from: &str, to: &str) {
             }
         }
         Stmt::Block(b) => rename_block(b, from, to),
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-        } => {
-            rename_expr(slab, from, to);
-            rename_expr(offset, from, to);
-            rename_expr(dest, from, to);
-            rename_expr(size, from, to);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
+        Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
         } => {
-            rename_expr(slab, from, to);
-            rename_expr(offset, from, to);
             rename_expr(src, from, to);
-            if let Some(sz) = size {
-                rename_expr(sz, from, to);
-            }
+            rename_expr(src_offset, from, to);
+            rename_expr(dest, from, to);
+            rename_expr(dest_offset, from, to);
+            rename_expr(size, from, to);
         }
         Stmt::Macro { .. } => {}
     }
@@ -607,29 +596,18 @@ fn sub_stmt(st: &mut Stmt, s: &HashMap<String, Type>) {
             }
         }
         Stmt::Block(b) => sub_block(b, s),
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-        } => {
-            sub_expr(slab, s);
-            sub_expr(offset, s);
-            sub_expr(dest, s);
-            sub_expr(size, s);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
+        Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
         } => {
-            sub_expr(slab, s);
-            sub_expr(offset, s);
             sub_expr(src, s);
-            if let Some(sz) = size {
-                sub_expr(sz, s);
-            }
+            sub_expr(src_offset, s);
+            sub_expr(dest, s);
+            sub_expr(dest_offset, s);
+            sub_expr(size, s);
         }
         Stmt::Macro { .. } => {}
     }
@@ -865,29 +843,18 @@ fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, u32>) {
             }
         }
         Stmt::Block(b) => sub_block_const(b, consts),
-        Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-        } => {
-            sub_expr_const(slab, consts);
-            sub_expr_const(offset, consts);
-            sub_expr_const(dest, consts);
-            sub_expr_const(size, consts);
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
+        Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
         } => {
-            sub_expr_const(slab, consts);
-            sub_expr_const(offset, consts);
             sub_expr_const(src, consts);
-            if let Some(sz) = size {
-                sub_expr_const(sz, consts);
-            }
+            sub_expr_const(src_offset, consts);
+            sub_expr_const(dest, consts);
+            sub_expr_const(dest_offset, consts);
+            sub_expr_const(size, consts);
         }
         Stmt::Macro { .. } => {}
     }

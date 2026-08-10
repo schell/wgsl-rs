@@ -1075,29 +1075,18 @@ fn collect_idents_in_stmt(out: &mut std::collections::HashSet<String>, stmt: &ir
             }
         }
         ir::Stmt::Block(b) => collect_idents_in_block(out, b),
-        ir::Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-        } => {
-            collect_idents_in_expr(out, slab);
-            collect_idents_in_expr(out, offset);
-            collect_idents_in_expr(out, dest);
-            collect_idents_in_expr(out, size);
-        }
-        ir::Stmt::SlabWrite {
-            slab,
-            offset,
+        ir::Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
         } => {
-            collect_idents_in_expr(out, slab);
-            collect_idents_in_expr(out, offset);
             collect_idents_in_expr(out, src);
-            if let Some(s) = size {
-                collect_idents_in_expr(out, s);
-            }
+            collect_idents_in_expr(out, src_offset);
+            collect_idents_in_expr(out, dest);
+            collect_idents_in_expr(out, dest_offset);
+            collect_idents_in_expr(out, size);
         }
         ir::Stmt::Break
         | ir::Stmt::Continue

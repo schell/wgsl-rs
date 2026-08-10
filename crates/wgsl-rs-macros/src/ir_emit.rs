@@ -1021,38 +1021,26 @@ fn stmt(p: &TokenStream, s: &ir::Stmt) -> TokenStream {
             let b = block(p, b);
             quote! { #p::Stmt::Block(#b) }
         }
-        ir::Stmt::SlabRead {
-            slab,
-            offset,
-            dest,
-            size,
-        } => {
-            let sl = expr(p, slab);
-            let o = expr(p, offset);
-            let d = expr(p, dest);
-            let s = expr(p, size);
-            quote! {
-                #p::Stmt::SlabRead { slab: #sl, offset: #o, dest: #d, size: #s }
-            }
-        }
-        ir::Stmt::SlabWrite {
-            slab,
-            offset,
+        ir::Stmt::SlabCopy {
             src,
+            src_offset,
+            dest,
+            dest_offset,
             size,
         } => {
-            let sl = expr(p, slab);
-            let o = expr(p, offset);
-            let sr = expr(p, src);
-            let s = match size {
-                Some(s) => {
-                    let s = expr(p, s);
-                    quote! { ::std::option::Option::Some(#s) }
-                }
-                None => quote! { ::std::option::Option::None },
-            };
+            let s = expr(p, src);
+            let so = expr(p, src_offset);
+            let d = expr(p, dest);
+            let do_ = expr(p, dest_offset);
+            let sz = expr(p, size);
             quote! {
-                #p::Stmt::SlabWrite { slab: #sl, offset: #o, src: #sr, size: #s }
+                #p::Stmt::SlabCopy {
+                    src: #s,
+                    src_offset: #so,
+                    dest: #d,
+                    dest_offset: #do_,
+                    size: #sz
+                }
             }
         }
         ir::Stmt::Discard => quote! { #p::Stmt::Discard },

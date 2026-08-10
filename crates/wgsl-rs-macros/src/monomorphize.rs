@@ -2493,45 +2493,27 @@ fn resolve_assoc_in_stmt(stmt: &mut Stmt, index: &BTreeMap<(String, String), Typ
                 changed = true;
             }
         }
-        Stmt::SlabRead {
-            slab,
-            offset,
+        Stmt::SlabCopy {
+            src,
+            src_offset,
             dest,
+            dest_offset,
             size,
             ..
         } => {
-            if resolve_assoc_in_expr(slab, index) {
+            if resolve_assoc_in_expr(src, index) {
                 changed = true;
             }
-            if resolve_assoc_in_expr(offset, index) {
+            if resolve_assoc_in_expr(src_offset, index) {
                 changed = true;
             }
             if resolve_assoc_in_expr(dest, index) {
                 changed = true;
             }
+            if resolve_assoc_in_expr(dest_offset, index) {
+                changed = true;
+            }
             if resolve_assoc_in_expr(size, index) {
-                changed = true;
-            }
-        }
-        Stmt::SlabWrite {
-            slab,
-            offset,
-            src,
-            size,
-            ..
-        } => {
-            if resolve_assoc_in_expr(slab, index) {
-                changed = true;
-            }
-            if resolve_assoc_in_expr(offset, index) {
-                changed = true;
-            }
-            if resolve_assoc_in_expr(src, index) {
-                changed = true;
-            }
-            if let Some(s) = size
-                && resolve_assoc_in_expr(s, index)
-            {
                 changed = true;
             }
         }

@@ -694,30 +694,27 @@ pub enum Stmt {
     For(ForLoop),
     Switch(StmtSwitch),
     Block(Block),
-    /// Slab read: copy `size` elements from `slab[offset..]` into `dest`.
-    SlabRead {
-        slab: Expr,
-        offset: Expr,
-        dest: Expr,
-        size: Expr,
-    },
-    /// Slab write: copy elements from `src` into `slab[offset..]`. When
-    /// `size` is `None`, the loop bound is `arrayLength(&slab)`.
-    SlabWrite {
-        slab: Expr,
-        offset: Expr,
+    /// Slab copy: copy `size` elements from `src[src_offset..]` into
+    /// `dest[dest_offset..]`.
+    ///
+    /// This is the bidirectional consolidation of the former `SlabRead` and
+    /// `SlabWrite` variants. The renderer emits a WGSL `for` loop of the
+    /// form `dest[dest_offset + i] = src[src_offset + i]`.
+    SlabCopy {
         src: Expr,
-        size: Option<Expr>,
+        src_offset: Expr,
+        dest: Expr,
+        dest_offset: Expr,
+        size: Expr,
     },
     Discard,
     /// An unrecognized statement macro, preserved for extension lowering.
     ///
     /// When the `#[wgsl]` parser encounters a statement macro that is not
-    /// one of its builtins (`slab_read_array!`, `slab_write_array!`,
-    /// `discard!`), it emits this variant instead of rejecting the macro.
-    /// A `WgslExtension` (in the `wgsl-rs` crate) can then recognize the
-    /// macro by name in its `modify_ir` method and replace this statement
-    /// with lowered IR.
+    /// one of its builtins (`slab_copy!`, `discard!`), it emits this variant
+    /// instead of rejecting the macro. A `WgslExtension` (in the `wgsl-rs`
+    /// crate) can then recognize the macro by name in its `modify_ir`
+    /// method and replace this statement with lowered IR.
     ///
     /// The `#[wgsl]` macro emits a compile-time `const` check verifying
     /// that at least one listed extension claims the macro name via its

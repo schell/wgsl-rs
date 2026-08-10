@@ -639,30 +639,17 @@ fn walk_expr_for_linkage_constraints(
                             // storage/uniform buffers); the parser rejects this.
             | Stmt::Discard { .. }
             | Stmt::Macro { .. } => {}
-            Stmt::SlabRead { slab, offset, dest, size, .. } => {
-                for expr in [slab, offset, dest, size] {
+            Stmt::SlabCopy {
+                src,
+                src_offset,
+                dest,
+                dest_offset,
+                size,
+                ..
+            } => {
+                for expr in [src, src_offset, dest, dest_offset, size] {
                     walk_expr_for_constraints_recursive(
                         expr,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-            Stmt::SlabWrite { slab, offset, src, size, .. } => {
-                for expr in [slab, offset, src] {
-                    walk_expr_for_constraints_recursive(
-                        expr,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-                if let Some(size_expr) = size {
-                    walk_expr_for_constraints_recursive(
-                        size_expr,
                         fn_name,
                         is_entry_point,
                         fn_type_params,

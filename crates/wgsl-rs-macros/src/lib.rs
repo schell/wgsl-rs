@@ -1270,16 +1270,19 @@ fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
 /// get_mut!(MY_BUFFER).field = 42;
 /// ```
 ///
-/// ## `slab_read_array!` / `slab_write_array!`
+/// ## `slab_copy!`
 ///
-/// Bulk read/write operations on storage buffer slabs.
+/// Bulk copy between a storage buffer slab and a local array (or between
+/// two arrays). Bidirectional: pass a slab as the first argument to read,
+/// or as the third argument to write.
 ///
 /// ```ignore
-/// slab_read_array!(get!(SLAB), offset, dest_array, count);
-/// slab_write_array!(get_mut!(SLAB), offset, src_array, count);
+/// slab_copy!(get!(SLAB), offset, dest_array, 0, count);
+/// slab_copy!(src_array, 0, get_mut!(SLAB), offset, count);
 /// ```
 ///
-/// These expand to indexed for-loops in WGSL.
+/// Expands to an indexed `for` loop in WGSL of the form
+/// `dest[dest_offset + i] = src[src_offset + i]`.
 ///
 /// # Warning Suppression
 ///

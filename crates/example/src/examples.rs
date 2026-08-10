@@ -1404,7 +1404,7 @@ pub mod slab_read_write {
         {
             // Extract the u32 data from the slab
             let mut array_data = Data::array_container();
-            slab_read_array!(get!(SLAB), index, array_data, Data::SLAB_SIZE);
+            slab_copy!(get!(SLAB), index, array_data, 0, Data::SLAB_SIZE);
             data = Data::from_array(array_data);
         }
 
@@ -1413,7 +1413,7 @@ pub mod slab_read_write {
 
         // Write the modified `Data` struct back to the slab
         let out_array = Data::to_array(data);
-        slab_write_array!(get_mut!(SLAB), index, out_array, Data::SLAB_SIZE);
+        slab_copy!(out_array, 0, get_mut!(SLAB), index, Data::SLAB_SIZE);
     }
 }
 

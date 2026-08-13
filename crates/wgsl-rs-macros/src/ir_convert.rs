@@ -784,7 +784,10 @@ pub fn block_from_parse(b: &parse::Block) -> Result<ir::Block> {
 fn stmt_from_parse(s: &parse::Stmt) -> Result<ir::Stmt> {
     Ok(match s {
         parse::Stmt::Local(l) => ir::Stmt::Local(ir::Local {
-            mutable: l.mutability.is_some(),
+            // WGSL `let` requires an initializer; `var` does not (defaults to
+            // zero value). So an uninitialized `let x: f32;` must render as
+            // `var` to be valid WGSL. See issue #148.
+            mutable: l.mutability.is_some() || l.init.is_none(),
             name: l.ident.to_string(),
             ty: l.ty.as_ref().map(|(_, t)| ty_from_parse(t)).transpose()?,
             init: l

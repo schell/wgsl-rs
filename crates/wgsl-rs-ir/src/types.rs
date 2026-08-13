@@ -599,8 +599,9 @@ pub enum Expr {
 /// A `let` / `var` / `const` initializer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Local {
-    /// `true` when this should render as `var` (Rust `let mut`); `false`
-    /// for `let` (Rust `let`).
+    /// `true` when this should render as `var` (Rust `let mut`, or
+    /// uninitialized `let` — WGSL `let` requires an initializer);
+    /// `false` for `let` (Rust `let` with initializer).
     pub mutable: bool,
     pub name: String,
     pub ty: Option<Type>,

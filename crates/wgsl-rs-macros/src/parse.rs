@@ -3095,7 +3095,9 @@ impl LocalInit {
 pub struct Local {
     pub let_token: Token![let],
     /// If `mutability` is `Some`, this is a `var` binding, otherwise this is a
-    /// `let` binding.
+    /// `let` binding. Note: an uninitialized `let x: f32;` (no `mut`, no init)
+    /// is rendered as `var` in WGSL, because WGSL `let` requires an
+    /// initializer. See issue #148.
     pub mutability: Option<Token![mut]>,
     pub ident: Ident,
     pub ty: Option<(Token![:], Type)>,
@@ -8938,6 +8940,44 @@ mod test {
         assert!(
             wgsl.contains("x += 1u;"),
             "Expected 'x += 1u;' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn uninit_let_renders_as_var() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn f() {
+                let x: f32;
+                x = 1.0;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("var x: f32;"),
+            "Expected 'var x: f32;' for uninitialized let, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("let x: f32;"),
+            "Should not emit 'let x: f32;' (invalid WGSL), got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn init_let_renders_as_let() {
+        let item: syn::Item = syn::parse_quote! {
+            pub fn f() {
+                let x: f32 = 1.0;
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("let x: f32 = 1.0;"),
+            "Expected 'let x: f32 = 1.0;' for initialized let, got: {}",
             wgsl
         );
     }

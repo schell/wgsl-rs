@@ -235,6 +235,7 @@ impl Source {
         if let Some(s) = subst {
             ir::substitute_types(&mut ir_module, s);
         }
+        ir::deshadow_module(&mut ir_module);
         if ir::items_need_tier1_extension(&ir_module.items) {
             *needs_tier1 = true;
         }
@@ -414,6 +415,7 @@ fn instantiate_template_into<'a>(
         ir::rename_items(&mut items, template.name, &instance_name);
     }
 
+    ir::deshadow_items(&mut items);
     if ir::items_need_tier1_extension(&items) {
         *needs_tier1 = true;
     }

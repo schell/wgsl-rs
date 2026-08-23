@@ -10,8 +10,8 @@
 //! On the GPU side, these types transpile to their WGSL equivalents.
 
 use crate::std::{
-    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3u, Vec4f, Vec4i, Vec4u, Wgsl,
-    WgslTextureScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
+    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3f, Vec3i, Vec3u, Vec4f, Vec4i, Vec4u,
+    Wgsl, WgslTextureScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
 };
 
 use std::marker::PhantomData;
@@ -340,6 +340,74 @@ impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<u32> {
             .get_pixel(x, level)
             .map(|p| vec4u(p[0], p[1], p[2], p[3]))
             .unwrap_or(vec4u(0, 0, 0, 0))
+    }
+}
+
+impl TextureSample<f32> for Texture1D<f32> {
+    type Output = Vec4f;
+
+    fn sample(&self, sampler: &Sampler, coords: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_1d(&data, &sampler_state, coords, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<f32, f32> for Texture1D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: f32, level: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let result = sample_texture_1d(&data, &sampler_state, coords, level);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<f32, i32> for Texture1D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: f32, level: i32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = if level < 0 { 0u32 } else { level as u32 };
+        let data = self.get();
+        let result = sample_texture_1d(&data, &sampler_state, coords, level);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<f32, u32> for Texture1D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: f32, level: u32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_1d(&data, &sampler_state, coords, level);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleBias<f32, f32> for Texture1D<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias(&self, sampler: &Sampler, coords: f32, _bias: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_1d(&data, &sampler_state, coords, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGrad<f32, f32, f32> for Texture1D<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad(&self, sampler: &Sampler, coords: f32, _ddx: f32, _ddy: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_1d(&data, &sampler_state, coords, 0);
+        vec4f(result[0], result[1], result[2], result[3])
     }
 }
 
@@ -1111,6 +1179,13 @@ impl<T: WgslTextureScalar + Default + Copy> Texture3D<T> {
     pub fn init(&self, width: u32, height: u32, depth: u32) {
         self.set(TextureData3D::new(width, height, depth))
     }
+
+    /// Set a pixel at the given coordinates.
+    ///
+    /// Not available in WGSL.
+    pub fn set_pixel(&self, x: u32, y: u32, z: u32, value: [T; 4]) {
+        self.data.write().set_pixel(x, y, z, 0, value);
+    }
 }
 
 impl<T: WgslTextureScalar> Texture3D<T> {
@@ -1141,6 +1216,256 @@ impl<T: WgslTextureScalar + Default + Clone> TextureDimensionsQuery for Texture3
 impl<T: WgslTextureScalar + Default + Clone> TextureNumLevelsQuery for Texture3D<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
+    }
+}
+
+impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn load(&self, coords: Vec3u, level: L) -> Self::Output {
+        let level = level.into_level();
+
+        self.get()
+            .get_pixel(coords.x(), coords.y(), coords.z(), level)
+            .map(|p| vec4f(p[0], p[1], p[2], p[3]))
+            .unwrap_or(vec4f(0.0, 0.0, 0.0, 0.0))
+    }
+}
+
+impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn load(&self, coords: Vec3i, level: L) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        let z = coords.z().max(0) as u32;
+        self.load(vec3u(x, y, z), level)
+    }
+}
+
+impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<i32> {
+    type Output = Vec4i;
+
+    fn load(&self, coords: Vec3u, level: L) -> Self::Output {
+        let level = level.into_level();
+
+        self.get()
+            .get_pixel(coords.x(), coords.y(), coords.z(), level)
+            .map(|p| vec4i(p[0], p[1], p[2], p[3]))
+            .unwrap_or(vec4i(0, 0, 0, 0))
+    }
+}
+
+impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<i32> {
+    type Output = Vec4i;
+
+    fn load(&self, coords: Vec3i, level: L) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        let z = coords.z().max(0) as u32;
+        self.load(vec3u(x, y, z), level)
+    }
+}
+
+impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<u32> {
+    type Output = Vec4u;
+
+    fn load(&self, coords: Vec3u, level: L) -> Self::Output {
+        let level = level.into_level();
+
+        self.get()
+            .get_pixel(coords.x(), coords.y(), coords.z(), level)
+            .map(|p| vec4u(p[0], p[1], p[2], p[3]))
+            .unwrap_or(vec4u(0, 0, 0, 0))
+    }
+}
+
+impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<u32> {
+    type Output = Vec4u;
+
+    fn load(&self, coords: Vec3i, level: L) -> Self::Output {
+        let x = coords.x().max(0) as u32;
+        let y = coords.y().max(0) as u32;
+        let z = coords.z().max(0) as u32;
+        self.load(vec3u(x, y, z), level)
+    }
+}
+
+impl TextureSample<Vec3f> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample(&self, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result =
+            sample_texture_3d(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleOffset<Vec3f, Vec3i> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_offset(&self, sampler: &Sampler, coords: Vec3f, offset: Vec3i) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h, d) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let w_coord = coords.z() + offset.z() as f32 / d.max(1) as f32;
+        let result = sample_texture_3d(&data, &sampler_state, u, v, w_coord, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<Vec3f, f32> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let result = sample_texture_3d(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<Vec3f, i32> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: i32) -> Self::Output {
+        let level = if level < 0 { 0u32 } else { level as u32 };
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_3d(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<Vec3f, u32> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: u32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_3d(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevelOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_level_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        level: f32,
+        offset: Vec3i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let (w, h, d) = data.dimensions(level);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let w_coord = coords.z() + offset.z() as f32 / d.max(1) as f32;
+        let result = sample_texture_3d(&data, &sampler_state, u, v, w_coord, level);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleBias<Vec3f, f32> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias(&self, sampler: &Sampler, coords: Vec3f, _bias: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result =
+            sample_texture_3d(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleBiasOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        _bias: f32,
+        offset: Vec3i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h, d) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let w_coord = coords.z() + offset.z() as f32 / d.max(1) as f32;
+        let result = sample_texture_3d(&data, &sampler_state, u, v, w_coord, 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        _ddx: Vec3f,
+        _ddy: Vec3f,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result =
+            sample_texture_3d(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGradOffset<Vec3f, Vec3f, Vec3f, Vec3i> for Texture3D<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        _ddx: Vec3f,
+        _ddy: Vec3f,
+        offset: Vec3i,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let (w, h, d) = data.dimensions(0);
+        let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        let w_coord = coords.z() + offset.z() as f32 / d.max(1) as f32;
+        let result = sample_texture_3d(&data, &sampler_state, u, v, w_coord, 0);
+        vec4f(result[0], result[1], result[2], result[3])
     }
 }
 
@@ -1222,6 +1547,104 @@ impl<T: WgslTextureScalar + Default + Copy> TextureDimensionsQuery for TextureCu
 impl<T: WgslTextureScalar + Default + Clone> TextureNumLevelsQuery for TextureCube<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
+    }
+}
+
+impl TextureSample<Vec3f> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn sample(&self, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result =
+            sample_texture_cube(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<Vec3f, f32> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let result = sample_texture_cube(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<Vec3f, i32> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: i32) -> Self::Output {
+        let level = if level < 0 { 0u32 } else { level as u32 };
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_cube(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevel<Vec3f, u32> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: u32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_cube(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleBias<Vec3f, f32> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias(&self, sampler: &Sampler, coords: Vec3f, _bias: f32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result =
+            sample_texture_cube(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        _ddx: Vec3f,
+        _ddy: Vec3f,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result =
+            sample_texture_cube(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
+        vec4f(result[0], result[1], result[2], result[3])
     }
 }
 
@@ -1309,6 +1732,153 @@ impl<T: WgslTextureScalar> TextureNumLayersQuery for TextureCubeArray<T> {
 impl<T: WgslTextureScalar> TextureNumLevelsQuery for TextureCubeArray<T> {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
+    }
+}
+
+impl TextureSampleArray<Vec3f, u32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_array(&self, sampler: &Sampler, coords: Vec3f, array_index: u32) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            0,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleArray<Vec3f, i32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_array(&self, sampler: &Sampler, coords: Vec3f, array_index: i32) -> Self::Output {
+        self.sample_array(sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureSampleLevelArray<Vec3f, u32, f32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_level_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: u32,
+        level: f32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let level = level.floor() as u32;
+        let data = self.get();
+        let result = sample_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            level,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleLevelArray<Vec3f, i32, f32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_level_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: i32,
+        level: f32,
+    ) -> Self::Output {
+        self.sample_level_array(sampler, coords, array_index.max(0) as u32, level)
+    }
+}
+
+impl TextureSampleBiasArray<Vec3f, u32, f32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: u32,
+        _bias: f32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            0,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleBiasArray<Vec3f, i32, f32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_bias_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: i32,
+        bias: f32,
+    ) -> Self::Output {
+        self.sample_bias_array(sampler, coords, array_index.max(0) as u32, bias)
+    }
+}
+
+impl TextureSampleGradArray<Vec3f, u32, Vec3f, Vec3f> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: u32,
+        _ddx: Vec3f,
+        _ddy: Vec3f,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let result = sample_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            0,
+        );
+        vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureSampleGradArray<Vec3f, i32, Vec3f, Vec3f> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn sample_grad_array(
+        &self,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: i32,
+        ddx: Vec3f,
+        ddy: Vec3f,
+    ) -> Self::Output {
+        self.sample_grad_array(sampler, coords, array_index.max(0) as u32, ddx, ddy)
     }
 }
 
@@ -2925,7 +3495,7 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureDimensionsQuery for Textur
 
 #[cfg(test)]
 mod tests {
-    use crate::std::{ReadWrite, Write, vec2f, vec2i};
+    use crate::std::{ReadWrite, Write, vec2f, vec2i, vec3f, vec3i};
 
     use super::*;
 
@@ -3704,5 +4274,284 @@ mod tests {
         assert_eq!(pixel.y(), 20);
         assert_eq!(pixel.z(), 30);
         assert_eq!(pixel.w(), 40);
+    }
+
+    #[test]
+    fn test_texture_1d_sample() {
+        let tex: Texture1D<f32> = Texture1D::new(0, 0);
+        tex.init(4);
+        tex.data.write().set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
+        tex.data.write().set_pixel(1, 0, [0.0, 1.0, 0.0, 1.0]);
+        tex.data.write().set_pixel(2, 0, [0.0, 0.0, 1.0, 1.0]);
+        tex.data.write().set_pixel(3, 0, [1.0, 1.0, 0.0, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Nearest filtering: 0.125 maps to texel 0 (red)
+        let color = texture_sample(&tex, &sampler, 0.125f32);
+        assert!((color.x() - 1.0).abs() < 0.001);
+        assert!((color.y() - 0.0).abs() < 0.001);
+
+        // 0.625 maps to texel 2 (blue)
+        let color = texture_sample(&tex, &sampler, 0.625f32);
+        assert!((color.z() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_1d_sample_level() {
+        let tex: Texture1D<f32> = Texture1D::new(0, 0);
+        tex.init(4);
+        tex.data.write().set_pixel(1, 0, [0.5, 0.25, 0.125, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let color = texture_sample_level(&tex, &sampler, 0.375f32, 0.0f32);
+        assert!((color.x() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_3d_load() {
+        let tex: Texture3D<f32> = Texture3D::new(0, 0);
+        tex.init(4, 4, 2);
+        tex.set_pixel(1, 2, 0, [0.5, 0.25, 0.125, 1.0]);
+        tex.set_pixel(1, 2, 1, [0.9, 0.8, 0.7, 0.6]);
+
+        // Load from z=0
+        let pixel = texture_load(&tex, vec3u(1, 2, 0), 0u32);
+        assert!((pixel.x() - 0.5).abs() < 0.001);
+        assert!((pixel.y() - 0.25).abs() < 0.001);
+
+        // Load from z=1
+        let pixel = texture_load(&tex, vec3u(1, 2, 1), 0u32);
+        assert!((pixel.x() - 0.9).abs() < 0.001);
+
+        // Load with i32 coords
+        let pixel = texture_load(&tex, vec3i(1, 2, 1), 0i32);
+        assert!((pixel.x() - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_3d_sample_nearest() {
+        let tex: Texture3D<f32> = Texture3D::new(0, 0);
+        tex.init(2, 2, 2);
+        // Set distinct colors at each corner of the 2x2x2 volume
+        tex.set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]); // red
+        tex.set_pixel(1, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
+        tex.set_pixel(0, 1, 0, [0.0, 0.0, 1.0, 1.0]); // blue
+        tex.set_pixel(1, 1, 0, [1.0, 1.0, 0.0, 1.0]); // yellow
+        tex.set_pixel(0, 0, 1, [1.0, 0.0, 1.0, 1.0]); // magenta
+        tex.set_pixel(1, 0, 1, [0.0, 1.0, 1.0, 1.0]); // cyan
+        tex.set_pixel(0, 1, 1, [0.5, 0.5, 0.5, 1.0]); // gray
+        tex.set_pixel(1, 1, 1, [1.0, 1.0, 1.0, 1.0]); // white
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init(); // Nearest filtering
+
+        // 0.25 maps to texel 0, 0.75 maps to texel 1
+        let color = texture_sample(&tex, &sampler, vec3f(0.25, 0.25, 0.25));
+        assert!((color.x() - 1.0).abs() < 0.001); // red
+        assert!((color.y() - 0.0).abs() < 0.001);
+
+        let color = texture_sample(&tex, &sampler, vec3f(0.75, 0.75, 0.75));
+        assert!((color.x() - 1.0).abs() < 0.001); // white
+        assert!((color.y() - 1.0).abs() < 0.001);
+        assert!((color.z() - 1.0).abs() < 0.001);
+
+        // z=1, x=0, y=1 -> gray
+        let color = texture_sample(&tex, &sampler, vec3f(0.25, 0.75, 0.75));
+        assert!((color.x() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_3d_sample_level() {
+        let tex: Texture3D<f32> = Texture3D::new(0, 0);
+        tex.init(2, 2, 2);
+        tex.set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let color = texture_sample_level(&tex, &sampler, vec3f(0.25, 0.25, 0.25), 0.0f32);
+        assert!((color.x() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_3d_sample_linear() {
+        // 2x2x2 texture: only texel (0,0,0) is non-zero.
+        // Under linear filtering at coords (0,0,0):
+        //   half_texel = 0.5/2 = 0.25
+        //   u - 0.25 = -0.25, scaled by 2 -> -0.5, floor.clamp -> texel 0, frac 0.5
+        //   So x0=0, x1=1, fx=0.5 (similarly y, z)
+        //   Only c000 = [1,0,0,1]; all other 7 corners are [0,0,0,0].
+        //   Trilinear: 0.5^3 weight on c000 -> r = 0.125, w = 0.125.
+        let tex: Texture3D<f32> = Texture3D::new(0, 0);
+        tex.init(2, 2, 2);
+        tex.set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.set(SamplerState::linear());
+
+        let color = texture_sample(&tex, &sampler, vec3f(0.0, 0.0, 0.0));
+        assert!(
+            (color.x() - 0.125).abs() < 0.001,
+            "expected r=0.125 from trilinear, got {}",
+            color.x()
+        );
+        assert!((color.y() - 0.0).abs() < 0.001);
+        assert!((color.z() - 0.0).abs() < 0.001);
+        assert!(
+            (color.w() - 0.125).abs() < 0.001,
+            "expected w=0.125 from trilinear, got {}",
+            color.w()
+        );
+
+        // At coords (1,1,1) with linear filtering:
+        //   u=1, u-0.25=0.75, *2=1.5, floor=1, frac=0.5 -> x0=1, x1=1, fx=0.5
+        // So c000 is not reached (x0=1, not 0). All 8 corners are 0. Result = 0.
+        let color = texture_sample(&tex, &sampler, vec3f(1.0, 1.0, 1.0));
+        assert!((color.x() - 0.0).abs() < 0.001);
+
+        // At coords (0.25, 0.25, 0.25): the (0,0,0) corner gets full weight.
+        //   u=0.25, u-0.25=0, *2=0, floor=0, frac=0 -> x0=0, x1=1, fx=0
+        //   fx=fy=fz=0 -> weight on c000 = 1.0 -> r = 1.0
+        let color = texture_sample(&tex, &sampler, vec3f(0.25, 0.25, 0.25));
+        assert!(
+            (color.x() - 1.0).abs() < 0.001,
+            "expected r=1.0 at (0.25,0.25,0.25), got {}",
+            color.x()
+        );
+    }
+
+    #[test]
+    fn test_texture_cube_sample() {
+        // Verify all 6 cube faces are selected correctly. Each face gets a
+        // distinct color at texel (0, 0). The sampling direction is chosen so
+        // that the major axis selects the target face and the projection maps
+        // to near (0, 0) within that face, hitting texel (0, 0) under nearest
+        // filtering on a 4x4 face.
+        //
+        // Face order: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z.
+        let face_colors: [[f32; 4]; 6] = [
+            [1.0, 0.0, 0.0, 1.0], // +X: red
+            [0.0, 1.0, 0.0, 1.0], // -X: green
+            [0.0, 0.0, 1.0, 1.0], // +Y: blue
+            [1.0, 1.0, 0.0, 1.0], // -Y: yellow
+            [1.0, 0.0, 1.0, 1.0], // +Z: magenta
+            [0.0, 1.0, 1.0, 1.0], // -Z: cyan
+        ];
+
+        // (direction, expected_face_index)
+        // Each direction makes the target axis the strict major axis, so face
+        // selection is unambiguous. The non-major components are ±0.9 so the
+        // projection lands near u=v=0.05 (texel 0 on a 4-wide face).
+        let cases: [([f32; 3], usize); 6] = [
+            ([1.0, 0.9, 0.9], 0),   // +X: u=0.5-0.9/2=0.05, v=0.05
+            ([-1.0, 0.9, -0.9], 1), // -X: u=0.5+(-0.9)/2=0.05, v=0.05
+            ([-0.9, 1.0, -0.9], 2), // +Y: u=0.5+(-0.9)/2=0.05, v=0.05
+            ([-0.9, -1.0, 0.9], 3), // -Y: u=0.05, v=0.05
+            ([-0.9, 0.9, 1.0], 4),  // +Z: u=0.05, v=0.05
+            ([0.9, 0.9, -1.0], 5),  // -Z: u=0.05, v=0.05
+        ];
+
+        let tex: TextureCube<f32> = TextureCube::new(0, 0);
+        tex.init(4);
+        for (face, &color) in face_colors.iter().enumerate() {
+            tex.data.write().faces[face].set_pixel(0, 0, 0, color);
+        }
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init(); // Nearest
+
+        for (dir, face) in cases {
+            let color = texture_sample(&tex, &sampler, vec3f(dir[0], dir[1], dir[2]));
+            let expected = face_colors[face];
+            assert!(
+                (color.x() - expected[0]).abs() < 0.001,
+                "face {face} (+{}/{}) expected r={:.3}, got {color:?} for dir {dir:?}",
+                if face % 2 == 0 { '+' } else { '-' },
+                ['X', 'X', 'Y', 'Y', 'Z', 'Z'][face],
+                expected[0]
+            );
+            assert!(
+                (color.y() - expected[1]).abs() < 0.001,
+                "face {face} y mismatch"
+            );
+            assert!(
+                (color.z() - expected[2]).abs() < 0.001,
+                "face {face} z mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_texture_cube_sample_zero_direction() {
+        // A zero-length direction is degenerate. The CPU implementation
+        // returns a deterministic fallback (face 0, center) rather than NaN.
+        let tex: TextureCube<f32> = TextureCube::new(0, 0);
+        tex.init(4);
+        tex.data.write().faces[0].set_pixel(2, 2, 0, [0.5, 0.5, 0.5, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let color = texture_sample(&tex, &sampler, vec3f(0.0, 0.0, 0.0));
+        // Should not be NaN; should return the center texel of face 0.
+        assert!(
+            color.x().is_finite(),
+            "zero direction should not produce NaN"
+        );
+        assert!((color.x() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_cube_sample_level() {
+        let tex: TextureCube<f32> = TextureCube::new(0, 0);
+        tex.init(2);
+        // Direction (1, 1, 1) selects +X face, u=0, v=0 -> texel (0, 0)
+        tex.data.write().faces[0].set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let color = texture_sample_level(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0.0f32);
+        assert!((color.x() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_cube_array_sample() {
+        let tex: TextureCubeArray<f32> = TextureCubeArray::new(0, 0);
+        tex.init(2, 2);
+
+        // Layer 0, +X face, texel (0, 0) = red
+        tex.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]);
+        // Layer 1, +X face, texel (0, 0) = green
+        tex.data.write().cubes[1].faces[0].set_pixel(0, 0, 0, [0.0, 1.0, 0.0, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Direction (1, 1, 1) selects +X face at (0, 0)
+        let color = texture_sample_array(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0u32);
+        assert!((color.x() - 1.0).abs() < 0.001, "expected red on layer 0");
+
+        let color = texture_sample_array(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 1u32);
+        assert!((color.y() - 1.0).abs() < 0.001, "expected green on layer 1");
+    }
+
+    #[test]
+    fn test_texture_cube_array_sample_level() {
+        let tex: TextureCubeArray<f32> = TextureCubeArray::new(0, 0);
+        tex.init(2, 2);
+        tex.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [0.3, 0.6, 0.9, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let color = texture_sample_level_array(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0u32, 0.0f32);
+        assert!((color.x() - 0.3).abs() < 0.001);
+        assert!((color.y() - 0.6).abs() < 0.001);
+        assert!((color.z() - 0.9).abs() < 0.001);
     }
 }

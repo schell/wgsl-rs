@@ -1,6 +1,7 @@
 //! Roundtrip tests for texture load/sample operations.
 //!
-//! Tests: `texture_load` and `texture_sample` on `Texture2D<f32>`.
+//! Tests: `texture_load` and `texture_sample` on `Texture2D<f32>` and
+//! `texture_sample` on `Texture3D<f32>`.
 
 #![allow(dead_code)]
 
@@ -10,6 +11,7 @@ use crate::harness::{self, ComparisonResult, RoundtripTest};
 
 const WIDTH: u32 = 8;
 const HEIGHT: u32 = 8;
+const DEPTH: u32 = 2;
 
 #[wgsl]
 pub mod texture_load_2d {
@@ -61,6 +63,38 @@ pub mod texture_sample_2d {
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
+        );
+        texture_sample(TEX, TEX_SAMPLER, uv)
+    }
+}
+
+#[wgsl]
+pub mod texture_sample_3d {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), TEX: Texture3D<f32>);
+    sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        let dims = texture_dimensions(TEX);
+        let uv = vec3f(
+            input.position.x / dims.x() as f32,
+            input.position.y / dims.y() as f32,
+            // Cycle through depth slices based on x position.
+            (input.position.x % 2.0) / dims.z() as f32,
         );
         texture_sample(TEX, TEX_SAMPLER, uv)
     }
@@ -351,6 +385,192 @@ fn render_texture_sample_gpu(
     harness::read_rgba32float_texture(device, queue, &target, WIDTH, HEIGHT)
 }
 
+/// Writes RGBA8 pixels into a CPU `Texture3D<f32>` as normalized channels.
+fn write_cpu_texture_3d(tex: &wgsl_rs::std::Texture3D<f32>, rgba8: &[[u8; 4]]) {
+    tex.init(WIDTH, HEIGHT, DEPTH);
+    for z in 0..DEPTH {
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let idx = (z * WIDTH * HEIGHT + y * WIDTH + x) as usize;
+                let px = if idx < rgba8.len() {
+                    rgba8[idx]
+                } else {
+                    [0u8; 4]
+                };
+                tex.set_pixel(
+                    x,
+                    y,
+                    z,
+                    [
+                        px[0] as f32 / 255.0,
+                        px[1] as f32 / 255.0,
+                        px[2] as f32 / 255.0,
+                        px[3] as f32 / 255.0,
+                    ],
+                );
+            }
+        }
+    }
+}
+
+/// Creates a GPU Rgba8Unorm 3D texture and uploads provided pixels.
+fn create_gpu_source_texture_3d(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    rgba8: &[[u8; 4]],
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("texture_ops_source_3d"),
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: DEPTH,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(rgba8),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(WIDTH * 4),
+            rows_per_image: Some(HEIGHT),
+        },
+        wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: DEPTH,
+        },
+    );
+
+    texture
+}
+
+/// Builds deterministic RGBA8 test pixels for a 3D texture (WIDTH * HEIGHT *
+/// DEPTH).
+fn build_rgba8_pixels_3d() -> Vec<[u8; 4]> {
+    let mut pixels = vec![[0u8; 4]; (WIDTH * HEIGHT * DEPTH) as usize];
+    for z in 0..DEPTH {
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let idx = (z * WIDTH * HEIGHT + y * WIDTH + x) as usize;
+                pixels[idx] = [
+                    ((x * 19 + y * 7 + z * 31) % 256) as u8,
+                    ((x * 11 + y * 23 + z * 3) % 256) as u8,
+                    ((x * 5 + y * 13 + z * 17) % 256) as u8,
+                    255u8,
+                ];
+            }
+        }
+    }
+    pixels
+}
+
+/// Renders the texture_sample_3d shader and returns RGBA pixels.
+fn render_texture_sample_3d_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source_texture: &wgpu::Texture,
+    filter_mode: wgpu::FilterMode,
+) -> Vec<[f32; 4]> {
+    let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("texture_sample_3d_sampler"),
+        mag_filter: filter_mode,
+        min_filter: filter_mode,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let target = harness::create_rgba32float_render_target(
+        device,
+        WIDTH,
+        HEIGHT,
+        "texture_sample_3d_target",
+    );
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let module = &texture_sample_3d::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
+
+    let pipeline_layout =
+        linkage.pipeline_layout(device, Some("texture_sample_3d_pipeline_layout"));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("texture_sample_3d_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let bind_group = linkage
+        .create_bind_group_named(
+            0,
+            device,
+            &[
+                ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                ("TEX_SAMPLER", wgpu::BindingResource::Sampler(&sampler)),
+            ],
+        )
+        .expect("texture_sample_3d bind group");
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("texture_sample_3d_render"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("texture_sample_3d_render"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit(Some(encoder.finish()));
+
+    harness::read_rgba32float_texture(device, queue, &target, WIDTH, HEIGHT)
+}
+
 pub struct TextureOperationsTest;
 
 impl RoundtripTest for TextureOperationsTest {
@@ -359,7 +579,7 @@ impl RoundtripTest for TextureOperationsTest {
     }
 
     fn description(&self) -> &str {
-        "texture_load and texture_sample on texture_2d<f32>"
+        "texture_load and texture_sample on texture_2d<f32> and texture_3d<f32>"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -422,6 +642,80 @@ impl RoundtripTest for TextureOperationsTest {
             &cpu_sample,
             &sample_label_refs,
             epsilon,
+        ));
+
+        // texture_sample on Texture3D<f32> (nearest filtering)
+        let pixels_3d = build_rgba8_pixels_3d();
+        let gpu_source_texture_3d = create_gpu_source_texture_3d(device, queue, &pixels_3d);
+
+        write_cpu_texture_3d(texture_sample_3d::TEX, &pixels_3d);
+        texture_sample_3d::TEX_SAMPLER.set(SamplerState::default());
+        let gpu_sample_3d_pixels = render_texture_sample_3d_gpu(
+            device,
+            queue,
+            &gpu_source_texture_3d,
+            wgpu::FilterMode::Nearest,
+        );
+        let cpu_sample_3d_grid = dispatch_fragments(
+            WIDTH,
+            HEIGHT,
+            |_, _| (),
+            |builtins, _| {
+                let result = texture_sample_3d::frag_main(texture_sample_3d::FragInput {
+                    position: builtins.position,
+                });
+                [result.x, result.y, result.z, result.w]
+            },
+        );
+
+        let gpu_sample_3d = flatten_rgba_pixels(&gpu_sample_3d_pixels);
+        let cpu_sample_3d = flatten_fragment_grid(&cpu_sample_3d_grid);
+        let sample_3d_labels = build_labels("texture_sample_3d");
+        let sample_3d_label_refs: Vec<&str> = sample_3d_labels.iter().map(|s| s.as_str()).collect();
+        results.push(harness::compare_f32_results(
+            "texture_sample_3d",
+            &gpu_sample_3d,
+            &cpu_sample_3d,
+            &sample_3d_label_refs,
+            epsilon,
+        ));
+
+        // texture_sample on Texture3D<f32> (linear / trilinear filtering)
+        // This exercises the trilinear interpolation path in the CPU
+        // implementation against the GPU, verifying the 8-texel blend and
+        // half-texel coordinate offset logic.
+        texture_sample_3d::TEX_SAMPLER.set(SamplerState::linear());
+        let gpu_sample_3d_linear_pixels = render_texture_sample_3d_gpu(
+            device,
+            queue,
+            &gpu_source_texture_3d,
+            wgpu::FilterMode::Linear,
+        );
+        let cpu_sample_3d_linear_grid = dispatch_fragments(
+            WIDTH,
+            HEIGHT,
+            |_, _| (),
+            |builtins, _| {
+                let result = texture_sample_3d::frag_main(texture_sample_3d::FragInput {
+                    position: builtins.position,
+                });
+                [result.x, result.y, result.z, result.w]
+            },
+        );
+
+        let gpu_sample_3d_linear = flatten_rgba_pixels(&gpu_sample_3d_linear_pixels);
+        let cpu_sample_3d_linear = flatten_fragment_grid(&cpu_sample_3d_linear_grid);
+        let sample_3d_linear_labels = build_labels("texture_sample_3d_linear");
+        let sample_3d_linear_label_refs: Vec<&str> =
+            sample_3d_linear_labels.iter().map(|s| s.as_str()).collect();
+        results.push(harness::compare_f32_results(
+            "texture_sample_3d_linear",
+            &gpu_sample_3d_linear,
+            &cpu_sample_3d_linear,
+            &sample_3d_linear_label_refs,
+            // Linear filtering can introduce small interpolation differences
+            // between CPU and GPU, so use a slightly larger epsilon.
+            1e-3,
         ));
 
         results

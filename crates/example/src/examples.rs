@@ -27,6 +27,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &packing_example::WGSL_SOURCE,
     &advanced_numeric_example::WGSL_SOURCE,
     &matrix_builtin_example::WGSL_SOURCE,
+    &vec_mat_mul_example::WGSL_SOURCE,
     &synchronization_example::WGSL_SOURCE,
     &macro_rules_definitions::WGSL_SOURCE,
     &slab_read_write::WGSL_SOURCE,
@@ -1266,6 +1267,33 @@ pub mod matrix_builtin_example {
 
     pub fn demo_transpose_4x4(m: Mat4f) -> Mat4f {
         transpose(m)
+    }
+}
+
+#[wgsl]
+pub mod vec_mat_mul_example {
+    //! Demonstrates row-vector * matrix, non-square matrix * vector, and
+    //! non-square matrix * matrix multiplication.
+    //!
+    //! WGSL allows `v * m` (row-vector-matrix product), `m * v` (column-
+    //! vector-matrix product), and `a * b` for any compatible matrix shapes,
+    //! not just square matrices. These operations all lower to the WGSL `*`
+    //! operator.
+    use wgsl_rs::std::*;
+
+    /// Row-vector * matrix: `Vec3f * Mat2x3f -> Vec2f`.
+    pub fn row_vec_times_mat(v: Vec3f, m: Mat2x3f) -> Vec2f {
+        v * m
+    }
+
+    /// Non-square matrix * vector: `Mat2x3f * Vec2f -> Vec3f`.
+    pub fn mat_times_vec_nonsquare(m: Mat2x3f, v: Vec2f) -> Vec3f {
+        m * v
+    }
+
+    /// Non-square matrix * matrix: `Mat2x3f * Mat3x2f -> Mat3x3f`.
+    pub fn mat_times_mat_nonsquare(a: Mat2x3f, b: Mat3x2f) -> Mat3x3f {
+        a * b
     }
 }
 

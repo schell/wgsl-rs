@@ -590,6 +590,197 @@ pub mod mat4_vec4_mul {
     }
 }
 
+// === Row-vector * matrix (the issue #152 case) ===============================
+
+#[wgsl]
+pub mod vec3_mat2x3_mul {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 576]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 128]);
+
+    /// Computes Vec3f * Mat2x3f -> Vec2f for 64 inputs.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 9;
+        let input = get!(INPUT);
+
+        let m = mat2x3f(
+            vec3f(input[base], input[base + 1], input[base + 2]),
+            vec3f(input[base + 3], input[base + 4], input[base + 5]),
+        );
+        let v = vec3f(input[base + 6], input[base + 7], input[base + 8]);
+        let out: Vec2f = v * m;
+
+        get_mut!(OUTPUT)[idx * 2] = out.x;
+        get_mut!(OUTPUT)[idx * 2 + 1] = out.y;
+    }
+}
+
+#[wgsl]
+pub mod vec2_mat3x2_mul {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 512]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 192]);
+
+    /// Computes Vec2f * Mat3x2f -> Vec3f for 64 inputs.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let m = mat3x2f(
+            vec2f(input[base], input[base + 1]),
+            vec2f(input[base + 2], input[base + 3]),
+            vec2f(input[base + 4], input[base + 5]),
+        );
+        let v = vec2f(input[base + 6], input[base + 7]);
+        let out: Vec3f = v * m;
+
+        get_mut!(OUTPUT)[idx * 3] = out.x;
+        get_mut!(OUTPUT)[idx * 3 + 1] = out.y;
+        get_mut!(OUTPUT)[idx * 3 + 2] = out.z;
+    }
+}
+
+// === Non-square matrix * vector ==============================================
+
+#[wgsl]
+pub mod mat2x3_vec2_mul {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 512]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 192]);
+
+    /// Computes Mat2x3f * Vec2f -> Vec3f for 64 inputs.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let m = mat2x3f(
+            vec3f(input[base], input[base + 1], input[base + 2]),
+            vec3f(input[base + 3], input[base + 4], input[base + 5]),
+        );
+        let v = vec2f(input[base + 6], input[base + 7]);
+        let out: Vec3f = m * v;
+
+        get_mut!(OUTPUT)[idx * 3] = out.x;
+        get_mut!(OUTPUT)[idx * 3 + 1] = out.y;
+        get_mut!(OUTPUT)[idx * 3 + 2] = out.z;
+    }
+}
+
+#[wgsl]
+pub mod mat3x2_vec3_mul {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 576]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 128]);
+
+    /// Computes Mat3x2f * Vec3f -> Vec2f for 64 inputs.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 9;
+        let input = get!(INPUT);
+
+        let m = mat3x2f(
+            vec2f(input[base], input[base + 1]),
+            vec2f(input[base + 2], input[base + 3]),
+            vec2f(input[base + 4], input[base + 5]),
+        );
+        let v = vec3f(input[base + 6], input[base + 7], input[base + 8]);
+        let out: Vec2f = m * v;
+
+        get_mut!(OUTPUT)[idx * 2] = out.x;
+        get_mut!(OUTPUT)[idx * 2 + 1] = out.y;
+    }
+}
+
+// === Non-square matrix * matrix ==============================================
+
+#[wgsl]
+pub mod mat2x3_mat3x2_mul {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 768]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 576]);
+
+    /// Computes Mat2x3f * Mat3x2f -> Mat3x3f for 64 inputs.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 12;
+        let input = get!(INPUT);
+
+        let a = mat2x3f(
+            vec3f(input[base], input[base + 1], input[base + 2]),
+            vec3f(input[base + 3], input[base + 4], input[base + 5]),
+        );
+        let b = mat3x2f(
+            vec2f(input[base + 6], input[base + 7]),
+            vec2f(input[base + 8], input[base + 9]),
+            vec2f(input[base + 10], input[base + 11]),
+        );
+        let out: Mat3x3f = a * b;
+
+        let out_base = idx * 9;
+        get_mut!(OUTPUT)[out_base] = out[0usize].x;
+        get_mut!(OUTPUT)[out_base + 1] = out[0usize].y;
+        get_mut!(OUTPUT)[out_base + 2] = out[0usize].z;
+        get_mut!(OUTPUT)[out_base + 3] = out[1usize].x;
+        get_mut!(OUTPUT)[out_base + 4] = out[1usize].y;
+        get_mut!(OUTPUT)[out_base + 5] = out[1usize].z;
+        get_mut!(OUTPUT)[out_base + 6] = out[2usize].x;
+        get_mut!(OUTPUT)[out_base + 7] = out[2usize].y;
+        get_mut!(OUTPUT)[out_base + 8] = out[2usize].z;
+    }
+}
+
+#[wgsl]
+pub mod mat3x2_mat2x3_mul {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 768]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+
+    /// Computes Mat3x2f * Mat2x3f -> Mat2x2f for 64 inputs.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 12;
+        let input = get!(INPUT);
+
+        let a = mat3x2f(
+            vec2f(input[base], input[base + 1]),
+            vec2f(input[base + 2], input[base + 3]),
+            vec2f(input[base + 4], input[base + 5]),
+        );
+        let b = mat2x3f(
+            vec3f(input[base + 6], input[base + 7], input[base + 8]),
+            vec3f(input[base + 9], input[base + 10], input[base + 11]),
+        );
+        let out: Mat2x2f = a * b;
+
+        let out_base = idx * 4;
+        get_mut!(OUTPUT)[out_base] = out[0usize].x;
+        get_mut!(OUTPUT)[out_base + 1] = out[0usize].y;
+        get_mut!(OUTPUT)[out_base + 2] = out[1usize].x;
+        get_mut!(OUTPUT)[out_base + 3] = out[1usize].y;
+    }
+}
+
 #[wgsl]
 pub mod mat2_mat2_mul {
     use wgsl_rs::std::*;
@@ -1126,6 +1317,104 @@ fn mat4_mat4_inputs() -> [f32; 2048] {
     out
 }
 
+/// Generates inputs for Vec3f * Mat2x3f: a Mat2x3f (6 values) plus a Vec3f
+/// (3 values) per item.
+fn vec3_mat2x3_inputs() -> [f32; 576] {
+    let mats = mat2x3_inputs();
+    let mut out = [0.0f32; 576];
+    for i in 0..N {
+        let m_base = i * 6;
+        let base = i * 9;
+        out[base..base + 6].copy_from_slice(&mats[m_base..m_base + 6]);
+        let t = i as f32 * 0.13 - 3.0;
+        out[base + 6] = 0.6 + t * 0.04;
+        out[base + 7] = -0.4 + t * 0.03;
+        out[base + 8] = 1.2 - t * 0.02;
+    }
+    out
+}
+
+/// Generates inputs for Vec2f * Mat3x2f: a Mat3x2f (6 values) plus a Vec2f
+/// (2 values) per item.
+fn vec2_mat3x2_inputs() -> [f32; 512] {
+    let mats = mat3x2_inputs();
+    let mut out = [0.0f32; 512];
+    for i in 0..N {
+        let m_base = i * 6;
+        let base = i * 8;
+        out[base..base + 6].copy_from_slice(&mats[m_base..m_base + 6]);
+        let t = i as f32 * 0.17 - 2.5;
+        out[base + 6] = 0.7 + t * 0.05;
+        out[base + 7] = -0.3 + t * 0.04;
+    }
+    out
+}
+
+/// Generates inputs for Mat2x3f * Vec2f: a Mat2x3f (6 values) plus a Vec2f
+/// (2 values) per item.
+fn mat2x3_vec2_inputs() -> [f32; 512] {
+    let mats = mat2x3_inputs();
+    let mut out = [0.0f32; 512];
+    for i in 0..N {
+        let m_base = i * 6;
+        let base = i * 8;
+        out[base..base + 6].copy_from_slice(&mats[m_base..m_base + 6]);
+        let t = i as f32 * 0.19 - 3.5;
+        out[base + 6] = 0.5 + t * 0.06;
+        out[base + 7] = -0.2 + t * 0.03;
+    }
+    out
+}
+
+/// Generates inputs for Mat3x2f * Vec3f: a Mat3x2f (6 values) plus a Vec3f
+/// (3 values) per item.
+fn mat3x2_vec3_inputs() -> [f32; 576] {
+    let mats = mat3x2_inputs();
+    let mut out = [0.0f32; 576];
+    for i in 0..N {
+        let m_base = i * 6;
+        let base = i * 9;
+        out[base..base + 6].copy_from_slice(&mats[m_base..m_base + 6]);
+        let t = i as f32 * 0.15 - 2.2;
+        out[base + 6] = 0.4 + t * 0.03;
+        out[base + 7] = 0.9 - t * 0.02;
+        out[base + 8] = -0.5 + t * 0.04;
+    }
+    out
+}
+
+/// Generates inputs for Mat2x3f * Mat3x2f: a Mat2x3f (6 values) plus a
+/// Mat3x2f (6 values) per item.
+fn mat2x3_mat3x2_inputs() -> [f32; 768] {
+    let a = mat2x3_inputs();
+    let b = mat3x2_inputs();
+    let mut out = [0.0f32; 768];
+    for i in 0..N {
+        let a_base = i * 6;
+        let b_base = i * 6;
+        let base = i * 12;
+        out[base..base + 6].copy_from_slice(&a[a_base..a_base + 6]);
+        out[base + 6..base + 12].copy_from_slice(&b[b_base..b_base + 6]);
+    }
+    out
+}
+
+/// Generates inputs for Mat3x2f * Mat2x3f: a Mat3x2f (6 values) plus a
+/// Mat2x3f (6 values) per item.
+fn mat3x2_mat2x3_inputs() -> [f32; 768] {
+    let a = mat3x2_inputs();
+    let b = mat2x3_inputs();
+    let mut out = [0.0f32; 768];
+    for i in 0..N {
+        let a_base = i * 6;
+        let b_base = i * 6;
+        let base = i * 12;
+        out[base..base + 6].copy_from_slice(&a[a_base..a_base + 6]);
+        out[base + 6..base + 12].copy_from_slice(&b[b_base..b_base + 6]);
+    }
+    out
+}
+
 /// Runs one f32-based compute shader on the GPU and returns unpacked f32
 /// output.
 fn run_gpu_f32_shader(
@@ -1446,6 +1735,98 @@ impl RoundtripTest for MatrixOperationsTest {
             });
             let cpu = mat4_mat4_mul::OUTPUT.get().to_vec();
             push_f32_result(&mut results, "mat4_mat4_mul", &gpu, &cpu, 1e-4);
+        }
+
+        // === Row-vector * matrix (issue #152) ===================================
+
+        {
+            let input = vec3_mat2x3_inputs();
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec3_mat2x3_mul::WGSL_SOURCE).unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 128);
+            vec3_mat2x3_mul::INPUT.set(input);
+            vec3_mat2x3_mul::OUTPUT.set([0.0f32; 128]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                vec3_mat2x3_mul::main(b.global_invocation_id)
+            });
+            let cpu = vec3_mat2x3_mul::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "vec3_mat2x3_mul", &gpu, &cpu, 1e-5);
+        }
+
+        {
+            let input = vec2_mat3x2_inputs();
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec2_mat3x2_mul::WGSL_SOURCE).unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 192);
+            vec2_mat3x2_mul::INPUT.set(input);
+            vec2_mat3x2_mul::OUTPUT.set([0.0f32; 192]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                vec2_mat3x2_mul::main(b.global_invocation_id)
+            });
+            let cpu = vec2_mat3x2_mul::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "vec2_mat3x2_mul", &gpu, &cpu, 1e-5);
+        }
+
+        // === Non-square matrix * vector ========================================
+
+        {
+            let input = mat2x3_vec2_inputs();
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat2x3_vec2_mul::WGSL_SOURCE).unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 192);
+            mat2x3_vec2_mul::INPUT.set(input);
+            mat2x3_vec2_mul::OUTPUT.set([0.0f32; 192]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat2x3_vec2_mul::main(b.global_invocation_id)
+            });
+            let cpu = mat2x3_vec2_mul::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "mat2x3_vec2_mul", &gpu, &cpu, 1e-5);
+        }
+
+        {
+            let input = mat3x2_vec3_inputs();
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat3x2_vec3_mul::WGSL_SOURCE).unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 128);
+            mat3x2_vec3_mul::INPUT.set(input);
+            mat3x2_vec3_mul::OUTPUT.set([0.0f32; 128]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat3x2_vec3_mul::main(b.global_invocation_id)
+            });
+            let cpu = mat3x2_vec3_mul::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "mat3x2_vec3_mul", &gpu, &cpu, 1e-5);
+        }
+
+        // === Non-square matrix * matrix ========================================
+
+        {
+            let input = mat2x3_mat3x2_inputs();
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat2x3_mat3x2_mul::WGSL_SOURCE)
+                    .unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 576);
+            mat2x3_mat3x2_mul::INPUT.set(input);
+            mat2x3_mat3x2_mul::OUTPUT.set([0.0f32; 576]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat2x3_mat3x2_mul::main(b.global_invocation_id)
+            });
+            let cpu = mat2x3_mat3x2_mul::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "mat2x3_mat3x2_mul", &gpu, &cpu, 1e-4);
+        }
+
+        {
+            let input = mat3x2_mat2x3_inputs();
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&mat3x2_mat2x3_mul::WGSL_SOURCE)
+                    .unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
+            mat3x2_mat2x3_mul::INPUT.set(input);
+            mat3x2_mat2x3_mul::OUTPUT.set([0.0f32; 256]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat3x2_mat2x3_mul::main(b.global_invocation_id)
+            });
+            let cpu = mat3x2_mat2x3_mul::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "mat3x2_mat2x3_mul", &gpu, &cpu, 1e-4);
         }
 
         results

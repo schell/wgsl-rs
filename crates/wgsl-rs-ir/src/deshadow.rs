@@ -10,375 +10,310 @@
 //! WGSL does allow shadowing in nested blocks (different end-of-scope),
 //! so this pass only renames when a name is redeclared within the same
 //! block scope.
+//!
+//! # Rename propagation
+//!
+//! Renames are propagated lazily via [`DeshadowCtx::active_renames`], a
+//! map from original name to mangled name. When resolving an expression,
+//! `rename_expr` consults this map. When a fresh binding is declared,
+//! its name is *removed* from `active_renames`, suppressing any
+//! outer-scope rename — this is what prevents renames from leaking past
+//! a nested-scope redeclaration (the bug fixed by this design). The map
+//! is saved and restored across nested scopes.
 
-use std::collections::HashSet;
+use crate::{
+    Block, CaseSelector, ElseBranch, Expr, FnArg, ForLoop, ImplItem, Item, ItemFn, Module, Stmt,
+    StmtIf, StmtSwitch, deshadow::ctx::DeshadowCtx,
+};
 
-use crate::{Block, ElseBranch, Expr, ForLoop, Item, ItemFn, Module, Stmt, StmtIf, StmtSwitch};
+mod ctx;
 
-/// Rename same-scope shadowed locals in every function in the module so
-/// the rendered WGSL is valid.
+/// The deshadow pass. Owns the scope-tracking context and walks the IR
+/// tree, renaming same-scope shadowed bindings.
+#[derive(Default)]
+struct DeshadowPass {
+    ctx: DeshadowCtx,
+}
+
+/// Pub wrappers preserving the old free-function API.
 pub fn deshadow_module(module: &mut Module) {
-    for item in &mut module.items {
-        if let Item::Fn(f) = item {
-            deshadow_fn(f);
-        }
-    }
+    DeshadowPass::default().deshadow_module(module);
 }
 
-/// Like [`deshadow_module`] but operates on a bare slice of items.
 pub fn deshadow_items(items: &mut [Item]) {
-    for item in items {
-        if let Item::Fn(f) = item {
-            deshadow_fn(f);
-        }
-    }
+    DeshadowPass::default().deshadow_items(items);
 }
 
-/// Deshadow a single function. Function parameters and the function
-/// body share the same scope (same end-of-scope in WGSL), so locals
-/// in the top-level body that shadow a parameter must be renamed.
-fn deshadow_fn(f: &mut ItemFn) {
-    let mut ctx = DeshadowCtx::new();
-    let mut base = HashSet::new();
-    for arg in &f.inputs {
-        base.insert(arg.name.clone());
-    }
-    ctx.scopes.push(base);
-
-    // Process the function body statements directly in the param scope
-    // (don't push a new scope — params and body share the same
-    // end-of-scope in WGSL).
-    let mut renames: Vec<(String, String)> = Vec::new();
-    for stmt in &mut f.block.stmts {
-        for (from, to) in &renames {
-            rename_in_expr_stmt(stmt, from, to);
-        }
-        collect_decls_and_recurse(stmt, &mut ctx, &mut renames);
-    }
-
-    ctx.scopes.pop();
-}
-
-/// Scope-tracking context for the deshadow pass.
-struct DeshadowCtx {
-    /// Stack of scopes, each containing the set of names declared in
-    /// that scope.
-    scopes: Vec<HashSet<String>>,
-    /// Monotonic counter for generating unique names.
-    counter: usize,
-}
-
-impl DeshadowCtx {
-    fn new() -> Self {
-        DeshadowCtx {
-            scopes: Vec::new(),
-            counter: 0,
+impl DeshadowPass {
+    /// Rename same-scope shadowed locals in every function in the module so
+    /// the rendered WGSL is valid.
+    fn deshadow_module(&mut self, module: &mut Module) {
+        for item in &mut module.items {
+            self.deshadow_item(item);
         }
     }
 
-    /// Generate a unique name for a shadowed variable. Checks all scopes
-    /// on the stack to avoid collisions with any in-scope name.
-    fn unique_name(&mut self, original: &str) -> String {
-        loop {
-            self.counter += 1;
-            let candidate = format!("{original}_{}", self.counter);
-            if !self.scopes.iter().any(|s| s.contains(&candidate)) {
-                return candidate;
+    /// Like [`deshadow_module`](Self::deshadow_module) but operates on a bare
+    /// slice of items.
+    fn deshadow_items(&mut self, items: &mut [Item]) {
+        for item in items {
+            self.deshadow_item(item);
+        }
+    }
+
+    /// Deshadow a single top-level item. Only functions (free or inside
+    /// `impl` blocks) contain bindings that can shadow; other items are
+    /// no-ops.
+    fn deshadow_item(&mut self, item: &mut Item) {
+        match item {
+            Item::Fn(item_fn) => {
+                self.deshadow_item_fn(item_fn);
             }
-        }
-    }
-
-    /// Check if a name is already declared in the current (innermost)
-    /// scope.
-    fn current_scope_contains(&self, name: &str) -> bool {
-        self.scopes.last().is_some_and(|s| s.contains(name))
-    }
-
-    /// Insert a name into the current (innermost) scope.
-    fn insert_into_current_scope(&mut self, name: String) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name);
-        }
-    }
-}
-
-/// Deshadow a block. Pushes a new scope, processes statements in order,
-/// and applies any pending renames to subsequent statements.
-fn deshadow_block(block: &mut Block, ctx: &mut DeshadowCtx) {
-    ctx.scopes.push(HashSet::new());
-
-    // Renames accumulated as we walk: (original_name, new_name).
-    // Each subsequent statement (and its sub-expressions) must have
-    // these renames applied so references resolve to the new binding.
-    let mut renames: Vec<(String, String)> = Vec::new();
-
-    for stmt in &mut block.stmts {
-        // Apply all pending renames to this statement first, so that
-        // references to previously-shadowed names point to the new
-        // binding.
-        for (from, to) in &renames {
-            rename_in_expr_stmt(stmt, from, to);
-        }
-
-        // Now process the statement for new shadowing declarations.
-        collect_decls_and_recurse(stmt, ctx, &mut renames);
-    }
-
-    ctx.scopes.pop();
-}
-
-/// Process a statement: collect any declarations (checking for
-/// shadowing), and recurse into nested scopes.
-fn collect_decls_and_recurse(
-    stmt: &mut Stmt,
-    ctx: &mut DeshadowCtx,
-    renames: &mut Vec<(String, String)>,
-) {
-    match stmt {
-        Stmt::Local(l) => {
-            if ctx.current_scope_contains(&l.name) {
-                // Shadowed! Generate a unique name.
-                let new_name = ctx.unique_name(&l.name);
-                let old_name = std::mem::replace(&mut l.name, new_name.clone());
-                // Do NOT rename l.init — in Rust, the initializer of a
-                // shadowing binding refers to the *outer* variable (which
-                // keeps its original name).
-                ctx.insert_into_current_scope(new_name.clone());
-                renames.push((old_name, new_name));
-            } else {
-                ctx.insert_into_current_scope(l.name.clone());
-            }
-        }
-        Stmt::Const(c) => {
-            if ctx.current_scope_contains(&c.name) {
-                let new_name = ctx.unique_name(&c.name);
-                let old_name = std::mem::replace(&mut c.name, new_name.clone());
-                // const init refers to outer scope, don't rename it.
-                ctx.insert_into_current_scope(new_name.clone());
-                renames.push((old_name, new_name));
-            } else {
-                ctx.insert_into_current_scope(c.name.clone());
-            }
-        }
-        Stmt::Block(b) => {
-            deshadow_block(b, ctx);
-        }
-        Stmt::While { body, .. } => {
-            deshadow_block(body, ctx);
-        }
-        Stmt::Loop { body } => {
-            deshadow_block(body, ctx);
-        }
-        Stmt::For(f) => {
-            deshadow_for(f, ctx);
-        }
-        Stmt::If(i) => {
-            deshadow_if(i, ctx);
-        }
-        Stmt::Switch(s) => {
-            deshadow_switch(s, ctx);
-        }
-        // Other statements don't introduce bindings or nested scopes.
-        _ => {}
-    }
-}
-
-/// Deshadow a for loop. The loop variable is scoped to the loop body.
-fn deshadow_for(f: &mut ForLoop, ctx: &mut DeshadowCtx) {
-    // The for loop introduces its loop variable in a scope that wraps
-    // the body. We push a scope, register the loop var, then deshadow
-    // the body within it.
-    ctx.scopes.push(HashSet::new());
-
-    if ctx.current_scope_contains(&f.var) {
-        let new_name = ctx.unique_name(&f.var);
-        let old_name = std::mem::replace(&mut f.var, new_name.clone());
-        ctx.insert_into_current_scope(new_name.clone());
-        // Rename references in the body (and from/to expressions).
-        rename_in_expr(&mut f.from, &old_name, &new_name);
-        rename_in_expr(&mut f.to, &old_name, &new_name);
-        rename_in_block(&mut f.body, &old_name, &new_name);
-    } else {
-        ctx.insert_into_current_scope(f.var.clone());
-    }
-
-    deshadow_block(&mut f.body, ctx);
-    ctx.scopes.pop();
-}
-
-/// Deshadow an if statement. Each branch (then, else block, else-if)
-/// gets its own nested scope.
-fn deshadow_if(i: &mut StmtIf, ctx: &mut DeshadowCtx) {
-    deshadow_block(&mut i.then_block, ctx);
-    if let Some(else_branch) = &mut i.else_branch {
-        match else_branch {
-            ElseBranch::Block(b) => deshadow_block(b, ctx),
-            ElseBranch::If(nested) => deshadow_if(nested, ctx),
-        }
-    }
-}
-
-/// Deshadow a switch statement. Each arm body gets its own nested scope.
-fn deshadow_switch(s: &mut StmtSwitch, ctx: &mut DeshadowCtx) {
-    for arm in &mut s.arms {
-        deshadow_block(&mut arm.body, ctx);
-    }
-}
-
-// ===== Rename helpers =====
-
-/// Rename all `Expr::Ident(from)` to `to` within a statement, recursing
-/// into all sub-expressions and nested blocks. This is a flat rename —
-/// it does not track scopes, so it should only be used when the caller
-/// has already established that `from` is the shadowed name visible in
-/// all positions being renamed.
-fn rename_in_expr_stmt(stmt: &mut Stmt, from: &str, to: &str) {
-    match stmt {
-        Stmt::Local(l) => {
-            // Rename init (references to the shadowed binding), but NOT
-            // l.name itself (that may have already been renamed).
-            if let Some(init) = &mut l.init {
-                rename_in_expr(init, from, to);
-            }
-        }
-        Stmt::Const(c) => {
-            rename_in_expr(&mut c.expr, from, to);
-        }
-        Stmt::Assignment { lhs, rhs } => {
-            rename_in_expr(lhs, from, to);
-            rename_in_expr(rhs, from, to);
-        }
-        Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            rename_in_expr(lhs, from, to);
-            rename_in_expr(rhs, from, to);
-        }
-        Stmt::While { condition, body } => {
-            rename_in_expr(condition, from, to);
-            rename_in_block(body, from, to);
-        }
-        Stmt::Loop { body } => {
-            rename_in_block(body, from, to);
-        }
-        Stmt::Expr { expr, .. } => {
-            rename_in_expr(expr, from, to);
-        }
-        Stmt::If(i) => {
-            rename_in_if(i, from, to);
-        }
-        Stmt::Return(Some(e)) => {
-            rename_in_expr(e, from, to);
-        }
-        Stmt::For(f) => {
-            rename_in_expr(&mut f.from, from, to);
-            rename_in_expr(&mut f.to, from, to);
-            // Don't rename f.var (it's a declaration name, not a ref)
-            rename_in_block(&mut f.body, from, to);
-        }
-        Stmt::Switch(s) => {
-            rename_in_expr(&mut s.selector, from, to);
-            for arm in &mut s.arms {
-                for sel in &mut arm.selectors {
-                    if let crate::CaseSelector::Expr(e) = sel {
-                        rename_in_expr(e, from, to);
+            Item::Impl(item_impl) => {
+                for impl_item in &mut item_impl.items {
+                    if let ImplItem::Fn(f) = impl_item {
+                        self.deshadow_item_fn(f);
                     }
                 }
-                rename_in_block(&mut arm.body, from, to);
             }
-        }
-        Stmt::Block(b) => {
-            rename_in_block(b, from, to);
-        }
-        Stmt::SlabCopy {
-            src,
-            src_offset,
-            dest,
-            dest_offset,
-            size,
-        } => {
-            rename_in_expr(src, from, to);
-            rename_in_expr(src_offset, from, to);
-            rename_in_expr(dest, from, to);
-            rename_in_expr(dest_offset, from, to);
-            rename_in_expr(size, from, to);
-        }
-        // No expressions to rename.
-        Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Discard | Stmt::Macro { .. } => {}
-    }
-}
-
-/// Rename all `Expr::Ident(from)` to `to` within a block.
-fn rename_in_block(block: &mut Block, from: &str, to: &str) {
-    for stmt in &mut block.stmts {
-        rename_in_expr_stmt(stmt, from, to);
-    }
-}
-
-/// Rename all `Expr::Ident(from)` to `to` within an if statement.
-fn rename_in_if(i: &mut StmtIf, from: &str, to: &str) {
-    rename_in_expr(&mut i.condition, from, to);
-    rename_in_block(&mut i.then_block, from, to);
-    if let Some(else_branch) = &mut i.else_branch {
-        match else_branch {
-            ElseBranch::Block(b) => rename_in_block(b, from, to),
-            ElseBranch::If(nested) => rename_in_if(nested, from, to),
+            Item::Const(_)
+            | Item::Uniform(_)
+            | Item::Storage(_)
+            | Item::Workgroup(_)
+            | Item::Sampler(_)
+            | Item::Texture(_)
+            | Item::Struct(_)
+            | Item::Enum(_) => {}
         }
     }
-}
 
-/// Rename all `Expr::Ident(from)` to `to` within an expression tree.
-fn rename_in_expr(e: &mut Expr, from: &str, to: &str) {
-    match e {
-        Expr::Ident(name) => {
-            if name == from {
-                *name = to.to_string();
+    /// Deshadow a single function. Function parameters and the function
+    /// body share the same scope (same end-of-scope in WGSL), so locals
+    /// in the top-level body that shadow a parameter must be renamed.
+    fn deshadow_item_fn(&mut self, f: &mut ItemFn) {
+        let ItemFn {
+            type_params: _,
+            const_params: _,
+            fn_attrs: _,
+            name: _,
+            inputs,
+            return_type: _,
+            block,
+            attrs: _,
+        } = f;
+        self.deshadow_block(block, Some(inputs));
+    }
+
+    /// Deshadow a block. Pushes a new scope, optionally seeds it with
+    /// function parameter names (params and body share the same
+    /// end-of-scope in WGSL), processes statements in order, then pops
+    /// the scope. Renames are scoped automatically via the push/pop —
+    /// no manual save/restore needed.
+    fn deshadow_block(&mut self, b: &mut Block, fn_inputs: Option<&[FnArg]>) {
+        self.ctx.push_scope();
+
+        if let Some(fn_args) = fn_inputs {
+            for arg in fn_args {
+                // Params are the first declarations in this scope; they
+                // can't shadow each other (WGSL forbids duplicate
+                // params), but a later local can shadow them.
+                self.ctx.declare_name(&arg.name);
             }
         }
-        Expr::Lit(_) | Expr::TypePath { .. } => {}
-        Expr::Array { elems } => {
-            for x in elems {
-                rename_in_expr(x, from, to);
-            }
+
+        let Block { stmts } = b;
+        for stmt in stmts.iter_mut() {
+            self.deshadow_stmt(stmt);
         }
-        Expr::Paren(inner) | Expr::Reference(inner) => {
-            rename_in_expr(inner, from, to);
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            rename_in_expr(lhs, from, to);
-            rename_in_expr(rhs, from, to);
-        }
-        Expr::Unary { expr, .. } => {
-            rename_in_expr(expr, from, to);
-        }
-        Expr::ArrayIndexing { lhs, index } => {
-            rename_in_expr(lhs, from, to);
-            rename_in_expr(index, from, to);
-        }
-        Expr::Swizzle { lhs, params, .. } => {
-            rename_in_expr(lhs, from, to);
-            if let Some(args) = params {
-                for a in args {
-                    rename_in_expr(a, from, to);
+
+        self.ctx.pop_scope();
+    }
+
+    /// Deshadow a statement: resolve references via the scope stack,
+    /// then handle any declarations (checking for same-scope shadowing)
+    /// and recurse into nested scopes.
+    fn deshadow_stmt(&mut self, stmt: &mut Stmt) {
+        match stmt {
+            Stmt::Local(l) => {
+                // Resolve the initializer in the *enclosing* scope (Rust
+                // semantics: the init of a shadowing binding refers to
+                // the outer variable).
+                if let Some(init) = &mut l.init {
+                    self.rename_expr(init);
+                }
+                if let Some(new_name) = self.ctx.declare_name(&l.name) {
+                    l.name = new_name;
                 }
             }
+            Stmt::Const(c) => {
+                self.rename_expr(&mut c.expr);
+                if let Some(new_name) = self.ctx.declare_name(&c.name) {
+                    c.name = new_name;
+                }
+            }
+            Stmt::Assignment { lhs, rhs } => {
+                self.rename_expr(lhs);
+                self.rename_expr(rhs);
+            }
+            Stmt::CompoundAssignment { lhs, rhs, .. } => {
+                self.rename_expr(lhs);
+                self.rename_expr(rhs);
+            }
+            Stmt::While { condition, body } => {
+                self.rename_expr(condition);
+                self.deshadow_block(body, None);
+            }
+            Stmt::Loop { body } => {
+                self.deshadow_block(body, None);
+            }
+            Stmt::Expr { expr, .. } => {
+                self.rename_expr(expr);
+            }
+            Stmt::If(i) => {
+                self.deshadow_if(i);
+            }
+            Stmt::Break | Stmt::Continue | Stmt::Discard => {}
+            Stmt::Return(e) => {
+                if let Some(e) = e {
+                    self.rename_expr(e);
+                }
+            }
+            Stmt::For(f) => {
+                self.deshadow_for(f);
+            }
+            Stmt::Switch(s) => {
+                self.deshadow_switch(s);
+            }
+            Stmt::Block(b) => {
+                self.deshadow_block(b, None);
+            }
+            Stmt::SlabCopy {
+                src,
+                src_offset,
+                dest,
+                dest_offset,
+                size,
+            } => {
+                self.rename_expr(src);
+                self.rename_expr(src_offset);
+                self.rename_expr(dest);
+                self.rename_expr(dest_offset);
+                self.rename_expr(size);
+            }
+            Stmt::Macro { .. } => {}
         }
-        Expr::Cast { lhs, .. } => {
-            rename_in_expr(lhs, from, to);
-        }
-        Expr::FnCall { params, .. } => {
-            for p in params {
-                rename_in_expr(p, from, to);
+    }
+
+    /// Deshadow an if statement. The condition is resolved in the
+    /// enclosing scope; each branch (then, else block, else-if) gets its
+    /// own nested scope.
+    fn deshadow_if(&mut self, i: &mut StmtIf) {
+        self.rename_expr(&mut i.condition);
+        self.deshadow_block(&mut i.then_block, None);
+        if let Some(else_branch) = &mut i.else_branch {
+            match else_branch {
+                ElseBranch::Block(b) => self.deshadow_block(b, None),
+                ElseBranch::If(nested) => self.deshadow_if(nested),
             }
         }
-        Expr::Struct { fields, .. } => {
-            for f in fields {
-                rename_in_expr(&mut f.expr, from, to);
+    }
+
+    /// Deshadow a for loop. The `from`/`to` range expressions are
+    /// resolved in the enclosing scope (Rust evaluates the range before
+    /// entering the loop). The loop variable is declared in a scope
+    /// wrapping the body; the body gets its own nested scope. Renames
+    /// are scoped automatically via the push/pop.
+    fn deshadow_for(&mut self, f: &mut ForLoop) {
+        // Resolve range in the enclosing scope.
+        self.rename_expr(&mut f.from);
+        self.rename_expr(&mut f.to);
+
+        // The loop variable lives in a scope wrapping the body. Per the
+        // WGSL spec, `for` desugars to `{ initializer; loop { body } }`,
+        // so the loop var is always in its own scope and can never
+        // same-scope-collide with an enclosing binding.
+        self.ctx.push_scope();
+        if let Some(new_name) = self.ctx.declare_name(&f.var) {
+            f.var = new_name;
+        }
+
+        self.deshadow_block(&mut f.body, None);
+
+        self.ctx.pop_scope();
+    }
+
+    /// Deshadow a switch statement. The selector and any expression
+    /// case selectors are resolved in the enclosing scope; each arm
+    /// body gets its own nested scope.
+    fn deshadow_switch(&mut self, s: &mut StmtSwitch) {
+        self.rename_expr(&mut s.selector);
+        for arm in &mut s.arms {
+            for sel in &mut arm.selectors {
+                if let CaseSelector::Expr(e) = sel {
+                    self.rename_expr(e);
+                }
             }
+            self.deshadow_block(&mut arm.body, None);
         }
-        Expr::FieldAccess { base, .. } => {
-            rename_in_expr(base, from, to);
-        }
-        Expr::ZeroValueArray { len, .. } => {
-            rename_in_expr(len, from, to);
+    }
+
+    /// Rename all `Expr::Ident` nodes within an expression tree by
+    /// consulting the scope stack ([`DeshadowCtx::resolve_rename`]).
+    /// Recurses into all sub-expressions.
+    fn rename_expr(&mut self, e: &mut Expr) {
+        match e {
+            Expr::Ident(name) => {
+                if let Some(to) = self.ctx.resolve_rename(name) {
+                    *name = to.to_string();
+                }
+            }
+            Expr::Lit(_) | Expr::TypePath { .. } => {}
+            Expr::Array { elems } => {
+                for x in elems {
+                    self.rename_expr(x);
+                }
+            }
+            Expr::Paren(inner) | Expr::Reference(inner) => {
+                self.rename_expr(inner);
+            }
+            Expr::Binary { lhs, rhs, .. } => {
+                self.rename_expr(lhs);
+                self.rename_expr(rhs);
+            }
+            Expr::Unary { expr, .. } => {
+                self.rename_expr(expr);
+            }
+            Expr::ArrayIndexing { lhs, index } => {
+                self.rename_expr(lhs);
+                self.rename_expr(index);
+            }
+            Expr::Swizzle { lhs, params, .. } => {
+                self.rename_expr(lhs);
+                if let Some(args) = params {
+                    for a in args {
+                        self.rename_expr(a);
+                    }
+                }
+            }
+            Expr::Cast { lhs, .. } => {
+                self.rename_expr(lhs);
+            }
+            Expr::FnCall { params, .. } => {
+                for p in params {
+                    self.rename_expr(p);
+                }
+            }
+            Expr::Struct { fields, .. } => {
+                for f in fields {
+                    self.rename_expr(&mut f.expr);
+                }
+            }
+            Expr::FieldAccess { base, .. } => {
+                self.rename_expr(base);
+            }
+            Expr::ZeroValueArray { len, .. } => {
+                self.rename_expr(len);
+            }
         }
     }
 }

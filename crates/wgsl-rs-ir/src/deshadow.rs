@@ -10,12 +10,6 @@
 //! WGSL does allow shadowing in nested blocks (different end-of-scope),
 //! so this pass only renames when a name is redeclared within the same
 //! block scope.
-//!
-//! # Rename propagation
-//!
-//! Renames are propagated lazily via [`DeshadowCtx::resolve_rename`], a
-//! map from original name to mangled name. When resolving an expression,
-//! `rename_expr` consults this map.
 
 use crate::{
     Block, CaseSelector, ElseBranch, Expr, FnArg, ForLoop, ImplItem, Item, ItemFn, Module, Stmt,

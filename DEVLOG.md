@@ -671,3 +671,62 @@ don't need return types, so they can be passed through as `Stmt::Macro`.
 This is why crabslab's `slab_read!`/`slab_write!` are statement macros
 (4 args including a dest name) rather than expressions.
 
+
+### 2026-08-23: Implement all WGSL matrix * vector, vector * matrix, and matrix * matrix combinations
+
+**Problem:**
+wgsl-rs only implemented `Mat * Vec` for the three square matrix types
+(`Mat2x2f`, `Mat3x3f`, `Mat4x4f`), delegating to glam. The row-vector * matrix
+product (`v * m`) was not implemented at all (GitHub issue #152), and neither
+were any non-square `Mat * Vec` or any non-square `Mat * Mat` combinations.
+glam has no non-square matrix types, so those cases had no glam fallback.
+
+**Decision:**
+Implement every WGSL-spec-valid multiplication combination in
+`crates/wgsl-rs/src/std/matrix.rs` via three macros:
+
+- `impl_mat_vec_mul!`: all 9 `matCxR * vecC -> vecR` cases. Row i of the
+  output is the dot product of row i of the matrix with the input vector.
+- `impl_vec_mat_mul!`: all 9 `vecR * matCxR -> vecC` cases. Component i of
+  the output is `dot(v, m.columns[i])` (the spec's
+  `transpose(transpose(m) * transpose(v))` lowered to column dots).
+- `impl_mat_mat_mul!`: all 27 `matKxR * matCxK -> matCxR` cases. Column j
+  of the output is `a * b.columns[j]`, reusing the `Mat * Vec` impl.
+
+Square `Mat * Mat` and `Mat * Vec` cases were previously delegated to glam;
+they now go through the same macro path as non-square cases for uniformity
+and so that all the linear-algebra semantics live in one auditable place.
+Scalar * matrix (and matrix * scalar) for the square types still delegate
+to glam; non-square scalar multiplication is implemented with a small
+`impl_mat_scalar_mul!` macro that multiplies each column vector.
+
+**Justification:**
+- Spec-compliant: the WGSL spec (`arithmetic-expr` section) defines all
+  three product kinds for every compatible shape combination; wgsl-rs
+  should mirror that on the CPU side so the "two worlds" agree.
+- GPU-side is trivial: the `#[wgsl]` macro lowers `*` to the WGSL `*`
+  operator regardless of operand shapes, so the GPU already handled every
+  case correctly. The fix is purely CPU-side trait impls so Rust type
+  inference resolves and the CPU `dispatch_workgroups` path matches.
+- Macro-based: the three macros keep the 45 total impls compact and ensure
+  every combination uses the same computation shape, making it easy to
+  audit against the spec. The `:tt` fragment specifier is used for the
+  dimension arguments so they can be matched against literal `2`/`3`/`4`
+  in the internal helper arms.
+- Verified by roundtrip tests: six new `#[wgsl]` compute shader modules
+  in `roundtrip-tests` (vec3*mat2x3, vec2*mat3x2, mat2x3*vec2, mat3x2*vec3,
+  mat2x3*mat3x2, mat3x2*mat2x3) confirm CPU and GPU outputs agree to within
+  ~1e-5 on Apple M4 Max / Metal.
+
+**Why not delegate non-square to glam?** glam 0.30 has no `Mat2x3`/`Mat3x2`/
+etc. types, so there is no glam implementation to delegate to. A manual
+implementation is required for non-square cases, and using the same manual
+path for square cases keeps the code uniform and removes a glam dependency
+from the multiplication hot path.
+
+**Performance tradeoff:** moving square `Mat*Mat` and `Mat*Vec` off glam
+trades glam's SIMD path for scalar component arithmetic on the two most
+common CPU-side matrix ops (`Mat4f * Vec4f`, `Mat4f * Mat4f`). This is
+acceptable because the CPU path in wgsl-rs exists primarily to validate
+the GPU path in roundtrip tests, not as a hot execution path. Revisit if
+CPU matrix math shows up in a profile for a downstream crate.

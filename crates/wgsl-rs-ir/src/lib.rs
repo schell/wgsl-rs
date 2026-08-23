@@ -22,11 +22,13 @@
 //! args, impl method name mangling, builtin name translation, enum
 //! discriminant auto-increment) lives in the [`render`] module.
 
+pub mod deshadow;
 pub mod mangle;
 pub mod render;
 mod substitute;
 mod types;
 
+pub use deshadow::{deshadow_items, deshadow_module};
 pub use mangle::{mangle, unmangle};
 pub use render::{
     items_need_tier1_extension, render_block, render_expr, render_item, render_items,

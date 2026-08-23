@@ -662,6 +662,7 @@ pub enum CaseSelector {
 /// A statement.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
+    /// A `let` / `var` / `const` initializer.
     Local(Local),
     /// A `const` item declared inside a function body.
     Const(ItemConst),
@@ -669,6 +670,7 @@ pub enum Stmt {
         lhs: Expr,
         rhs: Expr,
     },
+    /// lhs = rhs
     CompoundAssignment {
         lhs: Expr,
         op: CompoundOp,

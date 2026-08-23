@@ -1187,7 +1187,9 @@ pub(crate) fn assemble_ir(wgsl_source: &Source) -> Result<ir::Module, Error> {
         std::collections::HashSet::new();
     let mut items: Vec<ir::Item> = Vec::new();
     collect_items(wgsl_source, &mut visited, &mut seen, &mut items, None)?;
-    ir::deshadow_items(&mut items);
+    // Note: deshadowing is deferred to `analyze_ir_module`, which is the
+    // sole consumer of this assembled IR. Deshadowing here too would be
+    // redundant (the pass is idempotent but wastes work).
     Ok(ir::Module {
         name: wgsl_source.name,
         items,

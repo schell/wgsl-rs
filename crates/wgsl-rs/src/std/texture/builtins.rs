@@ -278,6 +278,17 @@ impl<T> TextureData3D<T> {
             .get(y as usize)?
             .get(x as usize)
     }
+
+    /// Set a pixel at the given coordinate and mip level.
+    pub fn set_pixel(&mut self, x: u32, y: u32, z: u32, level: u32, value: [T; 4]) {
+        if let Some(mip) = self.mips.get_mut(level as usize)
+            && let Some(slice) = mip.get_mut(z as usize)
+            && let Some(row) = slice.get_mut(y as usize)
+            && let Some(pixel) = row.get_mut(x as usize)
+        {
+            *pixel = value;
+        }
+    }
 }
 
 /// CPU-side texture data for cube textures.
@@ -2226,7 +2237,11 @@ fn bilinear_interpolate<T: Copy + Default + Into<f32> + From<f32>>(
 fn normalized_to_texel(coord: f32, size: u32) -> (u32, f32) {
     let scaled = coord * size as f32;
     let texel = (scaled.floor() as i32).clamp(0, (size as i32) - 1) as u32;
-    let frac = scaled.fract();
+    // Use `scaled.fract().abs()` instead of `scaled.fract()` because
+    // `f32::fract` returns a negative value for negative inputs (e.g.
+    // `(-0.5).fract() == -0.5`), which would produce negative interpolation
+    // weights and nonsensical results when sampling below texel 0.
+    let frac = scaled.fract().abs();
     (texel, frac)
 }
 
@@ -2357,4 +2372,256 @@ pub(crate) fn gather_4_depth_texels(
     // WGSL gather order: x=(u_min,v_max), y=(u_max,v_max), z=(u_max,v_min),
     // w=(u_min,v_min)
     [bl, br, tr, tl]
+}
+
+/// Helper for trilinear interpolation across the 8 corners of a 3D cell.
+///
+/// `fx`, `fy`, `fz` are the fractional weights in `[0, 1)` for the +1
+/// direction along each axis. The 8 corners are named `(x0|y0|z0)` style:
+/// `c000`, `c100`, `c010`, `c110`, `c001`, `c101`, `c011`, `c111`, where
+/// a `1` in position `x/y/z` means the +1 texel along that axis.
+#[allow(clippy::too_many_arguments)]
+fn trilinear_interpolate<T: Copy + Default + Into<f32> + From<f32>>(
+    c000: [T; 4],
+    c100: [T; 4],
+    c010: [T; 4],
+    c110: [T; 4],
+    c001: [T; 4],
+    c101: [T; 4],
+    c011: [T; 4],
+    c111: [T; 4],
+    fx: f32,
+    fy: f32,
+    fz: f32,
+) -> [T; 4] {
+    let lerp = |a: f32, b: f32, t: f32| a * (1.0 - t) + b * t;
+    std::array::from_fn(|i| {
+        let top = lerp(
+            lerp(c000[i].into(), c100[i].into(), fx),
+            lerp(c010[i].into(), c110[i].into(), fx),
+            fy,
+        );
+        let bottom = lerp(
+            lerp(c001[i].into(), c101[i].into(), fx),
+            lerp(c011[i].into(), c111[i].into(), fx),
+            fy,
+        );
+        T::from(lerp(top, bottom, fz))
+    })
+}
+
+/// Sample a 1D texture at the given normalized coordinate.
+pub(crate) fn sample_texture_1d<T: Copy + Default + Into<f32> + From<f32>>(
+    data: &TextureData1D<T>,
+    sampler_state: &SamplerState,
+    u: f32,
+    level: u32,
+) -> [T; 4] {
+    let u = SamplerState::apply_address_mode(sampler_state.address_mode_u, u);
+
+    let width = data.width(level);
+    if width == 0 {
+        return std::array::from_fn(|_| T::default());
+    }
+
+    match sampler_state.min_filter {
+        FilterMode::Nearest => {
+            let x = Ord::min((u * width as f32).floor() as u32, width - 1);
+            data.get_pixel(x, level)
+                .copied()
+                .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
+        }
+        FilterMode::Linear => {
+            let (x0, fx) = normalized_to_texel(u - 0.5 / width as f32, width);
+            let x1 = Ord::min(x0 + 1, width - 1);
+            let left = data
+                .get_pixel(x0, level)
+                .copied()
+                .unwrap_or_else(|| std::array::from_fn(|_| T::default()));
+            let right = data
+                .get_pixel(x1, level)
+                .copied()
+                .unwrap_or_else(|| std::array::from_fn(|_| T::default()));
+            std::array::from_fn(|i| T::from(left[i].into() * (1.0 - fx) + right[i].into() * fx))
+        }
+    }
+}
+
+/// Sample a 3D texture at the given normalized coordinates.
+///
+/// `u`, `v`, `w` are normalized coordinates in `[0, 1]`. The W coordinate
+/// uses `address_mode_w` for wrapping. Nearest filtering picks the nearest
+/// texel in 3D; linear filtering does trilinear interpolation across the 8
+/// surrounding texels.
+pub(crate) fn sample_texture_3d<T: Copy + Default + Into<f32> + From<f32>>(
+    data: &TextureData3D<T>,
+    sampler_state: &SamplerState,
+    u: f32,
+    v: f32,
+    w: f32,
+    level: u32,
+) -> [T; 4] {
+    let u = SamplerState::apply_address_mode(sampler_state.address_mode_u, u);
+    let v = SamplerState::apply_address_mode(sampler_state.address_mode_v, v);
+    let w = SamplerState::apply_address_mode(sampler_state.address_mode_w, w);
+
+    let (width, height, depth) = data.dimensions(level);
+    if width == 0 || height == 0 || depth == 0 {
+        return std::array::from_fn(|_| T::default());
+    }
+
+    match sampler_state.min_filter {
+        FilterMode::Nearest => {
+            let x = Ord::min((u * width as f32).floor() as u32, width - 1);
+            let y = Ord::min((v * height as f32).floor() as u32, height - 1);
+            let z = Ord::min((w * depth as f32).floor() as u32, depth - 1);
+            data.get_pixel(x, y, z, level)
+                .copied()
+                .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
+        }
+        FilterMode::Linear => {
+            let (x0, fx) = normalized_to_texel(u - 0.5 / width as f32, width);
+            let (y0, fy) = normalized_to_texel(v - 0.5 / height as f32, height);
+            let (z0, fz) = normalized_to_texel(w - 0.5 / depth as f32, depth);
+            let x1 = Ord::min(x0 + 1, width - 1);
+            let y1 = Ord::min(y0 + 1, height - 1);
+            let z1 = Ord::min(z0 + 1, depth - 1);
+
+            let default_pixel = || std::array::from_fn(|_| T::default());
+            let c000 = data
+                .get_pixel(x0, y0, z0, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c100 = data
+                .get_pixel(x1, y0, z0, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c010 = data
+                .get_pixel(x0, y1, z0, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c110 = data
+                .get_pixel(x1, y1, z0, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c001 = data
+                .get_pixel(x0, y0, z1, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c101 = data
+                .get_pixel(x1, y0, z1, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c011 = data
+                .get_pixel(x0, y1, z1, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+            let c111 = data
+                .get_pixel(x1, y1, z1, level)
+                .copied()
+                .unwrap_or_else(default_pixel);
+
+            trilinear_interpolate(c000, c100, c010, c110, c001, c101, c011, c111, fx, fy, fz)
+        }
+    }
+}
+
+/// Selects the cube face and projected `(u, v)` coordinates for a given
+/// direction vector, using the standard WebGPU cube-map major-axis
+/// selection convention.
+///
+/// Returns `(face_index, u, v)` where `face_index` is in `0..6` following
+/// the WebGPU face order: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z. The returned
+/// `u`, `v` are in `[0, 1]` within the selected face, suitable for passing
+/// to [`sample_texture_2d`].
+///
+/// A zero-length direction is degenerate (GPU behavior is undefined);
+/// this function returns face 0 at its center as a deterministic
+/// fallback rather than producing NaN from division by zero.
+///
+/// See <https://www.w3.org/TR/webgpu/#texture-view-format-cube>.
+fn select_cube_face(dx: f32, dy: f32, dz: f32) -> (usize, f32, f32) {
+    let ax = dx.abs();
+    let ay = dy.abs();
+    let az = dz.abs();
+    let ma = ax.max(ay).max(az);
+
+    // A zero-length direction is degenerate. Return a deterministic
+    // fallback to avoid division by zero.
+    if ma == 0.0 {
+        return (0, 0.5, 0.5);
+    }
+
+    // Major-axis selection. For each face the projection follows the
+    // standard cube-map convention: the two non-major axes are mapped to
+    // face (u, v), with sign flips depending on face orientation so that
+    // the texture is oriented correctly when viewed from outside the cube.
+    // The major axis is `ma`, so we divide by `2.0 * ma` to map the
+    // non-major components into [-0.5, 0.5] before centering at 0.5.
+    if ax == ma {
+        // X major
+        if dx >= 0.0 {
+            // +X face: u = -dz, v = -dy
+            (0, 0.5 - dz / (2.0 * ma), 0.5 - dy / (2.0 * ma))
+        } else {
+            // -X face: u = +dz, v = -dy
+            (1, 0.5 + dz / (2.0 * ma), 0.5 - dy / (2.0 * ma))
+        }
+    } else if ay == ma {
+        // Y major
+        if dy >= 0.0 {
+            // +Y face: u = +dx, v = +dz
+            (2, 0.5 + dx / (2.0 * ma), 0.5 + dz / (2.0 * ma))
+        } else {
+            // -Y face: u = +dx, v = -dz
+            (3, 0.5 + dx / (2.0 * ma), 0.5 - dz / (2.0 * ma))
+        }
+    } else {
+        // Z major
+        if dz >= 0.0 {
+            // +Z face: u = +dx, v = -dy
+            (4, 0.5 + dx / (2.0 * ma), 0.5 - dy / (2.0 * ma))
+        } else {
+            // -Z face: u = -dx, v = -dy
+            (5, 0.5 - dx / (2.0 * ma), 0.5 - dy / (2.0 * ma))
+        }
+    }
+}
+
+/// Sample a cube texture at the given direction.
+///
+/// The direction `(dx, dy, dz)` is first mapped to a face via
+/// [`select_cube_face`], then the face's 2D texture is sampled using
+/// [`sample_texture_2d`]. The W component of the sampler's address modes
+/// is not applied (cube textures have no W coordinate).
+pub(crate) fn sample_texture_cube<T: Copy + Default + Into<f32> + From<f32>>(
+    data: &TextureDataCube<T>,
+    sampler_state: &SamplerState,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+    level: u32,
+) -> [T; 4] {
+    let (face, u, v) = select_cube_face(dx, dy, dz);
+    sample_texture_2d(&data.faces[face], sampler_state, u, v, level)
+}
+
+/// Sample a cube array texture at the given direction and array layer.
+///
+/// The `array_index` is clamped to `[0, num_layers - 1]` before sampling
+/// the selected cube via [`sample_texture_cube`].
+pub(crate) fn sample_texture_cube_array<T: Copy + Default + Into<f32> + From<f32>>(
+    data: &TextureDataCubeArray<T>,
+    sampler_state: &SamplerState,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+    array_index: u32,
+    level: u32,
+) -> [T; 4] {
+    let layer = (array_index as usize).min(data.cubes.len().saturating_sub(1));
+    data.cubes
+        .get(layer)
+        .map(|cube| sample_texture_cube(cube, sampler_state, dx, dy, dz, level))
+        .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
 }

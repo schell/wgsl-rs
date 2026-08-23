@@ -13,13 +13,9 @@
 //!
 //! # Rename propagation
 //!
-//! Renames are propagated lazily via [`DeshadowCtx::active_renames`], a
+//! Renames are propagated lazily via [`DeshadowCtx::resolve_rename`], a
 //! map from original name to mangled name. When resolving an expression,
-//! `rename_expr` consults this map. When a fresh binding is declared,
-//! its name is *removed* from `active_renames`, suppressing any
-//! outer-scope rename — this is what prevents renames from leaking past
-//! a nested-scope redeclaration (the bug fixed by this design). The map
-//! is saved and restored across nested scopes.
+//! `rename_expr` consults this map.
 
 use crate::{
     Block, CaseSelector, ElseBranch, Expr, FnArg, ForLoop, ImplItem, Item, ItemFn, Module, Stmt,

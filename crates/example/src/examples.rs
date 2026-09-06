@@ -41,6 +41,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &shared_inter_stage::WGSL_SOURCE,
     &hello_triangle_generic::WGSL_SOURCE,
     &phantom_data::WGSL_SOURCE,
+    &builtin_constants::WGSL_SOURCE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
@@ -1926,5 +1927,22 @@ pub mod phantom_data {
 
     pub fn read_tagged(t: Tagged<f32, u32>) -> f32 {
         t.x
+    }
+}
+
+#[wgsl]
+pub mod builtin_constants {
+    use wgsl_rs::std::*;
+
+    pub fn demo_constants() {
+        // square matrices have `IDENTITY` and `ZERO`
+        let _m0 = Mat4x4f::IDENTITY * Mat4x4f::ZERO;
+        // non-square only have `ZERO`
+        let _m1 = Mat4x3f::ZERO;
+
+        // vectors have `ONE`, `ZERO`, and `X`, `Y`, `Z`, `W` (where appropriate)
+        let _v0 = Vec4f::X + Vec4f::ONE;
+        let _v1 = Vec3u::ZERO;
+        let _v2 = Vec2i::Y - Vec2i::X;
     }
 }

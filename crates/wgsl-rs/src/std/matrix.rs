@@ -729,6 +729,84 @@ impl NumericBuiltinTranspose for Mat2x4f {
     }
 }
 
+
+#[crate::wgsl(crate_path = crate)]
+pub mod builtin_matrix_constants {
+    #[crate::wgsl_ignore]
+    use crate::std::*;
+
+    impl Mat2x2f {
+        pub const ZERO: Mat2x2f = mat2x2f(vec2f(0.0, 0.0), vec2f(0.0, 0.0));
+        pub const IDENTITY: Mat2x2f = mat2x2f(vec2f(1.0, 0.0), vec2f(0.0, 1.0));
+    }
+
+    impl Mat2x3f {
+        pub const ZERO: Mat2x3f = mat2x3f(vec3f(0.0, 0.0, 0.0), vec3f(0.0, 0.0, 0.0));
+    }
+
+    impl Mat2x4f {
+        pub const ZERO: Mat2x4f = mat2x4f(vec4f(0.0, 0.0, 0.0, 0.0), vec4f(0.0, 0.0, 0.0, 0.0));
+    }
+
+    impl Mat3x2f {
+        pub const ZERO: Mat3x2f = mat3x2f(vec2f(0.0, 0.0), vec2f(0.0, 0.0), vec2f(0.0, 0.0));
+    }
+
+    impl Mat3x3f {
+        pub const ZERO: Mat3x3f = mat3x3f(
+            vec3f(0.0, 0.0, 0.0),
+            vec3f(0.0, 0.0, 0.0),
+            vec3f(0.0, 0.0, 0.0),
+        );
+        pub const IDENTITY: Mat3x3f = mat3x3f(
+            vec3f(1.0, 0.0, 0.0),
+            vec3f(0.0, 1.0, 0.0),
+            vec3f(0.0, 0.0, 1.0),
+        );
+    }
+
+    impl Mat3x4f {
+        pub const ZERO: Mat3x4f = mat3x4f(
+            vec4f(0.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 0.0, 0.0),
+        );
+    }
+
+    impl Mat4x2f {
+        pub const ZERO: Mat4x2f = mat4x2f(
+            vec2f(0.0, 0.0),
+            vec2f(0.0, 0.0),
+            vec2f(0.0, 0.0),
+            vec2f(0.0, 0.0),
+        );
+    }
+
+    impl Mat4x3f {
+        pub const ZERO: Mat4x3f = mat4x3f(
+            vec3f(0.0, 0.0, 0.0),
+            vec3f(0.0, 0.0, 0.0),
+            vec3f(0.0, 0.0, 0.0),
+            vec3f(0.0, 0.0, 0.0),
+        );
+    }
+
+    impl Mat4x4f {
+        pub const ZERO: Mat4x4f = mat4x4f(
+            vec4f(0.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 0.0, 0.0),
+        );
+        pub const IDENTITY: Mat4x4f = mat4x4f(
+            vec4f(1.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 1.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 1.0, 0.0),
+            vec4f(0.0, 0.0, 0.0, 1.0),
+        );
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1311,6 +1389,29 @@ mod test {
 
             pub fn mat_times_mat(a: Mat2x3f, b: Mat3x2f) -> Mat3x3f {
                 a * b
+            }
+        }
+    }
+
+    #[test]
+    fn can_compile_module_with_all_matrix_consts() {
+        #[crate::wgsl(crate_path = crate)]
+        mod matrices {
+            use crate::std::*;
+
+            pub fn _main() {
+                let _mat2x2f_zero = Mat2x2f::ZERO;
+                let _mat2x2f_identity = Mat2x2f::IDENTITY;
+                let _mat2x3f_zero = Mat2x3f::ZERO;
+                let _mat2x4f_zero = Mat2x4f::ZERO;
+                let _mat3x2f_zero = Mat3x2f::ZERO;
+                let _mat3x3f_zero = Mat3x3f::ZERO;
+                let _mat3x3f_identity = Mat3x3f::IDENTITY;
+                let _mat3x4f_zero = Mat3x4f::ZERO;
+                let _mat4x2f_zero = Mat4x2f::ZERO;
+                let _mat4x3f_zero = Mat4x3f::ZERO;
+                let _mat4x4f_zero = Mat4x4f::ZERO;
+                let _mat4x4f_identity = Mat4x4f::IDENTITY;
             }
         }
     }

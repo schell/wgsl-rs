@@ -56,6 +56,14 @@ pub use synchronization::*;
 pub use texture::*;
 pub use vector::*;
 
+#[rustfmt::skip] // needed so that rustfmt doesn't merge imports
+#[allow(unused_imports)]
+#[crate::wgsl(crate_path = crate)]
+pub mod builtin_constants {
+    use crate::std::builtin_matrix_constants::*;
+    use crate::std::builtin_vector_constants::*;
+}
+
 pub enum Error {}
 
 /// Marker trait for an owned type that is Send + Sync.

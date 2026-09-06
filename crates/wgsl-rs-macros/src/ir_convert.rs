@@ -658,7 +658,12 @@ pub fn expr_from_parse(e: &parse::Expr) -> Result<ir::Expr> {
             field: field.to_string(),
         },
         parse::Expr::TypePath { ty, member, .. } => ir::Expr::TypePath {
-            ty: ty.to_string(),
+            ty: {
+                let t = ty.to_string();
+                // for builtin WGSL types, we need to convert the type name, e.g. Vec3f -> vec3f
+                // this is needed so that associated constants are mapped correctly
+                parse::builtin_wgsl_type_name(&t).unwrap_or(t)
+            },
             member: member.to_string(),
         },
         parse::Expr::Reference { expr, .. } => {

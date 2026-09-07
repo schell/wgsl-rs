@@ -41,6 +41,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &shared_inter_stage::WGSL_SOURCE,
     &hello_triangle_generic::WGSL_SOURCE,
     &phantom_data::WGSL_SOURCE,
+    &swizzles::WGSL_SOURCE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
@@ -1926,5 +1927,37 @@ pub mod phantom_data {
 
     pub fn read_tagged(t: Tagged<f32, u32>) -> f32 {
         t.x
+    }
+}
+
+#[wgsl]
+pub mod swizzles {
+    use wgsl_rs::std::*;
+
+    pub fn demo_swizzles() {
+        let _f1 = vec2f(0., 1.);
+        let _f2: Vec4f = _f1.xxyy();
+        let _f3: Vec3f = _f2.zzz();
+        let _f4: Vec3f = _f3.rgb();
+        let _f5: Vec4f = _f4.bbbb();
+
+        let _u1 = vec2u(0, 1);
+        let _u2: Vec4u = _u1.xxyy();
+        let _u3: Vec3u = _u2.zzz();
+        let _u4: Vec3u = _u3.rgb();
+        let _u5: Vec4u = _u4.bbbb();
+
+        let _i1 = vec2i(0, 1);
+        let _i2: Vec4i = _i1.xxyy();
+        let _i3: Vec3i = _i2.zzz();
+        let _i4: Vec3i = _i3.rgb();
+        let _i5: Vec4i = _i4.bbbb();
+
+        // VecN<bool> currently don't work, see issue #169
+        // let _b1 = vec2b(false, true);
+        // let _b2: Vec4b = _b1.xxyy();
+        // let _b3: Vec3b = _b2.zzz();
+        // let _b4: Vec3b = _b3.rgb();
+        // let _b5: Vec4f = _b4.bbbb();
     }
 }

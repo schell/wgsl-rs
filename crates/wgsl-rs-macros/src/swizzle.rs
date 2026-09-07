@@ -7,12 +7,13 @@ use syn::parse::Parse;
 
 /// Parses macro input like `Vec2, [x, y], [r, g]` and
 /// produces swizzle function implementations of for
-/// functions x, y, r, g, xx, xy, yy, yx, rr, rg, gg, gr.
-/// `r` and `g` point to `x` and `y`.
+/// functions x, y, r, g, xx, xy, yy, yx, rr, rg, gg, gr, ...., xxxx, xxxy,
+/// ...., gggg. `r` and `g` point to `x` and `y`.
 struct Swizzling {
     /// Type of Self, VecN
     ty: syn::Ident,
-    /// Result types of swizzle constructors, starting with T, ending with VecN
+    /// Result types of swizzle constructors, starting with T, ending with Vec4
+    /// (the longest Vec type).
     tys: Vec<syn::Ident>,
     /// Result types of swizzling operation, starting with Vec2
     down_constructors: Vec<syn::Ident>,
@@ -52,17 +53,18 @@ impl Parse for Swizzling {
         let swizzles_len = swizzles.len();
         let tys_len = tys.len();
         let down_constructors_len = down_constructors.len();
+        let max_vec_fields = 4;
         assert!(
             fields.len() == swizzles.len(),
             "fields {fields_len} != swizzles {swizzles_len}"
         );
         assert!(
-            fields.len() == tys.len(),
-            "fields {fields_len} != tys {tys_len}"
+            tys.len() == max_vec_fields,
+            "tys {tys_len} != max_vec_fields {max_vec_fields}"
         );
         assert!(
-            fields.len() == down_constructors.len() + 1,
-            "fields {fields_len} != constructors {down_constructors_len} + 1"
+            down_constructors.len() + 1 == max_vec_fields,
+            "constructors {down_constructors_len} + 1 != max_vec_fields {max_vec_fields}"
         );
 
         Ok(Self {
@@ -162,7 +164,7 @@ impl ToTokens for Swizzling {
 
         let mut methods = vec![];
 
-        for ((n, return_ty), constructor) in (1..=swizzlings.len())
+        for ((n, return_ty), constructor) in (1..=tys.len())
             .zip(tys)
             .zip(std::iter::once(None).chain(down_constructors.iter().map(Some)))
         {

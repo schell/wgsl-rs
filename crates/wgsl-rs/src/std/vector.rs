@@ -343,68 +343,116 @@ impl<T> std::ops::IndexMut<u32> for Vec4<T> {
 // These provide multi-component and single-component access using both
 // the positional (x, y, z, w) and color (r, g, b, a) naming conventions.
 
-wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [r, g]);
-wgsl_rs_macros::swizzle!(Vec2f, [f32, Vec2f], [vec2f], [x, y], [x, y]);
-wgsl_rs_macros::swizzle!(Vec2i, [i32, Vec2i], [vec2i], [x, y], [r, g]);
-wgsl_rs_macros::swizzle!(Vec2i, [i32, Vec2i], [vec2i], [x, y], [x, y]);
-wgsl_rs_macros::swizzle!(Vec2u, [u32, Vec2u], [vec2u], [x, y], [r, g]);
-wgsl_rs_macros::swizzle!(Vec2u, [u32, Vec2u], [vec2u], [x, y], [x, y]);
-wgsl_rs_macros::swizzle!(Vec2b, [bool, Vec2b], [vec2b], [x, y], [r, g]);
-wgsl_rs_macros::swizzle!(Vec2b, [bool, Vec2b], [vec2b], [x, y], [x, y]);
+wgsl_rs_macros::swizzle!(
+    Vec2f,
+    [f32, Vec2f, Vec3f, Vec4f],
+    [vec2f, vec3f, vec4f],
+    [x, y],
+    [r, g]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2f,
+    [f32, Vec2f, Vec3f, Vec4f],
+    [vec2f, vec3f, vec4f],
+    [x, y],
+    [x, y]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2i,
+    [i32, Vec2i, Vec3i, Vec4i],
+    [vec2i, vec3i, vec4i],
+    [x, y],
+    [r, g]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2i,
+    [i32, Vec2i, Vec3i, Vec4i],
+    [vec2i, vec3i, vec4i],
+    [x, y],
+    [x, y]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2u,
+    [u32, Vec2u, Vec3u, Vec4u],
+    [vec2u, vec3u, vec4u],
+    [x, y],
+    [r, g]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2u,
+    [u32, Vec2u, Vec3u, Vec4u],
+    [vec2u, vec3u, vec4u],
+    [x, y],
+    [x, y]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2b,
+    [bool, Vec2b, Vec3b, Vec4b],
+    [vec2b, vec3b, vec4b],
+    [x, y],
+    [r, g]
+);
+wgsl_rs_macros::swizzle!(
+    Vec2b,
+    [bool, Vec2b, Vec3b, Vec4b],
+    [vec2b, vec3b, vec4b],
+    [x, y],
+    [x, y]
+);
 
 wgsl_rs_macros::swizzle!(
     Vec3f,
-    [f32, Vec2f, Vec3f],
-    [vec2f, vec3f],
+    [f32, Vec2f, Vec3f, Vec4f],
+    [vec2f, vec3f, vec4f],
     [x, y, z],
     [r, g, b]
 );
 wgsl_rs_macros::swizzle!(
     Vec3f,
-    [f32, Vec2f, Vec3f],
-    [vec2f, vec3f],
+    [f32, Vec2f, Vec3f, Vec4f],
+    [vec2f, vec3f, vec4f],
     [x, y, z],
     [x, y, z]
 );
 wgsl_rs_macros::swizzle!(
     Vec3i,
-    [i32, Vec2i, Vec3i],
-    [vec2i, vec3i],
+    [i32, Vec2i, Vec3i, Vec4i],
+    [vec2i, vec3i, vec4i],
     [x, y, z],
     [r, g, b]
 );
 wgsl_rs_macros::swizzle!(
     Vec3i,
-    [i32, Vec2i, Vec3i],
-    [vec2i, vec3i],
+    [i32, Vec2i, Vec3i, Vec4i],
+    [vec2i, vec3i, vec4i],
     [x, y, z],
     [x, y, z]
 );
 wgsl_rs_macros::swizzle!(
     Vec3u,
-    [u32, Vec2u, Vec3u],
-    [vec2u, vec3u],
+    [u32, Vec2u, Vec3u, Vec4u],
+    [vec2u, vec3u, vec4u],
     [x, y, z],
     [r, g, b]
 );
 wgsl_rs_macros::swizzle!(
     Vec3u,
-    [u32, Vec2u, Vec3u],
-    [vec2u, vec3u],
+    [u32, Vec2u, Vec3u, Vec4u],
+    [vec2u, vec3u, vec4u],
     [x, y, z],
     [x, y, z]
 );
 wgsl_rs_macros::swizzle!(
     Vec3b,
-    [bool, Vec2b, Vec3b],
-    [vec2b, vec3b],
+    [bool, Vec2b, Vec3b, Vec4b],
+    [vec2b, vec3b, vec4b],
     [x, y, z],
     [r, g, b]
 );
 wgsl_rs_macros::swizzle!(
     Vec3b,
-    [bool, Vec2b, Vec3b],
-    [vec2b, vec3b],
+    [bool, Vec2b, Vec3b, Vec4b],
+    [vec2b, vec3b, vec4b],
     [x, y, z],
     [x, y, z]
 );

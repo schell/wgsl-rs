@@ -15,7 +15,12 @@ use wgsl_rs::wgsl;
 
 /// The #160 repro shape: `let x = !0;` (issue used a compute entry point;
 /// a plain function renders the same let and validates the same).
-#[wgsl]
+///
+/// `skip_validation` turns off the macro's auto `__validate_wgsl` test, which
+/// is emitted without a `validation` feature gate and breaks
+/// `--no-default-features` builds; the explicit `#[cfg(feature = "validation")]`
+/// tests below cover validation instead.
+#[wgsl(skip_validation)]
 mod complement_repro {
     pub fn compute() -> i32 {
         let x = !0;
@@ -23,7 +28,7 @@ mod complement_repro {
     }
 }
 
-#[wgsl]
+#[wgsl(skip_validation)]
 mod complement_lowering {
     pub fn complement_i32() -> i32 {
         !0
@@ -77,9 +82,6 @@ fn repro_renders_complement_not_not() {
         !src.contains("!0"),
         "the #160 repro must not emit `!0`, got: {src}"
     );
-    complement_repro::WGSL_SOURCE
-        .validate()
-        .expect("naga validation");
 }
 
 #[test]
@@ -104,9 +106,6 @@ fn integer_complements_lower_to_tilde() {
         !src.contains("!0"),
         "no integer `!` should survive lowering, got: {src}"
     );
-    complement_lowering::WGSL_SOURCE
-        .validate()
-        .expect("naga validation");
 }
 
 #[test]
@@ -128,6 +127,29 @@ fn bool_negation_stays_bang() {
         !src.contains("~flag"),
         "bool operands must not lower to `~`, got: {src}"
     );
+}
+
+// ===== naga validation =====
+//
+// `Source::validate()` only exists with the `validation` feature, and the
+// crate supports `default-features = false`; like `shadowing.rs`, the
+// validation tests are gated and the substring tests above stay
+// unconditional.
+
+#[cfg(feature = "validation")]
+#[test]
+fn repro_validates() {
+    complement_repro::WGSL_SOURCE
+        .validate()
+        .expect("naga validation");
+}
+
+#[cfg(feature = "validation")]
+#[test]
+fn lowering_validates() {
+    complement_lowering::WGSL_SOURCE
+        .validate()
+        .expect("naga validation");
 }
 
 // ===== CPU-side parity =====

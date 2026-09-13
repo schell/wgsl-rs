@@ -960,6 +960,7 @@ fn compound_str(op: CompoundOp) -> &'static str {
 fn unop_str(op: UnOp) -> &'static str {
     match op {
         UnOp::Not => "!",
+        UnOp::Complement => "~",
         UnOp::Neg => "-",
         UnOp::Deref => "*",
     }

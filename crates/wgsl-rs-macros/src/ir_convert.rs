@@ -591,10 +591,21 @@ pub fn expr_from_parse(e: &parse::Expr) -> Result<ir::Expr> {
             op: bin_op(op),
             rhs: Box::new(expr_from_parse(rhs)?),
         },
-        parse::Expr::Unary { op, expr } => ir::Expr::Unary {
-            op: un_op(op),
-            expr: Box::new(expr_from_parse(expr)?),
-        },
+        parse::Expr::Unary { op, expr } => {
+            // Rust's `!` is logical not on `bool` but bitwise complement on
+            // integers — two different operators in WGSL (`!` vs `~`). The
+            // IR does not track expression types yet (#145), so decide from
+            // the operand's syntax: syntactically integer-typed operands
+            // lower to `Complement`, everything else keeps `Not` (#160).
+            let op = match op {
+                parse::UnOp::Not(_) if expr_is_int_typed(expr) => ir::UnOp::Complement,
+                _ => un_op(op),
+            };
+            ir::Expr::Unary {
+                op,
+                expr: Box::new(expr_from_parse(expr)?),
+            }
+        }
         parse::Expr::ArrayIndexing { lhs, index, .. } => ir::Expr::ArrayIndexing {
             lhs: Box::new(expr_from_parse(lhs)?),
             index: Box::new(expr_from_parse(index)?),
@@ -758,6 +769,50 @@ fn compound_op(op: &parse::CompoundOp) -> ir::CompoundOp {
         parse::CompoundOp::BitXorAssign(_) => ir::CompoundOp::BitXorAssign,
         parse::CompoundOp::ShlAssign(_) => ir::CompoundOp::ShlAssign,
         parse::CompoundOp::ShrAssign(_) => ir::CompoundOp::ShrAssign,
+    }
+}
+
+/// Best-effort syntactic check for whether `e` is integer-typed.
+///
+/// The IR does not track expression types yet (#145), so lowering Rust's `!`
+/// to WGSL `~` (bitwise complement) vs `!` (logical not) is decided by
+/// inspecting the operand's syntax (#160). Identifiers, calls and other
+/// opaque forms are conservatively treated as bool-typed, preserving the
+/// pre-#160 `!` rendering for them.
+fn expr_is_int_typed(e: &parse::Expr) -> bool {
+    match e {
+        parse::Expr::Lit(parse::Lit::Int(_)) => true,
+        parse::Expr::Lit(_) => false,
+        parse::Expr::Paren { inner, .. } => expr_is_int_typed(inner),
+        // `!x` and `-x` preserve the operand's type in Rust.
+        parse::Expr::Unary { op, expr } => match op {
+            parse::UnOp::Deref(_) => false,
+            _ => expr_is_int_typed(expr),
+        },
+        parse::Expr::Binary { lhs, op, rhs } => match op {
+            // Comparisons and logical ops are bool-typed regardless of the
+            // operand types.
+            parse::BinOp::Eq(_)
+            | parse::BinOp::Ne(_)
+            | parse::BinOp::Lt(_)
+            | parse::BinOp::Le(_)
+            | parse::BinOp::Gt(_)
+            | parse::BinOp::Ge(_)
+            | parse::BinOp::And(_)
+            | parse::BinOp::Or(_) => false,
+            // Shifts take the lhs's type.
+            parse::BinOp::Shl(_) | parse::BinOp::Shr(_) => expr_is_int_typed(lhs),
+            // Arithmetic and bitwise ops share the operands' type.
+            _ => expr_is_int_typed(lhs) && expr_is_int_typed(rhs),
+        },
+        parse::Expr::Cast { ty, .. } => matches!(
+            ty.as_ref(),
+            parse::Type::Scalar {
+                ty: parse::ScalarType::I32 | parse::ScalarType::U32,
+                ..
+            }
+        ),
+        _ => false,
     }
 }
 

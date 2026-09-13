@@ -871,6 +871,7 @@ fn binop(p: &TokenStream, op: ir::BinOp) -> TokenStream {
 fn unop(p: &TokenStream, op: ir::UnOp) -> TokenStream {
     let v = match op {
         ir::UnOp::Not => quote! { Not },
+        ir::UnOp::Complement => quote! { Complement },
         ir::UnOp::Neg => quote! { Neg },
         ir::UnOp::Deref => quote! { Deref },
     };

@@ -506,7 +506,14 @@ pub enum CompoundOp {
 /// Unary operators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UnOp {
+    /// Logical not (`!` in WGSL and Rust). Applies to `bool` (and
+    /// `vecN<bool>` in WGSL) only.
     Not,
+    /// Bitwise complement (`~` in WGSL). Rust has no `~` operator — Rust's
+    /// `!` on an integer-typed operand means bitwise complement, so the
+    /// macro lowers it to this when the operand is syntactically
+    /// integer-typed. See wgsl-rs#160.
+    Complement,
     Neg,
     Deref,
 }

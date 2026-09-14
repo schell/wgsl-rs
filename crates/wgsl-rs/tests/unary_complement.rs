@@ -18,8 +18,8 @@ use wgsl_rs::wgsl;
 ///
 /// `skip_validation` turns off the macro's auto `__validate_wgsl` test, which
 /// is emitted without a `validation` feature gate and breaks
-/// `--no-default-features` builds; the explicit `#[cfg(feature = "validation")]`
-/// tests below cover validation instead.
+/// `--no-default-features` builds; the explicit `#[cfg(feature =
+/// "validation")]` tests below cover validation instead.
 #[wgsl(skip_validation)]
 mod complement_repro {
     pub fn compute() -> i32 {

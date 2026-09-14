@@ -17,7 +17,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@nightly
+        # Pinned to the nightly main was last green with: this job needs
+        # nightly-only rustfmt options, and a floating nightly drifts (a
+        # September 2026 nightly changed comment wrapping, failing every
+        # open PR on files its PR never touched).
+        uses: dtolnay/rust-toolchain@nightly-2026-08-22
         with:
           components: rustfmt
 

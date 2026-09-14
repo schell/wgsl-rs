@@ -21,8 +21,9 @@ jobs:
         # nightly-only rustfmt options, and a floating nightly drifts (a
         # September 2026 nightly changed comment wrapping, failing every
         # open PR on files its PR never touched).
-        uses: dtolnay/rust-toolchain@nightly-2026-08-22
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-08-22
           components: rustfmt
 
       - name: Check formatting

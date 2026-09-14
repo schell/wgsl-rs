@@ -3,7 +3,6 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use snafu::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
 use syn::{
     DeriveInput,
     visit_mut::{self, VisitMut},
@@ -11,12 +10,12 @@ use syn::{
 
 use crate::parse::InterStageIo;
 
-static NEXT_MODULE_ID: AtomicU64 = AtomicU64::new(0);
 
 mod builder;
 mod builtins;
 mod ir_convert;
 mod ir_emit;
+mod module_id;
 mod monomorphize;
 mod parse;
 mod parse_visitor;
@@ -631,7 +630,7 @@ fn gen_wgsl_module(
 
     let module_ctor_ident = quote::format_ident!("__wgsl_module_ctor");
 
-    let module_id = NEXT_MODULE_ID.fetch_add(1, Ordering::Relaxed);
+    let module_id = module_id::next_module_id();
 
     Ok(quote! {
         fn #module_ctor_ident() -> #ir_p::Module {

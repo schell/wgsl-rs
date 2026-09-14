@@ -730,3 +730,31 @@ common CPU-side matrix ops (`Mat4f * Vec4f`, `Mat4f * Mat4f`). This is
 acceptable because the CPU path in wgsl-rs exists primarily to validate
 the GPU path in roundtrip tests, not as a hot execution path. Revisit if
 CPU matrix math shows up in a profile for a downstream crate.
+
+### 2026-09-15: Module ids derived from crate identity (issue #165)
+
+**Problem:** Every `#[wgsl]` module gets a `u64` id baked into its
+`WGSL_SOURCE` static, and the runtime assembler deduplicates imported
+sources by that id. Ids came from a per-process `AtomicU64` counter in
+the proc-macro. The proc-macro's statics are per compiled crate, so the
+counter restarts at 0 for every crate in a workspace — two modules in
+different crates routinely shared an id, the assembler dropped one as a
+"duplicate" import, and the surviving module's calls into the dropped
+one failed with unknown-identifier parse errors.
+
+**Decision:** Derive the id by FNV-1a-64 hashing the consuming crate's
+identity (`CARGO_PKG_NAME` + NUL + `CARGO_PKG_VERSION`) and XOR-ing in
+the per-process counter (see `wgsl-rs-macros/src/module_id.rs`).
+
+**Justification:**
+- Within a crate only the counter varies, and XOR with a fixed hash is a
+  bijection in the counter, so ids stay unique — exactly the old
+  guarantee.
+- Across crates the identity hash separates ids; including the version
+  also separates two semver-incompatible copies of the same package,
+  which cargo can legally compile into one binary.
+- FNV-1a is ~10 lines and *stable*: ids are baked into each crate at its
+  own compile time, so the hash must not vary between rustc versions —
+  which rules out `DefaultHasher`.
+- Outside cargo the env vars are absent, and ids degrade to the old
+  counter-only scheme, so non-cargo builds behave exactly as before.

@@ -1,0 +1,9 @@
+[package]
+name = "id-collision-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+id-collision-shader-a = { path = "../id-collision-shader-a" }
+id-collision-shader-b = { path = "../id-collision-shader-b" }
+wgsl-rs = { path = "../wgsl-rs" }

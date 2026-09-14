@@ -1284,6 +1284,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "id-collision-app"
+version = "0.1.0"
+dependencies = [
+ "id-collision-shader-a",
+ "id-collision-shader-b",
+ "wgsl-rs",
+]
+
+[[package]]
+name = "id-collision-shader-a"
+version = "0.1.0"
+dependencies = [
+ "wgsl-rs",
+]
+
+[[package]]
+name = "id-collision-shader-b"
+version = "0.1.0"
+dependencies = [
+ "wgsl-rs",
+]
+
+[[package]]
 name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -82,6 +82,50 @@ pub mod mat_compound_assign_mat4x3 {
     }
 }
 
+/// mat_compound_add_sub_mat2x2: Compound assignment (`+=`, `-=`) with a
+/// same-type Mat2x2f right-hand side.
+#[wgsl]
+pub mod mat_compound_add_sub_mat2x2 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 512]); // 64 pairs of Mat2x2f
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 512]); // 64 * (2 results * 4 components)
+
+    /// Adds and subtracts matrix pairs via compound assignment.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let a = mat2x2f(
+            vec2f(input[base], input[base + 1]),
+            vec2f(input[base + 2], input[base + 3]),
+        );
+        let b = mat2x2f(
+            vec2f(input[base + 4], input[base + 5]),
+            vec2f(input[base + 6], input[base + 7]),
+        );
+
+        // Each op starts from a fresh copy of the input so GPU fast-math
+        // cannot algebraically simplify chains like (a + b) - b.
+        let mut sum = a;
+        sum += b;
+        get_mut!(OUTPUT)[idx * 8] = sum[0usize].x;
+        get_mut!(OUTPUT)[idx * 8 + 1] = sum[0usize].y;
+        get_mut!(OUTPUT)[idx * 8 + 2] = sum[1usize].x;
+        get_mut!(OUTPUT)[idx * 8 + 3] = sum[1usize].y;
+
+        let mut diff = a;
+        diff -= b;
+        get_mut!(OUTPUT)[idx * 8 + 4] = diff[0usize].x;
+        get_mut!(OUTPUT)[idx * 8 + 5] = diff[0usize].y;
+        get_mut!(OUTPUT)[idx * 8 + 6] = diff[1usize].x;
+        get_mut!(OUTPUT)[idx * 8 + 7] = diff[1usize].y;
+    }
+}
+
 #[wgsl]
 pub mod determinant_mat2 {
     use wgsl_rs::std::*;
@@ -1519,6 +1563,27 @@ fn mat4x3_compound_assign_inputs() -> [f32; 832] {
     out
 }
 
+/// Generates pairs of Mat2x2f inputs for the compound add/sub test.
+fn mat2_pair_inputs() -> [f32; 512] {
+    let mut out = [0.0f32; 512];
+    for i in 0..N {
+        let t = i as f32 * 0.125 - 4.0;
+        write_mat2(
+            &mut out,
+            i * 2,
+            [1.0 + t * 0.25, -2.0 + t * 0.5],
+            [0.5 - t * 0.125, 3.0 + t * 0.75],
+        );
+        write_mat2(
+            &mut out,
+            i * 2 + 1,
+            [t * 0.5, 1.0 - t * 0.25],
+            [2.0 + t, -1.0 - t * 0.5],
+        );
+    }
+    out
+}
+
 /// Runs one f32-based compute shader on the GPU and returns unpacked f32
 /// output.
 fn run_gpu_f32_shader(
@@ -1963,6 +2028,28 @@ impl RoundtripTest for MatrixOperationsTest {
             });
             let cpu = mat_compound_assign_mat4x3::OUTPUT.get().to_vec();
             push_f32_result(&mut results, "mat_compound_assign_mat4x3", &gpu, &cpu, 1e-5);
+        }
+
+        {
+            let input = mat2_pair_inputs();
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &mat_compound_add_sub_mat2x2::WGSL_SOURCE,
+            )
+            .unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 512);
+            mat_compound_add_sub_mat2x2::INPUT.set(input);
+            mat_compound_add_sub_mat2x2::OUTPUT.set([0.0f32; 512]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat_compound_add_sub_mat2x2::main(b.global_invocation_id)
+            });
+            let cpu = mat_compound_add_sub_mat2x2::OUTPUT.get().to_vec();
+            push_f32_result(
+                &mut results,
+                "mat_compound_add_sub_mat2x2",
+                &gpu,
+                &cpu,
+                1e-5,
+            );
         }
 
         results

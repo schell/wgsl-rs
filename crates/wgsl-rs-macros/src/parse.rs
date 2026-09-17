@@ -1163,8 +1163,12 @@ pub enum Type {
     },
 }
 
+/// Recognise the `Vec{N}{suffix}` shorthand (e.g. `Vec3f`). Matching is
+/// anchored at the start of the identifier and the remainder must be a
+/// valid dimension-and-suffix pattern, so user-defined types that merely
+/// contain `Vec` (e.g. `MyVec3f`) are not mistaken for builtin aliases.
 fn split_as_vec(s: &str) -> Option<(&str, &str)> {
-    let (_vec, n_suffix) = s.split_once("Vec")?;
+    let n_suffix = s.strip_prefix("Vec")?;
     (n_suffix.len() == 2).then_some(())?;
     let split = n_suffix.split_at(1);
     Some(split)
@@ -1182,9 +1186,12 @@ struct MatAlias<'a> {
 }
 
 /// Recognise `Mat{N}f` (square shorthand, equivalent to `Mat{N}x{N}f`) or
-/// `Mat{C}x{R}f` (explicit non-square form).
+/// `Mat{C}x{R}f` (explicit non-square form). Matching is anchored at the
+/// start of the identifier and the remainder must be a valid
+/// dimension-and-suffix pattern, so user-defined types that merely contain
+/// `Mat` (e.g. `MyMat2x2f`) are not mistaken for builtin aliases.
 fn split_as_mat(s: &str) -> Option<MatAlias<'_>> {
-    let (_mat, rest) = s.split_once("Mat")?;
+    let rest = s.strip_prefix("Mat")?;
     // Square shorthand: `Mat{N}{suffix}` where suffix is one character.
     if rest.len() == 2 {
         let (n, suffix) = rest.split_at(1);
@@ -1213,24 +1220,22 @@ fn split_as_mat(s: &str) -> Option<MatAlias<'_>> {
 
 /// Converts the Rust type name to the WGSL type name for WGSL builtin types
 /// e.g. `Vec3f` -> `vec3f`, `Mat2x3f` -> `mat2x3f`
+///
+/// `split_as_vec`/`split_as_mat` are anchored on the full identifier, so
+/// user-defined lookalikes (e.g. `MyVec3f`) are not converted.
 pub(crate) fn builtin_wgsl_type_name(name: &str) -> Option<String> {
-    // Anchor on the full identifier: `split_as_vec`/`split_as_mat` accept any
-    // ident containing `Vec`/`Mat` (e.g. `MyVec3f`), which would misconvert
-    // user-defined lookalikes into builtin names.
-    if name.starts_with("Vec")
-        && let Some((elements, suffix)) = split_as_vec(name)
+    if let Some((elements, suffix)) = split_as_vec(name)
         && matches!(elements, "2" | "3" | "4")
         && matches!(suffix, "f" | "i" | "u" | "b")
     {
         return Some(format!("vec{elements}{suffix}"));
     }
 
-    if name.starts_with("Mat")
-        && let Some(MatAlias {
-            columns,
-            rows,
-            suffix: "f",
-        }) = split_as_mat(name)
+    if let Some(MatAlias {
+        columns,
+        rows,
+        suffix: "f",
+    }) = split_as_mat(name)
         && matches!(columns, "2" | "3" | "4")
         && matches!(rows, "2" | "3" | "4")
     {
@@ -8059,6 +8064,72 @@ mod test {
     }
 
     #[test]
+    fn type_position_builtin_lookalike_names_resolve_to_user_types() {
+        // Identifiers that merely contain `Vec`/`Mat` (e.g. `MyVec3f`) used
+        // in type position must resolve to the user type, not a builtin
+        // alias.
+        for name in [
+            "MyVec3f",
+            "MyVec3",
+            "MyMat2x2f",
+            "MyMat4f",
+            "AVec3f",
+            "Vector3f",
+        ] {
+            let ty: syn::Type = syn::parse_str(name).unwrap();
+            let ty = Type::try_from(&ty).unwrap();
+            let Type::Struct { ident, .. } = &ty else {
+                panic!("Expected `Type::Struct` for `{name}`, got {}", ty.to_wgsl());
+            };
+            assert_eq!(ident.to_string(), name);
+            assert_eq!(&ty.to_wgsl(), name);
+        }
+    }
+
+    #[test]
+    fn builtin_shorthand_types_still_parse_in_type_position() {
+        // Regression: builtin vec/mat shorthands and generic forms must
+        // still be recognised in type position now that `Vec`/`Mat`
+        // matching is anchored on the full identifier.
+        for (name, wgsl) in [
+            ("Vec2f", "vec2f"),
+            ("Vec3f", "vec3f"),
+            ("Vec4f", "vec4f"),
+            ("Vec2i", "vec2i"),
+            ("Vec3i", "vec3i"),
+            ("Vec4i", "vec4i"),
+            ("Vec2u", "vec2u"),
+            ("Vec3u", "vec3u"),
+            ("Vec4u", "vec4u"),
+            ("Vec2b", "vec2b"),
+            ("Vec3b", "vec3b"),
+            ("Vec4b", "vec4b"),
+            ("Mat2f", "mat2x2f"),
+            ("Mat3f", "mat3x3f"),
+            ("Mat4f", "mat4x4f"),
+            ("Mat2x3f", "mat2x3f"),
+            ("Mat3x2f", "mat3x2f"),
+            ("Mat2x4f", "mat2x4f"),
+            ("Mat4x2f", "mat4x2f"),
+            ("Mat3x4f", "mat3x4f"),
+            ("Mat4x3f", "mat4x3f"),
+            ("Vec2<f32>", "vec2f"),
+            ("Vec3<f32>", "vec3f"),
+            ("Vec4<f32>", "vec4f"),
+            ("Vec3<u32>", "vec3u"),
+            ("Vec4<i32>", "vec4i"),
+            ("Vec2<bool>", "vec2b"),
+            ("Mat2<f32>", "mat2x2<f32>"),
+            ("Mat3<f32>", "mat3x3<f32>"),
+            ("Mat4<f32>", "mat4x4<f32>"),
+        ] {
+            let ty: syn::Type = syn::parse_str(name).unwrap();
+            let ty = Type::try_from(&ty).unwrap();
+            assert_eq!(&ty.to_wgsl(), wgsl, "for source type `{name}`");
+        }
+    }
+
+    #[test]
     fn stmt_macro_forces_builtin_constants_import() {
         // Statement macro args are opaque token strings, so the usage scan
         // cannot see inside them — any statement macro must conservatively
@@ -8683,6 +8754,61 @@ mod test {
         assert!(
             wgsl.contains("array<Task, 10>"),
             "Expected 'array<Task, 10>' in WGSL output, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn struct_named_like_builtin_alias_stays_user_struct() {
+        // A user struct whose name merely contains `Vec`/`Mat` must be
+        // declared and used as-is in the rendered WGSL, not replaced by a
+        // builtin type.
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod test_module {
+                pub struct MyVec3f {
+                    pub v: f32,
+                }
+
+                pub struct MyMat2x2f {
+                    pub m: f32,
+                }
+
+                pub fn f(x: MyVec3f, y: MyMat2x2f) -> f32 {
+                    x.v + y.m
+                }
+            }
+        };
+        let item_mod = ItemMod::try_from(&item_mod).unwrap();
+        let wgsl = item_mod.to_wgsl();
+
+        assert!(
+            wgsl.contains("struct MyVec3f"),
+            "Expected 'struct MyVec3f' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("struct MyMat2x2f"),
+            "Expected 'struct MyMat2x2f' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("x: MyVec3f"),
+            "Expected parameter type 'MyVec3f' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            wgsl.contains("y: MyMat2x2f"),
+            "Expected parameter type 'MyMat2x2f' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("vec3f"),
+            "Expected no builtin 'vec3f' in WGSL output, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("mat2x2f"),
+            "Expected no builtin 'mat2x2f' in WGSL output, got: {}",
             wgsl
         );
     }

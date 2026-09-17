@@ -557,6 +557,28 @@ impl_mat_scalar_mul!(Mat3x4f);
 impl_mat_scalar_mul!(Mat4x2f);
 impl_mat_scalar_mul!(Mat4x3f);
 
+/// Implements scalar compound multiplication (`*=`) for a matrix type by
+/// delegating to the scalar `Mul` impls above.
+macro_rules! impl_mat_scalar_mul_assign {
+    ($mat:ty) => {
+        impl std::ops::MulAssign<f32> for $mat {
+            fn mul_assign(&mut self, rhs: f32) {
+                *self = *self * rhs;
+            }
+        }
+    };
+}
+
+impl_mat_scalar_mul_assign!(Mat2x2f);
+impl_mat_scalar_mul_assign!(Mat2x3f);
+impl_mat_scalar_mul_assign!(Mat2x4f);
+impl_mat_scalar_mul_assign!(Mat3x2f);
+impl_mat_scalar_mul_assign!(Mat3x3f);
+impl_mat_scalar_mul_assign!(Mat3x4f);
+impl_mat_scalar_mul_assign!(Mat4x2f);
+impl_mat_scalar_mul_assign!(Mat4x3f);
+impl_mat_scalar_mul_assign!(Mat4x4f);
+
 // Determinant.
 
 /// Provides the numeric built-in function `determinant`.
@@ -729,7 +751,6 @@ impl NumericBuiltinTranspose for Mat2x4f {
     }
 }
 
-
 #[crate::wgsl(crate_path = crate)]
 pub mod builtin_matrix_constants {
     #[crate::wgsl_ignore]
@@ -810,6 +831,46 @@ pub mod builtin_matrix_constants {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn mul_assign_scales_all_columns() {
+        let mut m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+        m *= 2.0;
+        assert_eq!(m.columns[0].to_array(), [2.0, 4.0]);
+        assert_eq!(m.columns[1].to_array(), [6.0, 8.0]);
+    }
+
+    #[test]
+    fn mul_assign_non_square_matrix() {
+        let mut m = mat4x3f(
+            vec3f(1.0, 0.0, 0.0),
+            vec3f(0.0, 1.0, 0.0),
+            vec3f(0.0, 0.0, 1.0),
+            vec3f(1.0, 1.0, 1.0),
+        );
+        m *= 0.5;
+        assert_eq!(m.columns[3].to_array(), [0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn can_compile_module_with_matrix_compound_assignment() {
+        #[crate::wgsl(crate_path = crate)]
+        mod compound_assign {
+            use crate::std::*;
+
+            pub fn _main() {
+                let mut _m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+                _m *= 2.0;
+            }
+        }
+
+        // The lowering must emit the WGSL compound operator rather than an
+        // expanded `m = m * x` form.
+        let src = compound_assign::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("*="));
+        #[cfg(feature = "validation")]
+        compound_assign::WGSL_SOURCE.validate().unwrap();
+    }
 
     #[test]
     fn sanity_determinant_mat2() {

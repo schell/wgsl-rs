@@ -1007,7 +1007,7 @@ pub mod runtime_array_example {
         if num_particles < index {
             let velocity = get!(PARTICLES).particles[index].velocity;
             let position = &mut get_mut!(PARTICLES).particles[index].position;
-            *position = *position + velocity;
+            *position += velocity;
         }
     }
 }

@@ -1571,6 +1571,159 @@ macro_rules! impl_vec4_scalar_rem {
     };
 }
 
+/// Implements compound assignment operations (AddAssign, SubAssign,
+/// MulAssign, DivAssign) for Vec2, for both same-type and scalar right-hand
+/// sides.
+///
+/// These delegate to the binary operators defined above so that integer
+/// vectors automatically inherit the wrapping arithmetic WGSL requires.
+macro_rules! impl_vec2_assign_ops {
+    ($scalar:ty) => {
+        impl std::ops::AddAssign for Vec2<$scalar> {
+            fn add_assign(&mut self, rhs: Self) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign for Vec2<$scalar> {
+            fn sub_assign(&mut self, rhs: Self) {
+                *self = *self - rhs;
+            }
+        }
+        impl std::ops::MulAssign for Vec2<$scalar> {
+            fn mul_assign(&mut self, rhs: Self) {
+                *self = *self * rhs;
+            }
+        }
+        impl std::ops::DivAssign for Vec2<$scalar> {
+            fn div_assign(&mut self, rhs: Self) {
+                *self = *self / rhs;
+            }
+        }
+        impl std::ops::AddAssign<$scalar> for Vec2<$scalar> {
+            fn add_assign(&mut self, rhs: $scalar) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign<$scalar> for Vec2<$scalar> {
+            fn sub_assign(&mut self, rhs: $scalar) {
+                *self = *self - rhs;
+            }
+        }
+        impl std::ops::MulAssign<$scalar> for Vec2<$scalar> {
+            fn mul_assign(&mut self, rhs: $scalar) {
+                *self = *self * rhs;
+            }
+        }
+        impl std::ops::DivAssign<$scalar> for Vec2<$scalar> {
+            fn div_assign(&mut self, rhs: $scalar) {
+                *self = *self / rhs;
+            }
+        }
+    };
+}
+
+/// Implements compound assignment operations (AddAssign, SubAssign,
+/// MulAssign, DivAssign) for Vec3, for both same-type and scalar right-hand
+/// sides.
+///
+/// These delegate to the binary operators defined above so that integer
+/// vectors automatically inherit the wrapping arithmetic WGSL requires.
+macro_rules! impl_vec3_assign_ops {
+    ($scalar:ty) => {
+        impl std::ops::AddAssign for Vec3<$scalar> {
+            fn add_assign(&mut self, rhs: Self) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign for Vec3<$scalar> {
+            fn sub_assign(&mut self, rhs: Self) {
+                *self = *self - rhs;
+            }
+        }
+        impl std::ops::MulAssign for Vec3<$scalar> {
+            fn mul_assign(&mut self, rhs: Self) {
+                *self = *self * rhs;
+            }
+        }
+        impl std::ops::DivAssign for Vec3<$scalar> {
+            fn div_assign(&mut self, rhs: Self) {
+                *self = *self / rhs;
+            }
+        }
+        impl std::ops::AddAssign<$scalar> for Vec3<$scalar> {
+            fn add_assign(&mut self, rhs: $scalar) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign<$scalar> for Vec3<$scalar> {
+            fn sub_assign(&mut self, rhs: $scalar) {
+                *self = *self - rhs;
+            }
+        }
+        impl std::ops::MulAssign<$scalar> for Vec3<$scalar> {
+            fn mul_assign(&mut self, rhs: $scalar) {
+                *self = *self * rhs;
+            }
+        }
+        impl std::ops::DivAssign<$scalar> for Vec3<$scalar> {
+            fn div_assign(&mut self, rhs: $scalar) {
+                *self = *self / rhs;
+            }
+        }
+    };
+}
+
+/// Implements compound assignment operations (AddAssign, SubAssign,
+/// MulAssign, DivAssign) for Vec4, for both same-type and scalar right-hand
+/// sides.
+///
+/// These delegate to the binary operators defined above so that integer
+/// vectors automatically inherit the wrapping arithmetic WGSL requires.
+macro_rules! impl_vec4_assign_ops {
+    ($scalar:ty) => {
+        impl std::ops::AddAssign for Vec4<$scalar> {
+            fn add_assign(&mut self, rhs: Self) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign for Vec4<$scalar> {
+            fn sub_assign(&mut self, rhs: Self) {
+                *self = *self - rhs;
+            }
+        }
+        impl std::ops::MulAssign for Vec4<$scalar> {
+            fn mul_assign(&mut self, rhs: Self) {
+                *self = *self * rhs;
+            }
+        }
+        impl std::ops::DivAssign for Vec4<$scalar> {
+            fn div_assign(&mut self, rhs: Self) {
+                *self = *self / rhs;
+            }
+        }
+        impl std::ops::AddAssign<$scalar> for Vec4<$scalar> {
+            fn add_assign(&mut self, rhs: $scalar) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign<$scalar> for Vec4<$scalar> {
+            fn sub_assign(&mut self, rhs: $scalar) {
+                *self = *self - rhs;
+            }
+        }
+        impl std::ops::MulAssign<$scalar> for Vec4<$scalar> {
+            fn mul_assign(&mut self, rhs: $scalar) {
+                *self = *self * rhs;
+            }
+        }
+        impl std::ops::DivAssign<$scalar> for Vec4<$scalar> {
+            fn div_assign(&mut self, rhs: $scalar) {
+                *self = *self / rhs;
+            }
+        }
+    };
+}
+
 // Float vectors: Add, Sub, Mul, Div, Rem
 impl_vec2_ops!(f32);
 impl_vec3_ops!(f32);
@@ -1603,6 +1756,19 @@ impl_vec4_ops_wrapping!(u32);
 impl_vec2_scalar_ops_wrapping!(u32);
 impl_vec3_scalar_ops_wrapping!(u32);
 impl_vec4_scalar_ops_wrapping!(u32);
+
+// Compound assignment ops for all vector scalar types. These delegate to the
+// binary operators above, so integer vectors wrap on overflow as WGSL
+// requires.
+impl_vec2_assign_ops!(f32);
+impl_vec3_assign_ops!(f32);
+impl_vec4_assign_ops!(f32);
+impl_vec2_assign_ops!(i32);
+impl_vec3_assign_ops!(i32);
+impl_vec4_assign_ops!(i32);
+impl_vec2_assign_ops!(u32);
+impl_vec3_assign_ops!(u32);
+impl_vec4_assign_ops!(u32);
 
 // Neg impls for signed types.
 
@@ -1758,6 +1924,7 @@ pub mod builtin_vector_constants {
 
 #[cfg(test)]
 mod test {
+    use super::*;
 
     #[test]
     fn can_compile_module_with_all_vector_aliases() {
@@ -1805,6 +1972,91 @@ mod test {
                 let _v4b = vec4b(true, false, true, false);
             }
         }
+    }
+
+    #[test]
+    fn can_compile_module_with_compound_assignment() {
+        #[crate::wgsl(crate_path = crate)]
+        mod compound_assign {
+            use crate::std::*;
+
+            pub fn _main() {
+                let mut _v = vec2f(1.0, 2.0);
+                _v += vec2f(0.5, 0.5);
+                _v -= vec2f(0.25, 0.25);
+                _v *= vec2f(2.0, 2.0);
+                _v /= vec2f(2.0, 4.0);
+                _v += 1.0;
+                _v -= 0.5;
+                _v *= 4.0;
+                _v /= 2.0;
+
+                let mut _w = vec3i(1, 2, 3);
+                _w += vec3i(1, 1, 1);
+                _w -= 1;
+                _w *= 2;
+                _w /= 3;
+
+                let mut _u = vec4u(1u32, 2u32, 3u32, 4u32);
+                _u += vec4u(1u32, 1u32, 1u32, 1u32);
+                _u *= 2u32;
+            }
+        }
+
+        // The lowering must emit WGSL compound assignment operators rather
+        // than expanded `x = x op y` forms.
+        let src = compound_assign::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("+="));
+        assert!(src.contains("-="));
+        assert!(src.contains("*="));
+        assert!(src.contains("/="));
+        #[cfg(feature = "validation")]
+        compound_assign::WGSL_SOURCE.validate().unwrap();
+    }
+
+    #[test]
+    fn compound_assign_f32_matches_binary_ops() {
+        let mut v = Vec2 { x: 1.0, y: 2.0 };
+        v += Vec2 { x: 0.5, y: 0.5 };
+        assert_eq!(v, Vec2 { x: 1.5, y: 2.5 });
+        v *= 2.0;
+        assert_eq!(v, Vec2 { x: 3.0, y: 5.0 });
+        v -= Vec2 { x: 1.0, y: 1.0 };
+        assert_eq!(v, Vec2 { x: 2.0, y: 4.0 });
+        v /= 4.0;
+        assert_eq!(v, Vec2 { x: 0.5, y: 1.0 });
+    }
+
+    #[test]
+    fn compound_assign_int_wraps_on_overflow() {
+        // WGSL requires integer arithmetic to wrap on overflow; the assign
+        // impls must inherit the wrapping binary operators.
+        let mut v = Vec3 {
+            x: i32::MAX,
+            y: 1,
+            z: 0,
+        };
+        v += Vec3 {
+            x: 1,
+            y: i32::MAX,
+            z: 1,
+        };
+        assert_eq!(
+            v,
+            Vec3 {
+                x: i32::MIN,
+                y: i32::MIN,
+                z: 1
+            }
+        );
+
+        let mut u = Vec2 { x: u32::MAX, y: 2 };
+        u += 1u32;
+        assert_eq!(u, Vec2 { x: 0, y: 3 });
+
+        let mut m = Vec2 { x: i32::MIN, y: 1 };
+        m *= -1;
+        assert_eq!(m, Vec2 { x: i32::MIN, y: -1 });
     }
 
     #[test]

@@ -9,6 +9,79 @@ use crate::harness::{self, ComparisonResult, RoundtripTest};
 
 const N: usize = 64;
 
+/// mat_compound_assign_mat2x2: Compound assignment (`*=`) with a scalar RHS
+/// on Mat2x2f.
+#[wgsl]
+pub mod mat_compound_assign_mat2x2 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 * (4 components + scale)
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]); // 64 * 4 components
+
+    /// Scales each Mat2x2f input via compound assignment.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 5;
+        let input = get!(INPUT);
+
+        let mut m = mat2x2f(
+            vec2f(input[base], input[base + 1]),
+            vec2f(input[base + 2], input[base + 3]),
+        );
+        let s = input[base + 4];
+
+        m *= s;
+        get_mut!(OUTPUT)[idx * 4] = m[0usize].x;
+        get_mut!(OUTPUT)[idx * 4 + 1] = m[0usize].y;
+        get_mut!(OUTPUT)[idx * 4 + 2] = m[1usize].x;
+        get_mut!(OUTPUT)[idx * 4 + 3] = m[1usize].y;
+    }
+}
+
+/// mat_compound_assign_mat4x3: Compound assignment (`*=`) with a scalar RHS
+/// on non-square Mat4x3f.
+#[wgsl]
+pub mod mat_compound_assign_mat4x3 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 832]); // 64 * (12 components + scale)
+    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 768]); // 64 * 12 components
+
+    /// Scales each Mat4x3f input via compound assignment.
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 13;
+        let input = get!(INPUT);
+
+        let mut m = mat4x3f(
+            vec3f(input[base], input[base + 1], input[base + 2]),
+            vec3f(input[base + 3], input[base + 4], input[base + 5]),
+            vec3f(input[base + 6], input[base + 7], input[base + 8]),
+            vec3f(input[base + 9], input[base + 10], input[base + 11]),
+        );
+        let s = input[base + 12];
+
+        m *= s;
+        let out_base = idx * 12;
+        get_mut!(OUTPUT)[out_base] = m[0usize].x;
+        get_mut!(OUTPUT)[out_base + 1] = m[0usize].y;
+        get_mut!(OUTPUT)[out_base + 2] = m[0usize].z;
+        get_mut!(OUTPUT)[out_base + 3] = m[1usize].x;
+        get_mut!(OUTPUT)[out_base + 4] = m[1usize].y;
+        get_mut!(OUTPUT)[out_base + 5] = m[1usize].z;
+        get_mut!(OUTPUT)[out_base + 6] = m[2usize].x;
+        get_mut!(OUTPUT)[out_base + 7] = m[2usize].y;
+        get_mut!(OUTPUT)[out_base + 8] = m[2usize].z;
+        get_mut!(OUTPUT)[out_base + 9] = m[3usize].x;
+        get_mut!(OUTPUT)[out_base + 10] = m[3usize].y;
+        get_mut!(OUTPUT)[out_base + 11] = m[3usize].z;
+    }
+}
+
 #[wgsl]
 pub mod determinant_mat2 {
     use wgsl_rs::std::*;
@@ -1415,6 +1488,37 @@ fn mat3x2_mat2x3_inputs() -> [f32; 768] {
     out
 }
 
+/// Generates inputs for the Mat2x2f compound assignment test: 4 matrix
+/// components plus a non-zero scale per invocation.
+fn mat2_compound_assign_inputs() -> [f32; 320] {
+    let mut out = [0.0f32; 320];
+    for i in 0..N {
+        let base = i * 5;
+        let t = i as f32 * 0.25 - 8.0;
+        out[base] = 1.0 + t * 0.125;
+        out[base + 1] = -0.5 + t * 0.0625;
+        out[base + 2] = 0.75 - t * 0.03125;
+        out[base + 3] = 2.0 + t * 0.25;
+        out[base + 4] = (i % 7 + 1) as f32 * 0.5;
+    }
+    out
+}
+
+/// Generates inputs for the Mat4x3f compound assignment test: 12 matrix
+/// components plus a non-zero scale per invocation.
+fn mat4x3_compound_assign_inputs() -> [f32; 832] {
+    let mut out = [0.0f32; 832];
+    for i in 0..N {
+        let base = i * 13;
+        let t = i as f32 * 0.125 - 4.0;
+        for c in 0..12 {
+            out[base + c] = t * (c as f32 * 0.125) + (c as f32 * 0.25 - 1.5);
+        }
+        out[base + 12] = (i % 5 + 1) as f32 * 0.25;
+    }
+    out
+}
+
 /// Runs one f32-based compute shader on the GPU and returns unpacked f32
 /// output.
 fn run_gpu_f32_shader(
@@ -1827,6 +1931,38 @@ impl RoundtripTest for MatrixOperationsTest {
             });
             let cpu = mat3x2_mat2x3_mul::OUTPUT.get().to_vec();
             push_f32_result(&mut results, "mat3x2_mat2x3_mul", &gpu, &cpu, 1e-4);
+        }
+
+        {
+            let input = mat2_compound_assign_inputs();
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &mat_compound_assign_mat2x2::WGSL_SOURCE,
+            )
+            .unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
+            mat_compound_assign_mat2x2::INPUT.set(input);
+            mat_compound_assign_mat2x2::OUTPUT.set([0.0f32; 256]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat_compound_assign_mat2x2::main(b.global_invocation_id)
+            });
+            let cpu = mat_compound_assign_mat2x2::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "mat_compound_assign_mat2x2", &gpu, &cpu, 1e-5);
+        }
+
+        {
+            let input = mat4x3_compound_assign_inputs();
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &mat_compound_assign_mat4x3::WGSL_SOURCE,
+            )
+            .unwrap();
+            let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 768);
+            mat_compound_assign_mat4x3::INPUT.set(input);
+            mat_compound_assign_mat4x3::OUTPUT.set([0.0f32; 768]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
+                mat_compound_assign_mat4x3::main(b.global_invocation_id)
+            });
+            let cpu = mat_compound_assign_mat4x3::OUTPUT.get().to_vec();
+            push_f32_result(&mut results, "mat_compound_assign_mat4x3", &gpu, &cpu, 1e-5);
         }
 
         results

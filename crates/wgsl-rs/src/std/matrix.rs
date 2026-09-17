@@ -35,6 +35,7 @@ use super::*;
 /// A 2x2 column-major matrix of `f32` components (2 columns of `Vec2f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat2x2f {
     columns: [Vec2f; 2],
 }
@@ -42,6 +43,7 @@ pub struct Mat2x2f {
 /// A 2x3 column-major matrix of `f32` components (2 columns of `Vec3f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat2x3f {
     columns: [Vec3f; 2],
 }
@@ -49,6 +51,7 @@ pub struct Mat2x3f {
 /// A 2x4 column-major matrix of `f32` components (2 columns of `Vec4f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat2x4f {
     columns: [Vec4f; 2],
 }
@@ -56,6 +59,7 @@ pub struct Mat2x4f {
 /// A 3x2 column-major matrix of `f32` components (3 columns of `Vec2f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat3x2f {
     columns: [Vec2f; 3],
 }
@@ -63,6 +67,7 @@ pub struct Mat3x2f {
 /// A 3x3 column-major matrix of `f32` components (3 columns of `Vec3f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat3x3f {
     columns: [Vec3f; 3],
 }
@@ -70,6 +75,7 @@ pub struct Mat3x3f {
 /// A 3x4 column-major matrix of `f32` components (3 columns of `Vec4f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat3x4f {
     columns: [Vec4f; 3],
 }
@@ -77,6 +83,7 @@ pub struct Mat3x4f {
 /// A 4x2 column-major matrix of `f32` components (4 columns of `Vec2f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat4x2f {
     columns: [Vec2f; 4],
 }
@@ -84,6 +91,7 @@ pub struct Mat4x2f {
 /// A 4x3 column-major matrix of `f32` components (4 columns of `Vec3f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat4x3f {
     columns: [Vec3f; 4],
 }
@@ -91,6 +99,7 @@ pub struct Mat4x3f {
 /// A 4x4 column-major matrix of `f32` components (4 columns of `Vec4f`).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat4x4f {
     columns: [Vec4f; 4],
 }
@@ -728,7 +737,6 @@ impl NumericBuiltinTranspose for Mat2x4f {
         }
     }
 }
-
 
 #[crate::wgsl(crate_path = crate)]
 pub mod builtin_matrix_constants {

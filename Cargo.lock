@@ -1008,6 +1008,7 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "num-traits",
+ "serde",
  "zerocopy",
 ]
 
@@ -3774,6 +3775,8 @@ dependencies = [
  "naga",
  "paste",
  "rayon",
+ "serde",
+ "serde_json",
  "snafu",
  "trybuild",
  "wgpu",

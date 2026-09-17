@@ -1176,6 +1176,143 @@ impl RoundtripTest for VectorArithmeticTest {
             ));
         }
 
+        // --- vec_compound_assign_f32 ---
+        {
+            let (input_a, input_b) = vec4f_binary_inputs();
+            let flattened = flatten_vec4f_pairs(&input_a, &input_b);
+            let input_bytes = bytemuck::cast_slice(&flattened);
+            let output_size = (N * 4 * 4 * std::mem::size_of::<f32>()) as u64;
+
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_compound_assign_f32::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                device,
+                queue,
+                linkage: &mut linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (1, 1, 1),
+            });
+            let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
+
+            vec_compound_assign_f32::INPUT.set(flattened);
+            vec_compound_assign_f32::OUTPUT.set([Vec4f::default(); 256]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
+                vec_compound_assign_f32::main(builtins.global_invocation_id);
+            });
+            let cpu_output_guard = vec_compound_assign_f32::OUTPUT.get();
+            let cpu_floats: Vec<f32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
+
+            let labels: Vec<String> = (0..N * 4 * 4)
+                .map(|i| format!("vec_compound_f32[{}]", i))
+                .collect();
+            let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+            results.push(harness::compare_f32_results(
+                "vec_compound_assign_f32",
+                gpu_floats,
+                &cpu_floats,
+                &label_refs,
+                1e-5,
+            ));
+        }
+
+        // --- vec_compound_assign_scalar_f32 ---
+        {
+            let (input_v, input_s) = vec4f_scalar_inputs();
+            let flattened = flatten_vec4f_scalar(&input_v, &input_s);
+            let input_bytes = bytemuck::cast_slice(&flattened);
+            let output_size = (N * 4 * 4 * std::mem::size_of::<f32>()) as u64;
+
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &vec_compound_assign_scalar_f32::WGSL_SOURCE,
+            )
+            .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                device,
+                queue,
+                linkage: &mut linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (1, 1, 1),
+            });
+            let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
+
+            vec_compound_assign_scalar_f32::INPUT.set(flattened);
+            vec_compound_assign_scalar_f32::OUTPUT.set([Vec4f::default(); 256]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
+                vec_compound_assign_scalar_f32::main(builtins.global_invocation_id);
+            });
+            let cpu_output_guard = vec_compound_assign_scalar_f32::OUTPUT.get();
+            let cpu_floats: Vec<f32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
+
+            let labels: Vec<String> = (0..N * 4 * 4)
+                .map(|i| format!("vec_compound_scalar_f32[{}]", i))
+                .collect();
+            let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+            results.push(harness::compare_f32_results(
+                "vec_compound_assign_scalar_f32",
+                gpu_floats,
+                &cpu_floats,
+                &label_refs,
+                1e-5,
+            ));
+        }
+
+        // --- vec_compound_assign_i32 ---
+        {
+            let (a_inputs, b_inputs) = vec4i_overflow_inputs();
+            let flattened = flatten_vec4i_pairs(&a_inputs, &b_inputs);
+            let input_bytes = bytemuck::cast_slice(&flattened);
+            let output_size = (192 * 4 * std::mem::size_of::<i32>()) as u64;
+
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&vec_compound_assign_i32::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                device,
+                queue,
+                linkage: &mut linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (1, 1, 1),
+            });
+            let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
+
+            vec_compound_assign_i32::INPUT.set(flattened);
+            vec_compound_assign_i32::OUTPUT.set([vec4i(0, 0, 0, 0); 192]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
+                vec_compound_assign_i32::main(builtins.global_invocation_id);
+            });
+            let cpu_output_guard = vec_compound_assign_i32::OUTPUT.get();
+            let cpu_i32s: Vec<i32> = cpu_output_guard
+                .iter()
+                .flat_map(|v| [v.x, v.y, v.z, v.w])
+                .collect();
+
+            let labels: Vec<String> = (0..192 * 4)
+                .map(|i| format!("vec_compound_i32[{}]", i))
+                .collect();
+            let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+            // Bit-exact comparison: cast i32 to u32 so wrapped values compare
+            // exactly.
+            let gpu_u32s: Vec<u32> = gpu_i32s.iter().map(|&x| x as u32).collect();
+            let cpu_u32s: Vec<u32> = cpu_i32s.iter().map(|&x| x as u32).collect();
+
+            results.push(harness::compare_u32_results(
+                "vec_compound_assign_i32",
+                &gpu_u32s,
+                &cpu_u32s,
+                &label_refs,
+            ));
+        }
+
         results
     }
 }
@@ -1262,6 +1399,148 @@ pub mod vec_overflow_i32 {
         get_mut!(OUTPUT)[out_base + 5] = a + a; // Self-addition overflow
         get_mut!(OUTPUT)[out_base + 6] = b - a; // Reversed subtraction
         // underflow
+    }
+}
+
+/// vec_compound_assign_f32: Compound assignment (+=, -=, *=, /=) on Vec4f
+///
+/// Tests vector-vector compound assignment: `v ⊗= b` where
+/// ⊗ ∈ {+, -, *, /}.
+#[wgsl]
+pub mod vec_compound_assign_f32 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 512]); // 64 vec4 pairs
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 256]); // 4 ops * 64
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let v0 = vec4f(
+            input[base],
+            input[base + 1],
+            input[base + 2],
+            input[base + 3],
+        );
+        let b = vec4f(
+            input[base + 4],
+            input[base + 5],
+            input[base + 6],
+            input[base + 7],
+        );
+
+        // Each op starts from a fresh copy of the input. Chaining ops on one
+        // variable (v += b; v -= b;) lets GPU compilers with fast-math apply
+        // algebraic simplification ((v + b) - b = v), which diverges from the
+        // sequentially-rounded results the CPU world produces.
+        let mut v_add = v0;
+        v_add += b;
+        get_mut!(OUTPUT)[idx * 4] = v_add;
+
+        let mut v_sub = v0;
+        v_sub -= b;
+        get_mut!(OUTPUT)[idx * 4 + 1] = v_sub;
+
+        let mut v_mul = v0;
+        v_mul *= b;
+        get_mut!(OUTPUT)[idx * 4 + 2] = v_mul;
+
+        let mut v_div = v0;
+        v_div /= b;
+        get_mut!(OUTPUT)[idx * 4 + 3] = v_div;
+    }
+}
+
+/// vec_compound_assign_scalar_f32: Compound assignment with a scalar RHS on
+/// Vec4f.
+///
+/// Tests vector-scalar compound assignment: `v ⊗= s` where
+/// ⊗ ∈ {+, -, *, /}. WGSL splats the scalar across the vector.
+#[wgsl]
+pub mod vec_compound_assign_scalar_f32 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 * (vec4 + scalar)
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 256]); // 4 ops * 64
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 5;
+        let input = get!(INPUT);
+
+        let v0 = vec4f(
+            input[base],
+            input[base + 1],
+            input[base + 2],
+            input[base + 3],
+        );
+        let s = input[base + 4];
+
+        // Each op starts from a fresh copy of the input so GPU fast-math
+        // cannot algebraically simplify chains like (v + s) - s.
+        let mut v_add = v0;
+        v_add += s;
+        get_mut!(OUTPUT)[idx * 4] = v_add;
+
+        let mut v_sub = v0;
+        v_sub -= s;
+        get_mut!(OUTPUT)[idx * 4 + 1] = v_sub;
+
+        let mut v_mul = v0;
+        v_mul *= s;
+        get_mut!(OUTPUT)[idx * 4 + 2] = v_mul;
+
+        let mut v_div = v0;
+        v_div /= s;
+        get_mut!(OUTPUT)[idx * 4 + 3] = v_div;
+    }
+}
+
+/// vec_compound_assign_i32: Compound assignment (+=, -=, *=) on Vec4i
+///
+/// Uses extreme values to verify that overflow wraps identically in both
+/// worlds (WGSL requires modulo 2^32 arithmetic).
+#[wgsl]
+pub mod vec_compound_assign_i32 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [i32; 512]); // 64 vec4 pairs
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 192]); // 3 ops * 64
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let base = idx * 8;
+        let input = get!(INPUT);
+
+        let mut v = vec4i(
+            input[base],
+            input[base + 1],
+            input[base + 2],
+            input[base + 3],
+        );
+        let b = vec4i(
+            input[base + 4],
+            input[base + 5],
+            input[base + 6],
+            input[base + 7],
+        );
+
+        v += b; // May overflow
+        get_mut!(OUTPUT)[idx * 3] = v;
+
+        v -= b;
+        get_mut!(OUTPUT)[idx * 3 + 1] = v;
+
+        v *= b; // May overflow
+        get_mut!(OUTPUT)[idx * 3 + 2] = v;
     }
 }
 

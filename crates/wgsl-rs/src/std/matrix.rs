@@ -566,6 +566,116 @@ impl_mat_scalar_mul!(Mat3x4f);
 impl_mat_scalar_mul!(Mat4x2f);
 impl_mat_scalar_mul!(Mat4x3f);
 
+/// Implements scalar compound multiplication (`*=`) for a matrix type by
+/// delegating to the scalar `Mul` impls above.
+macro_rules! impl_mat_scalar_mul_assign {
+    ($mat:ty) => {
+        impl std::ops::MulAssign<f32> for $mat {
+            fn mul_assign(&mut self, rhs: f32) {
+                *self = *self * rhs;
+            }
+        }
+    };
+}
+
+impl_mat_scalar_mul_assign!(Mat2x2f);
+impl_mat_scalar_mul_assign!(Mat2x3f);
+impl_mat_scalar_mul_assign!(Mat2x4f);
+impl_mat_scalar_mul_assign!(Mat3x2f);
+impl_mat_scalar_mul_assign!(Mat3x3f);
+impl_mat_scalar_mul_assign!(Mat3x4f);
+impl_mat_scalar_mul_assign!(Mat4x2f);
+impl_mat_scalar_mul_assign!(Mat4x3f);
+impl_mat_scalar_mul_assign!(Mat4x4f);
+
+/// Implements component-wise matrix addition and subtraction.
+///
+/// The WGSL spec defines `matCxR<T> + matCxR<T>` and `matCxR<T> - matCxR<T>`
+/// component-wise, with column i of the result being e1[i] ± e2[i]. Only
+/// same-type operands are defined — there is no matrix-scalar `+` or `-`.
+macro_rules! impl_mat_add_sub {
+    ($mat:ty) => {
+        impl std::ops::Add for $mat {
+            type Output = $mat;
+            fn add(self, rhs: $mat) -> $mat {
+                type Out = $mat;
+                let cols = self.columns;
+                let rhs_cols = rhs.columns;
+                Out {
+                    columns: std::array::from_fn(|i| cols[i] + rhs_cols[i]),
+                }
+            }
+        }
+        impl std::ops::Sub for $mat {
+            type Output = $mat;
+            fn sub(self, rhs: $mat) -> $mat {
+                type Out = $mat;
+                let cols = self.columns;
+                let rhs_cols = rhs.columns;
+                Out {
+                    columns: std::array::from_fn(|i| cols[i] - rhs_cols[i]),
+                }
+            }
+        }
+    };
+}
+
+/// Implements compound matrix addition/subtraction assignment (`+=`, `-=`),
+/// enabled by the binary ops above.
+macro_rules! impl_mat_add_sub_assign {
+    ($mat:ty) => {
+        impl std::ops::AddAssign for $mat {
+            fn add_assign(&mut self, rhs: $mat) {
+                *self = *self + rhs;
+            }
+        }
+        impl std::ops::SubAssign for $mat {
+            fn sub_assign(&mut self, rhs: $mat) {
+                *self = *self - rhs;
+            }
+        }
+    };
+}
+
+/// Implements matrix-matrix compound multiplication assignment (`*=`) for
+/// square matrices, where the `mat * mat` result type equals the left-hand
+/// side. Delegates to the existing matrix product impls.
+macro_rules! impl_mat_mat_mul_assign {
+    ($mat:ty) => {
+        impl std::ops::MulAssign for $mat {
+            fn mul_assign(&mut self, rhs: $mat) {
+                *self = *self * rhs;
+            }
+        }
+    };
+}
+
+impl_mat_add_sub!(Mat2x2f);
+impl_mat_add_sub!(Mat2x3f);
+impl_mat_add_sub!(Mat2x4f);
+impl_mat_add_sub!(Mat3x2f);
+impl_mat_add_sub!(Mat3x3f);
+impl_mat_add_sub!(Mat3x4f);
+impl_mat_add_sub!(Mat4x2f);
+impl_mat_add_sub!(Mat4x3f);
+impl_mat_add_sub!(Mat4x4f);
+
+impl_mat_add_sub_assign!(Mat2x2f);
+impl_mat_add_sub_assign!(Mat2x3f);
+impl_mat_add_sub_assign!(Mat2x4f);
+impl_mat_add_sub_assign!(Mat3x2f);
+impl_mat_add_sub_assign!(Mat3x3f);
+impl_mat_add_sub_assign!(Mat3x4f);
+impl_mat_add_sub_assign!(Mat4x2f);
+impl_mat_add_sub_assign!(Mat4x3f);
+impl_mat_add_sub_assign!(Mat4x4f);
+
+// Square matrices only: `m *= n` is valid WGSL only when the `mat * mat`
+// result type equals the left-hand side type.
+impl_mat_mat_mul_assign!(Mat2x2f);
+impl_mat_mat_mul_assign!(Mat3x3f);
+impl_mat_mat_mul_assign!(Mat4x4f);
+
 // Determinant.
 
 /// Provides the numeric built-in function `determinant`.
@@ -818,6 +928,84 @@ pub mod builtin_matrix_constants {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn mul_assign_scales_all_columns() {
+        let mut m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+        m *= 2.0;
+        assert_eq!(m.columns[0].to_array(), [2.0, 4.0]);
+        assert_eq!(m.columns[1].to_array(), [6.0, 8.0]);
+    }
+
+    #[test]
+    fn mul_assign_non_square_matrix() {
+        let mut m = mat4x3f(
+            vec3f(1.0, 0.0, 0.0),
+            vec3f(0.0, 1.0, 0.0),
+            vec3f(0.0, 0.0, 1.0),
+            vec3f(1.0, 1.0, 1.0),
+        );
+        m *= 0.5;
+        assert_eq!(m.columns[3].to_array(), [0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn add_sub_assign_matches_binary_ops() {
+        let a = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+        let b = mat2x2f(vec2f(0.5, 1.0), vec2f(1.5, 2.0));
+
+        let mut sum = a;
+        sum += b;
+        assert_eq!(sum.columns[0].to_array(), [1.5, 3.0]);
+        assert_eq!(sum.columns[1].to_array(), [4.5, 6.0]);
+
+        let mut diff = sum;
+        diff -= b;
+        assert_eq!(diff.columns[0].to_array(), [1.0, 2.0]);
+        assert_eq!(diff.columns[1].to_array(), [3.0, 4.0]);
+
+        // Non-square matrices use the same macro.
+        let mut n = mat4x3f(
+            vec3f(1.0, 0.0, 0.0),
+            vec3f(0.0, 1.0, 0.0),
+            vec3f(0.0, 0.0, 1.0),
+            vec3f(1.0, 1.0, 1.0),
+        );
+        n += n;
+        assert_eq!(n.columns[3].to_array(), [2.0, 2.0, 2.0]);
+
+        // Square matrices also support `m *= n`.
+        let mut sq = mat2x2f(vec2f(1.0, 0.0), vec2f(0.0, 1.0));
+        sq *= mat2x2f(vec2f(2.0, 0.0), vec2f(0.0, 2.0));
+        assert_eq!(sq.columns[0].to_array(), [2.0, 0.0]);
+        assert_eq!(sq.columns[1].to_array(), [0.0, 2.0]);
+    }
+
+    #[test]
+    fn can_compile_module_with_matrix_compound_assignment() {
+        #[crate::wgsl(crate_path = crate)]
+        mod compound_assign {
+            use crate::std::*;
+
+            pub fn _main() {
+                let mut _m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+                let _n = mat2x2f(vec2f(0.5, 1.0), vec2f(1.5, 2.0));
+                _m *= 2.0;
+                _m *= _n;
+                _m += _n;
+                _m -= _n;
+            }
+        }
+
+        // The lowering must emit the WGSL compound operators rather than
+        // expanded `m = m * x` forms.
+        let src = compound_assign::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("*="));
+        assert!(src.contains("+="));
+        assert!(src.contains("-="));
+        #[cfg(feature = "validation")]
+        compound_assign::WGSL_SOURCE.validate().unwrap();
+    }
 
     #[test]
     fn sanity_determinant_mat2() {

@@ -14,6 +14,7 @@
 /// A 2-dimensional vector.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec2<T> {
     pub x: T,
     pub y: T,
@@ -22,6 +23,7 @@ pub struct Vec2<T> {
 /// A 3-dimensional vector.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec3<T> {
     pub x: T,
     pub y: T,
@@ -31,6 +33,7 @@ pub struct Vec3<T> {
 /// A 4-dimensional vector.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec4<T> {
     pub x: T,
     pub y: T,

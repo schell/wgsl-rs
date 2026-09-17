@@ -854,3 +854,30 @@ enforces `imports_granularity = "crate"`, which merges the new module's
 two `use crate::...` statements — stable rustfmt cannot enforce that
 option, so this repo's contributors need a nightly toolchain to check
 formatting locally.
+
+### 2026-09-17: Feature-gated `serde` impls for `std` math types (issue #147)
+
+Downstream users embedding `wgsl_rs::std` math types in their own structs
+cannot add `Serialize`/`Deserialize` for those types themselves — the
+orphan rule forbids it — and routing everything through `glam`
+conversions (`.into()` everywhere) is friction they reasonably want gone
+(GitHub #147, jakkos-net).
+
+Decision: `wgsl-rs` gains a non-default `serde` cargo feature that turns
+on `derive(serde::Serialize, serde::Deserialize)` for the plain-data math
+types — `Vec2/3/4<T>` (all aliases included) and the nine `MatCxRf`
+shapes — via `#[cfg_attr(feature = "serde", ...)]`. The feature forwards
+`half/serde` so `Vec2<f16>` and friends serialize out of the box.
+
+Wire format: serde's default derived shape is kept — vectors serialize
+as `{"x":1.0,"y":2.0}`, matrices as
+`{"columns":[{"x":1.0,"y":2.0},{"x":3.0,"y":4.0}]}` — rather than
+hand-rolled tuple or array forms like `glam`'s. The derived form is
+self-describing and free to maintain; a compact or glam-compatible wire
+format can later ride `serde(with = ...)` helpers without breaking
+changes.
+
+Scope boundary: only the plain-data math types gain impls. Textures,
+samplers, and storage bindings are runtime handles; `Atomic*`,
+`ModfResult`, `FrexpResult` are shader-internal. Those can be follow-ups
+if requested.

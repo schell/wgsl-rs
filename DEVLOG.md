@@ -881,3 +881,22 @@ Scope boundary: only the plain-data math types gain impls. Textures,
 samplers, and storage bindings are runtime handles; `Atomic*`,
 `ModfResult`, `FrexpResult` are shader-internal. Those can be follow-ups
 if requested.
+
+### 2026-09-18: `Eq`/`Hash` on `VecN<T>` only — matrices stay out
+
+GitHub #161 asked for `VecN`-typed HashMap keys (e.g. `HashMap<Vec3u, _>`).
+`Vec2/3/4<T>` now derive `Eq, Hash`, which is safe because derives on a
+generic struct emit *conditional* impls (`impl<T: Hash> Hash for Vec3<T>`)
+— so `Vec3u`/`Vec3i`/`Vec3b` gain the traits while `Vec3f` keeps neither,
+matching Rust's own stance that floats make poor hash keys (NaN/-0.0).
+A trybuild compile-fail case pins this: using `Vec3f` as a `HashMap` key
+is rejected because `f32: Hash`/`f32: Eq` don't hold.
+
+The same cannot extend to the `MatNxMf` types: WGSL matrices are `f32`-only
+(there are no integer matrices in the spec), so the Rust-side types are
+concrete `f32` structs, not generics. `f32` implements neither `Eq` nor
+`Hash`, so deriving either would not compile, and hand-writing the impls
+would reintroduce exactly the footgun the conditional bound avoids.
+If integer-bearing matrix keys are ever wanted, the path is a generic
+`Mat<T>` — a nontrivial refactor with no WGSL counterpart, and out of
+scope.

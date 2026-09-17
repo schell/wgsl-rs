@@ -13,7 +13,7 @@
 
 /// A 2-dimensional vector.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec2<T> {
     pub x: T,
@@ -22,7 +22,7 @@ pub struct Vec2<T> {
 
 /// A 3-dimensional vector.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec3<T> {
     pub x: T,
@@ -32,7 +32,7 @@ pub struct Vec3<T> {
 
 /// A 4-dimensional vector.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec4<T> {
     pub x: T,
@@ -1928,6 +1928,29 @@ pub mod builtin_vector_constants {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn vec_n_can_be_used_as_hashmap_and_hashset_keys() {
+        use std::collections::{HashMap, HashSet};
+
+        let mut map: HashMap<Vec3u, &str> = HashMap::new();
+        map.insert(vec3u(1, 2, 3), "one");
+        map.insert(vec3u(4, 5, 6), "two");
+        assert_eq!(map.get(&vec3u(1, 2, 3)), Some(&"one"));
+        assert_eq!(map.get(&vec3u(4, 5, 6)), Some(&"two"));
+        assert_eq!(map.len(), 2);
+
+        let mut set: HashSet<Vec2i> = HashSet::new();
+        set.insert(Vec2i::X);
+        set.insert(Vec2i::Y);
+        set.insert(Vec2i::X);
+        assert_eq!(set.len(), 2);
+
+        // `bool` components implement `Hash`/`Eq` as well.
+        let mut bool_map: HashMap<Vec4b, u32> = HashMap::new();
+        bool_map.insert(vec4b(true, true, true, true), 42);
+        assert_eq!(bool_map.get(&vec4b(true, true, true, true)), Some(&42));
+    }
 
     #[test]
     fn can_compile_module_with_all_vector_aliases() {

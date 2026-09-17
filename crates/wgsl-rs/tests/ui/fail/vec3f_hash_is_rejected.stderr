@@ -1,0 +1,16 @@
+error[E0599]: the method `insert` exists for struct `HashMap<Vec3<f32>, u32>`, but its trait bounds were not satisfied
+  --> tests/ui/fail/vec3f_hash_is_rejected.rs:11:9
+   |
+11 |     map.insert(vec3f(1.0, 2.0, 3.0), 1);
+   |         ^^^^^^
+   |
+  ::: src/std/vector.rs
+   |
+   | pub struct Vec3<T> {
+   | ------------------ doesn't satisfy `Vec3<f32>: Hash` or `Vec3<f32>: std::cmp::Eq`
+   |
+   = note: the following trait bounds were not satisfied:
+           `f32: std::cmp::Eq`
+           which is required by `Vec3<f32>: std::cmp::Eq`
+           `f32: Hash`
+           which is required by `Vec3<f32>: Hash`

@@ -41,6 +41,12 @@ fn typed_literal_f64_suffix_is_rejected() {
 }
 
 #[test]
+fn vec3f_hash_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/vec3f_hash_is_rejected.rs");
+}
+
+#[test]
 fn generic_impl_on_array_compiles() {
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/pass/generic_impl_on_array.rs");

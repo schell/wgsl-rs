@@ -15,9 +15,16 @@ Procedural macros are provided by the
 ## Operator's Manual
 
 The canonical user-facing documentation is the
-[**Operator's Manual**](./book/src/SUMMARY.md), an mdbook covering installation,
-writing shaders, types, generics, validation, the standard library, wgpu
-linkage, extensions, memory layout, and a catalog of 35+ runnable examples.
+[**Operator's Manual**](https://renderling.xyz/wgsl-rs/manual/index.html) —
+an mdbook covering installation, writing shaders, types, generics, validation,
+the standard library, wgpu linkage, extensions, memory layout, and a catalog of
+35+ runnable examples. The book's sources live in [`book/`](./book) in this
+repo.
+
+New to `wgsl-rs`? Start with
+[Installation](https://renderling.xyz/wgsl-rs/manual/getting-started/installation.html)
+and [Hello, Triangle](https://renderling.xyz/wgsl-rs/manual/getting-started/hello-triangle.html),
+or browse the [examples catalog](https://renderling.xyz/wgsl-rs/manual/examples/catalog.html).
 
 To build the book locally:
 
@@ -38,8 +45,63 @@ There is a project plan for getting to beta
 
 ### Can it Hello World?
 
-Yes! See the [example](crates/example/src/main.rs), which transpiles the shader
-from [Tour of WGSL](https://google.github.io/tour-of-wgsl/).
+Yes! This is the canonical `hello_triangle` shader — ordinary Rust that the
+`#[wgsl]` macro transpiles to WGSL. It is also valid Rust you can compile,
+unit test, and run on the CPU:
+
+```rust
+#[wgsl]
+pub mod hello_triangle {
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), FRAME: u32);
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        const POS: [Vec2f; 3] = [vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5)];
+        let position = POS[vertex_index as usize];
+        vec4f(position.x, position.y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        vec4f(1.0, sin(f32(get!(FRAME)) / 128.0), 0.0, 1.0)
+    }
+}
+```
+
+See the runnable [example](crates/example/src/main.rs) (transpiled from
+[Tour of WGSL](https://google.github.io/tour-of-wgsl/)), or the manual's
+[Hello, Triangle](https://renderling.xyz/wgsl-rs/manual/getting-started/hello-triangle.html)
+chapter for a line-by-line walkthrough.
+
+## Highlights
+
+Beyond the basics, `wgsl-rs` supports the features real renderers need:
+
+- **Templates (generics)** — write generic shader modules in Rust and
+  instantiate them with turbofish; monomorphization produces concrete WGSL at
+  compile time. Const generics and generic structs and impls work too.
+  ([templates](https://renderling.xyz/wgsl-rs/manual/generics/templates.html))
+- **Binding macros** — `uniform!`, `storage!`, `workgroup!`, `texture!`,
+  `sampler!` and `ptr!` declare bindings once, visible in both Rust and WGSL.
+  ([binding macros](https://renderling.xyz/wgsl-rs/manual/writing-shaders/binding-macros.html))
+- **Auto validation** — `#[wgsl]` modules get a hidden
+  [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) validation test; for
+  template modules the test instantiates the template with the types given to
+  `validate_with_instantiation_types(T1, T2, ...)` before validating. Either
+  way, `cargo test` catches invalid WGSL before it reaches the GPU.
+  ([validation](https://renderling.xyz/wgsl-rs/manual/validation/auto-tests.html))
+- **wgpu linkage** — generated modules provide bind group layouts, stage
+  visibility and pipeline layout helpers, so wiring up `wgpu` requires no
+  boilerplate.
+  ([linkage](https://renderling.xyz/wgsl-rs/manual/linkage/overview.html))
+- **Extensions** — implement `WgslExtension` to hook the IR directly: custom
+  attributes, new statement macros, post-processing passes.
+  ([extensions](https://renderling.xyz/wgsl-rs/manual/extensions/trait.html))
+- **Memory layout** — `WgslLayout` and `#[derive(Layout)]` compute
+  WGSL-conformant layouts so CPU structs match GPU buffers exactly.
+  ([layout](https://renderling.xyz/wgsl-rs/manual/layout/overview.html))
 
 ## Funding
 
@@ -72,6 +134,12 @@ The project is split into a few parts:
   `render_module`, and `substitute_types`.
 - **`wgsl-rs-layout`** / **`wgsl-rs-layout-macros`** — WGSL memory layout
   computation (`WgslLayout`/`Layout` traits, `#[derive(Layout)]`).
+- **`example`** — Runnable example modules demonstrating every supported
+  feature.
+- **`xtask`** — Development tools (`wgsl-spec`, `ci`).
+- **`roundtrip-tests`** — Tests ensuring the "two worlds" (CPU and GPU)
+  agree.
+- **`gpu-tests`** — GPU-side test harness.
 
 There's also a [devlog](DEVLOG.md) that explains the decisions and tradeoffs
 made during development.

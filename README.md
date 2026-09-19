@@ -79,12 +79,12 @@ chapter for a line-by-line walkthrough.
 
 Beyond the basics, `wgsl-rs` supports the features real renderers need:
 
-- **Templates (generics)** — write generic shader modules in Rust and
-  instantiate them with turbofish; monomorphization produces concrete WGSL at
-  compile time. Const generics and generic structs and impls work too.
+- **Generics** — write generic shader entry points in Rust and
+  instantiate them with turbofish at runtime; monomorphization produces concrete WGSL.
+  Const generics and generic structs and impls work too.
   ([templates](https://renderling.xyz/wgsl-rs/manual/generics/templates.html))
 - **Binding macros** — `uniform!`, `storage!`, `workgroup!`, `texture!`,
-  `sampler!` and `ptr!` declare bindings once, visible in both Rust and WGSL.
+  `sampler!` declare bindings once, visible in both Rust and WGSL.
   ([binding macros](https://renderling.xyz/wgsl-rs/manual/writing-shaders/binding-macros.html))
 - **Auto validation** — `#[wgsl]` modules get a hidden
   [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) validation test; for

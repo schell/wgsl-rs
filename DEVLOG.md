@@ -900,3 +900,28 @@ would reintroduce exactly the footgun the conditional bound avoids.
 If integer-bearing matrix keys are ever wanted, the path is a generic
 `Mat<T>` — a nontrivial refactor with no WGSL counterpart, and out of
 scope.
+
+### 2026-09-20: Binding stage visibility is resolved transitively from entry-point call graphs
+
+**Problem.** The wgpu linkage analysis computed per-binding `ShaderStages`
+visibility by scanning only entry-point function bodies for identifier
+references. A binding used only inside a helper fn called from an entry
+point resolved as "unreferenced", fell back to the `COMPUTE` default, and
+vertex/fragment pipeline creation then failed with "Visibility flags
+don't include the shader stage" (wgsl-rs#177).
+
+**Decision.** Visibility is now resolved per entry point by a reachability
+walk over the module's fn call graph. Every function — entry point, helper,
+and impl methods (under their mangled `Type_method` render names) — records
+its referenced identifiers, and each entry point unions in the identifiers of
+every function it transitively calls. `collect_idents_in_stmt` /
+`collect_idents_in_expr` now also record `Expr::FnCall` callee paths, so the
+walk discovers helper chains.
+
+A whole-module per-stage scan was rejected: it would over-broaden
+visibility (a helper used only by an unused fn would still leak its stage),
+which can force demands like `VERTEX_WRITABLE_STORAGE` that most users don't
+want.
+
+The `COMPUTE` default in `visibility_for` for declared-but-unused bindings
+is kept — see its doc comment for that earlier decision.

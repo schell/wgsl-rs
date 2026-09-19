@@ -203,8 +203,8 @@ fn repro_wraps_constructors_in_all() {
         .wgsl_source()
         .expect("render should succeed");
     assert!(
-        src.contains("let x: bool = all(vec2f(0.0, 0.0) == vec2f(0.0, 0.0));"),
-        "the #164 repro must emit `all(...)`, got: {src}"
+        src.contains("let x: bool = all((vec2f(0.0, 0.0) == vec2f(0.0, 0.0)));"),
+        "the #164 repro must emit `all(...)` (binary op parenthesized per wgsl-rs#159), got: {src}"
     );
 }
 
@@ -215,30 +215,27 @@ fn vector_eq_ne_lower_to_all() {
         .expect("render should succeed");
     for (needle, why) in [
         (
-            "return all(vec3f(1.0, 2.0, 3.0) == vec3f(1.0, 2.0, 3.0));",
+            "return all((vec3f(1.0, 2.0, 3.0) == vec3f(1.0, 2.0, 3.0)));",
             "constructor == wraps in all()",
         ),
         (
-            "return !all(vec4f(1.0, 2.0, 3.0, 4.0) == vec4f(4.0, 3.0, 2.0, 1.0));",
-            "vector != lowers to !(all(lhs == rhs)); renders without parens around the call",
+            "return !all((vec4f(1.0, 2.0, 3.0, 4.0) == vec4f(4.0, 3.0, 2.0, 1.0)));",
+            "vector != lowers to !(all(lhs == rhs)); binary op parenthesized per wgsl-rs#159",
         ),
-        ("return all(c == d);", "locals compared via =="),
-        ("return all(e == f);", "annotated locals compared via =="),
+        ("return all((c == d));", "locals compared via =="),
+        ("return all((e == f));", "annotated locals compared via =="),
         (
-            "return all(a.xzy == b.zyx);",
+            "return all((a.xzy == b.zyx));",
             "multi-component swizzles are vectors",
         ),
         (
             "return all((a == b));",
-            "cmp_eq lowers to the raw == operator",
+            "cmp_eq lowers to the raw == operator; the monomorphized generic_eq body renders the \
+             same way",
         ),
         (
             "return any((a != b));",
             "cmp_ne lowers to the raw != operator",
-        ),
-        (
-            "return all(a == b);",
-            "monomorphized generic_eq wraps its body",
         ),
         (
             "return _1generic_eq_vec2f(a, b);",
@@ -252,7 +249,7 @@ fn vector_eq_ne_lower_to_all() {
     }
     // The mono instance `_1generic_eq_vec2f` must wrap its body.
     assert!(
-        src.contains("generic_eq") && src.contains("return all(a == b);"),
+        src.contains("generic_eq") && src.contains("return all((a == b));"),
         "monomorphized generic_eq must wrap `a == b` in all(), got: {src}"
     );
     // No raw vector == survived unwrapped at a return position.
@@ -270,12 +267,12 @@ fn scalar_comparisons_stay_raw() {
         .wgsl_source()
         .expect("render should succeed");
     assert!(
-        src.contains("return a == b;"),
-        "scalar == must stay raw, got: {src}"
+        src.contains("return (a == b);"),
+        "scalar == must stay free of the all() wrap, got: {src}"
     );
     assert!(
-        src.contains("return a.x != b.y;"),
-        "single-component swizzle != must stay raw, got: {src}"
+        src.contains("return (a.x != b.y);"),
+        "single-component swizzle != must stay free of the all() wrap, got: {src}"
     );
 }
 
@@ -285,38 +282,38 @@ fn infer_gaps_lower_to_all() {
         .wgsl_source()
         .expect("render should succeed");
     for (needle, why) in [
-        ("return all((a == b) == (c == d));", "mask == mask wraps"),
+        ("return all(((a == b) == (c == d)));", "mask == mask wraps"),
         (
             "let m = (a == b);",
             "mask local binding renders the raw mask",
         ),
-        ("return all(m == n);", "mask locals compare via =="),
+        ("return all((m == n));", "mask locals compare via =="),
         (
-            "return all(normalize(a) == normalize(b));",
+            "return all((normalize(a) == normalize(b)));",
             "vector-preserving builtins infer",
         ),
         (
-            "return all(Helpers_make(a) == Helpers_make(b));",
+            "return all((Helpers_make(a) == Helpers_make(b)));",
             "impl method calls infer",
         ),
         (
-            "return all(make() == make());",
+            "return all((make() == make()));",
             "nested module does not shadow outer symbols",
         ),
         (
-            "return all(input[0] == input[1]);",
+            "return all((input[0] == input[1]));",
             "storage linkage values infer",
         ),
         (
-            "return all(vec2f_ZERO == vec2f_ONE);",
+            "return all((vec2f_ZERO == vec2f_ONE));",
             "std vector associated consts infer",
         ),
         (
-            "return all(Helpers_ORIGIN == a);",
+            "return all((Helpers_ORIGIN == a));",
             "user impl associated consts infer",
         ),
         (
-            "return all(step(a, b) == step(c, d));",
+            "return all((step(a, b) == step(c, d)));",
             "step is a vector-preserving builtin",
         ),
     ] {

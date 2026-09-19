@@ -783,16 +783,33 @@ fn write_expr(w: &mut Writer, e: &Expr) {
             w.write(")");
         }
         Expr::Paren(inner) => {
-            w.write("(");
-            write_expr(w, inner);
-            w.write(")");
+            // A paren directly around a binary expression is redundant now
+            // that `Binary` self-parenthesizes (wgsl-rs#159): unwrap so
+            // idiomatic Rust like `!(a & b)` renders `~(a & b)`, not
+            // `~((a & b))`.
+            if matches!(&**inner, Expr::Binary { .. }) {
+                write_expr(w, inner);
+            } else {
+                w.write("(");
+                write_expr(w, inner);
+                w.write(")");
+            }
         }
+        // Parenthesized: Rust and WGSL disagree on the relative precedence
+        // of the bitwise ops and the comparisons (Rust binds `& ^ |`
+        // tighter than `== !=`; WGSL the reverse), so a flat rendering is
+        // re-parsed with a different structure — `let x = 0 & 0 == 0;`
+        // parsed as `(0 & 0) == 0` in Rust re-parses as `0 & (0 == 0)` in
+        // WGSL and fails naga validation. Parens preserve the Rust tree
+        // exactly (wgsl-rs#159).
         Expr::Binary { lhs, op, rhs } => {
+            w.write("(");
             write_expr(w, lhs);
             w.space();
             w.write(binop_str(*op));
             w.space();
             write_expr(w, rhs);
+            w.write(")");
         }
         Expr::Unary { op, expr } => {
             w.write(unop_str(*op));
@@ -1235,6 +1252,52 @@ fn write_switch(w: &mut Writer, s: &StmtSwitch) {
 mod tests {
     use super::*;
     use crate::types::{ScalarType, Type};
+
+    /// Binary expressions render fully parenthesized so the Rust parse
+    /// tree survives WGSL's different precedence table (wgsl-rs#159):
+    /// `(0 & 0) == 0` must not flatten to `0 & 0 == 0`, which WGSL
+    /// re-parses as `0 & (0 == 0)` — a type error under naga.
+    #[test]
+    fn renders_binary_parenthesized() {
+        let zero = || {
+            Expr::Lit(Lit::Int {
+                digits: "0".into(),
+                suffix: "u32".into(),
+            })
+        };
+        let expr = Expr::Binary {
+            lhs: Box::new(Expr::Binary {
+                lhs: Box::new(zero()),
+                op: BinOp::BitAnd,
+                rhs: Box::new(zero()),
+            }),
+            op: BinOp::Eq,
+            rhs: Box::new(zero()),
+        };
+        assert_eq!(render_expr(&expr), "((0u & 0u) == 0u)");
+    }
+
+    /// A binary child of a unary inherits the child's parens: `-(1 + 2)`
+    /// must not flatten to `-1 + 2`, which both worlds re-parse as
+    /// `(-1) + 2`.
+    #[test]
+    fn renders_unary_of_binary() {
+        let int = |digits: &str| {
+            Expr::Lit(Lit::Int {
+                digits: digits.into(),
+                suffix: String::new(),
+            })
+        };
+        let expr = Expr::Unary {
+            op: UnOp::Neg,
+            expr: Box::new(Expr::Binary {
+                lhs: Box::new(int("1")),
+                op: BinOp::Add,
+                rhs: Box::new(int("2")),
+            }),
+        };
+        assert_eq!(render_expr(&expr), "-(1 + 2)");
+    }
 
     /// Square matrices render as `matCxC<T>` or the shorthand `matCxCf` when
     /// `scalar_ty` is `None`.

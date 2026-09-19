@@ -399,6 +399,31 @@ pub mod binary_ops_example {
 
         vec4f(and_f, or_f, xor_f, shift_f)
     }
+
+    // Demonstrates mixed-precedence expressions (wgsl-rs#159): Rust binds
+    // `& ^ |` and shifts tighter than comparisons, WGSL binds comparisons
+    // tighter. wgsl-rs parenthesizes so the WGSL evaluates exactly as the
+    // Rust does — `flags & mask == flags` is `(flags & mask) == flags`,
+    // never `flags & (mask == flags)`.
+    #[fragment]
+    pub fn test_precedence() -> Vec4f {
+        // From the issue: `0 & 0 == 0` parses as `(0 & 0) == 0` in Rust; a
+        // flat WGSL rendering would re-parse as `0 & (0 == 0)`, a type
+        // error.
+        let flags: u32 = 12;
+        let mask: u32 = 3;
+        let eq_after_and = flags & mask == flags;
+        let cmp_after_or = flags | 1 == 13;
+        let cmp_after_xor = flags ^ 2 != 14;
+        let shift_vs_lt = 1u32 << 2u32 < 8u32;
+
+        vec4f(
+            select(0.0, 1.0, eq_after_and),
+            select(0.0, 1.0, cmp_after_or),
+            select(0.0, 1.0, cmp_after_xor),
+            select(0.0, 1.0, shift_vs_lt),
+        )
+    }
 }
 
 #[wgsl]

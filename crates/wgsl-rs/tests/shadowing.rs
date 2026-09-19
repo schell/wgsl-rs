@@ -53,7 +53,7 @@ fn nested_for_loop_body_references_loop_var_not_outer_shadow() {
         .expect("render should succeed");
     // Outer shadow renamed.
     assert!(
-        src.contains("let i_1 = i + 1u;"),
+        src.contains("let i_1 = (i + 1u);"),
         "outer shadowed `i` should be renamed to `i_1`, got: {src}"
     );
     // Loop variable keeps its name (new binding, no shadowing).
@@ -74,7 +74,7 @@ fn nested_for_loop_body_references_loop_var_not_outer_shadow() {
     );
     // Trailing expression references the outer shadowed binding.
     assert!(
-        src.contains("return sum + i_1;"),
+        src.contains("return (sum + i_1);"),
         "trailing expr should reference `i_1`, got: {src}"
     );
 }
@@ -124,7 +124,7 @@ fn nested_block_body_references_inner_binding_not_outer_shadow() {
     );
     // Trailing expression references the outer shadowed binding.
     assert!(
-        src.contains("return y + x_1;"),
+        src.contains("return (y + x_1);"),
         "trailing expr should reference `x_1`, got: {src}"
     );
 }

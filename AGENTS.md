@@ -73,6 +73,21 @@ cargo xtask ci --help          # Show CI subcommands
 cargo xtask ci pr-check        # Run all checks before pushing a PR
 ```
 
+## Operator's Manual
+
+The manual is user-facing: an mdBook in `book/` — source in `book/src`, TOC in
+`book/src/SUMMARY.md`. It documents what users see and write, not how the
+transpiler works internally — keep implementation details out unless completely
+necessary (they belong in DEVLOG.md or inline code comments). When transpiler
+behavior changes, update the matching chapter with the code (e.g. operator
+semantics live in `book/src/writing-shaders/operators.md`). Check changes
+locally with:
+
+```bash
+mdbook build book/   # same as CI (mdbook 0.5.2); output in book/book/ (gitignored)
+mdbook serve book/   # live preview
+```
+
 ## Code Style
 
 - **Imports**: Standard lib and external crates first, then `use crate::` for internal modules

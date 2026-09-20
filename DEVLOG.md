@@ -927,3 +927,31 @@ want.
 
 The `COMPUTE` default in `visibility_for` for declared-but-unused bindings
 is kept — see its doc comment for that earlier decision.
+
+### 2026-09-20: Fully parenthesized binary expressions in WGSL rendering (issue #159)
+
+**Problem:** Rust and WGSL disagree about the relative precedence of the
+comparison operators and the bitwise/shift operators. Rust binds
+`& ^ | << >>` tighter than `== != < > <= >=`; WGSL binds the reverse.
+The renderer emitted `Expr::Binary` flat (`lhs op rhs`), so a Rust tree
+parsed as `(0 & 0) == 0` was emitted as `0 & 0 == 0` — which WGSL
+re-parses as `0 & (0 == 0)`, a type error under naga (issue #159). The
+same flat-rendering class silently miscompiled `-(a + b)` into `-a + b`.
+
+**Decision:** always parenthesize. `Expr::Binary` renders as
+`(lhs op rhs)` — parens are the universal disambiguator and preserve
+the Rust parse tree exactly, in every context (child of a unary, cast,
+array indexing, or swizzle). Full parenthesization was chosen over a
+precedence-aware renderer (emitting parens only when the child's WGSL
+precedence would re-bind) because correctness on a P1 bug outweighs
+output polish; the precedence-aware variant remains a possible
+follow-up. To keep idiomatic explicit Rust parens from doubling up
+(`!(a & b)` is `Expr::Paren(Binary)`), the `Paren` arm unwraps when its
+inner expression is itself a `Binary`, which now brings its own parens.
+The `cmp_eq`/`cmp_ne` builtin lowering (#164) already parenthesized its
+emission, so the renderer is now uniformly parenthesized. Coverage:
+unit tests pin `(lhs op rhs)` and `-(a + b)`; the `binary_ops_example`
+module gained a `test_precedence` entry point with the issue repro; the
+roundtrip suite gained `bit_precedence_u32` (bitwise/shift vs
+comparison on both worlds — the logical operators do not diverge
+between Rust and WGSL, so the coverage lives in `bit_manipulation`).

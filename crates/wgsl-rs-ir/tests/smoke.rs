@@ -68,7 +68,7 @@ fn renders_simple_function() {
     };
     let wgsl = render_module(&m);
     assert!(wgsl.contains("fn double(x: f32) -> f32 {"), "got: {wgsl}");
-    assert!(wgsl.contains("return x * 2.0;"), "got: {wgsl}");
+    assert!(wgsl.contains("return (x * 2.0);"), "got: {wgsl}");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # Binary Operators
 
-Demonstrates all supported binary operators in four fragment shaders: arithmetic (`+ - * / %`), comparison (`== != < <= > >=`), logical (`&& ||`), and bitwise (`& | ^ << >>`).
+Demonstrates all supported binary operators in five fragment shaders: arithmetic (`+ - * / %`), comparison (`== != < <= > >=`), logical (`&& ||`), bitwise (`& | ^ << >>`), and mixed-precedence expressions (see [Precedence & Parentheses](../writing-shaders/operators.md#precedence--parentheses)).
 
 ## Rust Source
 
@@ -94,6 +94,31 @@ pub mod binary_ops_example {
 
         vec4f(and_f, or_f, xor_f, shift_f)
     }
+
+    // Demonstrates mixed-precedence expressions (wgsl-rs#159): Rust binds
+    // `& ^ |` and shifts tighter than comparisons, WGSL binds comparisons
+    // tighter. wgsl-rs parenthesizes so the WGSL evaluates exactly as the
+    // Rust does — `flags & mask == flags` is `(flags & mask) == flags`,
+    // never `flags & (mask == flags)`.
+    #[fragment]
+    pub fn test_precedence() -> Vec4f {
+        // From the issue: `0 & 0 == 0` parses as `(0 & 0) == 0` in Rust; a
+        // flat WGSL rendering would re-parse as `0 & (0 == 0)`, a type
+        // error.
+        let flags: u32 = 12;
+        let mask: u32 = 3;
+        let eq_after_and = flags & mask == flags;
+        let cmp_after_or = flags | 1 == 13;
+        let cmp_after_xor = flags ^ 2 != 14;
+        let shift_vs_lt = 1u32 << 2u32 < 8u32;
+
+        vec4f(
+            select(0.0, 1.0, eq_after_and),
+            select(0.0, 1.0, cmp_after_or),
+            select(0.0, 1.0, cmp_after_xor),
+            select(0.0, 1.0, shift_vs_lt),
+        )
+    }
 }
 ```
 
@@ -103,36 +128,36 @@ pub mod binary_ops_example {
 @fragment fn test_arithmetic() -> @location(0) vec4f {
     let a = vec3f(10.0, 11.0, 12.0);
     let b = 3.0;
-    let add = a + b;
-    let sub = a - b;
-    let mul = a * b;
-    let div = a / b;
-    let rem = a % b;
+    let add = (a + b);
+    let sub = (a - b);
+    let mul = (a * b);
+    let div = (a / b);
+    let rem = (a % b);
     return vec4f(add.x, sub.y, (mul * div).z, rem.z);
 }
 
 @fragment fn test_comparison() -> @location(0) vec4f {
     let a = 5;
     let b = 10;
-    let lt = a < b;
-    let le = a <= b;
-    let _gt = a > b;
-    let ge = a >= b;
-    let eq = a == b;
-    let ne = a != b;
+    let lt = (a < b);
+    let le = (a <= b);
+    let _gt = (a > b);
+    let ge = (a >= b);
+    let eq = (a == b);
+    let ne = (a != b);
     let lt_val = select(0.0, 1.0, lt);
     let eq_val = select(0.0, 1.0, eq);
     let ne_val = select(0.0, 1.0, ne);
-    let combined = select(0.0, 1.0, le && ge);
+    let combined = select(0.0, 1.0, (le && ge));
     return vec4f(lt_val, eq_val, ne_val, combined);
 }
 
 @fragment fn test_logical() -> @location(0) vec4f {
     let a = true;
     let b = false;
-    let and_result = a && b;
-    let or_result = a || b;
-    let complex = (a && b) || (!a && !b);
+    let and_result = (a && b);
+    let or_result = (a || b);
+    let complex = ((a && b) || (!a && !b));
     let and_val = select(0.0, 1.0, and_result);
     let or_val = select(0.0, 1.0, or_result);
     let complex_val = select(0.0, 1.0, complex);
@@ -142,16 +167,26 @@ pub mod binary_ops_example {
 @fragment fn test_bitwise() -> @location(0) vec4f {
     let a: u32 = 65280;
     let b: u32 = 3855;
-    let and_result = a & b;
-    let or_result = a | b;
-    let xor_result = a ^ b;
-    let shl_result = a << 4u;
-    let shr_result = a >> 4u;
-    let and_f = f32(and_result) / 65535.0;
-    let or_f = f32(or_result) / 65535.0;
-    let xor_f = f32(xor_result) / 65535.0;
-    let shift_f = f32(shl_result ^ shr_result) / 65535.0;
+    let and_result = (a & b);
+    let or_result = (a | b);
+    let xor_result = (a ^ b);
+    let shl_result = (a << 4u);
+    let shr_result = (a >> 4u);
+    let and_f = (f32(and_result) / 65535.0);
+    let or_f = (f32(or_result) / 65535.0);
+    let xor_f = (f32(xor_result) / 65535.0);
+    let shift_f = (f32((shl_result ^ shr_result)) / 65535.0);
     return vec4f(and_f, or_f, xor_f, shift_f);
+}
+
+@fragment fn test_precedence() -> @location(0) vec4f {
+    let flags: u32 = 12;
+    let mask: u32 = 3;
+    let eq_after_and = ((flags & mask) == flags);
+    let cmp_after_or = ((flags | 1) == 13);
+    let cmp_after_xor = ((flags ^ 2) != 14);
+    let shift_vs_lt = ((1u << 2u) < 8u);
+    return vec4f(select(0.0, 1.0, eq_after_and), select(0.0, 1.0, cmp_after_or), select(0.0, 1.0, cmp_after_xor), select(0.0, 1.0, shift_vs_lt));
 }
 ```
 
@@ -159,3 +194,4 @@ pub mod binary_ops_example {
 
 - Hex literals like `0xFF00` are emitted as decimal WGSL literals.
 - Short-circuit `&&`/`||` are preserved in the raw output; the naga-validated form lowers them to `if`/`else` because WGSL has no short-circuit logical operators.
+- Binary expressions render parenthesized — `(a + b)`, not `a + b` — so Rust's evaluation structure survives WGSL's different precedence rules (see [Precedence & Parentheses](../writing-shaders/operators.md#precedence--parentheses); wgsl-rs#159).

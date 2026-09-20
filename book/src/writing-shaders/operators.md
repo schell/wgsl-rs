@@ -33,13 +33,45 @@ wgsl-rs transpiles Rust operators to their WGSL equivalents. Most have a 1:1 map
 
 ## Bitwise
 
-| Rust | WGSL |
-| --- | --- |
-| `a & b` | `a & b` |
-| `a \| b` | `a \| b` |
-| `a ^ b` | `a ^ b` |
-| `a << n` | `a << n` |
-| `a >> n` | `a >> n` |
+| Rust | WGSL | Description |
+| --- | --- | --- |
+| `a & b` | `a & b` | bitwise and |
+| `a \| b` | `a \| b` | bitwise or |
+| `a ^ b` | `a ^ b` | bitwise xor |
+| `a << n` | `a << n` | shift left |
+| `a >> n` | `a >> n` | shift right |
+
+## Precedence & Parentheses
+
+Rust and WGSL disagree about the relative precedence of the bitwise and
+shift operators versus the comparisons. Rust binds `&`, `^`, `|`, `<<`
+and `>>` tighter than `==`, `!=`, `<`, `<=`, `>` and `>=`; WGSL binds the
+comparisons tighter. In Rust, `x & mask == flags` means
+`(x & mask) == flags` — while the same text in WGSL would mean
+`x & (mask == flags)`, which does not even type-check.
+
+To keep the two languages from disagreeing, wgsl-rs emits every binary
+expression parenthesized, so the generated WGSL always evaluates exactly
+like the Rust you wrote:
+
+```rust
+pub fn hit(x: u32) -> bool {
+    x & 3 == 3
+}
+```
+
+```wgsl
+fn hit(x: u32) -> bool {
+    return ((x & 3) == 3);
+}
+```
+
+Explicit grouping is preserved — for integer operands, `!(a & b)` renders as `~(a & b)`, while the parentheses remain around `a & b`. For boolean expressions, `!` remains WGSL's logical-not operator.
+redundant (`(a + b)` where `a + b` would do). That is harmless: it
+guarantees your expression structure survives WGSL's precedence rules
+exactly as you wrote it in Rust. See
+[issue #159](https://github.com/schell/wgsl-rs/issues/159) for the
+original report.
 
 ## Compound Assignment
 

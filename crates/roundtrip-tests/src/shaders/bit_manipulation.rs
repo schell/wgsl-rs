@@ -73,6 +73,32 @@ pub mod bit_extract_insert_u32 {
     }
 }
 
+/// Mixed-precedence bitwise/shift comparisons on u32 (wgsl-rs#159): Rust
+/// binds `& ^ | << >>` tighter than the comparison operators, WGSL the
+/// reverse. Each expression parses as `(x OP k) CMP k` in Rust; a flat
+/// WGSL rendering would re-parse as `x OP (k CMP k)` — a type error.
+/// The renderer parenthesizes so the two worlds agree.
+#[wgsl]
+pub mod bit_precedence_u32 {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [u32; 64]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let x = get!(INPUT)[idx];
+        get_mut!(OUTPUT)[idx] = vec4u(
+            select(0u32, 1u32, x & 3 == 3),
+            select(0u32, 1u32, x | 1 == 1),
+            select(0u32, 1u32, x ^ 2 != 2),
+            select(0u32, 1u32, x << 1u32 < 8),
+        );
+    }
+}
+
 /// Generates test input values for bit manipulation functions.
 ///
 /// Returns 64 u32 values including zero, max, powers of 2, alternating
@@ -112,7 +138,8 @@ impl RoundtripTest for BitManipulationTest {
 
     fn description(&self) -> &str {
         "count_leading_zeros, count_one_bits, count_trailing_zeros, reverse_bits, \
-         first_leading_bit, first_trailing_bit, extract_bits, insert_bits"
+         first_leading_bit, first_trailing_bit, extract_bits, insert_bits, mixed-precedence \
+         bitwise comparisons (wgsl-rs#159)"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -249,6 +276,51 @@ impl RoundtripTest for BitManipulationTest {
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
             results.push(harness::compare_u32_results(
                 "bit_extract_insert_u32",
+                gpu_u32s,
+                &cpu_u32s,
+                &label_refs,
+            ));
+        }
+
+        // --- bit_precedence_u32: mixed-precedence comparisons (wgsl-rs#159) ---
+        {
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_precedence_u32::WGSL_SOURCE)
+                    .unwrap();
+            let gpu_bytes = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+                device,
+                queue,
+                linkage: &mut linkage,
+                entry: "main",
+                input_data: input_bytes,
+                output_size,
+                workgroup_count: (1, 1, 1),
+            });
+            let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
+
+            use wgsl_rs::std::*;
+            bit_precedence_u32::INPUT.set(inputs);
+            bit_precedence_u32::OUTPUT.set([Vec4u::default(); N]);
+            dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
+                bit_precedence_u32::main(builtins.global_invocation_id);
+            });
+            let cpu_output = bit_precedence_u32::OUTPUT.get();
+            let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
+
+            let labels: Vec<String> = (0..N)
+                .flat_map(|i| {
+                    let x = inputs[i];
+                    vec![
+                        format!("(0x{x:08X} & 3) == 3"),
+                        format!("(0x{x:08X} | 1) == 1"),
+                        format!("(0x{x:08X} ^ 2) != 2"),
+                        format!("(0x{x:08X} << 1) < 8"),
+                    ]
+                })
+                .collect();
+            let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+            results.push(harness::compare_u32_results(
+                "bit_precedence_u32",
                 gpu_u32s,
                 &cpu_u32s,
                 &label_refs,

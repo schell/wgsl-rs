@@ -911,12 +911,14 @@ vertex/fragment pipeline creation then failed with "Visibility flags
 don't include the shader stage" (wgsl-rs#177).
 
 **Decision.** Visibility is now resolved per entry point by a reachability
-walk over the module's fn call graph. Every function — entry point, helper,
-and impl methods (under their mangled `Type_method` render names) — records
-its referenced identifiers, and each entry point unions in the identifiers of
-every function it transitively calls. `collect_idents_in_stmt` /
-`collect_idents_in_expr` now also record `Expr::FnCall` callee paths, so the
-walk discovers helper chains.
+walk over the module's fn call graph. Every function (entry point, helper,
+and impl methods, under their mangled `Type_method` render names) records
+its referenced value identifiers and its call edges, and each entry point
+unions in the identifiers of every function it transitively calls.
+`collect_refs_in_stmt` / `collect_refs_in_expr` record `Expr::Ident`
+references and `Expr::FnCall` callee paths in separate sets, so the walk
+discovers helper chains while a local (or parameter) shadowing a
+helper-fn name is not mistaken for a call.
 
 A whole-module per-stage scan was rejected: it would over-broaden
 visibility (a helper used only by an unused fn would still leak its stage),

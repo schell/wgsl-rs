@@ -7227,14 +7227,14 @@ mod test {
     fn parse_expr_binary() {
         let expr: syn::Expr = syn::parse_str("333 +  333").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + 333", &expr.to_wgsl());
+        assert_eq!("(333 + 333)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ident() {
         let expr: syn::Expr = syn::parse_str("333 + TIMES").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("333 + TIMES", &expr.to_wgsl());
+        assert_eq!("(333 + TIMES)", &expr.to_wgsl());
     }
 
     // Remainder operator
@@ -7242,7 +7242,7 @@ mod test {
     fn parse_expr_binary_rem() {
         let expr: syn::Expr = syn::parse_str("10 % 3").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("10 % 3", &expr.to_wgsl());
+        assert_eq!("(10 % 3)", &expr.to_wgsl());
     }
 
     // Comparison operators
@@ -7250,42 +7250,42 @@ mod test {
     fn parse_expr_binary_eq() {
         let expr: syn::Expr = syn::parse_str("a == b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a == b", &expr.to_wgsl());
+        assert_eq!("(a == b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ne() {
         let expr: syn::Expr = syn::parse_str("a != b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a != b", &expr.to_wgsl());
+        assert_eq!("(a != b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_lt() {
         let expr: syn::Expr = syn::parse_str("a < b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a < b", &expr.to_wgsl());
+        assert_eq!("(a < b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_le() {
         let expr: syn::Expr = syn::parse_str("a <= b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a <= b", &expr.to_wgsl());
+        assert_eq!("(a <= b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_gt() {
         let expr: syn::Expr = syn::parse_str("a > b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a > b", &expr.to_wgsl());
+        assert_eq!("(a > b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_ge() {
         let expr: syn::Expr = syn::parse_str("a >= b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a >= b", &expr.to_wgsl());
+        assert_eq!("(a >= b)", &expr.to_wgsl());
     }
 
     // Logical operators
@@ -7293,14 +7293,14 @@ mod test {
     fn parse_expr_binary_and() {
         let expr: syn::Expr = syn::parse_str("a && b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a && b", &expr.to_wgsl());
+        assert_eq!("(a && b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_or() {
         let expr: syn::Expr = syn::parse_str("a || b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a || b", &expr.to_wgsl());
+        assert_eq!("(a || b)", &expr.to_wgsl());
     }
 
     // Bitwise operators
@@ -7308,35 +7308,35 @@ mod test {
     fn parse_expr_binary_bitand() {
         let expr: syn::Expr = syn::parse_str("a & b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a & b", &expr.to_wgsl());
+        assert_eq!("(a & b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_bitor() {
         let expr: syn::Expr = syn::parse_str("a | b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a | b", &expr.to_wgsl());
+        assert_eq!("(a | b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_bitxor() {
         let expr: syn::Expr = syn::parse_str("a ^ b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a ^ b", &expr.to_wgsl());
+        assert_eq!("(a ^ b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_shl() {
         let expr: syn::Expr = syn::parse_str("a << b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a << b", &expr.to_wgsl());
+        assert_eq!("(a << b)", &expr.to_wgsl());
     }
 
     #[test]
     fn parse_expr_binary_shr() {
         let expr: syn::Expr = syn::parse_str("a >> b").unwrap();
         let expr = Expr::try_from(&expr).unwrap();
-        assert_eq!("a >> b", &expr.to_wgsl());
+        assert_eq!("(a >> b)", &expr.to_wgsl());
     }
 
     #[test]
@@ -9361,8 +9361,9 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         let wgsl = item.to_wgsl();
         assert!(
-            wgsl.contains("return x+1;") || wgsl.contains("return x + 1;"),
-            "Expected 'return x+1;' or 'return x + 1;' in WGSL output for implicit return, got: {}",
+            wgsl.contains("return (x + 1);"),
+            "Expected implicit return rendered as 'return (x + 1);' (binary ops parenthesize, \
+             wgsl-rs#159), got: {}",
             wgsl
         );
     }
@@ -9385,9 +9386,9 @@ mod test {
             wgsl
         );
         assert!(
-            wgsl.contains("return x*2;") || wgsl.contains("return x * 2;"),
-            "Expected implicit return converted to 'return x*2;' or 'return x * 2;' in WGSL \
-             output, got: {}",
+            wgsl.contains("return (x * 2);"),
+            "Expected implicit return converted to 'return (x * 2);' (binary ops parenthesize, \
+             wgsl-rs#159) in WGSL output, got: {}",
             wgsl
         );
     }

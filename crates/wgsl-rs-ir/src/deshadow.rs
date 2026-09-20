@@ -397,8 +397,9 @@ mod test {
             "first x unchanged, got: {wgsl}"
         );
         // Second binding renamed, but its init still references the old x.
+        // (Binary inits render parenthesized — wgsl-rs#159.)
         assert!(
-            wgsl.contains("let x_1 = x + 1.0;"),
+            wgsl.contains("let x_1 = (x + 1.0);"),
             "second x renamed to x_1 with init referencing old x, got: {wgsl}"
         );
     }

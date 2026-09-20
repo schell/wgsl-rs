@@ -710,6 +710,43 @@ pub enum BufferKind {
     Storage { read_only: bool },
 }
 
+/// The wgpu shader stage of an entry-point fn, or `None` for helper fns.
+fn stage_of(fn_attrs: &ir::FnAttrs) -> Option<wgpu::ShaderStages> {
+    match fn_attrs {
+        ir::FnAttrs::Vertex => Some(wgpu::ShaderStages::VERTEX),
+        ir::FnAttrs::Fragment => Some(wgpu::ShaderStages::FRAGMENT),
+        ir::FnAttrs::Compute { .. } => Some(wgpu::ShaderStages::COMPUTE),
+        ir::FnAttrs::None => None,
+    }
+}
+
+/// Value identifiers and call edges collected from a fn body, kept
+/// separate so a local (or parameter) that shadows a helper-fn name is
+/// not mistaken for a call (PR #190 review finding).
+#[derive(Default)]
+struct FnRefs {
+    /// `Expr::Ident` references: bindings, locals, params.
+    idents: std::collections::HashSet<String>,
+    /// `Expr::FnCall` callee paths; method calls are mangled
+    /// (`Type_method`). Only these are traversed as call-graph edges.
+    callees: std::collections::HashSet<String>,
+}
+
+/// Records a function's call-graph entry: its (possibly mangled) name
+/// and the value identifiers and call edges its body references (see
+/// [`collect_refs_in_block`]).
+fn record_fn_idents(
+    f: &ir::ItemFn,
+    name: String,
+    fn_names: &mut std::collections::HashSet<String>,
+    fn_refs: &mut std::collections::HashMap<String, FnRefs>,
+) {
+    let mut refs = FnRefs::default();
+    collect_refs_in_block(&mut refs, &f.block);
+    fn_names.insert(name.clone());
+    fn_refs.insert(name, refs);
+}
+
 /// Analyzes an IR module and returns its wgpu linkage.
 ///
 /// This is the core entry point. It expects a concrete IR module (no
@@ -741,13 +778,22 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
         buffers: Vec::new(),
     };
 
-    // First pass: collect every binding declaration and every entry
-    // point. We also walk each entry-point function body to record
-    // which binding names it references so we can compute a per-binding
-    // `ShaderStages` visibility in a second pass.
+    // First pass: collect every binding declaration, and record the
+    // identifiers used by every function — entry points and helpers
+    // alike. Per-binding `ShaderStages` visibility is then computed
+    // transitively in a second pass by walking each entry point's call
+    // graph, so bindings referenced only inside helper functions
+    // called from an entry point still carry that entry point's stage
+    // (wgsl-rs#177).
     let mut binding_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut referenced: std::collections::HashMap<String, wgpu::ShaderStages> =
-        std::collections::HashMap::new();
+    // Every function name in the module, including impl methods under
+    // their mangled render names (`Type_method`).
+    let mut fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Per-fn reference sets: value identifiers and call edges, kept
+    // separate (see [`FnRefs`]) so a local shadowing a helper-fn name
+    // is not mistaken for a call.
+    let mut fn_refs: std::collections::HashMap<String, FnRefs> = std::collections::HashMap::new();
+    let mut entry_points: Vec<(String, wgpu::ShaderStages)> = Vec::new();
 
     for item in &linkage.ir.items {
         match item {
@@ -764,24 +810,63 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 binding_names.insert(t.name.clone());
             }
             ir::Item::Fn(f) => {
-                let stage = match &f.fn_attrs {
-                    ir::FnAttrs::Vertex => wgpu::ShaderStages::VERTEX,
-                    ir::FnAttrs::Fragment => wgpu::ShaderStages::FRAGMENT,
-                    ir::FnAttrs::Compute { .. } => wgpu::ShaderStages::COMPUTE,
-                    ir::FnAttrs::None => continue,
-                };
-                let mut idents = std::collections::HashSet::new();
-                collect_idents_in_block(&mut idents, &f.block);
-                for name in idents {
-                    if binding_names.contains(&name) {
-                        referenced
-                            .entry(name)
-                            .and_modify(|s| *s |= stage)
-                            .or_insert(stage);
+                record_fn_idents(f, f.name.to_string(), &mut fn_names, &mut fn_refs);
+                if let Some(stage) = stage_of(&f.fn_attrs) {
+                    entry_points.push((f.name.to_string(), stage));
+                }
+            }
+            ir::Item::Impl(imp) => {
+                for impl_item in &imp.items {
+                    let ir::ImplItem::Fn(f) = impl_item else {
+                        continue;
+                    };
+                    // Impl methods are invoked via their mangled render
+                    // names (`Type_method`), so key the call graph by the
+                    // same mangled name.
+                    let mangled = ir::mangle::mangle(&[&imp.self_ty, &f.name]);
+                    record_fn_idents(f, mangled.clone(), &mut fn_names, &mut fn_refs);
+                    if let Some(stage) = stage_of(&f.fn_attrs) {
+                        entry_points.push((mangled, stage));
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    // Second pass: resolve per-binding stage visibility transitively.
+    // Starting from each entry point, walk the module call graph and
+    // union every reachable function's referenced bindings into the
+    // entry point's stage. The visited set guards against (spec-
+    // illegal) recursive call cycles.
+    let mut referenced: std::collections::HashMap<String, wgpu::ShaderStages> =
+        std::collections::HashMap::new();
+    for (entry_name, stage) in &entry_points {
+        let mut visited: std::collections::HashSet<&String> = std::collections::HashSet::new();
+        let mut stack: Vec<&String> = vec![entry_name];
+        while let Some(fname) = stack.pop() {
+            if !visited.insert(fname) {
+                continue;
+            }
+            let Some(refs) = fn_refs.get(fname) else {
+                continue;
+            };
+            // Bindings are attributed from value identifiers only; call
+            // edges come from `callees` only, so a same-named local can
+            // never masquerade as a call.
+            for name in &refs.idents {
+                if binding_names.contains(name) {
+                    referenced
+                        .entry(name.clone())
+                        .and_modify(|s| *s |= *stage)
+                        .or_insert(*stage);
+                }
+            }
+            for callee in &refs.callees {
+                if fn_names.contains(callee) {
+                    stack.push(callee);
+                }
+            }
         }
     }
 
@@ -999,53 +1084,54 @@ fn visibility_for(
         .unwrap_or(wgpu::ShaderStages::COMPUTE)
 }
 
-/// Walks an `ir::Block`, collecting every `Expr::Ident` name into `out`.
-fn collect_idents_in_block(out: &mut std::collections::HashSet<String>, block: &ir::Block) {
+/// Walks an `ir::Block`, collecting value identifiers and call edges
+/// into `refs` (see [`FnRefs`]).
+fn collect_refs_in_block(refs: &mut FnRefs, block: &ir::Block) {
     for stmt in &block.stmts {
-        collect_idents_in_stmt(out, stmt);
+        collect_refs_in_stmt(refs, stmt);
     }
 }
 
-fn collect_idents_in_stmt(out: &mut std::collections::HashSet<String>, stmt: &ir::Stmt) {
+fn collect_refs_in_stmt(refs: &mut FnRefs, stmt: &ir::Stmt) {
     match stmt {
         ir::Stmt::Local(l) => {
             if let Some(init) = &l.init {
-                collect_idents_in_expr(out, init);
+                collect_refs_in_expr(refs, init);
             }
         }
         ir::Stmt::Const(c) => {
-            collect_idents_in_expr(out, &c.expr);
+            collect_refs_in_expr(refs, &c.expr);
         }
         ir::Stmt::Assignment { lhs, rhs } => {
-            collect_idents_in_expr(out, lhs);
-            collect_idents_in_expr(out, rhs);
+            collect_refs_in_expr(refs, lhs);
+            collect_refs_in_expr(refs, rhs);
         }
         ir::Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            collect_idents_in_expr(out, lhs);
-            collect_idents_in_expr(out, rhs);
+            collect_refs_in_expr(refs, lhs);
+            collect_refs_in_expr(refs, rhs);
         }
         ir::Stmt::While { condition, body } => {
-            collect_idents_in_expr(out, condition);
-            collect_idents_in_block(out, body);
+            collect_refs_in_expr(refs, condition);
+            collect_refs_in_block(refs, body);
         }
         ir::Stmt::Loop { body } => {
-            collect_idents_in_block(out, body);
+            collect_refs_in_block(refs, body);
         }
         ir::Stmt::Expr { expr, .. } => {
-            collect_idents_in_expr(out, expr);
+            collect_refs_in_expr(refs, expr);
         }
         ir::Stmt::If(s) => {
-            collect_idents_in_expr(out, &s.condition);
-            collect_idents_in_block(out, &s.then_block);
+            collect_refs_in_expr(refs, &s.condition);
+            collect_refs_in_block(refs, &s.then_block);
             if let Some(else_branch) = &s.else_branch {
                 match else_branch {
-                    ir::ElseBranch::Block(b) => collect_idents_in_block(out, b),
+                    ir::ElseBranch::Block(b) => collect_refs_in_block(refs, b),
                     ir::ElseBranch::If(i) => {
-                        collect_idents_in_expr(out, &i.condition);
-                        collect_idents_in_block(out, &i.then_block);
+                        collect_refs_in_expr(refs, &i.condition);
+                        collect_refs_in_block(refs, &i.then_block);
                         if let Some(else_branch) = &i.else_branch {
                             match else_branch {
-                                ir::ElseBranch::Block(b) => collect_idents_in_block(out, b),
+                                ir::ElseBranch::Block(b) => collect_refs_in_block(refs, b),
                                 ir::ElseBranch::If(_) => {
                                     // Shouldn't recurse infinitely; the IR is
                                     // finite.
@@ -1056,26 +1142,26 @@ fn collect_idents_in_stmt(out: &mut std::collections::HashSet<String>, stmt: &ir
                 }
             }
         }
-        ir::Stmt::Return(Some(e)) => collect_idents_in_expr(out, e),
+        ir::Stmt::Return(Some(e)) => collect_refs_in_expr(refs, e),
         ir::Stmt::For(f) => {
-            collect_idents_in_expr(out, &f.from);
-            collect_idents_in_expr(out, &f.to);
-            collect_idents_in_block(out, &f.body);
+            collect_refs_in_expr(refs, &f.from);
+            collect_refs_in_expr(refs, &f.to);
+            collect_refs_in_block(refs, &f.body);
         }
         ir::Stmt::Switch(s) => {
-            collect_idents_in_expr(out, &s.selector);
+            collect_refs_in_expr(refs, &s.selector);
             for arm in &s.arms {
                 for sel in &arm.selectors {
                     match sel {
                         ir::CaseSelector::Literal(_) => {}
-                        ir::CaseSelector::Expr(e) => collect_idents_in_expr(out, e),
+                        ir::CaseSelector::Expr(e) => collect_refs_in_expr(refs, e),
                         ir::CaseSelector::Default => {}
                     }
                 }
-                collect_idents_in_block(out, &arm.body);
+                collect_refs_in_block(refs, &arm.body);
             }
         }
-        ir::Stmt::Block(b) => collect_idents_in_block(out, b),
+        ir::Stmt::Block(b) => collect_refs_in_block(refs, b),
         ir::Stmt::SlabCopy {
             src,
             src_offset,
@@ -1083,11 +1169,11 @@ fn collect_idents_in_stmt(out: &mut std::collections::HashSet<String>, stmt: &ir
             dest_offset,
             size,
         } => {
-            collect_idents_in_expr(out, src);
-            collect_idents_in_expr(out, src_offset);
-            collect_idents_in_expr(out, dest);
-            collect_idents_in_expr(out, dest_offset);
-            collect_idents_in_expr(out, size);
+            collect_refs_in_expr(refs, src);
+            collect_refs_in_expr(refs, src_offset);
+            collect_refs_in_expr(refs, dest);
+            collect_refs_in_expr(refs, dest_offset);
+            collect_refs_in_expr(refs, size);
         }
         ir::Stmt::Break
         | ir::Stmt::Continue
@@ -1097,50 +1183,63 @@ fn collect_idents_in_stmt(out: &mut std::collections::HashSet<String>, stmt: &ir
     }
 }
 
-fn collect_idents_in_expr(out: &mut std::collections::HashSet<String>, expr: &ir::Expr) {
+fn collect_refs_in_expr(refs: &mut FnRefs, expr: &ir::Expr) {
     match expr {
         ir::Expr::Ident(name) => {
-            out.insert(name.clone());
+            refs.idents.insert(name.clone());
         }
         ir::Expr::Lit(_) => {}
         ir::Expr::Array { elems } => {
             for e in elems {
-                collect_idents_in_expr(out, e);
+                collect_refs_in_expr(refs, e);
             }
         }
-        ir::Expr::Paren(e) => collect_idents_in_expr(out, e),
+        ir::Expr::Paren(e) => collect_refs_in_expr(refs, e),
         ir::Expr::Binary { lhs, rhs, .. } => {
-            collect_idents_in_expr(out, lhs);
-            collect_idents_in_expr(out, rhs);
+            collect_refs_in_expr(refs, lhs);
+            collect_refs_in_expr(refs, rhs);
         }
-        ir::Expr::Unary { expr, .. } => collect_idents_in_expr(out, expr),
+        ir::Expr::Unary { expr, .. } => collect_refs_in_expr(refs, expr),
         ir::Expr::ArrayIndexing { lhs, index } => {
-            collect_idents_in_expr(out, lhs);
-            collect_idents_in_expr(out, index);
+            collect_refs_in_expr(refs, lhs);
+            collect_refs_in_expr(refs, index);
         }
         ir::Expr::Swizzle { lhs, params, .. } => {
-            collect_idents_in_expr(out, lhs);
+            collect_refs_in_expr(refs, lhs);
             if let Some(args) = params {
                 for a in args {
-                    collect_idents_in_expr(out, a);
+                    collect_refs_in_expr(refs, a);
                 }
             }
         }
-        ir::Expr::Cast { lhs, .. } => collect_idents_in_expr(out, lhs),
-        ir::Expr::FnCall { params, .. } => {
+        ir::Expr::Cast { lhs, .. } => collect_refs_in_expr(refs, lhs),
+        ir::Expr::FnCall { path, params, .. } => {
+            // Record the callee so the linkage analysis can resolve
+            // transitive binding use through helper functions
+            // (wgsl-rs#177). Method calls are recorded under their
+            // mangled render names, matching how impl methods are
+            // keyed in the call graph.
+            match path {
+                ir::FnPath::Ident(name) => {
+                    refs.callees.insert(name.clone());
+                }
+                ir::FnPath::TypeMethod { ty, method } => {
+                    refs.callees.insert(ir::mangle::mangle(&[ty, method]));
+                }
+            }
             for p in params {
-                collect_idents_in_expr(out, p);
+                collect_refs_in_expr(refs, p);
             }
         }
         ir::Expr::Struct { fields, .. } => {
             for fv in fields {
-                collect_idents_in_expr(out, &fv.expr);
+                collect_refs_in_expr(refs, &fv.expr);
             }
         }
-        ir::Expr::FieldAccess { base, .. } => collect_idents_in_expr(out, base),
+        ir::Expr::FieldAccess { base, .. } => collect_refs_in_expr(refs, base),
         ir::Expr::TypePath { .. } => {}
-        ir::Expr::Reference(e) => collect_idents_in_expr(out, e),
-        ir::Expr::ZeroValueArray { len, .. } => collect_idents_in_expr(out, len),
+        ir::Expr::Reference(e) => collect_refs_in_expr(refs, e),
+        ir::Expr::ZeroValueArray { len, .. } => collect_refs_in_expr(refs, len),
     }
 }
 
@@ -1673,4 +1772,336 @@ fn eval_array_len(expr: &ir::Expr, module: &ir::Module) -> Option<usize> {
 
 fn eval_const_int(expr: &ir::Expr, module: &ir::Module) -> Option<usize> {
     eval_array_len(expr, module)
+}
+
+#[cfg(test)]
+mod binding_visibility {
+    //! Tests for per-binding `ShaderStages` visibility, including the
+    //! transitive helper-function case from wgsl-rs#177.
+
+    use std::borrow::Cow;
+
+    use super::*;
+
+    fn f32_ty() -> ir::Type {
+        ir::Type::Scalar(ir::ScalarType::F32)
+    }
+
+    fn zero() -> ir::Expr {
+        ir::Expr::Lit(ir::Lit::Float {
+            text: "0.0".to_string(),
+        })
+    }
+
+    fn uniform(name: &str, group: u32, binding: u32) -> ir::Item {
+        ir::Item::Uniform(ir::ItemUniform {
+            group,
+            binding,
+            name: name.to_string(),
+            ty: f32_ty(),
+            attrs: Vec::new(),
+        })
+    }
+
+    fn call(name: &str, params: Vec<ir::Expr>) -> ir::Expr {
+        ir::Expr::FnCall {
+            path: ir::FnPath::Ident(name.to_string()),
+            type_args: Vec::new(),
+            params,
+        }
+    }
+
+    fn ident(name: &str) -> ir::Expr {
+        ir::Expr::Ident(name.to_string())
+    }
+
+    fn fn_item(name: &str, fn_attrs: ir::FnAttrs, stmts: Vec<ir::Stmt>) -> ir::Item {
+        ir::Item::Fn(ir::ItemFn {
+            type_params: Vec::new(),
+            const_params: Vec::new(),
+            fn_attrs,
+            name: Cow::Owned(name.to_string()),
+            inputs: Vec::new(),
+            return_type: ir::ReturnType::Default,
+            block: ir::Block { stmts },
+            attrs: Vec::new(),
+        })
+    }
+
+    fn returns(expr: ir::Expr) -> ir::Stmt {
+        ir::Stmt::Return(Some(expr))
+    }
+
+    fn analyze(items: Vec<ir::Item>) -> WgpuLinkage {
+        analyze_ir_module(ir::Module {
+            name: "test_module",
+            items,
+            attrs: Vec::new(),
+        })
+    }
+
+    /// Looks up the analyzed visibility for the named binding.
+    fn visibility_of(linkage: &WgpuLinkage, name: &str) -> wgpu::ShaderStages {
+        for bind_group in linkage.bind_groups.values() {
+            if let Some(meta) = bind_group.bindings.iter().find(|b| b.name == name) {
+                let entry = bind_group
+                    .entries
+                    .iter()
+                    .find(|e| e.binding == meta.binding)
+                    .expect("binding layout entry exists");
+                return entry.visibility;
+            }
+        }
+        panic!("binding '{name}' not found in any bind group");
+    }
+
+    #[test]
+    fn direct_use_gets_entry_stage() {
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![returns(ident("MY_UNIFORM"))],
+            ),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::VERTEX
+        );
+    }
+
+    /// The wgsl-rs#177 repro: the binding is used only inside a helper
+    /// called from both entry points, so it must carry both stages.
+    #[test]
+    fn helper_only_use_carries_entry_point_stages() {
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            fn_item(
+                "read_uniform",
+                ir::FnAttrs::None,
+                vec![returns(ident("MY_UNIFORM"))],
+            ),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![returns(call("read_uniform", vec![]))],
+            ),
+            fn_item(
+                "frag",
+                ir::FnAttrs::Fragment,
+                vec![returns(call("read_uniform", vec![]))],
+            ),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+        );
+    }
+
+    /// A helper called only from `frag` must not leak vertex visibility.
+    #[test]
+    fn frag_only_helper_stays_fragment() {
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            fn_item(
+                "read_uniform",
+                ir::FnAttrs::None,
+                vec![returns(ident("MY_UNIFORM"))],
+            ),
+            fn_item(
+                "frag",
+                ir::FnAttrs::Fragment,
+                vec![returns(call("read_uniform", vec![]))],
+            ),
+            fn_item("vert", ir::FnAttrs::Vertex, vec![returns(zero())]),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::FRAGMENT
+        );
+    }
+
+    /// Mixed use: direct reference in one entry point, helper-only in
+    /// the other.
+    #[test]
+    fn mixed_direct_and_helper_use() {
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            fn_item(
+                "read_uniform",
+                ir::FnAttrs::None,
+                vec![returns(ident("MY_UNIFORM"))],
+            ),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![returns(ident("MY_UNIFORM"))],
+            ),
+            fn_item(
+                "frag",
+                ir::FnAttrs::Fragment,
+                vec![returns(call("read_uniform", vec![]))],
+            ),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+        );
+    }
+
+    /// Reachability must be transitive: entry point -> helper -> helper
+    /// -> binding.
+    #[test]
+    fn helper_chain_is_transitive() {
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            fn_item(
+                "inner",
+                ir::FnAttrs::None,
+                vec![returns(ident("MY_UNIFORM"))],
+            ),
+            fn_item(
+                "outer",
+                ir::FnAttrs::None,
+                vec![returns(call("inner", vec![]))],
+            ),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![returns(call("outer", vec![]))],
+            ),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::VERTEX
+        );
+    }
+
+    /// A declared-but-unused binding keeps the documented COMPUTE
+    /// default.
+    #[test]
+    fn unused_binding_defaults_to_compute() {
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            fn_item("vert", ir::FnAttrs::Vertex, vec![returns(zero())]),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::COMPUTE
+        );
+    }
+
+    /// A local (or parameter) that shadows a helper-fn name is a value
+    /// reference, not a call edge (PR #190 review finding): the helper
+    /// is never called, so its bindings must not gain this entry
+    /// point's stage.
+    #[test]
+    fn local_shadowing_fn_name_is_not_a_call_edge() {
+        let linkage = analyze(vec![
+            uniform("DATA", 0, 0),
+            fn_item(
+                "read_uniform",
+                ir::FnAttrs::None,
+                vec![returns(ident("DATA"))],
+            ),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![
+                    ir::Stmt::Local(ir::Local {
+                        mutable: false,
+                        name: "read_uniform".to_string(),
+                        ty: None,
+                        init: Some(zero()),
+                    }),
+                    returns(ident("read_uniform")),
+                ],
+            ),
+        ]);
+        // The helper is unreachable, so DATA falls back to the COMPUTE
+        // default rather than spuriously gaining VERTEX.
+        assert_eq!(visibility_of(&linkage, "DATA"), wgpu::ShaderStages::COMPUTE);
+    }
+
+    /// Same-shaped control: a real call from frag still creates the
+    /// edge (FRAGMENT), while vert's same-named local grants nothing.
+    #[test]
+    fn call_edge_survives_local_shadowing_elsewhere() {
+        let linkage = analyze(vec![
+            uniform("DATA", 0, 0),
+            fn_item(
+                "read_uniform",
+                ir::FnAttrs::None,
+                vec![returns(ident("DATA"))],
+            ),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![
+                    ir::Stmt::Local(ir::Local {
+                        mutable: false,
+                        name: "read_uniform".to_string(),
+                        ty: None,
+                        init: Some(zero()),
+                    }),
+                    returns(ident("read_uniform")),
+                ],
+            ),
+            fn_item(
+                "frag",
+                ir::FnAttrs::Fragment,
+                vec![returns(call("read_uniform", vec![]))],
+            ),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "DATA"),
+            wgpu::ShaderStages::FRAGMENT
+        );
+    }
+
+    /// Impl methods are called via mangled `Type_method` names; bindings
+    /// used inside them must be reachable from entry points that call
+    /// them.
+    #[test]
+    fn impl_method_helper_is_reachable() {
+        let method = ir::ItemFn {
+            type_params: Vec::new(),
+            const_params: Vec::new(),
+            fn_attrs: ir::FnAttrs::None,
+            name: Cow::Owned("read_uniform".to_string()),
+            inputs: Vec::new(),
+            return_type: ir::ReturnType::Default,
+            block: ir::Block {
+                stmts: vec![returns(ident("MY_UNIFORM"))],
+            },
+            attrs: Vec::new(),
+        };
+        let linkage = analyze(vec![
+            uniform("MY_UNIFORM", 0, 0),
+            ir::Item::Impl(ir::ItemImpl {
+                type_params: Vec::new(),
+                const_params: Vec::new(),
+                self_ty: "Foo".to_string(),
+                items: vec![ir::ImplItem::Fn(method)],
+                attrs: Vec::new(),
+            }),
+            fn_item(
+                "vert",
+                ir::FnAttrs::Vertex,
+                vec![returns(ir::Expr::FnCall {
+                    path: ir::FnPath::TypeMethod {
+                        ty: "Foo".to_string(),
+                        method: "read_uniform".to_string(),
+                    },
+                    type_args: Vec::new(),
+                    params: Vec::new(),
+                })],
+            ),
+        ]);
+        assert_eq!(
+            visibility_of(&linkage, "MY_UNIFORM"),
+            wgpu::ShaderStages::VERTEX
+        );
+    }
 }

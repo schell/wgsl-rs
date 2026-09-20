@@ -66,8 +66,7 @@ fn hit(x: u32) -> bool {
 }
 ```
 
-Parentheses you write yourself are kept — `!(a & b)` stays
-`!(a & b)` — and the generated code may contain parentheses that look
+Explicit grouping is preserved — for integer operands, `!(a & b)` renders as `~(a & b)`, while the parentheses remain around `a & b`. For boolean expressions, `!` remains WGSL's logical-not operator.
 redundant (`(a + b)` where `a + b` would do). That is harmless: it
 guarantees your expression structure survives WGSL's precedence rules
 exactly as you wrote it in Rust. See

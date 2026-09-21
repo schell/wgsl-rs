@@ -510,7 +510,7 @@ GitHub issue #131.
 unsupported — the proc-macro rejected any `Expr::Path` carrying a `qself`
 with "QSelf unsupported" (in both the `Expr::Call` and `Expr::Path` branches).
 Callers therefore had to route complex-type method calls through a generic
-function (`fn go<T: Trait>() -> T { T::zero() }` then `go::<[u32; 4]()`), an
+function (`fn go<T: Trait>() -> T { T::zero() }` then `go::<[u32; 4]>()`), an
 awkward indirection for what is a single direct call.
 
 **Decision:** Handle QSelf in both parse branches by reusing
@@ -522,6 +522,14 @@ IR, monomorphization, substitution, and render layers need no changes — they
 already treat `ty` as an opaque mangled string. This guarantees
 `<[u32; 4]>::zero()` and `impl Zeroable for [u32; 4] { fn zero() ... }`
 produce the same WGSL identifier and thus resolve to the same function.
+
+**Bare type parameters:** `<T>::method()` inside a generic function (where
+`T` is a type parameter, not a concrete type) must keep `T` as the ident
+verbatim rather than mangling it: `mangle_type` lowercases `Type::TypeParam`
+on the assumption that instantiations are fully resolved, but monomorphization
+substitution keys on the param name as written. Preserving the ident lets
+`<T>::method()` be rewritten to `u32_method()` exactly like the plain
+`T::method()` form.
 
 **Rejection of `<T as Trait>::...`:** The `as Trait` disambiguation form is
 rejected with a helpful error. Trait impls are matched by self type only

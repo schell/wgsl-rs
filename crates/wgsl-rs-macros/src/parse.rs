@@ -3179,7 +3179,17 @@ fn parse_qself_ty(qself: &syn::QSelf, ctx: &ParseContext) -> Result<Ident, Error
         .fail();
     }
     let ty = Type::parse(qself.ty.as_ref(), ctx)?;
-    let mangled = mangle_type(&ty)?;
+    // A bare type parameter (e.g. `<T>::method()` inside a generic function)
+    // must keep its original identifier: `mangle_type` lowercases
+    // `Type::TypeParam` (it assumes fully resolved instantiations), while
+    // monomorphization substitution keys on the param name as written (e.g.
+    // "T"). Mangling here would emit a call to `t_method()` that substitution
+    // never rewrites. Every other type is mangled as usual so it resolves to
+    // the impl block's `Type_method` WGSL function.
+    let mangled = match ty {
+        Type::TypeParam { ident, .. } => ident.to_string(),
+        other => mangle_type(&other)?,
+    };
     Ok(Ident::new(&mangled, qself.ty.span()))
 }
 

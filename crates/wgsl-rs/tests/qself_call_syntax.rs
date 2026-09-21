@@ -77,3 +77,47 @@ fn qself_array_call_runs_on_cpu() {
     assert_eq!(qself_call::direct_scalar_zero(), 0);
     assert_eq!(qself_call::direct_struct_default(), 7);
 }
+
+#[wgsl(skip_validation)]
+mod generic_qself {
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    impl Zeroable for u32 {
+        fn zero() -> u32 {
+            0
+        }
+    }
+
+    /// QSelf call on a *type parameter*: `<T>::zero()` inside a generic
+    /// function must be rewritten by monomorphization exactly like the
+    /// plain `T::zero()` form (substitution keys on the param name "T",
+    /// so the qself ty ident must not be mangled/lowercased to "t").
+    pub fn via_qself<T: Zeroable>() -> T {
+        <T>::zero()
+    }
+
+    pub fn caller() -> u32 {
+        via_qself::<u32>()
+    }
+}
+
+#[test]
+fn qself_type_param_call_transpiles() {
+    let src = generic_qself::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        !src.contains("t_zero"),
+        "generic `<T>::zero()` must be substituted, not left as a mangled `t_zero()` call, \
+         got:\n{src}"
+    );
+    assert!(
+        src.contains("u32_zero"),
+        "generic `<T>::zero()` should resolve to `u32_zero` after monomorphization, got:\n{src}"
+    );
+}
+
+#[test]
+fn qself_type_param_call_runs_on_cpu() {
+    assert_eq!(generic_qself::caller(), 0);
+}

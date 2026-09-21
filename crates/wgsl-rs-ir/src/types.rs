@@ -1033,6 +1033,11 @@ pub enum Item {
 impl Module {
     /// Renders this IR module to its WGSL source text.
     ///
+    /// Rendering first applies the type-directed literal suffix pass
+    /// ([`crate::suffix_module`]) to a clone of this module, so unsuffixed
+    /// integer literals are normalized; [`crate::render_module`] itself
+    /// stays a pure emitter.
+    ///
     /// This is the canonical (and only) WGSL emitter in the project. The
     /// IR may contain `Type::TypeParam`s (e.g. a template module that has
     /// not yet been monomorphized); in that case `render_module` emits
@@ -1044,6 +1049,8 @@ impl Module {
     /// For methods that need access to `wgsl-rs` types (e.g. `WgpuLinkage`),
     /// see the `wgsl_rs::linkage::wgpu::IrModuleExt` extension trait.
     pub fn wgsl_source(&self) -> String {
-        crate::render_module(self)
+        let mut module = self.clone();
+        crate::suffix_module(&mut module);
+        crate::render_module(&module)
     }
 }

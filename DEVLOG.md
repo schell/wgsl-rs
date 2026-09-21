@@ -999,3 +999,26 @@ f32 context without an explicit conversion call. Ordering with deshadow:
 suffix runs after — deshadow is the name authority (it renames declarations
 and uses consistently, so either order is correct, but one order is
 specified).
+
+### 2026-09-21: Suffix pass coverage extended to `instantiate` and `Module::wgsl_source` (review follow-up)
+
+**Problem (review of the #145 PR):** the deshadow-slot wiring covered
+`Source::wgsl_source` and the linkage path, but three public paths still
+emitted un-normalized IR: the macro-emitted `instantiate::<…>()`
+returns a concrete module whose callers (and the generated validation
+tests, which call `render_module` directly) rendered bare literals;
+`Module::wgsl_source` was a pure render of possibly-substituted IR; and
+each source chunk was suffixed in isolation, so calls to *imported* user
+functions had no signature to anchor from.
+
+**Decision:** the emitted `instantiate` applies `suffix_module` after
+its substitutions (builder.rs) — so every module flowing out of the
+generic path is normalized; `Module::wgsl_source` clones, suffixes, and
+renders (`render_module` itself stays a pure emitter, per the original
+placement decision); and `Source::collect` threads a fn-signature
+accumulator (`ir::fn_signatures` / `ir::suffix_module_with_imports`)
+through its depth-first import walk — imports render first, so every
+source suffixes with all ancestor signatures seeded, and a caller's own
+signatures shadow imported ones, matching Rust name resolution. Impl
+associated consts (`ImplItem::Const`) anchor from their declared types
+like module-level consts.

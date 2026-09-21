@@ -901,3 +901,106 @@ fn abstract_vec_constructor_leaves_literals_bare() {
     let wgsl = render(&mut m);
     assert!(wgsl.contains("vec3(0, 1, 2)"), "got: {wgsl}");
 }
+
+// ===== Review-fix coverage =====
+
+#[test]
+fn impl_associated_const_is_anchored() {
+    // `impl Counter { const MAX: u32 = 42; }` — associated consts anchor
+    // from their declared type, like module-level consts.
+    let mut m = module(vec![Item::Impl(ItemImpl {
+        type_params: vec![],
+        const_params: vec![],
+        self_ty: "Counter".to_string(),
+        items: vec![ImplItem::Const(ItemConst {
+            name: "MAX".to_string(),
+            ty: u32_ty(),
+            expr: bare_int("42"),
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    })]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("42u"), "got: {wgsl}");
+}
+
+#[test]
+fn imported_fn_signatures_anchor_call_args() {
+    // Module A defines `helper(x: u32)`; module B calls `helper(0)`.
+    // Seeding B's pass with A's signatures (as `Source::collect` threads
+    // them through its depth-first import walk) suffixes the argument.
+    let helper = module(vec![fn_item(
+        "helper",
+        vec![arg("x", u32_ty())],
+        returns(u32_ty()),
+        vec![Stmt::Return(Some(ident("x")))],
+    )]);
+    let sigs = fn_signatures(&helper);
+    assert_eq!(
+        sigs.get("helper"),
+        Some(&vec![u32_ty()]),
+        "fn_signatures should harvest free-fn params"
+    );
+
+    let mut caller = module(vec![fn_item(
+        "caller",
+        vec![],
+        ReturnType::Default,
+        vec![
+            local("y", None, Some(call("helper", vec![bare_int("0")]))),
+            Stmt::Return(None),
+        ],
+    )]);
+    suffix_module_with_imports(&mut caller, &sigs);
+    let wgsl = render_module(&caller);
+    assert!(wgsl.contains("helper(0u)"), "got: {wgsl}");
+}
+
+#[test]
+fn own_fn_signatures_shadow_imported_ones() {
+    // An imported `helper(x: u32)` is shadowed by the caller's own
+    // `helper(x: i32)` — Rust name resolution wins.
+    let imported = module(vec![fn_item(
+        "helper",
+        vec![arg("x", u32_ty())],
+        returns(u32_ty()),
+        vec![Stmt::Return(Some(ident("x")))],
+    )]);
+    let sigs = fn_signatures(&imported);
+
+    let mut caller = module(vec![
+        fn_item(
+            "helper",
+            vec![arg("x", i32_ty())],
+            returns(i32_ty()),
+            vec![Stmt::Return(Some(ident("x")))],
+        ),
+        fn_item(
+            "caller",
+            vec![],
+            ReturnType::Default,
+            vec![
+                local("y", None, Some(call("helper", vec![bare_int("0")]))),
+                Stmt::Return(None),
+            ],
+        ),
+    ]);
+    suffix_module_with_imports(&mut caller, &sigs);
+    let wgsl = render_module(&caller);
+    assert!(wgsl.contains("helper(0i)"), "got: {wgsl}");
+}
+
+#[test]
+fn module_wgsl_source_applies_suffixing() {
+    // `Module::wgsl_source` normalizes literals; `render_module` on its
+    // own stays a pure emitter.
+    let m = module(vec![fn_item(
+        "f",
+        vec![],
+        returns(u32_ty()),
+        vec![Stmt::Return(Some(bare_int("0")))],
+    )]);
+    assert!(render_module(&m).contains("return 0;"), "got: {m:?}");
+    let wgsl = m.wgsl_source();
+    assert!(wgsl.contains("return 0u;"), "got: {wgsl}");
+}

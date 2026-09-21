@@ -192,12 +192,14 @@ impl Source {
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
+        let mut fn_sigs: HashMap<String, Vec<ir::Type>> = HashMap::new();
         self.collect(
             &mut out,
             &mut visited_sources,
             &mut seen,
             None,
             &mut needs_tier1,
+            &mut fn_sigs,
         )?;
         // WGSL requires `enable` directives at the very start of the
         // translation unit, before any other declarations. Since `collect`
@@ -220,6 +222,10 @@ impl Source {
     /// mangled_const_args)` 4-tuples to deduplicate cross-source template
     /// instantiations. Including const args ensures `foo::<4>` and
     /// `foo::<8>` aren't incorrectly deduplicated.
+    /// `fn_sigs` accumulates every rendered source's user-function
+    /// signatures (callee name → parameter types), so later sources can
+    /// anchor call arguments into imported functions via
+    /// [`ir::suffix_module_with_imports`].
     fn collect(
         &self,
         out: &mut String,
@@ -227,11 +233,12 @@ impl Source {
         seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
         needs_tier1: &mut bool,
+        fn_sigs: &mut HashMap<String, Vec<ir::Type>>,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
             if visited_sources.insert(m.id) {
-                m.collect(out, visited_sources, seen, None, needs_tier1)?;
+                m.collect(out, visited_sources, seen, None, needs_tier1, fn_sigs)?;
             }
         }
 
@@ -241,7 +248,13 @@ impl Source {
             ir::substitute_types(&mut ir_module, s);
         }
         ir::deshadow_module(&mut ir_module);
-        ir::suffix_module(&mut ir_module);
+        // Make this source's own signatures available to later sources,
+        // then suffix with every ancestor's signatures seeded — calls to
+        // imported functions anchor their arguments, and a caller's own
+        // signatures shadow imported ones (matching Rust name
+        // resolution).
+        fn_sigs.extend(ir::fn_signatures(&ir_module));
+        ir::suffix_module_with_imports(&mut ir_module, fn_sigs);
         if ir::items_need_tier1_extension(&ir_module.items) {
             *needs_tier1 = true;
         }
@@ -540,6 +553,13 @@ mod test {
             "got:\n{source}"
         );
         assert!(source.contains("fn main()"), "got:\n{source}");
+        // Cross-source call arguments are suffixed via the fn-signature
+        // accumulator threaded through `collect` (module `c` imports
+        // `add_three_to_x_minus_y` from module `b`).
+        assert!(
+            source.contains("add_three_to_x_minus_y(1337u, 666u)"),
+            "got:\n{source}"
+        );
 
         // Verify that imported source outputs are not duplicated.
         // Source C imports B, which imports A. Source A's `THREE` const

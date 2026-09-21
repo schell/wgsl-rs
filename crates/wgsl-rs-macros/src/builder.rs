@@ -347,6 +347,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
                 #(#const_subst_entries),*
             ].into_iter().collect();
             #ir_p::substitute_consts(&mut __ir_module, &__const_subst);
+            #ir_p::suffix_module(&mut __ir_module);
             __ir_module
         }
     }

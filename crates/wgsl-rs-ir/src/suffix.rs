@@ -27,9 +27,10 @@
 //! Like [`crate::deshadow`], this is a whole-module IR mutation intended
 //! to run on freshly built and substituted IR, after deshadowing and
 //! immediately before rendering (see the DEVLOG entry for 2026-09-21).
-//! Call-argument propagation — builtin signatures and user function
-//! parameter types — extends the anchor set in a follow-up pass; this
-//! module owns the core and composite propagation walk.
+//! Call-argument propagation is part of this pass: user function
+//! signatures (seeded across sources via [`fn_signatures`] /
+//! [`suffix_module_with_imports`]), same-type builtin groups (`select` /
+//! `min` / `max` / `clamp`), and vector constructors.
 //!
 //! Deliberate exclusions:
 //!
@@ -65,6 +66,49 @@ pub fn suffix_module(module: &mut Module) {
 /// [`Module`] wrapper.
 pub fn suffix_items(items: &mut [Item]) {
     SuffixPass::default().walk_items(items);
+}
+
+/// Like [`suffix_module`], but seeds the user-function signature registry
+/// with `imports` — signatures harvested from other sources via
+/// [`fn_signatures`] — so calls to imported functions anchor their
+/// arguments too. The module's own signatures shadow imported ones,
+/// matching Rust name resolution.
+pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String, Vec<Type>>) {
+    SuffixPass {
+        fn_sigs: imports.clone(),
+        ..SuffixPass::default()
+    }
+    .walk_module(module);
+}
+
+/// Harvest the module's user-function signatures — callee name → declared
+/// parameter types — for seeding [`suffix_module_with_imports`] on a
+/// source that imports this module. Free functions key by their name;
+/// impl methods key by their mangled render name.
+pub fn fn_signatures(module: &Module) -> HashMap<String, Vec<Type>> {
+    let mut sigs = HashMap::new();
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                sigs.insert(
+                    f.name.to_string(),
+                    f.inputs.iter().map(|a| a.ty.clone()).collect(),
+                );
+            }
+            Item::Impl(imp) => {
+                for impl_item in &imp.items {
+                    if let ImplItem::Fn(f) = impl_item {
+                        sigs.insert(
+                            mangle(&[imp.self_ty.as_str(), &f.name]),
+                            f.inputs.iter().map(|a| a.ty.clone()).collect(),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    sigs
 }
 
 /// A collected struct definition: type parameter names plus fields as
@@ -146,8 +190,14 @@ impl SuffixPass {
                 Item::Fn(f) => self.walk_fn(f),
                 Item::Impl(imp) => {
                     for impl_item in &mut imp.items {
-                        if let ImplItem::Fn(f) = impl_item {
-                            self.walk_fn(f);
+                        match impl_item {
+                            ImplItem::Fn(f) => self.walk_fn(f),
+                            // Associated consts anchor from their
+                            // declared type, like module-level consts.
+                            ImplItem::Const(c) => self.expect(&mut c.expr, Some(&c.ty)),
+                            // Associated type aliases carry no
+                            // expression.
+                            ImplItem::Type(_) => {}
                         }
                     }
                 }

@@ -172,12 +172,25 @@ mod compound_qself {
         <Pair<T>>::zero()
     }
 
+    /// QSelf call on a *nested* compound type: `<[[T; 4]; 4]>::zero()`.
+    /// The type parameter hides inside an escaped mangled component
+    /// (`array__2array_t_4_4` un-mangles to `[array, array_t_4, 4]`), so
+    /// substitution must recurse into the nested component rather than
+    /// matching only top-level ones.
+    pub fn via_nested_array_qself<T: Zeroable>() -> [[T; 4]; 4] {
+        <[[T; 4]; 4]>::zero()
+    }
+
     pub fn array_caller() -> [u32; 4] {
         via_array_qself::<u32>()
     }
 
     pub fn struct_caller() -> Pair<u32> {
         via_struct_qself::<u32>()
+    }
+
+    pub fn nested_array_caller() -> [[u32; 4]; 4] {
+        via_nested_array_qself::<u32>()
     }
 }
 
@@ -204,6 +217,11 @@ fn qself_compound_type_call_transpiles() {
         "compound `<Pair<T>>::zero()` should resolve to the struct-instantiated `Pair_u32_zero` \
          after monomorphization, got:\n{src}"
     );
+    assert!(
+        src.contains("array__2array_u32_4_4"),
+        "nested `<[[T; 4]; 4]>::zero()` should resolve to the array-impl instantiated \
+         `array__2array_u32_4_4_zero` after monomorphization, got:\n{src}"
+    );
 }
 
 #[test]
@@ -211,4 +229,6 @@ fn qself_compound_type_call_runs_on_cpu() {
     assert_eq!(compound_qself::array_caller(), [0u32; 4]);
     let p = compound_qself::struct_caller();
     assert_eq!((p.a, p.b), (0u32, 0u32));
+    let nested = compound_qself::nested_array_caller();
+    assert_eq!(nested, [[0u32; 4]; 4]);
 }

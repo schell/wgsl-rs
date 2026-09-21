@@ -1919,6 +1919,8 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
 /// the ident into its components, replaces any component matching a
 /// substitution key (compared case-insensitively, since the mangler
 /// lowercased the param) with the concrete type's mangling, and re-mangles.
+/// Components that are themselves nested manglings (e.g. `Pair_t` inside
+/// `Pair__1Pair_t`, from `<Pair<Pair<T>>>::method()`) are recursed into.
 /// For `T = u32` this turns `array_t_4` into `array_u32_4` and `Pair_t`
 /// into `Pair_u32` — the latter exactly matching the name
 /// [`mangle_name`] gives the instantiated struct's impl methods.
@@ -1939,6 +1941,17 @@ fn substitute_mangled_ident(mangled: &str, subst: &BTreeMap<String, Type>) -> Op
             .find(|(param, _)| param.to_lowercase() == lower)
         {
             substituted.push(mangle_type(concrete).ok()?);
+            changed = true;
+        } else if component.contains('_')
+            && let Some(nested) = substitute_mangled_ident(component, subst)
+        {
+            // A component that itself contains underscores is the mangling
+            // of a *nested* type (e.g. `Pair_t` inside `Pair__1Pair_t`,
+            // from `Pair<Pair<T>>`). Recurse so parameters hidden inside
+            // it are substituted too. Components without underscores can't
+            // hide structure, so they are left alone — this also gives the
+            // recursion its base case.
+            substituted.push(nested);
             changed = true;
         } else {
             substituted.push(component.clone());

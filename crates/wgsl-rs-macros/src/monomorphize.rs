@@ -2051,7 +2051,8 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             // written (e.g. "T"), so mangling must not destroy a
             // parameter's identity. This arm is reachable for qself types
             // containing parameters (e.g. `<[T; 4]>::zero()` →
-            // `array_T_4`, handled by `substitute_mangled_ident`); keeping
+            // `array_T_4`), which `SubstituteVisitor` re-derives from the
+            // retained `qself_ty` structure after substitution; keeping
             // the case intact means a concrete ident that merely resembles
             // a parameter's spelling (a struct `t` vs a param `T`) stays
             // distinguishable.

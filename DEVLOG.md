@@ -525,23 +525,32 @@ produce the same WGSL identifier and thus resolve to the same function.
 
 **Bare type parameters:** `<T>::method()` inside a generic function (where
 `T` is a type parameter, not a concrete type) must keep `T` as the ident
-verbatim rather than mangling it: `mangle_type` lowercases `Type::TypeParam`
-on the assumption that instantiations are fully resolved, but monomorphization
-substitution keys on the param name as written. Preserving the ident lets
+verbatim rather than mangling it: monomorphization substitution keys on the
+param name as written. For the same reason `mangle_type`'s `Type::TypeParam`
+arm preserves the identifier's case — it was previously lowercased as a
+"shouldn't happen" fallback, but QSelf types containing parameters make that
+arm reachable, and lowercasing would destroy a parameter's identity
+(a struct `t` and a param `T` mangle identically). Preserving the ident lets
 `<T>::method()` be rewritten to `u32_method()` exactly like the plain
 `T::method()` form.
 
 **Compound types containing parameters:** a qself type that *contains* a
 type parameter but is not itself a bare parameter — `<[T; 4]>::zero()` or
-`<Pair<T>>::zero()` — is still eagerly mangled (`array_t_4`, `Pair_t`), and
-that mangled ident matches no substitution key. `SubstituteVisitor` gained a
+`<Pair<T>>::zero()` — is eagerly mangled (`array_T_4`, `Pair_T`), and that
+mangled ident matches no substitution key. `SubstituteVisitor` gained a
 structural fallback for `FnPath::TypeMethod` and `Expr::TypePath`: on a
 flat-lookup miss, `substitute_mangled_ident` unmangles the ident, replaces
-any component matching a substitution key (case-insensitively — the mangler
-lowercased the param), and re-mangles. `array_t_4` → `array_u32_4` for
-`T = u32`; `Pair_t` → `Pair_u32`, exactly matching the name `mangle_name`
-gives the instantiated struct's impl methods. Instantiation of the target
-impl/struct still piggybacks on the concrete type appearing in a type
+any component *exactly* matching a substitution key with the concrete
+type's mangling, and re-mangles — recursing into components that are
+themselves nested manglings (e.g. `array_T_4` inside `array__2array_T_4_4`
+from `<[[T; 4]; 4]>::zero()`; components without underscores are the
+recursion's base case). Exact matching is what makes it sound: since
+`mangle_type` preserves parameter case, a concrete ident spelled like a
+parameter's lowercase (`t` vs `T`) is never substituted. `array_T_4` →
+`array_u32_4` for `T = u32`; `Pair_T` → `Pair_u32`, exactly matching the
+name `mangle_name` gives the instantiated struct's impl methods.
+Instantiation of the target impl/struct still piggybacks on the concrete
+type appearing in a type
 position (signature or local) — the same constraint the pre-existing
 `T::method()` form has.
 

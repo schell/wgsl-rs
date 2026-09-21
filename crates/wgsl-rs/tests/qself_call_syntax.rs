@@ -198,9 +198,9 @@ mod compound_qself {
 fn qself_compound_type_call_transpiles() {
     let src = compound_qself::WGSL_SOURCE.wgsl_source().unwrap();
     assert!(
-        !src.contains("array_t_4"),
+        !src.contains("array_T_4"),
         "compound `<[T; 4]>::zero()` must be substituted, not left as the generic mangled \
-         `array_t_4_zero()`, got:\n{src}"
+         `array_T_4_zero()`, got:\n{src}"
     );
     assert!(
         src.contains("_2array_u32_4_zero"),
@@ -208,9 +208,9 @@ fn qself_compound_type_call_transpiles() {
          got:\n{src}"
     );
     assert!(
-        !src.contains("Pair_t"),
+        !src.contains("Pair_T"),
         "compound `<Pair<T>>::zero()` must be substituted, not left as the generic mangled \
-         `Pair_t_zero()`, got:\n{src}"
+         `Pair_T_zero()`, got:\n{src}"
     );
     assert!(
         src.contains("Pair_u32_zero"),
@@ -231,4 +231,58 @@ fn qself_compound_type_call_runs_on_cpu() {
     assert_eq!((p.a, p.b), (0u32, 0u32));
     let nested = compound_qself::nested_array_caller();
     assert_eq!(nested, [[0u32; 4]; 4]);
+}
+
+#[wgsl(skip_validation)]
+mod qself_case_sensitivity {
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    /// A concrete struct whose name is the *lowercase spelling* of a type
+    /// parameter used in the same module (`T`). Substitution must match
+    /// components exactly, so `t` is never confused with `T`.
+    #[allow(non_camel_case_types)] // lowercase is the point of this test
+    pub struct t {
+        pub x: u32,
+    }
+
+    impl Zeroable for t {
+        fn zero() -> t {
+            t { x: 0 }
+        }
+    }
+
+    impl Zeroable for u32 {
+        fn zero() -> u32 {
+            0
+        }
+    }
+
+    /// Direct QSelf call on the concrete lowercase struct `t`, from
+    /// inside a generic function whose parameter is `T`. The call must
+    /// resolve to the concrete impl (`t_zero`), not to the param-
+    /// substituted form (`u32_zero`).
+    pub fn concrete_lowercase_qself<T: Zeroable>(seed: T) -> t {
+        let _keep: T = seed;
+        <t>::zero()
+    }
+
+    pub fn caller() -> u32 {
+        concrete_lowercase_qself::<u32>(0).x
+    }
+}
+
+#[test]
+fn qself_case_sensitive_components_transpiles() {
+    let src = qself_case_sensitivity::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        src.contains("return t_zero();"),
+        "concrete `<t>::zero()` must resolve to the concrete `t_zero` impl, got:\n{src}"
+    );
+}
+
+#[test]
+fn qself_case_sensitive_components_runs_on_cpu() {
+    assert_eq!(qself_case_sensitivity::caller(), 0);
 }

@@ -1910,36 +1910,34 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
 }
 
 /// Rewrite a mangled qself type ident whose components contain type
-/// parameters (e.g. `array_t_4` from `<[T; 4]>::zero()`), applying the
+/// parameters (e.g. `array_T_4` from `<[T; 4]>::zero()`), applying the
 /// substitution map component-wise.
 ///
-/// `parse_qself_ty` mangles the qself type eagerly, and [`mangle_type`]
-/// lowercases `Type::TypeParam` idents, so the flat `subst.get(ty)` lookup
-/// (keyed on the param name as written, e.g. "T") misses. This un-mangles
-/// the ident into its components, replaces any component matching a
-/// substitution key (compared case-insensitively, since the mangler
-/// lowercased the param) with the concrete type's mangling, and re-mangles.
-/// Components that are themselves nested manglings (e.g. `Pair_t` inside
-/// `Pair__1Pair_t`, from `<Pair<Pair<T>>>::method()`) are recursed into.
-/// For `T = u32` this turns `array_t_4` into `array_u32_4` and `Pair_t`
-/// into `Pair_u32` — the latter exactly matching the name
+/// `parse_qself_ty` mangles the qself type eagerly, so the flat
+/// `subst.get(ty)` lookup (keyed on the param name as written, e.g. "T")
+/// misses for compound types. This un-mangles the ident into its
+/// components, replaces any component exactly matching a substitution key
+/// with the concrete type's mangling, and re-mangles. Components that are
+/// themselves nested manglings (e.g. `array_T_4` inside
+/// `array__2array_T_4_4`, from `<[[T; 4]; 4]>::method()`) are recursed
+/// into. For `T = u32` this turns `array_T_4` into `array_u32_4` and
+/// `Pair_T` into `Pair_u32` — the latter exactly matching the name
 /// [`mangle_name`] gives the instantiated struct's impl methods.
 ///
-/// Returns `None` when no component matched, leaving the ident untouched.
+/// Matching is exact, which is what makes it sound: [`mangle_type`]
+/// preserves type-parameter case, so a concrete ident that merely
+/// resembles a parameter's spelling (a struct `t` vs a param `T`) is never
+/// substituted. The residual ambiguity — a type parameter spelled
+/// identically to a concrete ident — is inherent to the mangled-string
+/// representation and predates QSelf support.
 ///
-/// **Known limitation:** the case-insensitive match means a component that
-/// merely resembles a lowercased type-param name (e.g. a concrete ident
-/// named `t` while a `T` param is in scope) is substituted anyway.
+/// Returns `None` when no component matched, leaving the ident untouched.
 fn substitute_mangled_ident(mangled: &str, subst: &BTreeMap<String, Type>) -> Option<String> {
     let components = unmangle(mangled)?;
     let mut substituted: Vec<String> = Vec::with_capacity(components.len());
     let mut changed = false;
     for component in &components {
-        let lower = component.to_lowercase();
-        if let Some((_, concrete)) = subst
-            .iter()
-            .find(|(param, _)| param.to_lowercase() == lower)
-        {
+        if let Some(concrete) = subst.get(component) {
             substituted.push(mangle_type(concrete).ok()?);
             changed = true;
         } else if component.contains('_')
@@ -2085,8 +2083,15 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             mangle(&["ptr", space, &elem_m])
         }
         Type::TypeParam { ident } => {
-            // This shouldn't happen for fully resolved instantiations
-            ident.to_string().to_lowercase()
+            // Case-preserving: substitution keys on the param name as
+            // written (e.g. "T"), so mangling must not destroy a
+            // parameter's identity. This arm is reachable for qself types
+            // containing parameters (e.g. `<[T; 4]>::zero()` →
+            // `array_T_4`, handled by `substitute_mangled_ident`); keeping
+            // the case intact means a concrete ident that merely resembles
+            // a parameter's spelling (a struct `t` vs a param `T`) stays
+            // distinguishable.
+            ident.to_string()
         }
         Type::Phantom { elem, .. } => mangle(&["phantom", &mangle_type(elem)?]),
         Type::AssocType { ty, member, .. } => mangle(&[&mangle_type(ty)?, &member.to_string()]),

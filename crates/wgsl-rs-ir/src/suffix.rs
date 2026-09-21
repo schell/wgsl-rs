@@ -161,9 +161,10 @@ struct SuffixPass {
     /// types. Free functions key by their name; impl methods key by
     /// their mangled render name (`mangle(&[self_ty, method])`).
     fn_sigs: HashMap<String, Vec<Type>>,
-    /// Module-level `const` item types by name, consulted as the
-    /// fallback of scope lookup.
-    consts: HashMap<String, Type>,
+    /// Module-level global names → types: `const` items and linkage
+    /// declarations (uniforms, storage, workgroup vars), consulted as
+    /// the fallback of scope lookup.
+    globals: HashMap<String, Type>,
 }
 
 impl SuffixPass {
@@ -199,7 +200,19 @@ impl SuffixPass {
                     );
                 }
                 Item::Const(c) => {
-                    self.consts.insert(c.name.clone(), c.ty.clone());
+                    self.globals.insert(c.name.clone(), c.ty.clone());
+                }
+                // Linkage declarations are lowered to `Expr::Ident` on
+                // use (`get_mut!(OUTPUT)`), so their declared types
+                // must be in the lookup environment.
+                Item::Uniform(u) => {
+                    self.globals.insert(u.name.clone(), u.ty.clone());
+                }
+                Item::Storage(s) => {
+                    self.globals.insert(s.name.clone(), s.ty.clone());
+                }
+                Item::Workgroup(w) => {
+                    self.globals.insert(w.name.clone(), w.ty.clone());
                 }
                 Item::Impl(imp) => {
                     for impl_item in &imp.items {
@@ -428,15 +441,16 @@ impl SuffixPass {
     }
 
     /// Look up the declared type of `name`, innermost scope first.
-    /// Module-level consts are the fallback after every scope misses;
-    /// locals, parameters, and function-body consts shadow them,
-    /// matching Rust name resolution.
+    /// Module-level globals — const items and linkage declarations —
+    /// are the fallback after every scope misses; locals, parameters,
+    /// and function-body consts shadow them, matching Rust name
+    /// resolution.
     fn lookup(&self, name: &str) -> Option<Type> {
         self.scopes
             .iter()
             .rev()
             .find_map(|s| s.get(name).cloned())
-            .or_else(|| self.consts.get(name).cloned())
+            .or_else(|| self.globals.get(name).cloned())
     }
 
     /// The concrete type of `expr`, when provable without a full type

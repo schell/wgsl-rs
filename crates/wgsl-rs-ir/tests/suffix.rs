@@ -1262,3 +1262,35 @@ fn array_indexing_base_gets_element_expectation() {
     let wgsl = render(&mut m);
     assert!(wgsl.contains("select(0u, 1u, c)"), "got: {wgsl}");
 }
+
+#[test]
+fn linkage_variables_anchor_assignment_targets() {
+    // `storage!(…, read_write, OUTPUT: [u32; 1])` +
+    // `get_mut!(OUTPUT)[0] = select(0, 1, cond);` — linkage declarations
+    // are in the type environment (uses lower to `Expr::Ident`), so the
+    // element assignment anchors the select.
+    let mut m = module(vec![
+        Item::Storage(ItemStorage {
+            group: 0,
+            binding: 0,
+            access: StorageAccess::ReadWrite,
+            name: "OUTPUT".to_string(),
+            ty: array_ty(u32_ty(), 1),
+            attrs: vec![],
+        }),
+        fn_item(
+            "f",
+            vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+            ReturnType::Default,
+            vec![Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("OUTPUT")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            }],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(0u, 1u, cond)"), "got: {wgsl}");
+}

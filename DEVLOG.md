@@ -1021,7 +1021,10 @@ through its depth-first import walk — imports render first, so every
 source suffixes with all ancestor signatures seeded, and a caller's own
 signatures shadow imported ones, matching Rust name resolution. Impl
 associated consts (`ImplItem::Const`) anchor from their declared types
-like module-level consts. Cross-source template instantiation seeds from
+like module-level consts. The lookup environment's global fallback
+covers module consts and linkage declarations (uniforms, storage,
+workgroup vars) — uses lower to `Expr::Ident`, so
+`get_mut!(OUTPUT)[0] = …` anchors from the declared buffer type. Cross-source template instantiation seeds from
 the same accumulator (`suffix_items_with_imports`), and each instantiated
 template publishes its renamed signatures (`fn_signatures_in_items`) for
 later chunks — dependency templates are instantiated first, so

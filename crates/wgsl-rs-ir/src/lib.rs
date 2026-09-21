@@ -39,5 +39,8 @@ pub use substitute::{
     rename_items, substitute_consts, substitute_consts_in_items, substitute_items,
     substitute_types, type_to_ident,
 };
-pub use suffix::{fn_signatures, suffix_items, suffix_module, suffix_module_with_imports};
+pub use suffix::{
+    fn_signatures, fn_signatures_in_items, suffix_items, suffix_items_with_imports, suffix_module,
+    suffix_module_with_imports,
+};
 pub use types::*;

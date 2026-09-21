@@ -1004,3 +1004,30 @@ fn module_wgsl_source_applies_suffixing() {
     let wgsl = m.wgsl_source();
     assert!(wgsl.contains("return 0u;"), "got: {wgsl}");
 }
+
+#[test]
+fn suffix_items_with_imports_anchors_template_calls() {
+    // A cross-source template's items reference functions defined in
+    // other chunks of the assembled translation unit; seeding from those
+    // chunks' signatures anchors the call arguments.
+    let helper = module(vec![fn_item(
+        "helper",
+        vec![arg("x", u32_ty())],
+        returns(u32_ty()),
+        vec![Stmt::Return(Some(ident("x")))],
+    )]);
+    let sigs = fn_signatures(&helper);
+
+    let mut template_items = vec![fn_item(
+        "caller",
+        vec![],
+        ReturnType::Default,
+        vec![
+            local("y", None, Some(call("helper", vec![bare_int("0")]))),
+            Stmt::Return(None),
+        ],
+    )];
+    suffix_items_with_imports(&mut template_items, &sigs);
+    let wgsl = render_items(&template_items);
+    assert!(wgsl.contains("helper(0u)"), "got: {wgsl}");
+}

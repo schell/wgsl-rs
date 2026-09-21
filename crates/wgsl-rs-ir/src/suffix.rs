@@ -81,13 +81,37 @@ pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String,
     .walk_module(module);
 }
 
+/// Like [`suffix_items`], but seeds the user-function signature registry
+/// with `imports` — signatures harvested from other sources via
+/// [`fn_signatures_in_items`] — so calls to imported functions anchor
+/// their arguments too. Used for cross-source template instantiation,
+/// where the template's items reference functions defined in other
+/// chunks of the assembled translation unit.
+pub fn suffix_items_with_imports(items: &mut [Item], imports: &HashMap<String, Vec<Type>>) {
+    SuffixPass {
+        fn_sigs: imports.clone(),
+        ..SuffixPass::default()
+    }
+    .walk_items(items);
+}
+
 /// Harvest the module's user-function signatures — callee name → declared
-/// parameter types — for seeding [`suffix_module_with_imports`] on a
-/// source that imports this module. Free functions key by their name;
-/// impl methods key by their mangled render name.
+/// parameter types — for seeding [`suffix_module_with_imports`] /
+/// [`suffix_items_with_imports`] on a source that imports or instantiates
+/// this module. Free functions key by their name; impl methods key by
+/// their mangled render name.
 pub fn fn_signatures(module: &Module) -> HashMap<String, Vec<Type>> {
+    fn_signatures_in_items(&module.items)
+}
+
+/// Like [`fn_signatures`], but for a bare slice of items — e.g. an
+/// instantiated cross-source template rendered without a [`Module`]
+/// wrapper. Note that signatures are taken from the items as-is, so
+/// call any renaming (such as template instance mangling) before
+/// harvesting.
+pub fn fn_signatures_in_items(items: &[Item]) -> HashMap<String, Vec<Type>> {
     let mut sigs = HashMap::new();
-    for item in &module.items {
+    for item in items {
         match item {
             Item::Fn(f) => {
                 sigs.insert(

@@ -1021,4 +1021,11 @@ through its depth-first import walk — imports render first, so every
 source suffixes with all ancestor signatures seeded, and a caller's own
 signatures shadow imported ones, matching Rust name resolution. Impl
 associated consts (`ImplItem::Const`) anchor from their declared types
-like module-level consts.
+like module-level consts. Cross-source template instantiation seeds from
+the same accumulator (`suffix_items_with_imports`), and each instantiated
+template publishes its renamed signatures (`fn_signatures_in_items`) for
+later chunks — dependency templates are instantiated first, so
+template-to-template calls are covered too. Imported struct-constructor
+field types are not threaded across chunks; WGSL's abstract-integer
+coercion keeps those valid, so the unsuffixed fields are a documented
+cosmetic gap.

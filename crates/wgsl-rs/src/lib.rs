@@ -284,6 +284,7 @@ impl Source {
                 out,
                 seen,
                 needs_tier1,
+                fn_sigs,
             )?;
         }
         Ok(())
@@ -309,6 +310,7 @@ fn instantiate_template_into<'a>(
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
+    fn_sigs: &mut HashMap<String, Vec<ir::Type>>,
 ) -> Result<(), SourceError<'a>> {
     let available_templates: Vec<String> = sources
         .iter()
@@ -393,6 +395,7 @@ fn instantiate_template_into<'a>(
             out,
             seen,
             needs_tier1,
+            fn_sigs,
         )?;
     }
 
@@ -435,7 +438,11 @@ fn instantiate_template_into<'a>(
     }
 
     ir::deshadow_items(&mut items);
-    ir::suffix_items(&mut items);
+    // Seed with every ancestor's signatures (imports and already-
+    // instantiated dependency templates), then publish this instance's
+    // own (renamed) signatures for any later chunk.
+    ir::suffix_items_with_imports(&mut items, fn_sigs);
+    fn_sigs.extend(ir::fn_signatures_in_items(&items));
     if ir::items_need_tier1_extension(&items) {
         *needs_tier1 = true;
     }

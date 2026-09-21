@@ -62,5 +62,6 @@ fn array_zero() -> array<u32, 4> {
 - `<u32>::zero()` and `<[u32; 4]>::zero()` resolve to the same mangled functions the impl blocks emit (`u32_zero` and `_2array_u32_4_zero`).
 - The `_2` prefix is the bijective mangled encoding of the `array_u32_4` self type.
 - Associated constants work too: `<Tag>::DEFAULT` resolves to `Tag_DEFAULT`.
+- Inside generic functions, QSelf calls on types containing type parameters (`<T>::method()`, `<[T; 4]>::zero()`, `<Pair<T>>::zero()`) are rewritten during monomorphization to the concrete impl's function.
 - The `<T as Trait>::method()` disambiguation form is rejected with a helpful error — trait impls are matched by self type only.
 - Generic (turbofish) arguments on the method after `>::` are not supported in the QSelf form.

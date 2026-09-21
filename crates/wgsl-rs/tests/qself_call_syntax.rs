@@ -121,3 +121,94 @@ fn qself_type_param_call_transpiles() {
 fn qself_type_param_call_runs_on_cpu() {
     assert_eq!(generic_qself::caller(), 0);
 }
+
+#[wgsl(skip_validation)]
+mod compound_qself {
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    impl Zeroable for u32 {
+        fn zero() -> u32 {
+            0
+        }
+    }
+
+    /// A generic struct whose trait impl is instantiated alongside the
+    /// struct (see `instantiate_struct`).
+    pub struct Pair<T> {
+        pub a: T,
+        pub b: T,
+    }
+
+    impl<T: Zeroable> Zeroable for Pair<T> {
+        fn zero() -> Pair<T> {
+            Pair {
+                a: T::zero(),
+                b: T::zero(),
+            }
+        }
+    }
+
+    impl<T: Zeroable> Zeroable for [T; 4] {
+        fn zero() -> [T; 4] {
+            [T::zero(), T::zero(), T::zero(), T::zero()]
+        }
+    }
+
+    /// QSelf call on a *compound* type containing a type parameter:
+    /// `<[T; 4]>::zero()` inside a generic function must be rewritten by
+    /// monomorphization to the concrete array impl's function
+    /// (`array_u32_4_zero` for `T = u32`), not left as the eagerly mangled
+    /// generic form (`array_t_4_zero`).
+    pub fn via_array_qself<T: Zeroable>() -> [T; 4] {
+        <[T; 4]>::zero()
+    }
+
+    /// QSelf call on a generic *struct* type containing a type parameter:
+    /// `<Pair<T>>::zero()` must resolve to the struct-instantiated method
+    /// (`Pair_u32_zero` for `T = u32`).
+    pub fn via_struct_qself<T: Zeroable>() -> Pair<T> {
+        <Pair<T>>::zero()
+    }
+
+    pub fn array_caller() -> [u32; 4] {
+        via_array_qself::<u32>()
+    }
+
+    pub fn struct_caller() -> Pair<u32> {
+        via_struct_qself::<u32>()
+    }
+}
+
+#[test]
+fn qself_compound_type_call_transpiles() {
+    let src = compound_qself::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        !src.contains("array_t_4"),
+        "compound `<[T; 4]>::zero()` must be substituted, not left as the generic mangled \
+         `array_t_4_zero()`, got:\n{src}"
+    );
+    assert!(
+        src.contains("_2array_u32_4_zero"),
+        "compound `<[T; 4]>::zero()` should resolve to `array_u32_4_zero` after monomorphization, \
+         got:\n{src}"
+    );
+    assert!(
+        !src.contains("Pair_t"),
+        "compound `<Pair<T>>::zero()` must be substituted, not left as the generic mangled \
+         `Pair_t_zero()`, got:\n{src}"
+    );
+    assert!(
+        src.contains("Pair_u32_zero"),
+        "compound `<Pair<T>>::zero()` should resolve to the struct-instantiated `Pair_u32_zero` \
+         after monomorphization, got:\n{src}"
+    );
+}
+
+#[test]
+fn qself_compound_type_call_runs_on_cpu() {
+    assert_eq!(compound_qself::array_caller(), [0u32; 4]);
+    let p = compound_qself::struct_caller();
+    assert_eq!((p.a, p.b), (0u32, 0u32));
+}

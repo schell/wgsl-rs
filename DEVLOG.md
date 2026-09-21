@@ -531,6 +531,20 @@ substitution keys on the param name as written. Preserving the ident lets
 `<T>::method()` be rewritten to `u32_method()` exactly like the plain
 `T::method()` form.
 
+**Compound types containing parameters:** a qself type that *contains* a
+type parameter but is not itself a bare parameter — `<[T; 4]>::zero()` or
+`<Pair<T>>::zero()` — is still eagerly mangled (`array_t_4`, `Pair_t`), and
+that mangled ident matches no substitution key. `SubstituteVisitor` gained a
+structural fallback for `FnPath::TypeMethod` and `Expr::TypePath`: on a
+flat-lookup miss, `substitute_mangled_ident` unmangles the ident, replaces
+any component matching a substitution key (case-insensitively — the mangler
+lowercased the param), and re-mangles. `array_t_4` → `array_u32_4` for
+`T = u32`; `Pair_t` → `Pair_u32`, exactly matching the name `mangle_name`
+gives the instantiated struct's impl methods. Instantiation of the target
+impl/struct still piggybacks on the concrete type appearing in a type
+position (signature or local) — the same constraint the pre-existing
+`T::method()` form has.
+
 **Rejection of `<T as Trait>::...`:** The `as Trait` disambiguation form is
 rejected with a helpful error. Trait impls are matched by self type only
 (the trait path is discarded throughout wgsl-rs — see `ItemImpl`'s handling),

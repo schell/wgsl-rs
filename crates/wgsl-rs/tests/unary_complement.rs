@@ -90,11 +90,14 @@ fn integer_complements_lower_to_tilde() {
         .wgsl_source()
         .expect("render should succeed");
     for (needle, why) in [
-        ("return ~0;", "`!0` (i32) lowers to `~`"),
+        (
+            "return ~0i;",
+            "`!0` (i32) lowers to `~` (suffix from the i32 return)",
+        ),
         ("return ~0u;", "`!0u32` lowers to `~`"),
-        ("return ~~0;", "`!!0` is complement-of-complement"),
+        ("return ~~0i;", "`!!0` is complement-of-complement"),
         ("return ~(1u & 2u);", "`!(a & b)` on ints lowers to `~`"),
-        ("return ~-1;", "`!-1` lowers to `~`"),
+        ("return ~-1i;", "`!-1` lowers to `~`"),
         ("return ~(u32(x));", "`!(x as u32)` lowers to `~`"),
     ] {
         assert!(

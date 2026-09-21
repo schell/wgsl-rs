@@ -48,7 +48,7 @@ use crate::{
     mangle::mangle,
     types::{
         BinOp, Block, CaseSelector, ElseBranch, Expr, FnPath, ForLoop, ImplItem, Item, ItemFn, Lit,
-        Local, Module, ReturnType, ScalarType, Stmt, StmtIf, StmtSwitch, Type,
+        Local, Module, ReturnType, ScalarType, Stmt, StmtIf, StmtSwitch, Type, UnOp,
     },
 };
 
@@ -308,13 +308,29 @@ impl SuffixPass {
             Stmt::For(f) => self.walk_for(f),
             Stmt::Switch(s) => self.walk_switch(s),
             Stmt::Block(b) => self.walk_block(b),
-            // Control flow, slab copies, and extension macros carry no
-            // type expectation in this pass.
+            Stmt::SlabCopy {
+                src,
+                src_offset,
+                dest,
+                dest_offset,
+                size,
+            } => {
+                // The renderer emits a u32 loop counter, compares it
+                // against `size`, and adds the offsets to it — all
+                // three flow through u32 arithmetic.
+                let u32_ty = Type::Scalar(ScalarType::U32);
+                self.expect(src_offset, Some(&u32_ty));
+                self.expect(dest_offset, Some(&u32_ty));
+                self.expect(size, Some(&u32_ty));
+                self.expect(src, None);
+                self.expect(dest, None);
+            }
+            // Control flow and extension macros carry no type
+            // expectation in this pass.
             Stmt::Return(None)
             | Stmt::Break
             | Stmt::Continue
             | Stmt::Discard
-            | Stmt::SlabCopy { .. }
             | Stmt::Macro { .. } => {}
         }
     }
@@ -359,28 +375,43 @@ impl SuffixPass {
         }
     }
 
-    /// Walk a `for` loop: bounds inherit the loop variable's type when
-    /// it is explicit, and the loop variable is visible in the body.
+    /// Walk a `for` loop: bounds inherit the loop variable's type, and
+    /// the loop variable is visible in the body.
+    ///
+    /// Parsed Rust loops never annotate the loop variable (`for i: u32
+    /// in …` is not valid Rust — the IR field stays `None`), so its
+    /// type is inferred from a provable range bound, mirroring Rust's
+    /// own inference. Fully-bare ranges (`for i in 0..8`) infer `i32`
+    /// in both Rust and WGSL and stay bare.
     fn walk_for(&mut self, f: &mut ForLoop) {
-        let var_ty = f.var_ty.clone();
+        let var_ty = f
+            .var_ty
+            .clone()
+            .or_else(|| self.expr_ty(&f.from).or_else(|| self.expr_ty(&f.to)));
         if let Some(ty) = &var_ty {
             self.expect(&mut f.from, Some(ty));
             self.expect(&mut f.to, Some(ty));
         }
+        let mut seeded = false;
         if let Some(ty) = var_ty {
             let mut frame = HashMap::new();
             frame.insert(f.var.clone(), ty);
             self.scopes.push(frame);
+            seeded = true;
         }
         self.walk_block(&mut f.body);
-        if f.var_ty.is_some() {
+        if seeded {
             self.scopes.pop();
         }
     }
 
-    /// Walk a `switch`: case selectors inherit the selector's type, and
-    /// arm bodies are walked for their own anchors.
+    /// Walk a `switch`: the selector subtree is walked first so nested
+    /// call-site and binary anchoring applies (`match x + select(0, 1,
+    /// c)` suffixes the select through the binary anchor), then case
+    /// selectors inherit the selector's derived type, and arm bodies
+    /// are walked for their own anchors.
     fn walk_switch(&mut self, s: &mut StmtSwitch) {
+        self.expect(&mut s.selector, None);
         let selector_ty = self.expr_ty(&s.selector);
         for arm in &mut s.arms {
             if let Some(ty) = &selector_ty {
@@ -440,6 +471,34 @@ impl SuffixPass {
                 // not a scalar — no scalar expectation is derivable.
                 _ => None,
             },
+            // Arithmetic and shift operators yield their operands'
+            // type; comparisons and logical operators yield `bool`.
+            Expr::Binary { lhs, op, rhs } => {
+                if is_arithmetic(op) {
+                    self.expr_ty(lhs).or_else(|| self.expr_ty(rhs))
+                } else {
+                    Some(Type::Scalar(ScalarType::Bool))
+                }
+            }
+            // `!`, bitwise complement, and negation preserve the
+            // operand type; a deref yields the pointee, which the
+            // pointer expression's type does not carry.
+            Expr::Unary { op, expr } => match op {
+                UnOp::Not | UnOp::Complement | UnOp::Neg => self.expr_ty(expr),
+                UnOp::Deref => None,
+            },
+            // Same-type builtin value groups yield their first value
+            // argument's type.
+            Expr::FnCall { path, params, .. } => {
+                let FnPath::Ident(name) = path else {
+                    return None;
+                };
+                if builtin_value_args(name.as_str()).is_some() {
+                    params.first().and_then(|p| self.expr_ty(p))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -564,14 +623,14 @@ impl SuffixPass {
             Expr::Binary { lhs, op, rhs } => {
                 // Arithmetic and shift operators pass an outer
                 // expectation to their operands (the operands share the
-                // result type). Comparisons and logical operators yield
-                // `bool`, so no expectation flows into the operands.
-                if is_arithmetic(op)
-                    && let Some(ty) = expected
-                {
-                    self.expect(lhs, Some(ty));
-                    self.expect(rhs, Some(ty));
-                }
+                // result type); comparisons and logical operators yield
+                // `bool`, so their operands are walked bare. Either
+                // way the operands are walked so nested call-site and
+                // binary anchoring applies
+                // (`let y = select(x, 0, c) + 1;`).
+                let operand_expected = if is_arithmetic(op) { expected } else { None };
+                self.expect(lhs, operand_expected);
+                self.expect(rhs, operand_expected);
                 // Anchor: a bare literal adopts the provable scalar type
                 // of the other operand.
                 if is_arithmetic(op) || is_comparison(op) {
@@ -590,11 +649,28 @@ impl SuffixPass {
                 type_args,
                 params,
             } => self.walk_fn_call(path, type_args, params, expected),
-            Expr::Unary { expr, .. } => self.expect(expr, None),
+            Expr::Unary { op, expr } => {
+                // `!` (logical not), bitwise complement, and negation
+                // preserve the operand type, so the expectation flows
+                // through (`fn f() -> u32 { !0 }` renders `~0u`). A
+                // deref's operand is the pointer — its type is not the
+                // deref result — so it is walked bare.
+                match op {
+                    UnOp::Not | UnOp::Complement | UnOp::Neg => self.expect(expr, expected),
+                    UnOp::Deref => self.expect(expr, None),
+                }
+            }
             Expr::ArrayIndexing { lhs, index } => {
+                // An outer scalar expectation pins the indexed base's
+                // element type (`[select(0, 1, c)][0]` in a `u32`
+                // function): carry it into the base as a sequence
+                // expectation.
+                let seq_expected = expected.map(|ty| Type::RuntimeArray {
+                    elem: Box::new(ty.clone()),
+                });
+                self.expect(lhs, seq_expected.as_ref());
                 // Index expressions stay bare (WGSL coerces the
-                // abstract integer); only walk the indexed base.
-                self.expect(lhs, None);
+                // abstract integer in `a[0]` to either index type).
                 self.expect(index, None);
             }
             Expr::Swizzle { lhs, params, .. } => {

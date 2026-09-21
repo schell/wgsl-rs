@@ -1112,3 +1112,153 @@ fn module_const_anchors_expressions() {
     // In `g`, the shadowing local (i32) wins over the module const.
     assert!(wgsl.contains("select(MAX, 0i, cond)"), "got: {wgsl}");
 }
+
+#[test]
+fn slab_copy_offsets_and_size_are_u32() {
+    // The renderer emits a u32 loop counter and adds the offsets to it,
+    // so offsets and size flow through u32 arithmetic.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("c", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![Stmt::SlabCopy {
+            src: ident("slab"),
+            src_offset: call("select", vec![bare_int("0"), bare_int("1"), ident("c")]),
+            dest: ident("d"),
+            dest_offset: bare_int("0"),
+            size: call("select", vec![bare_int("0"), bare_int("1"), ident("c")]),
+        }],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, c)"),
+        "slab offsets/size should be u32, got: {wgsl}"
+    );
+    assert!(wgsl.contains("0u + _i"), "got: {wgsl}");
+}
+
+#[test]
+fn for_bounds_infer_from_typed_range_bound() {
+    // `let n: u32 = 4; for i in 0..n` — parsed loops never carry a
+    // loop-variable annotation, so `i`'s type is inferred from `n`.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        ReturnType::Default,
+        vec![
+            local("n", Some(u32_ty()), Some(suffixed_int("4", "u32"))),
+            Stmt::For(ForLoop {
+                var: "i".to_string(),
+                var_ty: None,
+                from: bare_int("0"),
+                to: ident("n"),
+                inclusive: false,
+                body: Block { stmts: vec![] },
+            }),
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("var i = 0u;"), "got: {wgsl}");
+}
+
+#[test]
+fn switch_selector_subtree_is_walked() {
+    // `match x + select(0, 1, c)` with `x: u32` — the selector subtree
+    // is walked (the select anchors through the binary operand), and
+    // the case literals inherit the selector's derived type.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("x", u32_ty()), arg("c", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![Stmt::Switch(StmtSwitch {
+            selector: Expr::Binary {
+                lhs: Box::new(ident("x")),
+                op: BinOp::Add,
+                rhs: Box::new(call(
+                    "select",
+                    vec![bare_int("0"), bare_int("1"), ident("c")],
+                )),
+            },
+            arms: vec![SwitchArm {
+                selectors: vec![CaseSelector::Literal(Lit::Int {
+                    digits: "9".to_string(),
+                    suffix: String::new(),
+                })],
+                body: Block { stmts: vec![] },
+            }],
+            has_explicit_default: false,
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(0u, 1u, c)"), "got: {wgsl}");
+    assert!(
+        wgsl.contains("9u"),
+        "case literal should match selector type, got: {wgsl}"
+    );
+}
+
+#[test]
+fn binary_walks_operands_without_expectation() {
+    // `let y = select(x, 0, c) + 1;` — no outer annotation; the select
+    // anchors through its own typed argument, and the `1` anchors from
+    // the select's type.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("x", u32_ty()), arg("c", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "y",
+                None,
+                Some(Expr::Binary {
+                    lhs: Box::new(call("select", vec![ident("x"), bare_int("0"), ident("c")])),
+                    op: BinOp::Add,
+                    rhs: Box::new(bare_int("1")),
+                }),
+            ),
+            Stmt::Return(None),
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(x, 0u, c)"), "got: {wgsl}");
+    assert!(wgsl.contains("+ 1u"), "got: {wgsl}");
+}
+
+#[test]
+fn unary_complement_propagates_expectation() {
+    // `fn f() -> u32 { !0 }` — the complement preserves the expected
+    // u32, so the operand is suffixed.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        returns(u32_ty()),
+        vec![Stmt::Return(Some(Expr::Unary {
+            op: UnOp::Complement,
+            expr: Box::new(bare_int("0")),
+        }))],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("0u"), "got: {wgsl}");
+}
+
+#[test]
+fn array_indexing_base_gets_element_expectation() {
+    // `fn f(c: bool) -> u32 { [select(0, 1, c)][0] }` — the return
+    // expectation flows into the indexed array literal's elements.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("c", Type::Scalar(ScalarType::Bool))],
+        returns(u32_ty()),
+        vec![Stmt::Return(Some(Expr::ArrayIndexing {
+            lhs: Box::new(Expr::Array {
+                elems: vec![call(
+                    "select",
+                    vec![bare_int("0"), bare_int("1"), ident("c")],
+                )],
+            }),
+            index: Box::new(bare_int("0")),
+        }))],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(0u, 1u, c)"), "got: {wgsl}");
+}

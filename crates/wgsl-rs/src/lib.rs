@@ -248,6 +248,33 @@ impl Source {
             ir::substitute_types(&mut ir_module, s);
         }
         ir::deshadow_module(&mut ir_module);
+        // Pre-seed with the signatures of cross-source template
+        // instances this source calls: instance chunks are appended
+        // (and publish their signatures) after this chunk is suffixed,
+        // so a call like `choose::<u32>(select(0, 1, data))` must find
+        // the instance's concrete parameter types now.
+        for inst in self.instantiations {
+            let mangled: Vec<String> = inst
+                .mangled_type_args
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let type_args = (inst.type_args_constructor)();
+            let mangled_consts: Vec<String> = inst
+                .mangled_const_args
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let const_args = (inst.const_args_constructor)();
+            fn_sigs.extend(instance_signatures(
+                inst.modules,
+                inst.template_name,
+                &type_args,
+                &const_args,
+                &mangled,
+                &mangled_consts,
+            ));
+        }
         // Make this source's own signatures available to later sources,
         // then suffix with every ancestor's signatures seeded — calls to
         // imported functions anchor their arguments, and a caller's own
@@ -312,6 +339,76 @@ fn instantiate_template_into<'a>(
     needs_tier1: &mut bool,
     fn_sigs: &mut HashMap<String, Vec<ir::Type>>,
 ) -> Result<(), SourceError<'a>> {
+    let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
+
+    let key = (
+        source.id,
+        template_name.to_string(),
+        mangled_type_args.to_vec(),
+        mangled_const_args.to_vec(),
+    );
+    if !seen.insert(key) {
+        return Ok(()); // Already instantiated
+    }
+
+    // Recursively instantiate dependencies first.
+    for dep in template.dependencies {
+        let dep_mangled: Vec<String> = dep
+            .type_param_mapping
+            .iter()
+            .map(|&idx| mangled_type_args[idx].clone())
+            .collect();
+        let dep_args: Vec<ir::Type> = dep
+            .type_param_mapping
+            .iter()
+            .map(|&idx| type_args[idx].clone())
+            .collect();
+        // Dependencies currently share the caller's const args by
+        // reference; a full const-param-mapping parallel to
+        // `type_param_mapping` is a future extension. For now we pass
+        // the const args through unchanged.
+        instantiate_template_into(
+            &[source],
+            dep.callee,
+            &dep_mangled,
+            &dep_args,
+            mangled_const_args,
+            const_args,
+            out,
+            seen,
+            needs_tier1,
+            fn_sigs,
+        )?;
+    }
+
+    let mut items = build_instance_items(
+        template,
+        type_args,
+        const_args,
+        mangled_type_args,
+        mangled_const_args,
+    );
+
+    ir::deshadow_items(&mut items);
+    // Seed with every ancestor's signatures (imports and already-
+    // instantiated dependency templates), then publish this instance's
+    // own (renamed) signatures for any later chunk.
+    ir::suffix_items_with_imports(&mut items, fn_sigs);
+    fn_sigs.extend(ir::fn_signatures_in_items(&items));
+    if ir::items_need_tier1_extension(&items) {
+        *needs_tier1 = true;
+    }
+    out.push_str(&ir::render_items(&items));
+    Ok(())
+}
+
+/// Resolve `template_name` to exactly one template among `sources`,
+/// producing the structured errors `instantiate_template_into` reports.
+fn resolve_template<'a>(
+    sources: &[&'a Source],
+    template_name: &str,
+    mangled_type_args: &[String],
+) -> Result<(&'a Source, &'a GenericTemplate), SourceError<'a>> {
     let available_templates: Vec<String> = sources
         .iter()
         .copied()
@@ -359,46 +456,21 @@ fn instantiate_template_into<'a>(
         );
     };
 
-    let key = (
-        source.id,
-        template_name.to_string(),
-        mangled_type_args.to_vec(),
-        mangled_const_args.to_vec(),
-    );
-    if !seen.insert(key) {
-        return Ok(()); // Already instantiated
-    }
+    Ok((source, template))
+}
 
-    // Recursively instantiate dependencies first.
-    for dep in template.dependencies {
-        let dep_mangled: Vec<String> = dep
-            .type_param_mapping
-            .iter()
-            .map(|&idx| mangled_type_args[idx].clone())
-            .collect();
-        let dep_args: Vec<ir::Type> = dep
-            .type_param_mapping
-            .iter()
-            .map(|&idx| type_args[idx].clone())
-            .collect();
-        // Dependencies currently share the caller's const args by
-        // reference; a full const-param-mapping parallel to
-        // `type_param_mapping` is a future extension. For now we pass
-        // the const args through unchanged.
-        instantiate_template_into(
-            &[source],
-            dep.callee,
-            &dep_mangled,
-            &dep_args,
-            mangled_const_args,
-            const_args,
-            out,
-            seen,
-            needs_tier1,
-            fn_sigs,
-        )?;
-    }
-
+/// Build a template instance's items: run the template's IR
+/// constructor, substitute its type and const parameters, and rename
+/// the instance to its mangled name. Uses `ir::mangle` so that names
+/// with underscores in either the template name or the type-arg-mangled
+/// strings are escaped unambiguously (see issue #112).
+fn build_instance_items(
+    template: &GenericTemplate,
+    type_args: &[ir::Type],
+    const_args: &[u32],
+    mangled_type_args: &[String],
+    mangled_const_args: &[String],
+) -> Vec<ir::Item> {
     // Build substitution maps: type params -> concrete types, const
     // params -> concrete u32 values.
     let mut subst: HashMap<String, ir::Type> = HashMap::new();
@@ -414,10 +486,6 @@ fn instantiate_template_into<'a>(
     ir::substitute_items(&mut items, &subst);
     ir::substitute_consts_in_items(&mut items, &consts);
 
-    // Mangle the template's name to a concrete instance name so multiple
-    // monomorphizations can coexist. Uses `ir::mangle` so that names with
-    // underscores in either the template name or the type-arg-mangled
-    // strings are escaped unambiguously (see issue #112).
     let instance_name = if mangled_type_args.is_empty() && mangled_const_args.is_empty() {
         template.name.to_string()
     } else {
@@ -436,18 +504,39 @@ fn instantiate_template_into<'a>(
     if instance_name != template.name {
         ir::rename_items(&mut items, template.name, &instance_name);
     }
+    items
+}
 
-    ir::deshadow_items(&mut items);
-    // Seed with every ancestor's signatures (imports and already-
-    // instantiated dependency templates), then publish this instance's
-    // own (renamed) signatures for any later chunk.
-    ir::suffix_items_with_imports(&mut items, fn_sigs);
-    fn_sigs.extend(ir::fn_signatures_in_items(&items));
-    if ir::items_need_tier1_extension(&items) {
-        *needs_tier1 = true;
-    }
-    out.push_str(&ir::render_items(&items));
-    Ok(())
+/// Harvest the signatures a template instance would export, for
+/// pre-seeding the fn-signature accumulator before a calling source's
+/// chunk is suffixed — instance chunks are appended (and publish their
+/// signatures) after the caller is suffixed, so a call like
+/// `choose::<u32>(select(0, 1, data))` must find the instance's
+/// concrete parameter types now.
+///
+/// Resolution failures are ignored here:
+/// [`instantiate_template_into`] reports them with full context when
+/// the instance is actually rendered.
+fn instance_signatures(
+    sources: &[&Source],
+    template_name: &str,
+    type_args: &[ir::Type],
+    const_args: &[u32],
+    mangled_type_args: &[String],
+    mangled_const_args: &[String],
+) -> HashMap<String, Vec<ir::Type>> {
+    let Ok((_source, template)) = resolve_template(sources, template_name, mangled_type_args)
+    else {
+        return HashMap::new();
+    };
+    let items = build_instance_items(
+        template,
+        type_args,
+        const_args,
+        mangled_type_args,
+        mangled_const_args,
+    );
+    ir::fn_signatures_in_items(&items)
 }
 
 #[cfg(feature = "validation")]

@@ -1031,3 +1031,84 @@ fn suffix_items_with_imports_anchors_template_calls() {
     let wgsl = render_items(&template_items);
     assert!(wgsl.contains("helper(0u)"), "got: {wgsl}");
 }
+
+#[test]
+fn local_const_anchors_later_expressions() {
+    // `const C: u32 = 1; let y = select(C, 0, cond);` — the const's
+    // registered type anchors the bare literal through the select
+    // value group.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            Stmt::Const(ItemConst {
+                name: "C".to_string(),
+                ty: u32_ty(),
+                expr: bare_int("1"),
+                attrs: vec![],
+            }),
+            local(
+                "y",
+                None,
+                Some(call(
+                    "select",
+                    vec![ident("C"), bare_int("0"), ident("cond")],
+                )),
+            ),
+            Stmt::Return(None),
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("0u"), "got: {wgsl}");
+}
+
+#[test]
+fn module_const_anchors_expressions() {
+    // `const MAX: u32 = 4095;` at module scope anchors expressions in
+    // every function body; locals shadow it (the inner `let MAX: i32`
+    // wins inside `g`).
+    let mut m = module(vec![
+        Item::Const(ItemConst {
+            name: "MAX".to_string(),
+            ty: u32_ty(),
+            expr: bare_int("4095"),
+            attrs: vec![],
+        }),
+        fn_item(
+            "f",
+            vec![arg("x", u32_ty())],
+            ReturnType::Default,
+            vec![
+                local(
+                    "y",
+                    None,
+                    Some(call("min", vec![ident("MAX"), bare_int("1")])),
+                ),
+                Stmt::Return(None),
+            ],
+        ),
+        fn_item(
+            "g",
+            vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+            ReturnType::Default,
+            vec![
+                local("MAX", Some(i32_ty()), Some(suffixed_int("7", "i32"))),
+                local(
+                    "y",
+                    None,
+                    Some(call(
+                        "select",
+                        vec![ident("MAX"), bare_int("0"), ident("cond")],
+                    )),
+                ),
+                Stmt::Return(None),
+            ],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    // In `f`, the module const (u32) anchors the literal.
+    assert!(wgsl.contains("min(MAX, 1u)"), "got: {wgsl}");
+    // In `g`, the shadowing local (i32) wins over the module const.
+    assert!(wgsl.contains("select(MAX, 0i, cond)"), "got: {wgsl}");
+}

@@ -161,6 +161,9 @@ struct SuffixPass {
     /// types. Free functions key by their name; impl methods key by
     /// their mangled render name (`mangle(&[self_ty, method])`).
     fn_sigs: HashMap<String, Vec<Type>>,
+    /// Module-level `const` item types by name, consulted as the
+    /// fallback of scope lookup.
+    consts: HashMap<String, Type>,
 }
 
 impl SuffixPass {
@@ -194,6 +197,9 @@ impl SuffixPass {
                         f.name.to_string(),
                         f.inputs.iter().map(|a| a.ty.clone()).collect(),
                     );
+                }
+                Item::Const(c) => {
+                    self.consts.insert(c.name.clone(), c.ty.clone());
                 }
                 Item::Impl(imp) => {
                     for impl_item in &imp.items {
@@ -265,7 +271,18 @@ impl SuffixPass {
     fn walk_stmt(&mut self, stmt: &mut Stmt) {
         match stmt {
             Stmt::Local(local) => self.walk_local(local),
-            Stmt::Const(c) => self.expect(&mut c.expr, Some(&c.ty)),
+            Stmt::Const(c) => {
+                self.expect(&mut c.expr, Some(&c.ty));
+                // Register the const's declared type in scope after
+                // walking its initializer, like a typed local — later
+                // expressions anchor from it
+                // (`const C: u32 = 1; select(C, 0, cond)`).
+                let name = c.name.clone();
+                let ty = c.ty.clone();
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(name, ty);
+                }
+            }
             Stmt::Assignment { lhs, rhs } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
                 self.walk_assignment_rhs(lhs, rhs);
             }
@@ -380,8 +397,15 @@ impl SuffixPass {
     }
 
     /// Look up the declared type of `name`, innermost scope first.
+    /// Module-level consts are the fallback after every scope misses;
+    /// locals, parameters, and function-body consts shadow them,
+    /// matching Rust name resolution.
     fn lookup(&self, name: &str) -> Option<Type> {
-        self.scopes.iter().rev().find_map(|s| s.get(name).cloned())
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.get(name).cloned())
+            .or_else(|| self.consts.get(name).cloned())
     }
 
     /// The concrete type of `expr`, when provable without a full type

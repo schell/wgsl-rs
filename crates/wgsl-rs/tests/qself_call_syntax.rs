@@ -286,3 +286,54 @@ fn qself_case_sensitive_components_transpiles() {
 fn qself_case_sensitive_components_runs_on_cpu() {
     assert_eq!(qself_case_sensitivity::caller(), 0);
 }
+
+#[allow(non_camel_case_types)] // underscore/lowercase names are the point of this module
+#[wgsl(skip_validation)]
+mod qself_underscore_idents {
+    /// A concrete struct whose name contains an underscore, whose trailing
+    /// string component matches the type parameter `bar` in scope below.
+    /// The mangled ident `Foo_bar` must never be decomposed and rewritten
+    /// as `Foo_u32`.
+    pub struct Foo_bar {
+        pub x: u32,
+    }
+
+    impl Foo_bar {
+        pub fn get() -> u32 {
+            let f = Foo_bar { x: 7 };
+            f.x
+        }
+    }
+
+    /// QSelf call on the concrete underscore-named struct `Foo_bar`, from
+    /// inside a generic function whose parameter is `bar`. The call must
+    /// resolve to the concrete impl method (`Foo_bar_get`), not to a
+    /// decomposed, param-substituted form.
+    pub fn underscore_ident_qself<bar>(seed: bar) -> u32 {
+        let _keep: bar = seed;
+        <Foo_bar>::get()
+    }
+
+    pub fn caller() -> u32 {
+        underscore_ident_qself::<u32>(0)
+    }
+}
+
+#[test]
+fn qself_underscore_ident_not_decomposed() {
+    let src = qself_underscore_idents::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        src.contains("Foo_bar_get"),
+        "concrete `<Foo_bar>::get()` must resolve to `Foo_bar_get` (rendered as `_1Foo_bar_get`), \
+         got:\n{src}"
+    );
+    assert!(
+        !src.contains("Foo_u32"),
+        "the underscore in `Foo_bar` must not be mistaken for a mangling separator, got:\n{src}"
+    );
+}
+
+#[test]
+fn qself_underscore_ident_runs_on_cpu() {
+    assert_eq!(qself_underscore_idents::caller(), 7);
+}

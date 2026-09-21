@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use proc_macro2::Span;
 use syn::Ident;
-use wgsl_rs_ir::{mangle, unmangle};
+use wgsl_rs_ir::mangle;
 
 use crate::{
     parse::{
@@ -1268,17 +1268,30 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
         //
         // * `T { fields }` becomes `f32 { fields }` for the same reason (the struct
         //   ident is just an `Ident`, not a `Type`).
+        //
+        // QSelf paths (`<T>::method(...)`, `<[T; 4]>::CONSTANT`) carry the parsed
+        // qself type in `qself_ty`; when it contains type parameters, the *structure*
+        // is substituted and the mangled ident re-derived from it. Structure is
+        // never inferred from the mangled string — ordinary Rust identifiers can
+        // contain underscores, so a string component could be a real ident rather
+        // than a nested mangling.
         match expr {
             Expr::FnCall {
-                path: FnPath::TypeMethod { ty, .. },
+                path: FnPath::TypeMethod { ty, qself_ty, .. },
                 ..
             } => {
-                if let Some(concrete) = self.subst.get(&ty.to_string()) {
+                if let Some(qty) = qself_ty {
+                    // QSelf path: substitute structurally when needed; concrete
+                    // qself types are left untouched.
+                    if contains_type_param(qty) {
+                        substitute_type(qty, self.subst, self.consts);
+                        if let Ok(mangled) = mangle_type(qty) {
+                            *ty = Ident::new(&mangled, ty.span());
+                        }
+                    }
+                } else if let Some(concrete) = self.subst.get(&ty.to_string()) {
+                    // Plain `T::method(...)`: flat lookup on the param name.
                     *ty = type_to_ident(concrete, ty.span());
-                } else if let Some(substituted) =
-                    substitute_mangled_ident(&ty.to_string(), self.subst)
-                {
-                    *ty = Ident::new(&substituted, ty.span());
                 }
             }
             Expr::Struct { ident, .. } => {
@@ -1288,14 +1301,18 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
             }
             // `T::SLAB_SIZE` → `f32::SLAB_SIZE` (or `Self::SLAB_SIZE` →
             // `Wrapper_f32::SLAB_SIZE`) when the base type is in the
-            // substitution map.
-            Expr::TypePath { ty, .. } => {
-                if let Some(concrete) = self.subst.get(&ty.to_string()) {
+            // substitution map. QSelf const paths substitute structurally,
+            // like QSelf method calls above.
+            Expr::TypePath { ty, qself_ty, .. } => {
+                if let Some(qty) = qself_ty {
+                    if contains_type_param(qty) {
+                        substitute_type(qty, self.subst, self.consts);
+                        if let Ok(mangled) = mangle_type(qty) {
+                            *ty = Ident::new(&mangled, ty.span());
+                        }
+                    }
+                } else if let Some(concrete) = self.subst.get(&ty.to_string()) {
                     *ty = type_to_ident(concrete, ty.span());
-                } else if let Some(substituted) =
-                    substitute_mangled_ident(&ty.to_string(), self.subst)
-                {
-                    *ty = Ident::new(&substituted, ty.span());
                 }
             }
             _ => {}
@@ -1907,59 +1924,6 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
     }
     let name = mangle_type(ty).unwrap_or_else(|_| "unknown".to_string());
     Ident::new(&name, span)
-}
-
-/// Rewrite a mangled qself type ident whose components contain type
-/// parameters (e.g. `array_T_4` from `<[T; 4]>::zero()`), applying the
-/// substitution map component-wise.
-///
-/// `parse_qself_ty` mangles the qself type eagerly, so the flat
-/// `subst.get(ty)` lookup (keyed on the param name as written, e.g. "T")
-/// misses for compound types. This un-mangles the ident into its
-/// components, replaces any component exactly matching a substitution key
-/// with the concrete type's mangling, and re-mangles. Components that are
-/// themselves nested manglings (e.g. `array_T_4` inside
-/// `array__2array_T_4_4`, from `<[[T; 4]; 4]>::method()`) are recursed
-/// into. For `T = u32` this turns `array_T_4` into `array_u32_4` and
-/// `Pair_T` into `Pair_u32` — the latter exactly matching the name
-/// [`mangle_name`] gives the instantiated struct's impl methods.
-///
-/// Matching is exact, which is what makes it sound: [`mangle_type`]
-/// preserves type-parameter case, so a concrete ident that merely
-/// resembles a parameter's spelling (a struct `t` vs a param `T`) is never
-/// substituted. The residual ambiguity — a type parameter spelled
-/// identically to a concrete ident — is inherent to the mangled-string
-/// representation and predates QSelf support.
-///
-/// Returns `None` when no component matched, leaving the ident untouched.
-fn substitute_mangled_ident(mangled: &str, subst: &BTreeMap<String, Type>) -> Option<String> {
-    let components = unmangle(mangled)?;
-    let mut substituted: Vec<String> = Vec::with_capacity(components.len());
-    let mut changed = false;
-    for component in &components {
-        if let Some(concrete) = subst.get(component) {
-            substituted.push(mangle_type(concrete).ok()?);
-            changed = true;
-        } else if component.contains('_')
-            && let Some(nested) = substitute_mangled_ident(component, subst)
-        {
-            // A component that itself contains underscores is the mangling
-            // of a *nested* type (e.g. `Pair_t` inside `Pair__1Pair_t`,
-            // from `Pair<Pair<T>>`). Recurse so parameters hidden inside
-            // it are substituted too. Components without underscores can't
-            // hide structure, so they are left alone — this also gives the
-            // recursion its base case.
-            substituted.push(nested);
-            changed = true;
-        } else {
-            substituted.push(component.clone());
-        }
-    }
-    if !changed {
-        return None;
-    }
-    let str_components: Vec<&str> = substituted.iter().map(|s| s.as_str()).collect();
-    Some(mangle(&str_components))
 }
 
 // ===== Name mangling =====

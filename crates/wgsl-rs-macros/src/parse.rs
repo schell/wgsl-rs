@@ -2242,6 +2242,14 @@ pub enum FnPath {
         ty: Ident,
         colon2_token: Token![::],
         method: Ident,
+        /// The parsed qself type when this path came from `<T>::method()`
+        /// syntax (`None` for plain `Type::method()` paths). Retained so
+        /// monomorphization can substitute type parameters *structurally*
+        /// and re-derive the mangled `ty` (see `SubstituteVisitor`), rather
+        /// than inferring structure from the mangled string — ordinary
+        /// identifiers can contain underscores, so the string alone is
+        /// ambiguous. Dropped at IR conversion.
+        qself_ty: Option<Box<Type>>,
     },
 }
 
@@ -2339,6 +2347,10 @@ pub enum Expr {
         ty: Ident,
         colon2_token: Token![::],
         member: Ident,
+        /// The parsed qself type when this path came from `<T>::CONSTANT`
+        /// syntax (`None` for plain `Type::CONSTANT` paths). See
+        /// [`FnPath::TypeMethod::qself_ty`] for why it is retained.
+        qself_ty: Option<Box<Type>>,
     },
     /// A reference expression like `&expr`.
     ///
@@ -2420,7 +2432,7 @@ impl Expr {
                 // `Type_member` WGSL identifier (issue #131).
                 if let Some(q) = qself.as_ref() {
                     // `<T as Trait>::member` is rejected — see `parse_qself_ty`.
-                    let ty = parse_qself_ty(q, ctx)?;
+                    let (ty, qself_ty) = parse_qself_ty(q, ctx)?;
                     if path.segments.len() != 1 {
                         return UnsupportedSnafu {
                             span: path.span(),
@@ -2442,6 +2454,7 @@ impl Expr {
                         ty,
                         colon2_token: Token![::](seg.ident.span()),
                         member: seg.ident.clone(),
+                        qself_ty: Some(qself_ty),
                     }
                 } else if let Some(ident) = path.get_ident() {
                     // Simple identifier: `foo`. If this is a const-param
@@ -2482,6 +2495,7 @@ impl Expr {
                         ty,
                         colon2_token: Token![::](path.segments[0].ident.span()),
                         member,
+                        qself_ty: None,
                     }
                 } else {
                     return UnsupportedSnafu {
@@ -2686,7 +2700,7 @@ impl Expr {
                         // so the call resolves to `Type_method` in WGSL
                         // (issue #131). `<T as Trait>::...` is rejected by
                         // `parse_qself_ty`.
-                        let ty = parse_qself_ty(q, ctx)?;
+                        let (ty, qself_ty) = parse_qself_ty(q, ctx)?;
                         if syn_path.segments.len() != 1 {
                             return UnsupportedSnafu {
                                 span: syn_path.span(),
@@ -2709,6 +2723,7 @@ impl Expr {
                                 ty,
                                 colon2_token: Token![::](seg.ident.span()),
                                 method: seg.ident.clone(),
+                                qself_ty: Some(qself_ty),
                             },
                             vec![],
                             vec![],
@@ -2798,6 +2813,7 @@ impl Expr {
                                 ty,
                                 colon2_token: Token![::](syn_path.segments[0].ident.span()),
                                 method,
+                                qself_ty: None,
                             },
                             type_args,
                             const_args,
@@ -3165,11 +3181,18 @@ impl Expr {
 /// call `<[u32; 4]>::zero()` resolve to the WGSL function emitted for
 /// `impl Zeroable for [u32; 4] { fn zero() ... }` (issue #131).
 ///
+/// The parsed type is also returned alongside the mangled ident and
+/// retained on the `FnPath::TypeMethod` / `Expr::TypePath` node. When the
+/// type contains type parameters, monomorphization substitutes the
+/// *structure* and re-derives the mangled ident from it — the mangled
+/// string alone cannot be decomposed safely, because ordinary Rust
+/// identifiers can contain underscores.
+///
 /// The `<T as Trait>::...` disambiguation form is rejected: trait impls
 /// are matched by self type only (the trait path is discarded, matching
 /// [`ItemImpl`]'s handling), so naming the trait explicitly has no
 /// meaning here.
-fn parse_qself_ty(qself: &syn::QSelf, ctx: &ParseContext) -> Result<Ident, Error> {
+fn parse_qself_ty(qself: &syn::QSelf, ctx: &ParseContext) -> Result<(Ident, Box<Type>), Error> {
     if let Some(as_token) = &qself.as_token {
         return UnsupportedSnafu {
             span: as_token.span(),
@@ -3186,11 +3209,11 @@ fn parse_qself_ty(qself: &syn::QSelf, ctx: &ParseContext) -> Result<Ident, Error
     // would produce the same ident — the explicit branch documents the
     // invariant. Every other type is mangled as usual so it resolves to
     // the impl block's `Type_method` WGSL function.
-    let mangled = match ty {
+    let mangled = match &ty {
         Type::TypeParam { ident, .. } => ident.to_string(),
-        other => mangle_type(&other)?,
+        other => mangle_type(other)?,
     };
-    Ok(Ident::new(&mangled, qself.ty.span()))
+    Ok((Ident::new(&mangled, qself.ty.span()), Box::new(ty)))
 }
 
 // TODO: BuiltIn and Location should be built when a vertex or fragment shader

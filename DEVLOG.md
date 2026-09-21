@@ -537,20 +537,21 @@ arm reachable, and lowercasing would destroy a parameter's identity
 **Compound types containing parameters:** a qself type that *contains* a
 type parameter but is not itself a bare parameter — `<[T; 4]>::zero()` or
 `<Pair<T>>::zero()` — is eagerly mangled (`array_T_4`, `Pair_T`), and that
-mangled ident matches no substitution key. `SubstituteVisitor` gained a
-structural fallback for `FnPath::TypeMethod` and `Expr::TypePath`: on a
-flat-lookup miss, `substitute_mangled_ident` unmangles the ident, replaces
-any component *exactly* matching a substitution key with the concrete
-type's mangling, and re-mangles — recursing into components that are
-themselves nested manglings (e.g. `array_T_4` inside `array__2array_T_4_4`
-from `<[[T; 4]; 4]>::zero()`; components without underscores are the
-recursion's base case). Exact matching is what makes it sound: since
-`mangle_type` preserves parameter case, a concrete ident spelled like a
-parameter's lowercase (`t` vs `T`) is never substituted. `array_T_4` →
-`array_u32_4` for `T = u32`; `Pair_T` → `Pair_u32`, exactly matching the
-name `mangle_name` gives the instantiated struct's impl methods.
-Instantiation of the target impl/struct still piggybacks on the concrete
-type appearing in a type
+mangled ident matches no substitution key. Decomposing the mangled string
+to substitute inside it is unsound: ordinary Rust identifiers can contain
+underscores, so a component could be a real ident (`Foo_bar`) rather than
+a nested mangling, and after the fact the two are indistinguishable in the
+mangled string. Instead, `FnPath::TypeMethod` and `Expr::TypePath` gained
+an optional `qself_ty` field retaining the parsed qself type; when it
+contains type parameters, `SubstituteVisitor` substitutes the *structure*
+(`substitute_type`) and re-derives the mangled ident with `mangle_type` —
+the same derivation the instantiation machinery uses, so
+`<[T; 4]>::zero()` resolves to `array_u32_4_zero` and `<Pair<T>>::zero()`
+to `Pair_u32_zero`, exactly like the impl blocks emit them. Concrete
+qself types (with or without underscores, and however their spelling
+relates to a parameter's) are never touched. The field is dropped at IR
+conversion — the IR is unchanged. Instantiation of the target impl/struct
+still piggybacks on the concrete type appearing in a type
 position (signature or local) — the same constraint the pre-existing
 `T::method()` form has.
 

@@ -117,6 +117,7 @@
 - [Discard](./examples/discard.md)
 - [Generic Functions](./examples/generic-functions.md)
 - [Trait Impls](./examples/trait-impls.md)
+- [QSelf Call Syntax](./examples/qself-call.md)
 - [Renderer Specialization](./examples/renderer-specialization.md)
 - [Renderer Specialization (Simple)](./examples/renderer-specialization-simple.md)
 - [Generic Structs](./examples/generic-structs.md)

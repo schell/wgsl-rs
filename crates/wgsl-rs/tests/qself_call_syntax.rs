@@ -1,0 +1,79 @@
+//! Tests for direct `<T>::method()` / `<T>::CONSTANT` call syntax on complex
+//! (non-ident) self types — the "QSelf paths" of issue #131.
+//!
+//! The generic form `T::method()` inside `fn f<T: Trait>()` already worked
+//! (it resolves via monomorphization — see `complex_type_trait_impl.rs`).
+//! These tests cover the *direct* form where the caller names the concrete
+//! complex type itself, e.g. `<[u32; 4]>::zero()`.
+
+use wgsl_rs::wgsl;
+
+#[wgsl(skip_validation)]
+mod qself_call {
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    impl Zeroable for u32 {
+        fn zero() -> u32 {
+            0
+        }
+    }
+
+    impl Zeroable for [u32; 4] {
+        fn zero() -> [u32; 4] {
+            [0u32, 0u32, 0u32, 0u32]
+        }
+    }
+
+    // An inherent impl on a user struct, with an associated constant accessed
+    // via QSelf below. (Inherent impls on primitive arrays like `[u32; 4]`
+    // are forbidden by Rust, so the constant lives on a struct instead —
+    // this still exercises the `Expr::Path` QSelf branch.)
+    pub struct Tag {
+        pub _x: u32,
+    }
+
+    impl Tag {
+        pub const DEFAULT: u32 = 7;
+    }
+
+    /// Direct QSelf call: `<[u32; 4]>::zero()`.
+    pub fn direct_array_zero() -> [u32; 4] {
+        <[u32; 4]>::zero()
+    }
+
+    /// Direct QSelf call on a scalar, for symmetry with the array case.
+    pub fn direct_scalar_zero() -> u32 {
+        <u32>::zero()
+    }
+
+    /// Direct QSelf access of an associated constant.
+    pub fn direct_struct_default() -> u32 {
+        <Tag>::DEFAULT
+    }
+}
+
+#[test]
+fn qself_array_call_transpiles() {
+    let src = qself_call::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        src.contains("_2array_u32_4_zero"),
+        "direct `<[u32; 4]>::zero()` should mangle to `_2array_u32_4_zero`, got:\n{src}"
+    );
+    assert!(
+        src.contains("u32_zero"),
+        "direct `<u32>::zero()` should resolve to `u32_zero`, got:\n{src}"
+    );
+    assert!(
+        src.contains("Tag_DEFAULT"),
+        "direct `<Tag>::DEFAULT` should resolve to `Tag_DEFAULT`, got:\n{src}"
+    );
+}
+
+#[test]
+fn qself_array_call_runs_on_cpu() {
+    assert_eq!(qself_call::direct_array_zero(), [0u32, 0u32, 0u32, 0u32]);
+    assert_eq!(qself_call::direct_scalar_zero(), 0);
+    assert_eq!(qself_call::direct_struct_default(), 7);
+}

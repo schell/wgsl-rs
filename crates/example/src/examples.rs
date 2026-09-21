@@ -35,6 +35,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &discard_example::WGSL_SOURCE,
     &generic_functions::WGSL_SOURCE,
     &trait_impl_example::WGSL_SOURCE,
+    &qself_call_example::WGSL_SOURCE,
     &renderer_specialization::WGSL_SOURCE,
     &renderer_specialization_simple::WGSL_SOURCE,
     &generic_structs::WGSL_SOURCE,
@@ -1643,6 +1644,52 @@ pub mod trait_impl_example {
     /// Concrete caller — triggers monomorphization of `sum_three::<i32>`.
     pub fn sum_i32(a: i32, b: i32, c: i32) -> i32 {
         sum_three::<i32>(a, b, c)
+    }
+}
+
+/// Direct `<T>::method()` call syntax on complex (non-ident) self types.
+///
+/// Inside a generic function, `T::method(args)` resolves to
+/// `ConcreteType_method(args)` after monomorphization (see
+/// [`trait_impl_example`]). For *direct* calls where the concrete type is
+/// named at the call site, Rust requires the qualified-self form
+/// `<T>::method(args)` when `T` is not a simple identifier — e.g.
+/// `<[u32; 4]>::zero()`. This example shows that such direct QSelf calls
+/// transpile to the same `Type_method` WGSL function the corresponding
+/// impl block emits.
+///
+/// In WGSL output, `<[u32; 4]>::zero()` becomes `_2array_u32_4_zero()`
+/// — the leading `_2` is the underscore-escape prefix from the
+/// [`wgsl_rs_ir::mangle`] scheme (two underscores inside the mangled
+/// `array_u32_4` component).
+#[wgsl]
+pub mod qself_call_example {
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    impl Zeroable for u32 {
+        fn zero() -> u32 {
+            0
+        }
+    }
+
+    impl Zeroable for [u32; 4] {
+        fn zero() -> [u32; 4] {
+            [0u32, 0u32, 0u32, 0u32]
+        }
+    }
+
+    /// Direct QSelf call on a scalar — `<u32>::zero()` resolves to
+    /// `u32_zero()`.
+    pub fn scalar_zero() -> u32 {
+        <u32>::zero()
+    }
+
+    /// Direct QSelf call on an array — `<[u32; 4]>::zero()` resolves to
+    /// `_2array_u32_4_zero()`.
+    pub fn array_zero() -> [u32; 4] {
+        <[u32; 4]>::zero()
     }
 }
 

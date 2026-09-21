@@ -504,6 +504,37 @@ because the monomorphization pass clears `type_params` before IR conversion.
 yet supported — only `T::method()` (resolved via monomorphization). Tracked in
 GitHub issue #131.
 
+### 2026-08-02: QSelf call syntax reuses mangled TypeMethod (resolves #131)
+
+**Problem:** The previous entry left direct `<[u32; 4]>::zero()` call syntax
+unsupported — the proc-macro rejected any `Expr::Path` carrying a `qself`
+with "QSelf unsupported" (in both the `Expr::Call` and `Expr::Path` branches).
+Callers therefore had to route complex-type method calls through a generic
+function (`fn go<T: Trait>() -> T { T::zero() }` then `go::<[u32; 4]()`), an
+awkward indirection for what is a single direct call.
+
+**Decision:** Handle QSelf in both parse branches by reusing
+`monomorphize::mangle_type` to collapse `qself.ty` into the same mangled
+`Ident` that the impl-block self-type already produces (e.g. `[u32; 4]` →
+`array_u32_4`). The result is stored unchanged in the existing
+`FnPath::TypeMethod { ty, .. }` / `Expr::TypePath { ty, .. }` fields, so the
+IR, monomorphization, substitution, and render layers need no changes — they
+already treat `ty` as an opaque mangled string. This guarantees
+`<[u32; 4]>::zero()` and `impl Zeroable for [u32; 4] { fn zero() ... }`
+produce the same WGSL identifier and thus resolve to the same function.
+
+**Rejection of `<T as Trait>::...`:** The `as Trait` disambiguation form is
+rejected with a helpful error. Trait impls are matched by self type only
+(the trait path is discarded throughout wgsl-rs — see `ItemImpl`'s handling),
+so naming the trait explicitly has no meaning here. The error message points
+callers at the plain `<T>::method(...)` form.
+
+**Why no IR change:** `ir::FnPath::TypeMethod.ty` is already a `String`, and
+`ir::substitute::type_to_ident` already produces mangled identifiers for
+complex types when substituting type params. The parse layer was the only
+place that assumed `ty` was a single source-level ident; relaxing that
+assumption (by computing the mangled ident at parse time) is the whole fix.
+
 ### 2026-08-05: `PhantomData<T>` marker fields are retained in the IR, omitted from WGSL
 
 **Problem:** A `#[wgsl]` struct carrying `PhantomData<T>` (e.g. for a slab-id

@@ -116,6 +116,7 @@ fn parse_meta_list_args(list: &syn::MetaList) -> Vec<String> {
     })
 }
 
+use crate::monomorphize::mangle_type;
 #[allow(unused_imports)]
 use crate::parse::util::in_progress;
 
@@ -2413,9 +2414,36 @@ impl Expr {
                 qself,
                 path,
             }) => {
-                util::some_is_unsupported(qself.as_ref(), "QSelf is unsupported")?;
-
-                if let Some(ident) = path.get_ident() {
+                // Qualified-self path: `<T>::member` (e.g. `<[u32; 4]>::CONSTANT`).
+                // The qself type is mangled into the same ident used for
+                // impl-block self-types, so the path resolves to the right
+                // `Type_member` WGSL identifier (issue #131).
+                if let Some(q) = qself.as_ref() {
+                    // `<T as Trait>::member` is rejected — see `parse_qself_ty`.
+                    let ty = parse_qself_ty(q, ctx)?;
+                    if path.segments.len() != 1 {
+                        return UnsupportedSnafu {
+                            span: path.span(),
+                            note: "qualified-self paths support a single member after `>::`, e.g. \
+                                   `<[u32; 4]>::CONSTANT`",
+                        }
+                        .fail();
+                    }
+                    let seg = &path.segments[0];
+                    if !matches!(seg.arguments, syn::PathArguments::None) {
+                        return UnsupportedSnafu {
+                            span: seg.arguments.span(),
+                            note: "generic arguments on the member of a qualified-self path are \
+                                   not supported",
+                        }
+                        .fail();
+                    }
+                    Self::TypePath {
+                        ty,
+                        colon2_token: Token![::](seg.ident.span()),
+                        member: seg.ident.clone(),
+                    }
+                } else if let Some(ident) = path.get_ident() {
                     // Simple identifier: `foo`. If this is a const-param
                     // reference (e.g. `N` in an array length or a for-loop
                     // bound), apply any positional rename so entry-point
@@ -2649,10 +2677,43 @@ impl Expr {
                 args,
             }) => match func.as_ref() {
                 syn::Expr::Path(expr_path) => {
-                    util::some_is_unsupported(expr_path.qself.as_ref(), "QSelf unsupported")?;
-
                     let syn_path = &expr_path.path;
-                    let (fn_path, type_args, const_args) = if syn_path.segments.len() == 1 {
+                    let (fn_path, type_args, const_args) = if let Some(q) = expr_path.qself.as_ref()
+                    {
+                        // Qualified-self call: `<T>::method(args)` (e.g.
+                        // `<[u32; 4]>::zero()`). The qself type is mangled
+                        // into the same ident used for impl-block self-types,
+                        // so the call resolves to `Type_method` in WGSL
+                        // (issue #131). `<T as Trait>::...` is rejected by
+                        // `parse_qself_ty`.
+                        let ty = parse_qself_ty(q, ctx)?;
+                        if syn_path.segments.len() != 1 {
+                            return UnsupportedSnafu {
+                                span: syn_path.span(),
+                                note: "qualified-self call paths support a single method after \
+                                       `>::`, e.g. `<[u32; 4]>::zero()`",
+                            }
+                            .fail();
+                        }
+                        let seg = &syn_path.segments[0];
+                        if !matches!(seg.arguments, syn::PathArguments::None) {
+                            return UnsupportedSnafu {
+                                span: seg.arguments.span(),
+                                note: "generic arguments on the method of a qualified-self call \
+                                       are not supported",
+                            }
+                            .fail();
+                        }
+                        (
+                            FnPath::TypeMethod {
+                                ty,
+                                colon2_token: Token![::](seg.ident.span()),
+                                method: seg.ident.clone(),
+                            },
+                            vec![],
+                            vec![],
+                        )
+                    } else if syn_path.segments.len() == 1 {
                         let seg = &syn_path.segments[0];
                         match &seg.arguments {
                             syn::PathArguments::None => {
@@ -3093,6 +3154,33 @@ impl Expr {
             Expr::LinkageAccess { ident, .. } => ident.span(),
         }
     }
+}
+
+/// Parse a qualified-self (`<T>::...`) type into the `Ident` used as the
+/// `ty` of an [`FnPath::TypeMethod`] / [`Expr::TypePath`].
+///
+/// The qself's type (e.g. `[u32; 4]`, `Vec4<f32>`) is run through
+/// [`mangle_type`] so that it produces the same mangled identifier the
+/// impl-block self-type does (e.g. `array_u32_4`). This lets a direct
+/// call `<[u32; 4]>::zero()` resolve to the WGSL function emitted for
+/// `impl Zeroable for [u32; 4] { fn zero() ... }` (issue #131).
+///
+/// The `<T as Trait>::...` disambiguation form is rejected: trait impls
+/// are matched by self type only (the trait path is discarded, matching
+/// [`ItemImpl`]'s handling), so naming the trait explicitly has no
+/// meaning here.
+fn parse_qself_ty(qself: &syn::QSelf, ctx: &ParseContext) -> Result<Ident, Error> {
+    if let Some(as_token) = &qself.as_token {
+        return UnsupportedSnafu {
+            span: as_token.span(),
+            note: "the `<T as Trait>::...` form is not supported; trait impls are matched by self \
+                   type only — write `<T>::method(...)` instead",
+        }
+        .fail();
+    }
+    let ty = Type::parse(qself.ty.as_ref(), ctx)?;
+    let mangled = mangle_type(&ty)?;
+    Ok(Ident::new(&mangled, qself.ty.span()))
 }
 
 // TODO: BuiltIn and Location should be built when a vertex or fragment shader

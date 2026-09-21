@@ -955,3 +955,47 @@ module gained a `test_precedence` entry point with the issue repro; the
 roundtrip suite gained `bit_precedence_u32` (bitwise/shift vs
 comparison on both worlds — the logical operators do not diverge
 between Rust and WGSL, so the coverage lives in `bit_manipulation`).
+
+### 2026-09-21: Literal-suffix inference runs at the deshadow slot (wgsl-rs#145)
+
+**Problem:** Rust infers unsuffixed integer literals from context (`0` is
+`u32` when the return type is `u32`), but WGSL defaults them to i32 through
+polymorphic builtins — `select(0, 1, data)` in a `u32` context compiles in
+Rust and fails naga validation (issue #145, discovered during crabslab
+`SlabItem` development). Bare `Lit::Int` nodes reach the renderer from four
+distinct sources: the user's source (preserved as-is by `#[wgsl]`), runtime
+const substitution (`substitute_consts_in_items` inserts `Lit::Int` with an
+empty suffix), runtime type substitution (`substitute_types` /
+`substitute_items`), and extension lowering (`WgslExtension::modify_ir`).
+No compile-time placement can see all four.
+
+**Decision:** the suffix pass lives in `wgsl-rs-ir` (like `deshadow`) and
+runs exactly where deshadow already runs — on freshly built and
+substituted IR, immediately after `deshadow_*` and immediately before
+`render_*`. Three call sites: `Source::collect` (wgsl-rs/src/lib.rs),
+`instantiate_template_into` (items-level, for cross-source templates,
+mirroring `deshadow_items`), and `analyze_ir_module`
+(wgsl-rs/src/linkage/wgpu.rs — the linkage stores the suffixed IR, so
+`WgpuLinkage::wgsl_source` renders it as-is).
+
+Rejected alternatives: running in the macro-emitted constructors or
+`instantiate` (builder.rs) — misses runtime substitution and extension
+lowering, and would need every emitted call site regenerated. Running
+inside `render_module` — the renderer is pure `&Module` (and renders
+template placeholder modules too); inference is a whole-module mutation
+and belongs in the pipeline, not the emitter.
+
+**Semantics:** a scope-tracking walk propagates expected types from anchors
+(function return types, `Local.ty`, const items, assignment and compound
+assignment RHS, array/struct/vector constructors, casts, builtin and
+user-function call args, binary operands) down to leaf literals, writing
+Rust-style suffixes (`u32` / `i32` — the forms `render` already translates)
+only onto empty-suffix ints with a concrete scalar expectation. Only empty
+suffixes are written, so the pass is idempotent and re-runnable. Type
+positions (`Type::Array.len`, `Expr::ZeroValueArray.len`) are never
+suffixed — WGSL wants abstract integers there. Floats are out of scope:
+WGSL abstract-float coerces, and Rust cannot place an unsuffixed int in an
+f32 context without an explicit conversion call. Ordering with deshadow:
+suffix runs after — deshadow is the name authority (it renames declarations
+and uses consistently, so either order is correct, but one order is
+specified).

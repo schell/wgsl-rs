@@ -35,6 +35,10 @@
 //!   `radians`
 //! - [`logical_operations`] — Logical builtins: `all`, `any` on bool vectors
 //!   (Vec2b, Vec3b, Vec4b)
+//! - [`literal_suffixes`] — Type-directed literal suffixes (#145): bare
+//!   literals in `u32`-inferred contexts (`select` in an array literal,
+//!   comparison-anchored and `min`-grouped literals) render with WGSL `u`
+//!   suffixes; GPU and CPU agree
 //! - [`vector_equality`] — Vector comparisons (#164): `==`/`!=` lowered to
 //!   `all(...)`/`!(all(...))`, plus the `cmp_eq`/`cmp_ne` componentwise masks
 //! - [`select_operations`] — Conditional selection: `select` on scalar and
@@ -71,6 +75,7 @@ pub mod clamping;
 pub mod derivative_operations;
 pub mod exponential;
 pub mod geometric;
+pub mod literal_suffixes;
 pub mod logical_operations;
 pub mod matrix_operations;
 pub mod modf_frexp_ldexp;
@@ -104,6 +109,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(vector_equality::VectorEqualityTest),
         Box::new(basic_numeric::BasicNumericTest),
         Box::new(logical_operations::LogicalOperationsTest),
+        Box::new(literal_suffixes::LiteralSuffixTest),
         Box::new(select_operations::SelectOperationsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),

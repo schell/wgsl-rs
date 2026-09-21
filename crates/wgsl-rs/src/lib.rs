@@ -241,6 +241,7 @@ impl Source {
             ir::substitute_types(&mut ir_module, s);
         }
         ir::deshadow_module(&mut ir_module);
+        ir::suffix_module(&mut ir_module);
         if ir::items_need_tier1_extension(&ir_module.items) {
             *needs_tier1 = true;
         }
@@ -421,6 +422,7 @@ fn instantiate_template_into<'a>(
     }
 
     ir::deshadow_items(&mut items);
+    ir::suffix_items(&mut items);
     if ir::items_need_tier1_extension(&items) {
         *needs_tier1 = true;
     }
@@ -532,7 +534,7 @@ mod test {
     fn module_source() {
         let source = c::WGSL_SOURCE.wgsl_source().unwrap();
         c::main();
-        assert!(source.contains("const THREE: u32 = 3;"), "got:\n{source}");
+        assert!(source.contains("const THREE: u32 = 3u;"), "got:\n{source}");
         assert!(
             source.contains("fn add_three_to_x_minus_y(x: u32, y: u32) -> u32"),
             "got:\n{source}"

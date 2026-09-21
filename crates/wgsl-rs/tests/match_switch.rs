@@ -46,15 +46,17 @@ mod valid_switches {
 #[test]
 fn or_literals_render_correctly() {
     let src = valid_switches::WGSL_SOURCE.wgsl_source().unwrap();
-    // The or-pattern `0 | 1 | 2` should render as `case 0, 1, 2:` (not mixed
-    // with default).
+    // The or-pattern `0 | 1 | 2` should render as `case 0u, 1u, 2u:`
+    // (not mixed with default). The literal suffix pass adds the `u`
+    // suffixes because the switch selector is `u32` — WGSL requires
+    // case selectors to match the selector's type.
     assert!(
-        src.contains("case 0, 1, 2"),
-        "expected 'case 0, 1, 2' in WGSL, got: {src}"
+        src.contains("case 0u, 1u, 2u"),
+        "expected 'case 0u, 1u, 2u' in WGSL, got: {src}"
     );
     // `default` must NOT be combined with the case selectors.
     assert!(
-        !src.contains("case 0, 1, 2, default"),
+        !src.contains("case 0u, 1u, 2u, default"),
         "default should not be mixed with case selectors, got: {src}"
     );
     assert!(

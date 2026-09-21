@@ -43,6 +43,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &phantom_data::WGSL_SOURCE,
     &swizzles::WGSL_SOURCE,
     &builtin_constants::WGSL_SOURCE,
+    &literal_suffix_example::WGSL_SOURCE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
@@ -2004,5 +2005,34 @@ pub mod builtin_constants {
         let _v2 = Vec2i::Y - Vec2i::X;
         // signed vectors also have `NEG_ONE`
         let _v3 = Vec3i::NEG_ONE;
+    }
+}
+
+/// Type-directed integer literal suffix insertion (wgsl-rs#145).
+///
+/// Rust infers the type of an unsuffixed integer literal from context;
+/// the transpiler propagates that expected type and inserts the
+/// matching WGSL suffix (`u`/`i`) for you. Try:
+/// `cargo run -p example -- source literal_suffix_example`
+#[wgsl]
+pub mod literal_suffix_example {
+    use wgsl_rs::std::*;
+
+    /// The issue #145 repro: `0` and `1` are `u32` from the array
+    /// element type, rendered as `0u` / `1u`.
+    pub fn to_array(data: bool) -> [u32; 1] {
+        [select(0, 1, data)]
+    }
+
+    /// `4095` is `u32` from the parameter and the `min` group,
+    /// rendered as `4095u`.
+    pub fn clamp_to(x: u32) -> u32 {
+        min(x, 4095)
+    }
+
+    /// An annotated `let` pins its initializer too.
+    pub fn counting() -> u32 {
+        let count: u32 = 0;
+        count + 1
     }
 }

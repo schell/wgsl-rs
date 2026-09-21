@@ -1660,7 +1660,7 @@ pub mod trait_impl_example {
 ///
 /// In WGSL output, `<[u32; 4]>::zero()` becomes `_2array_u32_4_zero()`
 /// — the leading `_2` is the underscore-escape prefix from the
-/// [`wgsl_rs_ir::mangle`] scheme (two underscores inside the mangled
+/// `wgsl_rs_ir::mangle` scheme (two underscores inside the mangled
 /// `array_u32_4` component).
 #[wgsl]
 pub mod qself_call_example {

@@ -1523,3 +1523,111 @@ fn array_and_vec_literal_inferred_types_register() {
         "swizzle target should anchor, got: {wgsl}"
     );
 }
+
+// ===== Vector / matrix indexing and derefs (wgsl-rs#196) =====
+
+fn matrix_u32(columns: u8, rows: u8) -> Type {
+    Type::Matrix {
+        columns,
+        rows,
+        scalar_ty: Some(ScalarType::U32),
+    }
+}
+
+fn ptr_u32() -> Type {
+    Type::Ptr {
+        address_space: AddressSpace::Function,
+        elem: Box::new(u32_ty()),
+    }
+}
+
+#[test]
+fn vector_indexing_anchors_element_assignments() {
+    // `let mut v = vec4u(0, 0, 0, 0); v[0] = select(0, 1, cond);` —
+    // the vector constructor registers the vector type, indexing it
+    // resolves the element scalar, and the select anchors (wgsl-rs#196).
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "v",
+                None,
+                Some(call(
+                    "vec4u",
+                    vec![bare_int("0"), bare_int("0"), bare_int("0"), bare_int("0")],
+                )),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("v")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "vector element assignment should anchor the select, got: {wgsl}"
+    );
+}
+
+#[test]
+fn matrix_double_indexing_resolves_scalar_type() {
+    // `fn f(m: mat4x4u, cond: bool) { m[0][1] = select(0, 1, cond); }` —
+    // the first index yields a column vector, the second its scalar,
+    // so the select anchors from the matrix's element type (wgsl-rs#196).
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![
+            arg("m", matrix_u32(4, 4)),
+            arg("cond", Type::Scalar(ScalarType::Bool)),
+        ],
+        ReturnType::Default,
+        vec![Stmt::Assignment {
+            lhs: Expr::ArrayIndexing {
+                lhs: Box::new(Expr::ArrayIndexing {
+                    lhs: Box::new(ident("m")),
+                    index: Box::new(bare_int("0")),
+                }),
+                index: Box::new(bare_int("1")),
+            },
+            rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+        }],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "matrix element assignment should anchor the select, got: {wgsl}"
+    );
+}
+
+#[test]
+fn deref_assignment_target_anchors_rhs() {
+    // `fn f(p: ptr<function, u32>, cond: bool) { *p = select(0, 1, cond); }` —
+    // a deref target resolves the pointee type, so the RHS select
+    // anchors from it.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![
+            arg("p", ptr_u32()),
+            arg("cond", Type::Scalar(ScalarType::Bool)),
+        ],
+        ReturnType::Default,
+        vec![Stmt::Assignment {
+            lhs: Expr::Unary {
+                op: UnOp::Deref,
+                expr: Box::new(ident("p")),
+            },
+            rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+        }],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "deref assignment should anchor the select, got: {wgsl}"
+    );
+}

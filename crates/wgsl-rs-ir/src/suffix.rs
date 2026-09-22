@@ -264,28 +264,61 @@ impl TypeEnv {
 
     /// The concrete type of `expr`, when provable without a full type
     /// checker: typed identifiers from scope, suffixed literals, casts,
-    /// and field / element accesses rooted at a typed base.
-    fn expr_ty(&self, expr: &Expr) -> Option<Type> {
+    /// constructors, user-fn returns, and field / element accesses
+    /// rooted at a typed base.
+    ///
+    /// The match is exhaustive over [`Expr`]: every variant either has
+    /// a derivable rule or an explicit `None` with a comment naming
+    /// why, so a new variant cannot silently fall through. `None`
+    /// means "unprovable — do not anchor"; the pass never guesses a
+    /// type (see the DEVLOG entry for 2026-09-22).
+    fn infer(&self, expr: &Expr) -> Option<Type> {
         match expr {
             Expr::Ident(name) => self.lookup(name),
-            Expr::Lit(Lit::Int { suffix, .. }) => match suffix.as_str() {
-                "u32" | "usize" => Some(Type::Scalar(ScalarType::U32)),
-                "i32" | "isize" => Some(Type::Scalar(ScalarType::I32)),
-                _ => None,
+            Expr::Lit(lit) => match lit {
+                Lit::Int { suffix, .. } => match suffix.as_str() {
+                    "u32" | "usize" => Some(Type::Scalar(ScalarType::U32)),
+                    "i32" | "isize" => Some(Type::Scalar(ScalarType::I32)),
+                    _ => None,
+                },
+                // Bool and float literals carry no anchorable integer
+                // type — a float literal cannot appear in an integer
+                // context in valid Rust, and a bool never anchors one.
+                Lit::Bool(_) | Lit::Float { .. } => None,
             },
-            Expr::Paren(inner) => self.expr_ty(inner),
+            Expr::Paren(inner) => self.infer(inner),
             Expr::Cast { ty, .. } => Some((**ty).clone()),
             Expr::FieldAccess { base, field } => {
-                let Type::Struct { name, type_args } = self.expr_ty(base)? else {
+                let Type::Struct { name, type_args } = self.infer(base)? else {
                     return None;
                 };
                 self.field_ty(&name, &type_args, field)
             }
-            Expr::ArrayIndexing { lhs, .. } => match self.expr_ty(lhs)? {
+            Expr::ArrayIndexing { lhs, .. } => match self.infer(lhs)? {
                 Type::Array { elem, .. } | Type::RuntimeArray { elem } => Some((*elem).clone()),
+                // Indexing a vector yields its scalar element —
+                // `v[0] = select(0, 1, cond)` anchors from the
+                // vector's element type (wgsl-rs#196).
+                Type::Vector {
+                    scalar_ty: Some(scalar),
+                    ..
+                } => Some(Type::Scalar(scalar)),
+                // Indexing a matrix yields a column vector carrying
+                // the matrix's scalar type; `m[i][j]` recurses
+                // through the vector case (wgsl-rs#196).
+                Type::Matrix {
+                    rows,
+                    scalar_ty: Some(scalar),
+                    ..
+                } => Some(Type::Vector {
+                    elements: rows,
+                    scalar_ty: Some(scalar),
+                }),
+                // Abstract vectors / matrices (`scalar_ty: None`) and
+                // non-indexable bases carry no provable element type.
                 _ => None,
             },
-            Expr::Swizzle { lhs, .. } => match self.expr_ty(lhs)? {
+            Expr::Swizzle { lhs, .. } => match self.infer(lhs)? {
                 Type::Vector {
                     scalar_ty: Some(scalar),
                     ..
@@ -300,24 +333,27 @@ impl TypeEnv {
             // operators yield `bool`.
             Expr::Binary { lhs, op, rhs } => {
                 if is_shift(op) {
-                    self.expr_ty(lhs)
+                    self.infer(lhs)
                 } else if is_arithmetic(op) {
-                    self.expr_ty(lhs).or_else(|| self.expr_ty(rhs))
+                    self.infer(lhs).or_else(|| self.infer(rhs))
                 } else {
                     Some(Type::Scalar(ScalarType::Bool))
                 }
             }
             // `!`, bitwise complement, and negation preserve the
-            // operand type; a deref yields the pointee, which the
-            // pointer expression's type does not carry.
+            // operand type; a deref yields the pointee of a provable
+            // pointer operand.
             Expr::Unary { op, expr } => match op {
-                UnOp::Not | UnOp::Complement | UnOp::Neg => self.expr_ty(expr),
-                UnOp::Deref => None,
+                UnOp::Not | UnOp::Complement | UnOp::Neg => self.infer(expr),
+                UnOp::Deref => match self.infer(expr)? {
+                    Type::Ptr { elem, .. } => Some((*elem).clone()),
+                    _ => None,
+                },
             },
             // Array literals yield the first element's type; the
             // length is the element count.
             Expr::Array { elems } => {
-                let elem = elems.first().and_then(|e| self.expr_ty(e))?;
+                let elem = elems.first().and_then(|e| self.infer(e))?;
                 Some(Type::Array {
                     elem: Box::new(elem),
                     len: Expr::Lit(Lit::Int {
@@ -353,20 +389,26 @@ impl TypeEnv {
                 if let Some(sig) = self.fn_sigs.get(&callee) {
                     sig.ret.clone()
                 } else if builtin_value_args(&callee).is_some() {
-                    params.first().and_then(|p| self.expr_ty(p))
+                    params.first().and_then(|p| self.infer(p))
                 } else if let Some((elements, scalar)) = vec_ctor_shape(&callee) {
                     Some(Type::Vector {
                         elements,
                         scalar_ty: Some(scalar),
                     })
                 } else {
+                    // External builtins (texture sampling, atomics,
+                    // derivatives, packing, …) have no signature table
+                    // here — deliberately unprovable rather than guessed.
                     None
                 }
             }
             // Associated constants are registered under their mangled
             // render name (`Type_MEMBER`) at collection time.
             Expr::TypePath { ty, member } => self.globals.get(&mangle(&[ty, member])).cloned(),
-            _ => None,
+            // A reference is pointer-typed; anchors flow through
+            // pointees (the deref rule above), not pointer values, so
+            // no type is derivable here.
+            Expr::Reference(_) => None,
         }
     }
 
@@ -556,7 +598,7 @@ impl SuffixPass {
         }
         let ty = match (&local.ty, &local.init) {
             (Some(ty), _) => Some(ty.clone()),
-            (None, Some(init)) => self.env.expr_ty(init),
+            (None, Some(init)) => self.env.infer(init),
             _ => None,
         };
         if let Some(ty) = ty
@@ -581,7 +623,7 @@ impl SuffixPass {
             self.expect(rhs, Some(&u32_ty));
             return;
         }
-        let target_ty = self.env.expr_ty(lhs);
+        let target_ty = self.env.infer(lhs);
         self.expect(rhs, target_ty.as_ref());
     }
 
@@ -606,11 +648,10 @@ impl SuffixPass {
     /// own inference. Fully-bare ranges (`for i in 0..8`) infer `i32`
     /// in both Rust and WGSL and stay bare.
     fn walk_for(&mut self, f: &mut ForLoop) {
-        let var_ty = f.var_ty.clone().or_else(|| {
-            self.env
-                .expr_ty(&f.from)
-                .or_else(|| self.env.expr_ty(&f.to))
-        });
+        let var_ty = f
+            .var_ty
+            .clone()
+            .or_else(|| self.env.infer(&f.from).or_else(|| self.env.infer(&f.to)));
         if let Some(ty) = &var_ty {
             self.expect(&mut f.from, Some(ty));
             self.expect(&mut f.to, Some(ty));
@@ -635,7 +676,7 @@ impl SuffixPass {
     /// are walked for their own anchors.
     fn walk_switch(&mut self, s: &mut StmtSwitch) {
         self.expect(&mut s.selector, None);
-        let selector_ty = self.env.expr_ty(&s.selector);
+        let selector_ty = self.env.infer(&s.selector);
         for arm in &mut s.arms {
             if let Some(ty) = &selector_ty {
                 for sel in &mut arm.selectors {
@@ -689,7 +730,7 @@ impl SuffixPass {
             let group_ty = expected.cloned().or_else(|| {
                 value_indices
                     .iter()
-                    .find_map(|&i| params.get(i).and_then(|a| self.env.expr_ty(a)))
+                    .find_map(|&i| params.get(i).and_then(|a| self.env.infer(a)))
             });
             for (i, arg) in params.iter_mut().enumerate() {
                 if value_indices.contains(&i) {
@@ -778,8 +819,8 @@ impl SuffixPass {
                     // neither side (the count is u32; the value follows
                     // the lhs only).
                     if is_arithmetic(op) || is_comparison(op) {
-                        let lhs_ty = self.env.expr_ty(lhs);
-                        let rhs_ty = self.env.expr_ty(rhs);
+                        let lhs_ty = self.env.infer(lhs);
+                        let rhs_ty = self.env.infer(rhs);
                         if let Some(ty) = lhs_ty {
                             self.expect(rhs, Some(&ty));
                         }

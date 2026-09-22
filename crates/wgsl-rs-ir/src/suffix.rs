@@ -75,7 +75,10 @@ pub fn suffix_items(items: &mut [Item]) {
 /// matching Rust name resolution.
 pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String, FnSig>) {
     SuffixPass {
-        fn_sigs: imports.clone(),
+        env: TypeEnv {
+            fn_sigs: imports.clone(),
+            ..TypeEnv::default()
+        },
         ..SuffixPass::default()
     }
     .walk_module(module);
@@ -89,7 +92,10 @@ pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String,
 /// chunks of the assembled translation unit.
 pub fn suffix_items_with_imports(items: &mut [Item], imports: &HashMap<String, FnSig>) {
     SuffixPass {
-        fn_sigs: imports.clone(),
+        env: TypeEnv {
+            fn_sigs: imports.clone(),
+            ..TypeEnv::default()
+        },
         ..SuffixPass::default()
     }
     .walk_items(items);
@@ -157,18 +163,17 @@ struct StructDef {
     fields: Vec<(String, Type)>,
 }
 
-/// Scope-tracking state for the suffix pass.
-///
-/// Structurally mirrors the deshadow pass: one instance walks a whole
-/// module, pushing a scope frame per block so that the innermost
-/// declaration of a name wins when resolving assignment targets.
+/// The suffix pass's type environment: everything needed to resolve
+/// the concrete type of an expression bottom-up — the scope stack, the
+/// struct registry, the user-function signature registry, and the
+/// module-level globals. Collected once per module (plus any imported
+/// signatures seeded by the `_with_imports` entry points) before the
+/// mutation walk begins.
 #[derive(Default)]
-struct SuffixPass {
+struct TypeEnv {
     /// Stack of scope frames mapping local names to their declared types.
     /// The bottom frame holds the current function's parameters.
     scopes: Vec<HashMap<String, Type>>,
-    /// The current function's declared return type, if any.
-    return_ty: Option<Type>,
     /// Struct definitions by name, collected before the walk so struct
     /// constructor fields and field assignments can resolve types.
     structs: HashMap<String, StructDef>,
@@ -182,18 +187,12 @@ struct SuffixPass {
     globals: HashMap<String, Type>,
 }
 
-impl SuffixPass {
-    /// Walk every item in the module.
-    fn walk_module(&mut self, module: &mut Module) {
-        self.walk_items(&mut module.items);
-    }
-
-    /// First collect struct definitions, then walk each top-level item
-    /// that can anchor a type expectation: `const` items via their
-    /// declared type, and functions (free or impl methods) via their
-    /// signatures.
-    fn walk_items(&mut self, items: &mut [Item]) {
-        for item in items.iter() {
+impl TypeEnv {
+    /// Collect struct definitions, user-function signatures, and global
+    /// types from every top-level item. Runs ahead of the mutation
+    /// walk; the walk mutates the items, so collection borrows first.
+    fn collect(&mut self, items: &[Item]) {
+        for item in items {
             match item {
                 Item::Struct(s) => {
                     self.structs.insert(
@@ -247,239 +246,6 @@ impl SuffixPass {
                 }
                 _ => {}
             }
-        }
-        for item in items {
-            match item {
-                Item::Const(c) => self.expect(&mut c.expr, Some(&c.ty)),
-                Item::Fn(f) => self.walk_fn(f),
-                Item::Impl(imp) => {
-                    for impl_item in &mut imp.items {
-                        match impl_item {
-                            ImplItem::Fn(f) => self.walk_fn(f),
-                            // Associated consts anchor from their
-                            // declared type, like module-level consts.
-                            ImplItem::Const(c) => self.expect(&mut c.expr, Some(&c.ty)),
-                            // Associated type aliases carry no
-                            // expression.
-                            ImplItem::Type(_) => {}
-                        }
-                    }
-                }
-                // Structs were collected above; uniforms, storage,
-                // samplers, textures, and enums carry no expression to
-                // suffix.
-                _ => {}
-            }
-        }
-    }
-
-    /// Walk one function body with its parameters and return type as the
-    /// seed context.
-    fn walk_fn(&mut self, f: &mut ItemFn) {
-        self.scopes.clear();
-        self.return_ty = match &f.return_type {
-            ReturnType::Type { ty, .. } => Some(ty.clone()),
-            ReturnType::Default => None,
-        };
-        let params: HashMap<String, Type> = f
-            .inputs
-            .iter()
-            .map(|arg| (arg.name.clone(), arg.ty.clone()))
-            .collect();
-        self.scopes.push(params);
-        self.walk_block(&mut f.block);
-        self.scopes.clear();
-        self.return_ty = None;
-    }
-
-    /// Walk a block's statements in a fresh scope frame.
-    fn walk_block(&mut self, block: &mut Block) {
-        self.scopes.push(HashMap::new());
-        for stmt in &mut block.stmts {
-            self.walk_stmt(stmt);
-        }
-        self.scopes.pop();
-    }
-
-    /// Apply the anchors that produce a type expectation for a statement.
-    fn walk_stmt(&mut self, stmt: &mut Stmt) {
-        match stmt {
-            Stmt::Local(local) => self.walk_local(local),
-            Stmt::Const(c) => {
-                self.expect(&mut c.expr, Some(&c.ty));
-                // Register the const's declared type in scope after
-                // walking its initializer, like a typed local — later
-                // expressions anchor from it
-                // (`const C: u32 = 1; select(C, 0, cond)`).
-                let name = c.name.clone();
-                let ty = c.ty.clone();
-                if let Some(scope) = self.scopes.last_mut() {
-                    scope.insert(name, ty);
-                }
-            }
-            Stmt::Assignment { lhs, rhs } => {
-                self.walk_assignment_rhs(lhs, rhs, None);
-            }
-            Stmt::CompoundAssignment { lhs, op, rhs } => {
-                self.walk_assignment_rhs(lhs, rhs, Some(*op));
-            }
-            Stmt::Return(Some(expr)) => {
-                let ret = self.return_ty.clone();
-                self.expect(expr, ret.as_ref());
-            }
-            Stmt::Expr { expr, has_semi } => {
-                // A trailing expression is an implicit `return expr;`.
-                let expected = if *has_semi {
-                    None
-                } else {
-                    self.return_ty.clone()
-                };
-                self.expect(expr, expected.as_ref());
-            }
-            Stmt::If(i) => self.walk_if(i),
-            Stmt::While { condition, body } => {
-                self.expect(condition, None);
-                self.walk_block(body);
-            }
-            Stmt::Loop { body } => self.walk_block(body),
-            Stmt::For(f) => self.walk_for(f),
-            Stmt::Switch(s) => self.walk_switch(s),
-            Stmt::Block(b) => self.walk_block(b),
-            Stmt::SlabCopy {
-                src,
-                src_offset,
-                dest,
-                dest_offset,
-                size,
-            } => {
-                // The renderer emits a u32 loop counter, compares it
-                // against `size`, and adds the offsets to it — all
-                // three flow through u32 arithmetic.
-                let u32_ty = Type::Scalar(ScalarType::U32);
-                self.expect(src_offset, Some(&u32_ty));
-                self.expect(dest_offset, Some(&u32_ty));
-                self.expect(size, Some(&u32_ty));
-                self.expect(src, None);
-                self.expect(dest, None);
-            }
-            // Control flow and extension macros carry no type
-            // expectation in this pass.
-            Stmt::Return(None)
-            | Stmt::Break
-            | Stmt::Continue
-            | Stmt::Discard
-            | Stmt::Macro { .. } => {}
-        }
-    }
-
-    /// Suffix a local's initializer and register the local's type in the
-    /// current scope.
-    ///
-    /// Typed locals propagate their declared type; un-annotated locals
-    /// are still walked so self-anchored expressions (struct
-    /// constructors) inside them are suffixed, and a type provable from
-    /// the (now suffixed) initializer registers in scope — Rust infers
-    /// `let mut y = 0u32;` as `u32`, so a later assignment anchors from
-    /// it. Fully-bare initializers stay unregistered: Rust infers
-    /// `let x = 0;` as `i32`, matching WGSL's default.
-    fn walk_local(&mut self, local: &mut Local) {
-        match (&local.ty, &mut local.init) {
-            (Some(ty), Some(init)) => self.expect(init, Some(ty)),
-            (None, Some(init)) => self.expect(init, None),
-            _ => {}
-        }
-        let ty = match (&local.ty, &local.init) {
-            (Some(ty), _) => Some(ty.clone()),
-            (None, Some(init)) => self.expr_ty(init),
-            _ => None,
-        };
-        if let Some(ty) = ty
-            && let Some(scope) = self.scopes.last_mut()
-        {
-            scope.insert(local.name.clone(), ty);
-        }
-    }
-
-    /// Suffix the RHS of an assignment from the type of the assignment
-    /// target, when that is provable (identifier, field, array element,
-    /// or swizzle rooted at a typed base).
-    fn walk_assignment_rhs(&mut self, lhs: &Expr, rhs: &mut Expr, compound_op: Option<CompoundOp>) {
-        // Shift-assign counts are u32 in WGSL, like shift operands —
-        // the count never follows the target's type
-        // (`x <<= 1` with `x: i32` still needs a `1u` count).
-        if matches!(
-            compound_op,
-            Some(CompoundOp::ShlAssign | CompoundOp::ShrAssign)
-        ) {
-            let u32_ty = Type::Scalar(ScalarType::U32);
-            self.expect(rhs, Some(&u32_ty));
-            return;
-        }
-        let target_ty = self.expr_ty(lhs);
-        self.expect(rhs, target_ty.as_ref());
-    }
-
-    /// Walk an `if` / `else if` / `else` chain.
-    fn walk_if(&mut self, i: &mut StmtIf) {
-        self.expect(&mut i.condition, None);
-        self.walk_block(&mut i.then_block);
-        if let Some(else_branch) = &mut i.else_branch {
-            match else_branch {
-                ElseBranch::Block(b) => self.walk_block(b),
-                ElseBranch::If(inner) => self.walk_if(inner),
-            }
-        }
-    }
-
-    /// Walk a `for` loop: bounds inherit the loop variable's type, and
-    /// the loop variable is visible in the body.
-    ///
-    /// Parsed Rust loops never annotate the loop variable (`for i: u32
-    /// in …` is not valid Rust — the IR field stays `None`), so its
-    /// type is inferred from a provable range bound, mirroring Rust's
-    /// own inference. Fully-bare ranges (`for i in 0..8`) infer `i32`
-    /// in both Rust and WGSL and stay bare.
-    fn walk_for(&mut self, f: &mut ForLoop) {
-        let var_ty = f
-            .var_ty
-            .clone()
-            .or_else(|| self.expr_ty(&f.from).or_else(|| self.expr_ty(&f.to)));
-        if let Some(ty) = &var_ty {
-            self.expect(&mut f.from, Some(ty));
-            self.expect(&mut f.to, Some(ty));
-        }
-        let mut seeded = false;
-        if let Some(ty) = var_ty {
-            let mut frame = HashMap::new();
-            frame.insert(f.var.clone(), ty);
-            self.scopes.push(frame);
-            seeded = true;
-        }
-        self.walk_block(&mut f.body);
-        if seeded {
-            self.scopes.pop();
-        }
-    }
-
-    /// Walk a `switch`: the selector subtree is walked first so nested
-    /// call-site and binary anchoring applies (`match x + select(0, 1,
-    /// c)` suffixes the select through the binary anchor), then case
-    /// selectors inherit the selector's derived type, and arm bodies
-    /// are walked for their own anchors.
-    fn walk_switch(&mut self, s: &mut StmtSwitch) {
-        self.expect(&mut s.selector, None);
-        let selector_ty = self.expr_ty(&s.selector);
-        for arm in &mut s.arms {
-            if let Some(ty) = &selector_ty {
-                for sel in &mut arm.selectors {
-                    match sel {
-                        CaseSelector::Literal(l) => suffix_lit(l, ty),
-                        CaseSelector::Expr(e) => self.expect(e, Some(ty)),
-                        CaseSelector::Default => {}
-                    }
-                }
-            }
-            self.walk_block(&mut arm.body);
         }
     }
 
@@ -618,6 +384,271 @@ impl SuffixPass {
         substitute_params(&mut ty, &def.type_params, type_args);
         Some(ty)
     }
+}
+
+/// Scope-tracking state for the suffix pass's mutation walk.
+///
+/// Structurally mirrors the deshadow pass: one instance walks a whole
+/// module, pushing a scope frame per block so that the innermost
+/// declaration of a name wins when resolving assignment targets. Type
+/// knowledge lives in [`TypeEnv`]; the walk adds the current
+/// function's return type, which is walk state rather than environment.
+#[derive(Default)]
+struct SuffixPass {
+    /// The collected type environment.
+    env: TypeEnv,
+    /// The current function's declared return type, if any.
+    return_ty: Option<Type>,
+}
+
+impl SuffixPass {
+    /// Walk every item in the module.
+    fn walk_module(&mut self, module: &mut Module) {
+        self.walk_items(&mut module.items);
+    }
+
+    /// First collect the type environment (struct definitions,
+    /// function signatures, globals), then walk each top-level item
+    /// that can anchor a type expectation: `const` items via their
+    /// declared type, and functions (free or impl methods) via their
+    /// signatures.
+    fn walk_items(&mut self, items: &mut [Item]) {
+        self.env.collect(items);
+        for item in items {
+            match item {
+                Item::Const(c) => self.expect(&mut c.expr, Some(&c.ty)),
+                Item::Fn(f) => self.walk_fn(f),
+                Item::Impl(imp) => {
+                    for impl_item in &mut imp.items {
+                        match impl_item {
+                            ImplItem::Fn(f) => self.walk_fn(f),
+                            // Associated consts anchor from their
+                            // declared type, like module-level consts.
+                            ImplItem::Const(c) => self.expect(&mut c.expr, Some(&c.ty)),
+                            // Associated type aliases carry no
+                            // expression.
+                            ImplItem::Type(_) => {}
+                        }
+                    }
+                }
+                // Structs were collected above; uniforms, storage,
+                // samplers, textures, and enums carry no expression to
+                // suffix.
+                _ => {}
+            }
+        }
+    }
+
+    /// Walk one function body with its parameters and return type as the
+    /// seed context.
+    fn walk_fn(&mut self, f: &mut ItemFn) {
+        self.env.scopes.clear();
+        self.return_ty = match &f.return_type {
+            ReturnType::Type { ty, .. } => Some(ty.clone()),
+            ReturnType::Default => None,
+        };
+        let params: HashMap<String, Type> = f
+            .inputs
+            .iter()
+            .map(|arg| (arg.name.clone(), arg.ty.clone()))
+            .collect();
+        self.env.scopes.push(params);
+        self.walk_block(&mut f.block);
+        self.env.scopes.clear();
+        self.return_ty = None;
+    }
+
+    /// Walk a block's statements in a fresh scope frame.
+    fn walk_block(&mut self, block: &mut Block) {
+        self.env.scopes.push(HashMap::new());
+        for stmt in &mut block.stmts {
+            self.walk_stmt(stmt);
+        }
+        self.env.scopes.pop();
+    }
+
+    /// Apply the anchors that produce a type expectation for a statement.
+    fn walk_stmt(&mut self, stmt: &mut Stmt) {
+        match stmt {
+            Stmt::Local(local) => self.walk_local(local),
+            Stmt::Const(c) => {
+                self.expect(&mut c.expr, Some(&c.ty));
+                // Register the const's declared type in scope after
+                // walking its initializer, like a typed local — later
+                // expressions anchor from it
+                // (`const C: u32 = 1; select(C, 0, cond)`).
+                let name = c.name.clone();
+                let ty = c.ty.clone();
+                if let Some(scope) = self.env.scopes.last_mut() {
+                    scope.insert(name, ty);
+                }
+            }
+            Stmt::Assignment { lhs, rhs } => {
+                self.walk_assignment_rhs(lhs, rhs, None);
+            }
+            Stmt::CompoundAssignment { lhs, op, rhs } => {
+                self.walk_assignment_rhs(lhs, rhs, Some(*op));
+            }
+            Stmt::Return(Some(expr)) => {
+                let ret = self.return_ty.clone();
+                self.expect(expr, ret.as_ref());
+            }
+            Stmt::Expr { expr, has_semi } => {
+                // A trailing expression is an implicit `return expr;`.
+                let expected = if *has_semi {
+                    None
+                } else {
+                    self.return_ty.clone()
+                };
+                self.expect(expr, expected.as_ref());
+            }
+            Stmt::If(i) => self.walk_if(i),
+            Stmt::While { condition, body } => {
+                self.expect(condition, None);
+                self.walk_block(body);
+            }
+            Stmt::Loop { body } => self.walk_block(body),
+            Stmt::For(f) => self.walk_for(f),
+            Stmt::Switch(s) => self.walk_switch(s),
+            Stmt::Block(b) => self.walk_block(b),
+            Stmt::SlabCopy {
+                src,
+                src_offset,
+                dest,
+                dest_offset,
+                size,
+            } => {
+                // The renderer emits a u32 loop counter, compares it
+                // against `size`, and adds the offsets to it — all
+                // three flow through u32 arithmetic.
+                let u32_ty = Type::Scalar(ScalarType::U32);
+                self.expect(src_offset, Some(&u32_ty));
+                self.expect(dest_offset, Some(&u32_ty));
+                self.expect(size, Some(&u32_ty));
+                self.expect(src, None);
+                self.expect(dest, None);
+            }
+            // Control flow and extension macros carry no type
+            // expectation in this pass.
+            Stmt::Return(None)
+            | Stmt::Break
+            | Stmt::Continue
+            | Stmt::Discard
+            | Stmt::Macro { .. } => {}
+        }
+    }
+
+    /// Suffix a local's initializer and register the local's type in the
+    /// current scope.
+    ///
+    /// Typed locals propagate their declared type; un-annotated locals
+    /// are still walked so self-anchored expressions (struct
+    /// constructors) inside them are suffixed, and a type provable from
+    /// the (now suffixed) initializer registers in scope — Rust infers
+    /// `let mut y = 0u32;` as `u32`, so a later assignment anchors from
+    /// it. Fully-bare initializers stay unregistered: Rust infers
+    /// `let x = 0;` as `i32`, matching WGSL's default.
+    fn walk_local(&mut self, local: &mut Local) {
+        match (&local.ty, &mut local.init) {
+            (Some(ty), Some(init)) => self.expect(init, Some(ty)),
+            (None, Some(init)) => self.expect(init, None),
+            _ => {}
+        }
+        let ty = match (&local.ty, &local.init) {
+            (Some(ty), _) => Some(ty.clone()),
+            (None, Some(init)) => self.env.expr_ty(init),
+            _ => None,
+        };
+        if let Some(ty) = ty
+            && let Some(scope) = self.env.scopes.last_mut()
+        {
+            scope.insert(local.name.clone(), ty);
+        }
+    }
+
+    /// Suffix the RHS of an assignment from the type of the assignment
+    /// target, when that is provable (identifier, field, array element,
+    /// or swizzle rooted at a typed base).
+    fn walk_assignment_rhs(&mut self, lhs: &Expr, rhs: &mut Expr, compound_op: Option<CompoundOp>) {
+        // Shift-assign counts are u32 in WGSL, like shift operands —
+        // the count never follows the target's type
+        // (`x <<= 1` with `x: i32` still needs a `1u` count).
+        if matches!(
+            compound_op,
+            Some(CompoundOp::ShlAssign | CompoundOp::ShrAssign)
+        ) {
+            let u32_ty = Type::Scalar(ScalarType::U32);
+            self.expect(rhs, Some(&u32_ty));
+            return;
+        }
+        let target_ty = self.env.expr_ty(lhs);
+        self.expect(rhs, target_ty.as_ref());
+    }
+
+    /// Walk an `if` / `else if` / `else` chain.
+    fn walk_if(&mut self, i: &mut StmtIf) {
+        self.expect(&mut i.condition, None);
+        self.walk_block(&mut i.then_block);
+        if let Some(else_branch) = &mut i.else_branch {
+            match else_branch {
+                ElseBranch::Block(b) => self.walk_block(b),
+                ElseBranch::If(inner) => self.walk_if(inner),
+            }
+        }
+    }
+
+    /// Walk a `for` loop: bounds inherit the loop variable's type, and
+    /// the loop variable is visible in the body.
+    ///
+    /// Parsed Rust loops never annotate the loop variable (`for i: u32
+    /// in …` is not valid Rust — the IR field stays `None`), so its
+    /// type is inferred from a provable range bound, mirroring Rust's
+    /// own inference. Fully-bare ranges (`for i in 0..8`) infer `i32`
+    /// in both Rust and WGSL and stay bare.
+    fn walk_for(&mut self, f: &mut ForLoop) {
+        let var_ty = f.var_ty.clone().or_else(|| {
+            self.env
+                .expr_ty(&f.from)
+                .or_else(|| self.env.expr_ty(&f.to))
+        });
+        if let Some(ty) = &var_ty {
+            self.expect(&mut f.from, Some(ty));
+            self.expect(&mut f.to, Some(ty));
+        }
+        let mut seeded = false;
+        if let Some(ty) = var_ty {
+            let mut frame = HashMap::new();
+            frame.insert(f.var.clone(), ty);
+            self.env.scopes.push(frame);
+            seeded = true;
+        }
+        self.walk_block(&mut f.body);
+        if seeded {
+            self.env.scopes.pop();
+        }
+    }
+
+    /// Walk a `switch`: the selector subtree is walked first so nested
+    /// call-site and binary anchoring applies (`match x + select(0, 1,
+    /// c)` suffixes the select through the binary anchor), then case
+    /// selectors inherit the selector's derived type, and arm bodies
+    /// are walked for their own anchors.
+    fn walk_switch(&mut self, s: &mut StmtSwitch) {
+        self.expect(&mut s.selector, None);
+        let selector_ty = self.env.expr_ty(&s.selector);
+        for arm in &mut s.arms {
+            if let Some(ty) = &selector_ty {
+                for sel in &mut arm.selectors {
+                    match sel {
+                        CaseSelector::Literal(l) => suffix_lit(l, ty),
+                        CaseSelector::Expr(e) => self.expect(e, Some(ty)),
+                        CaseSelector::Default => {}
+                    }
+                }
+            }
+            self.walk_block(&mut arm.body);
+        }
+    }
 
     /// Propagate expectations into a call's arguments.
     ///
@@ -639,7 +670,7 @@ impl SuffixPass {
             FnPath::Ident(name) => name.clone(),
             FnPath::TypeMethod { ty, method } => mangle(&[ty, method]),
         };
-        if let Some(sig) = self.fn_sigs.get(&callee).cloned() {
+        if let Some(sig) = self.env.fn_sigs.get(&callee).cloned() {
             for (i, arg) in params.iter_mut().enumerate() {
                 self.expect(arg, sig.params.get(i));
             }
@@ -658,7 +689,7 @@ impl SuffixPass {
             let group_ty = expected.cloned().or_else(|| {
                 value_indices
                     .iter()
-                    .find_map(|&i| params.get(i).and_then(|a| self.expr_ty(a)))
+                    .find_map(|&i| params.get(i).and_then(|a| self.env.expr_ty(a)))
             });
             for (i, arg) in params.iter_mut().enumerate() {
                 if value_indices.contains(&i) {
@@ -716,7 +747,7 @@ impl SuffixPass {
                     _ => ctor_args.clone(),
                 };
                 for field in fields {
-                    let field_ty = self.field_ty(name, &args, &field.member);
+                    let field_ty = self.env.field_ty(name, &args, &field.member);
                     self.expect(&mut field.expr, field_ty.as_ref());
                 }
             }
@@ -747,8 +778,8 @@ impl SuffixPass {
                     // neither side (the count is u32; the value follows
                     // the lhs only).
                     if is_arithmetic(op) || is_comparison(op) {
-                        let lhs_ty = self.expr_ty(lhs);
-                        let rhs_ty = self.expr_ty(rhs);
+                        let lhs_ty = self.env.expr_ty(lhs);
+                        let rhs_ty = self.env.expr_ty(rhs);
                         if let Some(ty) = lhs_ty {
                             self.expect(rhs, Some(&ty));
                         }

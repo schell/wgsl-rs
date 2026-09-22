@@ -1390,3 +1390,136 @@ fn associated_const_anchors_sibling_literals() {
     let wgsl = render(&mut m);
     assert!(wgsl.contains("0u"), "got: {wgsl}");
 }
+
+#[test]
+fn shift_counts_are_u32() {
+    // `fn f(x: i32) -> i32 { x << 1 }` — WGSL shift counts are u32, so
+    // the count must not inherit the i32 result type.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("x", i32_ty())],
+        returns(i32_ty()),
+        vec![
+            Stmt::Return(Some(Expr::Binary {
+                lhs: Box::new(ident("x")),
+                op: BinOp::Shl,
+                rhs: Box::new(bare_int("1")),
+            })),
+            Stmt::Assignment {
+                lhs: ident("x"),
+                rhs: Expr::Binary {
+                    lhs: Box::new(ident("x")),
+                    op: BinOp::Shl,
+                    rhs: Box::new(bare_int("2")),
+                },
+            },
+            Stmt::CompoundAssignment {
+                lhs: ident("x"),
+                op: CompoundOp::ShrAssign,
+                rhs: bare_int("3"),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("<< 1u"),
+        "shift count should be u32, got: {wgsl}"
+    );
+    assert!(wgsl.contains("<< 2u"), "got: {wgsl}");
+    assert!(
+        wgsl.contains(">>= 3u"),
+        "shift-assign count should be u32, got: {wgsl}"
+    );
+    assert!(
+        !wgsl.contains("1i"),
+        "count must not take the i32 result type, got: {wgsl}"
+    );
+    assert!(!wgsl.contains("2i"), "got: {wgsl}");
+    assert!(!wgsl.contains("3i"), "got: {wgsl}");
+}
+
+#[test]
+fn array_initializer_inferred_type_registers() {
+    // `let mut a = [0u32; 1]; a[0] = select(0, 1, cond);` — the
+    // zero-value array initializer registers the array type, so the
+    // element assignment anchors the select.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "a",
+                None,
+                Some(Expr::ZeroValueArray {
+                    elem_type: Box::new(u32_ty()),
+                    len: Box::new(bare_int("1")),
+                }),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("a")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(0u, 1u, cond)"), "got: {wgsl}");
+}
+
+#[test]
+fn array_and_vec_literal_inferred_types_register() {
+    // Array literals register the first element's type; vector
+    // constructors register the constructed vector type — so later
+    // swizzle and element assignments anchor.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "arr",
+                None,
+                Some(Expr::Array {
+                    elems: vec![suffixed_int("0", "u32"), suffixed_int("1", "u32")],
+                }),
+            ),
+            local(
+                "v",
+                None,
+                Some(call(
+                    "vec4u",
+                    vec![
+                        suffixed_int("0", "u32"),
+                        suffixed_int("0", "u32"),
+                        suffixed_int("0", "u32"),
+                        suffixed_int("0", "u32"),
+                    ],
+                )),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("arr")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+            Stmt::Assignment {
+                lhs: Expr::Swizzle {
+                    lhs: Box::new(ident("v")),
+                    swizzle: "x".to_string(),
+                    params: None,
+                },
+                rhs: bare_int("7"),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(0u, 1u, cond)"), "got: {wgsl}");
+    assert!(
+        wgsl.contains("= 7u"),
+        "swizzle target should anchor, got: {wgsl}"
+    );
+}

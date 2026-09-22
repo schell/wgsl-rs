@@ -47,8 +47,8 @@ use std::collections::HashMap;
 use crate::{
     mangle::mangle,
     types::{
-        BinOp, Block, CaseSelector, ElseBranch, Expr, FnPath, ForLoop, ImplItem, Item, ItemFn, Lit,
-        Local, Module, ReturnType, ScalarType, Stmt, StmtIf, StmtSwitch, Type, UnOp,
+        BinOp, Block, CaseSelector, CompoundOp, ElseBranch, Expr, FnPath, ForLoop, ImplItem, Item,
+        ItemFn, Lit, Local, Module, ReturnType, ScalarType, Stmt, StmtIf, StmtSwitch, Type, UnOp,
     },
 };
 
@@ -317,8 +317,11 @@ impl SuffixPass {
                     scope.insert(name, ty);
                 }
             }
-            Stmt::Assignment { lhs, rhs } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-                self.walk_assignment_rhs(lhs, rhs);
+            Stmt::Assignment { lhs, rhs } => {
+                self.walk_assignment_rhs(lhs, rhs, None);
+            }
+            Stmt::CompoundAssignment { lhs, op, rhs } => {
+                self.walk_assignment_rhs(lhs, rhs, Some(*op));
             }
             Stmt::Return(Some(expr)) => {
                 let ret = self.return_ty.clone();
@@ -400,7 +403,18 @@ impl SuffixPass {
     /// Suffix the RHS of an assignment from the type of the assignment
     /// target, when that is provable (identifier, field, array element,
     /// or swizzle rooted at a typed base).
-    fn walk_assignment_rhs(&mut self, lhs: &Expr, rhs: &mut Expr) {
+    fn walk_assignment_rhs(&mut self, lhs: &Expr, rhs: &mut Expr, compound_op: Option<CompoundOp>) {
+        // Shift-assign counts are u32 in WGSL, like shift operands —
+        // the count never follows the target's type
+        // (`x <<= 1` with `x: i32` still needs a `1u` count).
+        if matches!(
+            compound_op,
+            Some(CompoundOp::ShlAssign | CompoundOp::ShrAssign)
+        ) {
+            let u32_ty = Type::Scalar(ScalarType::U32);
+            self.expect(rhs, Some(&u32_ty));
+            return;
+        }
         let target_ty = self.expr_ty(lhs);
         self.expect(rhs, target_ty.as_ref());
     }
@@ -514,10 +528,14 @@ impl SuffixPass {
                 // not a scalar — no scalar expectation is derivable.
                 _ => None,
             },
-            // Arithmetic and shift operators yield their operands'
-            // type; comparisons and logical operators yield `bool`.
+            // Same-type arithmetic operators yield their operands'
+            // type; shifts yield the shifted value's type (the count is
+            // u32, not the result type); comparisons and logical
+            // operators yield `bool`.
             Expr::Binary { lhs, op, rhs } => {
-                if is_arithmetic(op) {
+                if is_shift(op) {
+                    self.expr_ty(lhs)
+                } else if is_arithmetic(op) {
                     self.expr_ty(lhs).or_else(|| self.expr_ty(rhs))
                 } else {
                     Some(Type::Scalar(ScalarType::Bool))
@@ -530,6 +548,33 @@ impl SuffixPass {
                 UnOp::Not | UnOp::Complement | UnOp::Neg => self.expr_ty(expr),
                 UnOp::Deref => None,
             },
+            // Array literals yield the first element's type; the
+            // length is the element count.
+            Expr::Array { elems } => {
+                let elem = elems.first().and_then(|e| self.expr_ty(e))?;
+                Some(Type::Array {
+                    elem: Box::new(elem),
+                    len: Expr::Lit(Lit::Int {
+                        digits: elems.len().to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                })
+            }
+            // `[T; N]()` zero-value arrays carry their full type.
+            Expr::ZeroValueArray { elem_type, len } => Some(Type::Array {
+                elem: elem_type.clone(),
+                len: (**len).clone(),
+            }),
+            // Struct constructors yield the constructed struct type
+            // (with the constructor's own type arguments).
+            Expr::Struct {
+                name,
+                type_args,
+                fields: _,
+            } => Some(Type::Struct {
+                name: name.clone(),
+                type_args: type_args.clone(),
+            }),
             // Same-type builtin value groups yield their first value
             // argument's type; user functions yield their declared
             // return type. User signatures shadow builtins, matching
@@ -543,6 +588,11 @@ impl SuffixPass {
                     sig.ret.clone()
                 } else if builtin_value_args(&callee).is_some() {
                     params.first().and_then(|p| self.expr_ty(p))
+                } else if let Some((elements, scalar)) = vec_ctor_shape(&callee) {
+                    Some(Type::Vector {
+                        elements,
+                        scalar_ty: Some(scalar),
+                    })
                 } else {
                     None
                 }
@@ -672,26 +722,39 @@ impl SuffixPass {
             }
             Expr::Cast { lhs, ty } => self.expect(lhs, Some(ty)),
             Expr::Binary { lhs, op, rhs } => {
-                // Arithmetic and shift operators pass an outer
-                // expectation to their operands (the operands share the
-                // result type); comparisons and logical operators yield
-                // `bool`, so their operands are walked bare. Either
-                // way the operands are walked so nested call-site and
-                // binary anchoring applies
-                // (`let y = select(x, 0, c) + 1;`).
-                let operand_expected = if is_arithmetic(op) { expected } else { None };
-                self.expect(lhs, operand_expected);
-                self.expect(rhs, operand_expected);
-                // Anchor: a bare literal adopts the provable scalar type
-                // of the other operand.
-                if is_arithmetic(op) || is_comparison(op) {
-                    let lhs_ty = self.expr_ty(lhs);
-                    let rhs_ty = self.expr_ty(rhs);
-                    if let Some(ty) = lhs_ty {
-                        self.expect(rhs, Some(&ty));
-                    }
-                    if let Some(ty) = rhs_ty {
-                        self.expect(lhs, Some(&ty));
+                // Shifts are handled separately: the count is `u32` in
+                // WGSL, not the result type — Rust infers it
+                // independently (`fn f(x: i32) -> i32 { x << 1 }` is
+                // valid Rust, but a `1i` count is invalid WGSL).
+                if is_shift(op) {
+                    let u32_ty = Type::Scalar(ScalarType::U32);
+                    // The shifted value shares the outer expectation.
+                    self.expect(lhs, expected);
+                    self.expect(rhs, Some(&u32_ty));
+                } else {
+                    // Arithmetic operators pass an outer expectation to
+                    // their operands (the operands share the result
+                    // type); comparisons and logical operators yield
+                    // `bool`, so their operands are walked bare. Either
+                    // way the operands are walked so nested call-site
+                    // and binary anchoring applies
+                    // (`let y = select(x, 0, c) + 1;`).
+                    let operand_expected = if is_arithmetic(op) { expected } else { None };
+                    self.expect(lhs, operand_expected);
+                    self.expect(rhs, operand_expected);
+                    // Anchor: a bare literal adopts the provable scalar
+                    // type of the other operand. Shifts anchor on
+                    // neither side (the count is u32; the value follows
+                    // the lhs only).
+                    if is_arithmetic(op) || is_comparison(op) {
+                        let lhs_ty = self.expr_ty(lhs);
+                        let rhs_ty = self.expr_ty(rhs);
+                        if let Some(ty) = lhs_ty {
+                            self.expect(rhs, Some(&ty));
+                        }
+                        if let Some(ty) = rhs_ty {
+                            self.expect(lhs, Some(&ty));
+                        }
                     }
                 }
             }
@@ -773,16 +836,30 @@ fn vec_ctor_elem(name: &str, type_args: &[Type]) -> Option<Type> {
     if let [ty] = type_args {
         return Some(ty.clone());
     }
+    let (_, scalar) = vec_ctor_shape(name)?;
+    Some(Type::Scalar(scalar))
+}
+
+/// The element count and scalar type encoded in a WGSL vector
+/// constructor name (`vec4u` → `(4, U32)`). Returns `None` for
+/// abstract (`vec3`) and bool (`vec3b`) constructors.
+fn vec_ctor_shape(name: &str) -> Option<(u8, ScalarType)> {
     let rest = name.strip_prefix("vec")?;
-    let suffix = rest.strip_prefix(|c: char| matches!(c, '2' | '3' | '4'))?;
-    Some(Type::Scalar(match suffix {
+    let digits_end = rest.find(|c: char| !c.is_ascii_digit())?;
+    let (n, suffix) = rest.split_at(digits_end);
+    let elements = match n {
+        "2" => 2,
+        "3" => 3,
+        "4" => 4,
+        _ => return None,
+    };
+    let scalar = match suffix {
         "i" => ScalarType::I32,
         "u" => ScalarType::U32,
-        // `vec3f` is float-typed: an integer literal cannot appear
-        // there in valid Rust, and the pass leaves floats alone.
         "f" => ScalarType::F32,
         _ => return None,
-    }))
+    };
+    Some((elements, scalar))
 }
 
 /// Argument indices of the builtins whose value arguments share one
@@ -817,6 +894,9 @@ fn concrete_scalar(ty: &Type) -> Option<ScalarType> {
 
 /// Whether `op` produces a result of its operands' type (so an outer
 /// expectation flows into the operands).
+/// Whether `op` produces a result of its operands' shared type (so an
+/// outer expectation flows into the operands). Shifts are excluded —
+/// see [`is_shift`].
 fn is_arithmetic(op: &BinOp) -> bool {
     matches!(
         op,
@@ -828,9 +908,15 @@ fn is_arithmetic(op: &BinOp) -> bool {
             | BinOp::BitAnd
             | BinOp::BitOr
             | BinOp::BitXor
-            | BinOp::Shl
-            | BinOp::Shr
     )
+}
+
+/// Whether `op` is a bit shift. WGSL shift counts are `u32` — the count
+/// is *not* the result type, and Rust infers it independently
+/// (`fn f(x: i32) -> i32 { x << 1 }` is valid Rust; rendering the count
+/// as `1i` is invalid WGSL).
+fn is_shift(op: &BinOp) -> bool {
+    matches!(op, BinOp::Shl | BinOp::Shr)
 }
 
 /// Whether `op` compares two same-typed operands (so one operand's

@@ -159,6 +159,12 @@ impl<T: Zeroable> Zeroable for [T; 4] {
     }
 }
 
+impl Zeroable for u32 {
+    fn zero() -> u32 {
+        0
+    }
+}
+
 pub fn caller_u32_array() -> [u32; 4] {
     <[u32; 4]>::zero()
 }

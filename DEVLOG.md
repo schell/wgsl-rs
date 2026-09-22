@@ -1077,3 +1077,29 @@ function/struct-only ones: templates removed, instantiations generated,
 names rewritten. Regression test added to `generic_array_impl.rs` pinning
 the documented generic-impl-plus-QSelf-caller form with an impl-only
 module (no generic functions).
+
+**Call-site discovery (Copilot PR review follow-up):** counting the impl
+maps in `has_templates` was necessary but not sufficient —
+`discover_instantiations` reached array-impl templates only through
+`visit_type` on *type positions* (signatures, locals), and `walk_expr`
+never visits a QSelf path's retained type. A caller like
+`fn caller() -> u32 { <[u32; 4]>::value() }` — where the array type
+appears nowhere else — had the generic impl removed by `apply` while the
+instantiation its call referenced was never emitted. `MonoCtx::visit_expr`
+now routes the retained `qself_ty` through `visit_type`, so the concrete
+QSelf type triggers array-impl / struct instantiation from the call
+itself; types still containing type parameters fall through
+`visit_type`'s concreteness gates and are resolved transitively when the
+enclosing template is instantiated. The regression module gained the
+scalar-returning caller, which previously had nothing to piggyback on.
+
+The scalar-returning regression then exposed a second pre-existing gap:
+`instantiate_array_impl`'s dedup set was keyed by the mangled self type
+alone (`array_u32_4`), so with *several* impls targeting the same array
+type (`impl<T> Zeroable for [T; 4]` and `impl<T> Valued for [T; 4]`), the
+first instantiation marked the self type seen and every further impl was
+silently dropped. The seen-key now identifies the impl block by its
+member names (methods, consts, assoc types — the trait path is discarded
+by design, and impls whose members all share a name would collide in
+reserved-names mangling regardless), so each distinct impl instantiates
+once per concrete self type.

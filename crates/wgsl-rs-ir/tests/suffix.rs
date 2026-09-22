@@ -1872,3 +1872,91 @@ fn unprovable_loop_var_shadows_outer_binding() {
         "the bare loop variable must shadow the outer u32 binding, got: {wgsl}"
     );
 }
+
+// ===== Round-2 review coverage: vector-valued swizzles, vector-first arithmetic =====
+
+#[test]
+fn multi_component_swizzle_registers_vector_type() {
+    // `let v = vec4u(0, 0, 0, 0); let mut w = v.xy(); w[0] = select(0, 1, cond);` —
+    // the two-component swizzle is vector-valued, so `w` registers a
+    // vec2 of the base scalar and the element assignment anchors.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "v",
+                None,
+                Some(call(
+                    "vec4u",
+                    vec![bare_int("0"), bare_int("0"), bare_int("0"), bare_int("0")],
+                )),
+            ),
+            local(
+                "w",
+                None,
+                Some(Expr::Swizzle {
+                    lhs: Box::new(ident("v")),
+                    swizzle: "xy".to_string(),
+                    params: None,
+                }),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("w")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "the vector-valued swizzle should register a vector type, got: {wgsl}"
+    );
+}
+
+#[test]
+fn arithmetic_prefers_vector_operand() {
+    // `let mut v = scale * vec4u(0, 0, 0, 0); v[0] = select(0, 1, cond);` —
+    // scalar-vector arithmetic yields the vector shape (as
+    // `combine_arith` in the vector_cmp lowering resolves it), so
+    // `v` registers a vector even though the left operand is a
+    // typed scalar.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![
+            arg("scale", u32_ty()),
+            arg("cond", Type::Scalar(ScalarType::Bool)),
+        ],
+        ReturnType::Default,
+        vec![
+            local(
+                "v",
+                None,
+                Some(Expr::Binary {
+                    lhs: Box::new(ident("scale")),
+                    op: BinOp::Mul,
+                    rhs: Box::new(call(
+                        "vec4u",
+                        vec![bare_int("0"), bare_int("0"), bare_int("0"), bare_int("0")],
+                    )),
+                }),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("v")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "the vector-shaped arithmetic result should register a vector type, got: {wgsl}"
+    );
+}

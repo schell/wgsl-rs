@@ -335,11 +335,25 @@ impl TypeEnv {
                 // non-indexable bases carry no provable element type.
                 _ => None,
             },
-            Expr::Swizzle { lhs, .. } => match self.infer(lhs)? {
+            Expr::Swizzle { lhs, swizzle, .. } => match self.infer(lhs)? {
+                // A swizzle is vector-valued for lengths 2–4
+                // (`v.xy()` → vec2 of the base scalar) and reads a
+                // single scalar for a one-component access — the
+                // component count decides the shape.
                 Type::Vector {
                     scalar_ty: Some(scalar),
                     ..
-                } => Some(Type::Scalar(scalar)),
+                } => {
+                    let elements = swizzle.len() as u8;
+                    if elements == 1 {
+                        Some(Type::Scalar(scalar))
+                    } else {
+                        Some(Type::Vector {
+                            elements,
+                            scalar_ty: Some(scalar),
+                        })
+                    }
+                }
                 // A swizzle on a matrix selects a column (a vector),
                 // not a scalar — no scalar expectation is derivable.
                 _ => None,
@@ -352,7 +366,19 @@ impl TypeEnv {
                 if is_shift(op) {
                     self.infer(lhs)
                 } else if is_arithmetic(op) {
-                    self.infer(lhs).or_else(|| self.infer(rhs))
+                    // Component-wise scalar-vector arithmetic yields
+                    // the vector shape, as `combine_arith` in the
+                    // `vector_cmp` lowering resolves it: a vector
+                    // operand dominates a scalar one, so
+                    // `scale * vec4u(...)` infers as a vector, not the
+                    // scalar of its left operand.
+                    let lhs_ty = self.infer(lhs);
+                    let rhs_ty = self.infer(rhs);
+                    match (&lhs_ty, &rhs_ty) {
+                        (Some(Type::Vector { .. }), _) => lhs_ty,
+                        (_, Some(Type::Vector { .. })) => rhs_ty,
+                        _ => lhs_ty.or(rhs_ty),
+                    }
                 } else {
                     Some(Type::Scalar(ScalarType::Bool))
                 }

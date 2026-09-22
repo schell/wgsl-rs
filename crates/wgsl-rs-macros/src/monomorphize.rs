@@ -924,12 +924,20 @@ impl MonoCtx {
         // instantiation).
         module.content.retain(|item| match item {
             Item::Fn(f) => {
-                let is_generic_entry_point =
-                    !f.type_params.is_empty() && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
-                f.type_params.is_empty() || is_generic_entry_point
+                // Mirror the template classification from `MonoCtx::new`:
+                // a fn is a template when it has *type or const* params.
+                // (This previously checked type params only, so const-only
+                // template fns leaked into the output raw — with their
+                // const params unresolved, e.g. `fn sum_n(arr:
+                // array<u32, N>)`.)
+                let is_generic_entry_point = (!f.type_params.is_empty()
+                    || !f.const_params.is_empty())
+                    && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
+                let is_template = !f.type_params.is_empty() || !f.const_params.is_empty();
+                !is_template || is_generic_entry_point
             }
-            Item::Struct(s) => s.type_params.is_empty(),
-            Item::Impl(i) => i.type_params.is_empty(),
+            Item::Struct(s) => s.type_params.is_empty() && s.const_params.is_empty(),
+            Item::Impl(i) => i.type_params.is_empty() && i.const_params.is_empty(),
             _ => true,
         });
 
@@ -1281,13 +1289,19 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
                 ..
             } => {
                 if let Some(qty) = qself_ty {
-                    // QSelf path: substitute structurally when needed; concrete
-                    // qself types are left untouched.
-                    if contains_type_param(qty) {
-                        substitute_type(qty, self.subst, self.consts);
-                        if let Ok(mangled) = mangle_type(qty) {
-                            *ty = Ident::new(&mangled, ty.span());
-                        }
+                    // QSelf path: substitute the retained structure and
+                    // re-derive the mangled ident. This runs
+                    // unconditionally — substituting and re-mangling a
+                    // concrete type is an identity, and *detecting*
+                    // whether a rewrite is needed is exactly what missed
+                    // const-generic array lengths (`<[u32; N]>::zero()`:
+                    // the length is an `Expr`, not a `TypeParam`).
+                    // Substitution covers both: type params via
+                    // `visit_type`, const params via `visit_expr` on
+                    // array lengths.
+                    substitute_type(qty, self.subst, self.consts);
+                    if let Ok(mangled) = mangle_type(qty) {
+                        *ty = Ident::new(&mangled, ty.span());
                     }
                 } else if let Some(concrete) = self.subst.get(&ty.to_string()) {
                     // Plain `T::method(...)`: flat lookup on the param name.
@@ -1305,11 +1319,13 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
             // like QSelf method calls above.
             Expr::TypePath { ty, qself_ty, .. } => {
                 if let Some(qty) = qself_ty {
-                    if contains_type_param(qty) {
-                        substitute_type(qty, self.subst, self.consts);
-                        if let Ok(mangled) = mangle_type(qty) {
-                            *ty = Ident::new(&mangled, ty.span());
-                        }
+                    // QSelf const path: substitute the retained structure
+                    // and re-derive the mangled ident, exactly like QSelf
+                    // method calls above (unconditionally — see the
+                    // `Expr::FnCall` arm).
+                    substitute_type(qty, self.subst, self.consts);
+                    if let Ok(mangled) = mangle_type(qty) {
+                        *ty = Ident::new(&mangled, ty.span());
                     }
                 } else if let Some(concrete) = self.subst.get(&ty.to_string()) {
                     *ty = type_to_ident(concrete, ty.span());

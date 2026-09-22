@@ -555,6 +555,25 @@ still piggybacks on the concrete type appearing in a type
 position (signature or local) — the same constraint the pre-existing
 `T::method()` form has.
 
+**Const-generic lengths:** `<[u32; N]>::zero()` inside a `const N: usize`
+function puts the parameter in the array *length* — an `Expr`, not a
+`TypeParam` — so no type-parameter detection can gate the rewrite. The
+structural substitution is therefore unconditional whenever a `qself_ty`
+is retained: substituting and re-mangling a concrete type is an identity,
+so there is nothing to detect. Const references are rewritten by the same
+`substitute_type` pass (via `visit_expr` on array lengths), turning
+`array_u32_N` into `array_u32_4` for `N = 4`. Writing the regression test
+exposed a latent leak in the template-removal pass: `apply` classified
+templates by type params only, so const-only template functions (and
+structs/impls) were emitted *raw* with their const params unresolved
+(e.g. `fn sum_n(arr: array<u32, N>)` next to the correct `_1sum_n_4`
+instantiation). The retain check now mirrors the collection
+classification (type *or* const params). A full end-to-end const-generic
+QSelf call additionally needs a WGSL-side target impl; const-generic
+array impls (`impl<T, const N> ... for [T; N]`) remain unsupported (#133),
+so the regression test uses a `#[wgsl_ignore]`d CPU-side impl for Rust
+resolution and asserts the rewrite.
+
 **Rejection of `<T as Trait>::...`:** The `as Trait` disambiguation form is
 rejected with a helpful error. Trait impls are matched by self type only
 (the trait path is discarded throughout wgsl-rs — see `ItemImpl`'s handling),

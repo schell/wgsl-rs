@@ -337,3 +337,59 @@ fn qself_underscore_ident_not_decomposed() {
 fn qself_underscore_ident_runs_on_cpu() {
     assert_eq!(qself_underscore_idents::caller(), 7);
 }
+
+#[wgsl(skip_validation)]
+mod qself_const_generic {
+    use wgsl_rs::std::*; // brings `wgsl_ignore` into scope
+
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    /// CPU-side resolution for `<[u32; N]>::zero()`. The transpiler skips
+    /// this impl (`#[wgsl_ignore]`) because const-generic array impls are
+    /// not yet supported on the WGSL side (#133, pinned by the
+    /// `generic_impl_const_generic_array` trybuild test), so this module
+    /// has no WGSL-side target function. The test below asserts the
+    /// QSelf-side *rewrite* only.
+    #[wgsl_ignore]
+    impl<const N: usize> Zeroable for [u32; N] {
+        fn zero() -> [u32; N] {
+            [0; N]
+        }
+    }
+
+    /// Const-generic QSelf: `<[u32; N]>::zero()`. The const parameter N
+    /// appears in the array *length* — an `Expr`, not a `TypeParam`, so
+    /// type-parameter detection alone never triggers the rewrite (which
+    /// is why the substitution is unconditional). With `N = 4` the call
+    /// must be rewritten to the concrete spelling `array_u32_4_zero`,
+    /// not left as `array_u32_N_zero`.
+    pub fn via_qself<const N: usize>() -> [u32; N] {
+        <[u32; N]>::zero()
+    }
+
+    pub fn caller() -> [u32; 4] {
+        via_qself::<4>()
+    }
+}
+
+#[test]
+fn qself_const_generic_call_is_rewritten() {
+    let src = qself_const_generic::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        !src.contains("array_u32_N"),
+        "const-generic `<[u32; N]>::zero()` must have N substituted, not left as \
+         `array_u32_N_zero()`, got:\n{src}"
+    );
+    assert!(
+        src.contains("array_u32_4_zero"),
+        "const-generic `<[u32; N]>::zero()` should be rewritten to the concrete spelling \
+         `array_u32_4_zero` for N = 4, got:\n{src}"
+    );
+}
+
+#[test]
+fn qself_const_generic_call_runs_on_cpu() {
+    assert_eq!(qself_const_generic::caller(), [0u32; 4]);
+}

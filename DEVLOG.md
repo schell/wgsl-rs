@@ -504,6 +504,88 @@ because the monomorphization pass clears `type_params` before IR conversion.
 yet supported — only `T::method()` (resolved via monomorphization). Tracked in
 GitHub issue #131.
 
+### 2026-08-02: QSelf call syntax reuses mangled TypeMethod (resolves #131)
+
+**Problem:** The previous entry left direct `<[u32; 4]>::zero()` call syntax
+unsupported — the proc-macro rejected any `Expr::Path` carrying a `qself`
+with "QSelf unsupported" (in both the `Expr::Call` and `Expr::Path` branches).
+Callers therefore had to route complex-type method calls through a generic
+function (`fn go<T: Trait>() -> T { T::zero() }` then `go::<[u32; 4]>()`), an
+awkward indirection for what is a single direct call.
+
+**Decision:** Handle QSelf in both parse branches by reusing
+`monomorphize::mangle_type` to collapse `qself.ty` into the same mangled
+`Ident` that the impl-block self-type already produces (e.g. `[u32; 4]` →
+`array_u32_4`). The result is stored unchanged in the existing
+`FnPath::TypeMethod { ty, .. }` / `Expr::TypePath { ty, .. }` fields, so the
+IR, monomorphization, substitution, and render layers need no changes — they
+already treat `ty` as an opaque mangled string. This guarantees
+`<[u32; 4]>::zero()` and `impl Zeroable for [u32; 4] { fn zero() ... }`
+produce the same WGSL identifier and thus resolve to the same function.
+
+**Bare type parameters:** `<T>::method()` inside a generic function (where
+`T` is a type parameter, not a concrete type) must keep `T` as the ident
+verbatim rather than mangling it: monomorphization substitution keys on the
+param name as written. For the same reason `mangle_type`'s `Type::TypeParam`
+arm preserves the identifier's case — it was previously lowercased as a
+"shouldn't happen" fallback, but QSelf types containing parameters make that
+arm reachable, and lowercasing would destroy a parameter's identity
+(a struct `t` and a param `T` mangle identically). Preserving the ident lets
+`<T>::method()` be rewritten to `u32_method()` exactly like the plain
+`T::method()` form.
+
+**Compound types containing parameters:** a qself type that *contains* a
+type parameter but is not itself a bare parameter — `<[T; 4]>::zero()` or
+`<Pair<T>>::zero()` — is eagerly mangled (`array_T_4`, `Pair_T`), and that
+mangled ident matches no substitution key. Decomposing the mangled string
+to substitute inside it is unsound: ordinary Rust identifiers can contain
+underscores, so a component could be a real ident (`Foo_bar`) rather than
+a nested mangling, and after the fact the two are indistinguishable in the
+mangled string. Instead, `FnPath::TypeMethod` and `Expr::TypePath` gained
+an optional `qself_ty` field retaining the parsed qself type; when it
+contains type parameters, `SubstituteVisitor` substitutes the *structure*
+(`substitute_type`) and re-derives the mangled ident with `mangle_type` —
+the same derivation the instantiation machinery uses, so
+`<[T; 4]>::zero()` resolves to `array_u32_4_zero` and `<Pair<T>>::zero()`
+to `Pair_u32_zero`, exactly like the impl blocks emit them. Concrete
+qself types (with or without underscores, and however their spelling
+relates to a parameter's) are never touched. The field is dropped at IR
+conversion — the IR is unchanged. Instantiation of the target impl/struct
+still piggybacks on the concrete type appearing in a type
+position (signature or local) — the same constraint the pre-existing
+`T::method()` form has.
+
+**Const-generic lengths:** `<[u32; N]>::zero()` inside a `const N: usize`
+function puts the parameter in the array *length* — an `Expr`, not a
+`TypeParam` — so no type-parameter detection can gate the rewrite. The
+structural substitution is therefore unconditional whenever a `qself_ty`
+is retained: substituting and re-mangling a concrete type is an identity,
+so there is nothing to detect. Const references are rewritten by the same
+`substitute_type` pass (via `visit_expr` on array lengths), turning
+`array_u32_N` into `array_u32_4` for `N = 4`. Writing the regression test
+exposed a latent leak in the template-removal pass: `apply` classified
+templates by type params only, so const-only template functions (and
+structs/impls) were emitted *raw* with their const params unresolved
+(e.g. `fn sum_n(arr: array<u32, N>)` next to the correct `_1sum_n_4`
+instantiation). The retain check now mirrors the collection
+classification (type *or* const params). A full end-to-end const-generic
+QSelf call additionally needs a WGSL-side target impl; const-generic
+array impls (`impl<T, const N> ... for [T; N]`) remain unsupported (#133),
+so the regression test uses a `#[wgsl_ignore]`d CPU-side impl for Rust
+resolution and asserts the rewrite.
+
+**Rejection of `<T as Trait>::...`:** The `as Trait` disambiguation form is
+rejected with a helpful error. Trait impls are matched by self type only
+(the trait path is discarded throughout wgsl-rs — see `ItemImpl`'s handling),
+so naming the trait explicitly has no meaning here. The error message points
+callers at the plain `<T>::method(...)` form.
+
+**Why no IR change:** `ir::FnPath::TypeMethod.ty` is already a `String`, and
+`ir::substitute::type_to_ident` already produces mangled identifiers for
+complex types when substituting type params. The parse layer was the only
+place that assumed `ty` was a single source-level ident; relaxing that
+assumption (by computing the mangled ident at parse time) is the whole fix.
+
 ### 2026-08-05: `PhantomData<T>` marker fields are retained in the IR, omitted from WGSL
 
 **Problem:** A `#[wgsl]` struct carrying `PhantomData<T>` (e.g. for a slab-id

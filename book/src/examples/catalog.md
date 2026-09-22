@@ -38,6 +38,7 @@ The `example` crate provides two subcommands for inspecting examples:
 | `discard_example` | The `discard!()` statement for discarding fragments | [discard](./discard.md) |
 | `generic_functions` | Generic functions with monomorphization | [generic-functions](./generic-functions.md) |
 | `trait_impl_example` | Trait definitions and impl blocks resolved via monomorphization | [trait-impls](./trait-impls.md) |
+| `qself_call_example` | Direct `<T>::method()` QSelf calls on complex types | [qself-call](./qself-call.md) |
 | `renderer_specialization` | A full renderer specialized via traits and turbofish | [renderer-specialization](./renderer-specialization.md) |
 | `renderer_specialization_simple` | A second specialization of the shared renderer pipeline | [renderer-specialization-simple](./renderer-specialization-simple.md) |
 | `generic_structs` | Generic structs with `#[wgsl(skip_validation)]` (known bug) | [generic-structs](./generic-structs.md) |

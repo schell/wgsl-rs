@@ -15,6 +15,7 @@ wgsl-rs transpiles a deliberately constrained subset of Rust to WGSL. The macro 
 - Arrays
 - Generic functions and generic structs (monomorphized)
 - Const generic parameters (`const N: usize` / `const N: u32`) on functions, structs, impl blocks, and template entry points
+- Direct QSelf calls (`<T>::method()`, e.g. `<[u32; 4]>::zero()`)
 
 ## Not Supported
 
@@ -26,7 +27,6 @@ wgsl-rs transpiles a deliberately constrained subset of Rust to WGSL. The macro 
 | Closures            | No closure capture model in WGSL                        | Write named functions                        |
 | `async`             | No async runtime on GPU                                 | —                                            |
 | Dynamic dispatch    | No vtables in WGSL                                      | Use enums or monomorphization                |
-| QSelf call syntax   | `<[u32; 4]>::method()` not yet supported                | Use `T::method()` via monomorphization (#131)|
 
 ## Feature Table
 
@@ -58,4 +58,4 @@ wgsl-rs transpiles a deliberately constrained subset of Rust to WGSL. The macro 
 | Closures               | No         |                                                    |
 | `async`                | No         |                                                    |
 | Dynamic dispatch       | No         |                                                    |
-| QSelf call syntax      | No         | `<[u32; 4]>::method()` (#131)                      |
+| QSelf call syntax      | Yes        | `<T as Trait>::` disambiguation form is rejected   |

@@ -166,7 +166,7 @@ pub fn caller_u32_array() -> [u32; 4] {
 
 The call with `[u32; 4]` produces a WGSL function `_2array_u32_4_zero` (the `_2` prefix is the bijective mangled encoding of `array_u32_4`). Similarly, `[f32; 4]` produces `_2array_f32_4_zero`.
 
-> **Limitation:** Direct `<[u32; 4]>::method()` call syntax (QSelf paths) is not yet supported — only `T::method()` resolved via monomorphization. Tracked in [GitHub issue #131](https://github.com/schell/wgsl-rs/issues/131).
+Direct `<T>::method()` call syntax (QSelf paths) is supported as well: `<[u32; 4]>::zero()` transpiles to the same `_2array_u32_4_zero` function as the turbofish call above, and `<u32>::zero()` to `u32_zero`. The `<T as Trait>::method()` disambiguation form is rejected — trait impls are matched by self type only. See the [QSelf call syntax example](../examples/qself-call.md) for the full picture.
 
 ## `PhantomData<T>` Marker Fields
 

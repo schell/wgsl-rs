@@ -2804,7 +2804,9 @@ impl Expr {
                         if !matches!(syn_path.segments[1].arguments, syn::PathArguments::None) {
                             return UnsupportedSnafu {
                                 span: syn_path.segments[1].arguments.span(),
-                                note: "generic arguments on the method segment are not supported",
+                                note: "generic arguments on the method segment are not supported; \
+                                       use the qualified-self form instead, e.g. `<[u32; \
+                                       4]>::zero()`",
                             }
                             .fail();
                         }

@@ -71,3 +71,55 @@ fn generic_array_impl_runs_on_cpu() {
         [0.0, 0.0, 0.0, 0.0]
     );
 }
+
+#[wgsl(skip_validation)]
+mod direct_qself_caller {
+    pub trait Zeroable {
+        fn zero() -> Self;
+    }
+
+    impl Zeroable for u32 {
+        fn zero() -> u32 {
+            0u32
+        }
+    }
+
+    impl<T: Zeroable> Zeroable for [T; 4] {
+        fn zero() -> [T; 4] {
+            [T::zero(), T::zero(), T::zero(), T::zero()]
+        }
+    }
+
+    /// Direct QSelf call against a *generic* array impl from a concrete
+    /// (non-generic) function — the form documented in
+    /// book/src/generics/generic-structs.md. Note this module's *only*
+    /// generics are the impl template: `has_templates` used to skip the
+    /// monomorphization pipeline for such modules, leaking the raw
+    /// generic impl into the WGSL (`fn _2array_T_4_zero` calling the
+    /// nonexistent `T_zero()`) and never emitting the instantiation the
+    /// call site references.
+    pub fn caller_u32_array() -> [u32; 4] {
+        <[u32; 4]>::zero()
+    }
+}
+
+#[test]
+fn direct_qself_caller_transpiles() {
+    let src = direct_qself_caller::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        !src.contains("__TPT__") && !src.contains("array_T_4"),
+        "the generic array impl must not leak raw into the WGSL, got:\n{src}"
+    );
+    assert!(
+        src.contains("fn _2array_u32_4_zero()"),
+        "the [u32; 4] instantiation of the generic impl must be emitted, got:\n{src}"
+    );
+}
+
+#[test]
+fn direct_qself_caller_runs_on_cpu() {
+    assert_eq!(
+        direct_qself_caller::caller_u32_array(),
+        [0u32, 0u32, 0u32, 0u32]
+    );
+}

@@ -103,8 +103,16 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     // Generate template macros for generic functions defined in this module
     let template_macros = ctx.generate_template_macros(module)?;
 
-    // Run same-module monomorphization if there are any generic templates
-    let has_templates = !ctx.templates.is_empty() || !ctx.struct_templates.is_empty();
+    // Run same-module monomorphization if there are any generic templates.
+    // This must also count the impl templates: a module whose only generics
+    // are impl blocks (`impl<T> Trait for [T; 4]` with concrete callers)
+    // needs the pipeline just as much — without it, the generic impl is
+    // rendered raw with `__TP{N}__` placeholders and the instantiations
+    // its call sites reference are never generated.
+    let has_templates = !ctx.templates.is_empty()
+        || !ctx.struct_templates.is_empty()
+        || !ctx.array_impl_templates.is_empty()
+        || !ctx.impl_templates.is_empty();
     if has_templates {
         ctx.discover_instantiations(module)?;
         ctx.process_queue()?;

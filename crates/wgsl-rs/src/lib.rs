@@ -192,7 +192,7 @@ impl Source {
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
-        let mut fn_sigs: HashMap<String, Vec<ir::Type>> = HashMap::new();
+        let mut fn_sigs: HashMap<String, ir::FnSig> = HashMap::new();
         self.collect(
             &mut out,
             &mut visited_sources,
@@ -233,7 +233,7 @@ impl Source {
         seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
         needs_tier1: &mut bool,
-        fn_sigs: &mut HashMap<String, Vec<ir::Type>>,
+        fn_sigs: &mut HashMap<String, ir::FnSig>,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
@@ -337,7 +337,7 @@ fn instantiate_template_into<'a>(
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
-    fn_sigs: &mut HashMap<String, Vec<ir::Type>>,
+    fn_sigs: &mut HashMap<String, ir::FnSig>,
 ) -> Result<(), SourceError<'a>> {
     let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
 
@@ -524,7 +524,7 @@ fn instance_signatures(
     const_args: &[u32],
     mangled_type_args: &[String],
     mangled_const_args: &[String],
-) -> HashMap<String, Vec<ir::Type>> {
+) -> HashMap<String, ir::FnSig> {
     let Ok((_source, template)) = resolve_template(sources, template_name, mangled_type_args)
     else {
         return HashMap::new();

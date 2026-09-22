@@ -1032,3 +1032,28 @@ template-to-template calls are covered too. Imported struct-constructor
 field types are not threaded across chunks; WGSL's abstract-integer
 coercion keeps those valid, so the unsuffixed fields are a documented
 cosmetic gap.
+
+### 2026-09-22: The suffix pass is an anchoring pass, not a type checker
+
+**Problem:** five review rounds on the #145 PR each surfaced new gaps in
+the suffix pass's partial inference — missing environment entries
+(imports, linkage declarations, associated constants), missing node
+kinds in the type oracle (`expr_ty`), and missing propagation paths
+(selectors, unaries, indexed bases, unannotated locals). Each finding
+was real, and several were genuine invalid-WGSL bugs; but the pattern
+has a single root cause: the pass emulates type inference with ad-hoc
+per-node rules, and any node kind or environment entry those rules do
+not cover is a latent review finding.
+
+**Decision:** land the current coverage — the signature registry carries
+return types (`FnSig`), un-annotated locals register a type provable
+from their initializer, and associated constants register under their
+mangled render name — and draw the boundary explicitly: the pass
+anchors literals where a type is provable; it is not a type checker.
+Contexts it cannot prove must render *valid* WGSL with bare literals —
+WGSL's abstract-integer coercion is the safety net, and bare literals
+only break validity through polymorphic overload resolution, which the
+builtin-group rules cover. If future review rounds surface more
+validity-class gaps, the fix is a follow-up PR consolidating the walk
+into a proper bottom-up `infer(expr) -> Type` over one environment
+struct — not another round of per-node patches inside this PR.

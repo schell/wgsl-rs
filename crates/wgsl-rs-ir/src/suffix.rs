@@ -73,7 +73,7 @@ pub fn suffix_items(items: &mut [Item]) {
 /// [`fn_signatures`] — so calls to imported functions anchor their
 /// arguments too. The module's own signatures shadow imported ones,
 /// matching Rust name resolution.
-pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String, Vec<Type>>) {
+pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String, FnSig>) {
     SuffixPass {
         fn_sigs: imports.clone(),
         ..SuffixPass::default()
@@ -87,7 +87,7 @@ pub fn suffix_module_with_imports(module: &mut Module, imports: &HashMap<String,
 /// their arguments too. Used for cross-source template instantiation,
 /// where the template's items reference functions defined in other
 /// chunks of the assembled translation unit.
-pub fn suffix_items_with_imports(items: &mut [Item], imports: &HashMap<String, Vec<Type>>) {
+pub fn suffix_items_with_imports(items: &mut [Item], imports: &HashMap<String, FnSig>) {
     SuffixPass {
         fn_sigs: imports.clone(),
         ..SuffixPass::default()
@@ -95,12 +95,33 @@ pub fn suffix_items_with_imports(items: &mut [Item], imports: &HashMap<String, V
     .walk_items(items);
 }
 
-/// Harvest the module's user-function signatures — callee name → declared
-/// parameter types — for seeding [`suffix_module_with_imports`] /
-/// [`suffix_items_with_imports`] on a source that imports or instantiates
-/// this module. Free functions key by their name; impl methods key by
-/// their mangled render name.
-pub fn fn_signatures(module: &Module) -> HashMap<String, Vec<Type>> {
+/// A harvested user-function signature: declared parameter types plus
+/// the return type (`None` for `()` returns).
+#[derive(Clone, Debug)]
+pub struct FnSig {
+    /// Declared parameter types, in order.
+    pub params: Vec<Type>,
+    /// The declared return type, if any.
+    pub ret: Option<Type>,
+}
+
+/// The signature of one function item.
+fn fn_sig(f: &ItemFn) -> FnSig {
+    FnSig {
+        params: f.inputs.iter().map(|a| a.ty.clone()).collect(),
+        ret: match &f.return_type {
+            ReturnType::Type { ty, .. } => Some(ty.clone()),
+            ReturnType::Default => None,
+        },
+    }
+}
+
+/// Harvest the module's user-function signatures — callee name →
+/// [`FnSig`] — for seeding [`suffix_module_with_imports`] /
+/// [`suffix_items_with_imports`] on a source that imports or
+/// instantiates this module. Free functions key by their name; impl
+/// methods key by their mangled render name.
+pub fn fn_signatures(module: &Module) -> HashMap<String, FnSig> {
     fn_signatures_in_items(&module.items)
 }
 
@@ -109,23 +130,17 @@ pub fn fn_signatures(module: &Module) -> HashMap<String, Vec<Type>> {
 /// wrapper. Note that signatures are taken from the items as-is, so
 /// call any renaming (such as template instance mangling) before
 /// harvesting.
-pub fn fn_signatures_in_items(items: &[Item]) -> HashMap<String, Vec<Type>> {
+pub fn fn_signatures_in_items(items: &[Item]) -> HashMap<String, FnSig> {
     let mut sigs = HashMap::new();
     for item in items {
         match item {
             Item::Fn(f) => {
-                sigs.insert(
-                    f.name.to_string(),
-                    f.inputs.iter().map(|a| a.ty.clone()).collect(),
-                );
+                sigs.insert(f.name.to_string(), fn_sig(f));
             }
             Item::Impl(imp) => {
                 for impl_item in &imp.items {
                     if let ImplItem::Fn(f) = impl_item {
-                        sigs.insert(
-                            mangle(&[imp.self_ty.as_str(), &f.name]),
-                            f.inputs.iter().map(|a| a.ty.clone()).collect(),
-                        );
+                        sigs.insert(mangle(&[imp.self_ty.as_str(), &f.name]), fn_sig(f));
                     }
                 }
             }
@@ -157,10 +172,10 @@ struct SuffixPass {
     /// Struct definitions by name, collected before the walk so struct
     /// constructor fields and field assignments can resolve types.
     structs: HashMap<String, StructDef>,
-    /// User function signatures: callee name → declared parameter
-    /// types. Free functions key by their name; impl methods key by
-    /// their mangled render name (`mangle(&[self_ty, method])`).
-    fn_sigs: HashMap<String, Vec<Type>>,
+    /// User function signatures: callee name → [`FnSig`]. Free
+    /// functions key by their name; impl methods key by their mangled
+    /// render name (`mangle(&[self_ty, method])`).
+    fn_sigs: HashMap<String, FnSig>,
     /// Module-level global names → types: `const` items and linkage
     /// declarations (uniforms, storage, workgroup vars), consulted as
     /// the fallback of scope lookup.
@@ -194,10 +209,7 @@ impl SuffixPass {
                     );
                 }
                 Item::Fn(f) => {
-                    self.fn_sigs.insert(
-                        f.name.to_string(),
-                        f.inputs.iter().map(|a| a.ty.clone()).collect(),
-                    );
+                    self.fn_sigs.insert(f.name.to_string(), fn_sig(f));
                 }
                 Item::Const(c) => {
                     self.globals.insert(c.name.clone(), c.ty.clone());
@@ -216,11 +228,20 @@ impl SuffixPass {
                 }
                 Item::Impl(imp) => {
                     for impl_item in &imp.items {
-                        if let ImplItem::Fn(f) = impl_item {
-                            self.fn_sigs.insert(
-                                mangle(&[imp.self_ty.as_str(), &f.name]),
-                                f.inputs.iter().map(|a| a.ty.clone()).collect(),
-                            );
+                        match impl_item {
+                            ImplItem::Fn(f) => {
+                                self.fn_sigs
+                                    .insert(mangle(&[imp.self_ty.as_str(), &f.name]), fn_sig(f));
+                            }
+                            // Associated consts render as the mangled
+                            // `Type_MEMBER` name — the same key scheme
+                            // as methods — so register their declared
+                            // type under that key.
+                            ImplItem::Const(c) => {
+                                self.globals
+                                    .insert(mangle(&[imp.self_ty.as_str(), &c.name]), c.ty.clone());
+                            }
+                            ImplItem::Type(_) => {}
                         }
                     }
                 }
@@ -352,19 +373,27 @@ impl SuffixPass {
     /// current scope.
     ///
     /// Typed locals propagate their declared type; un-annotated locals
-    /// still get walked so self-anchored expressions (struct
-    /// constructors) inside them are suffixed. Rust infers `let x = 0;`
-    /// as `i32`, matching WGSL's default, so bare literals stay bare.
+    /// are still walked so self-anchored expressions (struct
+    /// constructors) inside them are suffixed, and a type provable from
+    /// the (now suffixed) initializer registers in scope — Rust infers
+    /// `let mut y = 0u32;` as `u32`, so a later assignment anchors from
+    /// it. Fully-bare initializers stay unregistered: Rust infers
+    /// `let x = 0;` as `i32`, matching WGSL's default.
     fn walk_local(&mut self, local: &mut Local) {
         match (&local.ty, &mut local.init) {
             (Some(ty), Some(init)) => self.expect(init, Some(ty)),
             (None, Some(init)) => self.expect(init, None),
             _ => {}
         }
-        if let Some(ty) = &local.ty
+        let ty = match (&local.ty, &local.init) {
+            (Some(ty), _) => Some(ty.clone()),
+            (None, Some(init)) => self.expr_ty(init),
+            _ => None,
+        };
+        if let Some(ty) = ty
             && let Some(scope) = self.scopes.last_mut()
         {
-            scope.insert(local.name.clone(), ty.clone());
+            scope.insert(local.name.clone(), ty);
         }
     }
 
@@ -502,17 +531,25 @@ impl SuffixPass {
                 UnOp::Deref => None,
             },
             // Same-type builtin value groups yield their first value
-            // argument's type.
+            // argument's type; user functions yield their declared
+            // return type. User signatures shadow builtins, matching
+            // the walk order.
             Expr::FnCall { path, params, .. } => {
-                let FnPath::Ident(name) = path else {
-                    return None;
+                let callee = match path {
+                    FnPath::Ident(name) => name.clone(),
+                    FnPath::TypeMethod { ty, method } => mangle(&[ty, method]),
                 };
-                if builtin_value_args(name.as_str()).is_some() {
+                if let Some(sig) = self.fn_sigs.get(&callee) {
+                    sig.ret.clone()
+                } else if builtin_value_args(&callee).is_some() {
                     params.first().and_then(|p| self.expr_ty(p))
                 } else {
                     None
                 }
             }
+            // Associated constants are registered under their mangled
+            // render name (`Type_MEMBER`) at collection time.
+            Expr::TypePath { ty, member } => self.globals.get(&mangle(&[ty, member])).cloned(),
             _ => None,
         }
     }
@@ -552,9 +589,9 @@ impl SuffixPass {
             FnPath::Ident(name) => name.clone(),
             FnPath::TypeMethod { ty, method } => mangle(&[ty, method]),
         };
-        if let Some(param_tys) = self.fn_sigs.get(&callee).cloned() {
+        if let Some(sig) = self.fn_sigs.get(&callee).cloned() {
             for (i, arg) in params.iter_mut().enumerate() {
-                self.expect(arg, param_tys.get(i));
+                self.expect(arg, sig.params.get(i));
             }
             return;
         }

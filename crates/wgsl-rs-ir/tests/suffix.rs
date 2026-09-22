@@ -936,11 +936,11 @@ fn imported_fn_signatures_anchor_call_args() {
         vec![Stmt::Return(Some(ident("x")))],
     )]);
     let sigs = fn_signatures(&helper);
-    assert_eq!(
-        sigs.get("helper"),
-        Some(&vec![u32_ty()]),
-        "fn_signatures should harvest free-fn params"
-    );
+    let sig = sigs
+        .get("helper")
+        .expect("fn_signatures should harvest free-fn params");
+    assert_eq!(sig.params, vec![u32_ty()]);
+    assert_eq!(sig.ret, Some(u32_ty()));
 
     let mut caller = module(vec![fn_item(
         "caller",
@@ -1293,4 +1293,100 @@ fn linkage_variables_anchor_assignment_targets() {
     ]);
     let wgsl = render(&mut m);
     assert!(wgsl.contains("select(0u, 1u, cond)"), "got: {wgsl}");
+}
+
+#[test]
+fn user_fn_return_type_anchors_literals() {
+    // `let y = min(get_u32(), 0);` — the user function's declared
+    // return type anchors the bare literal through the `min` group.
+    let mut m = module(vec![
+        fn_item(
+            "get_u32",
+            vec![],
+            returns(u32_ty()),
+            vec![Stmt::Return(Some(suffixed_int("42", "u32")))],
+        ),
+        fn_item(
+            "f",
+            vec![],
+            ReturnType::Default,
+            vec![
+                local(
+                    "y",
+                    None,
+                    Some(call("min", vec![call("get_u32", vec![]), bare_int("0")])),
+                ),
+                Stmt::Return(None),
+            ],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("min(get_u32(), 0u)"), "got: {wgsl}");
+}
+
+#[test]
+fn unannotated_local_registers_inferred_type() {
+    // `let mut y = 0u32; y = select(0, 1, cond);` — the local's type
+    // is inferred from its initializer, so the assignment anchors the
+    // select (assigning the bare i32 select to a u32 would be invalid
+    // WGSL).
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local("y", None, Some(suffixed_int("0", "u32"))),
+            Stmt::Assignment {
+                lhs: ident("y"),
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("select(0u, 1u, cond)"), "got: {wgsl}");
+}
+
+#[test]
+fn associated_const_anchors_sibling_literals() {
+    // `min(Counter::MAX, 0)` — the associated constant's declared type
+    // is registered under its mangled render name, so it anchors the
+    // bare literal.
+    let mut m = module(vec![
+        Item::Impl(ItemImpl {
+            type_params: vec![],
+            const_params: vec![],
+            self_ty: "Counter".to_string(),
+            items: vec![ImplItem::Const(ItemConst {
+                name: "MAX".to_string(),
+                ty: u32_ty(),
+                expr: suffixed_int("7", "u32"),
+                attrs: vec![],
+            })],
+            attrs: vec![],
+        }),
+        fn_item(
+            "f",
+            vec![],
+            ReturnType::Default,
+            vec![
+                local(
+                    "y",
+                    None,
+                    Some(call(
+                        "min",
+                        vec![
+                            Expr::TypePath {
+                                ty: "Counter".to_string(),
+                                member: "MAX".to_string(),
+                            },
+                            bare_int("0"),
+                        ],
+                    )),
+                ),
+                Stmt::Return(None),
+            ],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("0u"), "got: {wgsl}");
 }

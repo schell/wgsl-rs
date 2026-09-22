@@ -1579,7 +1579,10 @@ fn vector_indexing_anchors_element_assignments() {
 fn matrix_double_indexing_resolves_scalar_type() {
     // `fn f(m: mat4x4u, cond: bool) { m[0][1] = select(0, 1, cond); }` —
     // the first index yields a column vector, the second its scalar,
-    // so the select anchors from the matrix's element type (wgsl-rs#196).
+    // so the select anchors from the matrix's element type
+    // (wgsl-rs#196). The fixture is synthetic: WGSL matrices are
+    // f32-only, so an integer-scalar matrix cannot arise from parsed
+    // source — the rule is scalar-agnostic and pinned at the IR level.
     let mut m = module(vec![fn_item(
         "f",
         vec![
@@ -1629,5 +1632,243 @@ fn deref_assignment_target_anchors_rhs() {
     assert!(
         wgsl.contains("select(0u, 1u, cond)"),
         "deref assignment should anchor the select, got: {wgsl}"
+    );
+}
+
+#[test]
+fn vector_field_access_anchors_component_assignments() {
+    // `fn f(v: vec4u, cond: bool) { v.x = select(0, 1, cond); }` — a
+    // plain component field access (`v.x`, which lowers to
+    // `Expr::FieldAccess`, unlike the `.x()` swizzle method call)
+    // resolves the scalar element, anchoring the select.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![
+            arg(
+                "v",
+                Type::Vector {
+                    elements: 4,
+                    scalar_ty: Some(ScalarType::U32),
+                },
+            ),
+            arg("cond", Type::Scalar(ScalarType::Bool)),
+        ],
+        ReturnType::Default,
+        vec![Stmt::Assignment {
+            lhs: Expr::FieldAccess {
+                base: Box::new(ident("v")),
+                field: "x".to_string(),
+            },
+            rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+        }],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "vector component assignment should anchor the select, got: {wgsl}"
+    );
+}
+
+#[test]
+fn array_literal_anchors_from_any_typed_element() {
+    // `let mut a = [0, 1u32]; a[0] = select(0, 1, cond);` — the
+    // suffixed sibling carries the element type for the whole literal:
+    // the initializer self-anchors and the local registers the array
+    // type, so the element assignment anchors too.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "a",
+                None,
+                Some(Expr::Array {
+                    elems: vec![bare_int("0"), suffixed_int("1", "u32")],
+                }),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("a")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("array(0u, 1u)"),
+        "the suffixed sibling should anchor the bare initializer element, got: {wgsl}"
+    );
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "registered array type should anchor the element assignment, got: {wgsl}"
+    );
+}
+
+#[test]
+fn builtin_call_infers_from_any_value_argument() {
+    // `let mut y = min(0, n); y = select(0, 1, cond);` with `n: u32` —
+    // the shared value type is searched across all value arguments
+    // (mirroring the walk's operand anchor), so the local registers
+    // u32 even when the first argument is bare. The loop-bound
+    // variant is the stricter case: `for i in 0..min(0, n)` infers
+    // the loop variable's type BEFORE walking the bounds, so the
+    // first argument is still bare there and the range must anchor
+    // from the inferred group type.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![
+            arg("n", u32_ty()),
+            arg("cond", Type::Scalar(ScalarType::Bool)),
+        ],
+        ReturnType::Default,
+        vec![
+            local(
+                "y",
+                None,
+                Some(call("min", vec![bare_int("0"), ident("n")])),
+            ),
+            Stmt::Assignment {
+                lhs: ident("y"),
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+            Stmt::For(ForLoop {
+                var: "i".to_string(),
+                var_ty: None,
+                from: bare_int("0"),
+                to: call("min", vec![bare_int("0"), ident("n")]),
+                inclusive: false,
+                body: Block { stmts: vec![] },
+            }),
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("min(0u, n)"),
+        "min's later value argument should anchor the bare one, got: {wgsl}"
+    );
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "min's inferred type should register the local and anchor the select, got: {wgsl}"
+    );
+    assert!(
+        wgsl.contains("var i = 0u;"),
+        "the inferred min type should anchor the loop bounds, got: {wgsl}"
+    );
+}
+
+#[test]
+fn reference_valued_local_anchors_deref_assignments() {
+    // `let p = &mut get_mut!(OUTPUT)[0]; *p = select(0, 1, cond);` —
+    // the reference registers a pointer to the pointee, so the deref
+    // assignment target resolves the element type.
+    let mut m = module(vec![
+        Item::Storage(ItemStorage {
+            group: 0,
+            binding: 0,
+            access: StorageAccess::ReadWrite,
+            name: "OUTPUT".to_string(),
+            ty: array_ty(u32_ty(), 1),
+            attrs: vec![],
+        }),
+        fn_item(
+            "f",
+            vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+            ReturnType::Default,
+            vec![
+                local(
+                    "p",
+                    None,
+                    Some(Expr::Reference(Box::new(Expr::ArrayIndexing {
+                        lhs: Box::new(ident("OUTPUT")),
+                        index: Box::new(bare_int("0")),
+                    }))),
+                ),
+                Stmt::Assignment {
+                    lhs: Expr::Unary {
+                        op: UnOp::Deref,
+                        expr: Box::new(ident("p")),
+                    },
+                    rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+                },
+            ],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "the deref target should anchor from the referenced pointee, got: {wgsl}"
+    );
+}
+
+#[test]
+fn unprovable_local_shadows_outer_binding() {
+    // `let x: u32 = 0; if c { let x = 0; let y = select(x, 1, c); }` —
+    // the inner, fully-bare `x` is i32 in Rust; anchoring from the
+    // shadowed outer u32 would write a wrong `1u`. The inner
+    // declaration must shadow without anchoring: the select stays
+    // bare, which WGSL reads as i32 — matching Rust.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("c", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local("x", Some(u32_ty()), Some(suffixed_int("0", "u32"))),
+            Stmt::If(StmtIf {
+                condition: ident("c"),
+                then_block: Block {
+                    stmts: vec![
+                        local("x", None, Some(bare_int("0"))),
+                        local(
+                            "y",
+                            None,
+                            Some(call("select", vec![ident("x"), bare_int("1"), ident("c")])),
+                        ),
+                    ],
+                },
+                else_branch: None,
+            }),
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(x, 1, c)"),
+        "the unprovable inner x must shadow the outer u32 binding, got: {wgsl}"
+    );
+}
+
+#[test]
+fn unprovable_loop_var_shadows_outer_binding() {
+    // `let i: u32 = 0; for i in 0..8 { let y = select(i, 1, c); }` —
+    // the loop variable is fully bare (i32 in Rust and WGSL); it must
+    // shadow the outer u32 `i` without anchoring.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("c", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local("i", Some(u32_ty()), Some(suffixed_int("0", "u32"))),
+            Stmt::For(ForLoop {
+                var: "i".to_string(),
+                var_ty: None,
+                from: bare_int("0"),
+                to: bare_int("8"),
+                inclusive: false,
+                body: Block {
+                    stmts: vec![local(
+                        "y",
+                        None,
+                        Some(call("select", vec![ident("i"), bare_int("1"), ident("c")])),
+                    )],
+                },
+            }),
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(i, 1, c)"),
+        "the bare loop variable must shadow the outer u32 binding, got: {wgsl}"
     );
 }

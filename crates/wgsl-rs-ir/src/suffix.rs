@@ -47,8 +47,9 @@ use std::collections::HashMap;
 use crate::{
     mangle::mangle,
     types::{
-        BinOp, Block, CaseSelector, CompoundOp, ElseBranch, Expr, FnPath, ForLoop, ImplItem, Item,
-        ItemFn, Lit, Local, Module, ReturnType, ScalarType, Stmt, StmtIf, StmtSwitch, Type, UnOp,
+        AddressSpace, BinOp, Block, CaseSelector, CompoundOp, ElseBranch, Expr, FnPath, ForLoop,
+        ImplItem, Item, ItemFn, Lit, Local, Module, ReturnType, ScalarType, Stmt, StmtIf,
+        StmtSwitch, Type, UnOp,
     },
 };
 
@@ -171,9 +172,11 @@ struct StructDef {
 /// mutation walk begins.
 #[derive(Default)]
 struct TypeEnv {
-    /// Stack of scope frames mapping local names to their declared types.
-    /// The bottom frame holds the current function's parameters.
-    scopes: Vec<HashMap<String, Type>>,
+    /// Stack of scope frames mapping local names to their declared
+    /// types. `None` marks a name declared in scope whose type is
+    /// unprovable — it shadows outer bindings without anchoring from
+    /// them. The bottom frame holds the current function's parameters.
+    scopes: Vec<HashMap<String, Option<Type>>>,
     /// Struct definitions by name, collected before the walk so struct
     /// constructor fields and field assignments can resolve types.
     structs: HashMap<String, StructDef>,
@@ -250,16 +253,19 @@ impl TypeEnv {
     }
 
     /// Look up the declared type of `name`, innermost scope first.
+    /// The innermost declaration wins even when its type is
+    /// unprovable — a declared-but-unknown name shadows outer
+    /// bindings without anchoring from them, since anchoring from a
+    /// shadowed outer type can write the wrong suffix.
     /// Module-level globals — const items and linkage declarations —
     /// are the fallback after every scope misses; locals, parameters,
     /// and function-body consts shadow them, matching Rust name
     /// resolution.
     fn lookup(&self, name: &str) -> Option<Type> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|s| s.get(name).cloned())
-            .or_else(|| self.globals.get(name).cloned())
+        match self.scopes.iter().rev().find_map(|s| s.get(name)) {
+            Some(declared) => declared.clone(),
+            None => self.globals.get(name).cloned(),
+        }
     }
 
     /// The concrete type of `expr`, when provable without a full type
@@ -288,12 +294,23 @@ impl TypeEnv {
             },
             Expr::Paren(inner) => self.infer(inner),
             Expr::Cast { ty, .. } => Some((**ty).clone()),
-            Expr::FieldAccess { base, field } => {
-                let Type::Struct { name, type_args } = self.infer(base)? else {
-                    return None;
-                };
-                self.field_ty(&name, &type_args, field)
-            }
+            Expr::FieldAccess { base, field } => match self.infer(base)? {
+                Type::Struct { name, type_args } => self.field_ty(&name, &type_args, field),
+                // Plain component access on a vector (`v.x`): the
+                // Rust-side vector types expose single-component
+                // x/y/z/w/r/g/b/a fields and a plain field access
+                // lowers here, unlike multi-component swizzles
+                // (method calls → `Expr::Swizzle`). A single swizzle
+                // character reads one scalar component of the
+                // vector's element type.
+                Type::Vector {
+                    scalar_ty: Some(scalar),
+                    ..
+                } if field.len() == 1 && "xyzwrgba".contains(field.as_str()) => {
+                    Some(Type::Scalar(scalar))
+                }
+                _ => None,
+            },
             Expr::ArrayIndexing { lhs, .. } => match self.infer(lhs)? {
                 Type::Array { elem, .. } | Type::RuntimeArray { elem } => Some((*elem).clone()),
                 // Indexing a vector yields its scalar element —
@@ -350,10 +367,13 @@ impl TypeEnv {
                     _ => None,
                 },
             },
-            // Array literals yield the first element's type; the
-            // length is the element count.
+            // Array literals yield their element type, derivable from
+            // any single inferable element — Rust unifies the element
+            // type across the literal, so a later suffixed element
+            // carries the same information as the first; the length is
+            // the element count.
             Expr::Array { elems } => {
-                let elem = elems.first().and_then(|e| self.infer(e))?;
+                let elem = elems.iter().find_map(|e| self.infer(e))?;
                 Some(Type::Array {
                     elem: Box::new(elem),
                     len: Expr::Lit(Lit::Int {
@@ -388,8 +408,13 @@ impl TypeEnv {
                 };
                 if let Some(sig) = self.fn_sigs.get(&callee) {
                     sig.ret.clone()
-                } else if builtin_value_args(&callee).is_some() {
-                    params.first().and_then(|p| self.infer(p))
+                } else if let Some(value_indices) = builtin_value_args(&callee) {
+                    // The shared value type, searched across all value
+                    // arguments — mirroring the walk's operand anchor:
+                    // `min(0, n)` with `n: u32` anchors from `n`.
+                    value_indices
+                        .iter()
+                        .find_map(|&i| params.get(i).and_then(|p| self.infer(p)))
                 } else if let Some((elements, scalar)) = vec_ctor_shape(&callee) {
                     Some(Type::Vector {
                         elements,
@@ -405,10 +430,15 @@ impl TypeEnv {
             // Associated constants are registered under their mangled
             // render name (`Type_MEMBER`) at collection time.
             Expr::TypePath { ty, member } => self.globals.get(&mangle(&[ty, member])).cloned(),
-            // A reference is pointer-typed; anchors flow through
-            // pointees (the deref rule above), not pointer values, so
-            // no type is derivable here.
-            Expr::Reference(_) => None,
+            // A reference is a pointer to the pointee; carrying the
+            // pointee through lets deref-assignment targets anchor
+            // (`let p = &mut get_mut!(OUTPUT)[0]; *p = select(0,1,c)`).
+            // References created in function scope are
+            // `ptr<function, T>`.
+            Expr::Reference(inner) => self.infer(inner).map(|elem| Type::Ptr {
+                address_space: AddressSpace::Function,
+                elem: Box::new(elem),
+            }),
         }
     }
 
@@ -489,10 +519,10 @@ impl SuffixPass {
             ReturnType::Type { ty, .. } => Some(ty.clone()),
             ReturnType::Default => None,
         };
-        let params: HashMap<String, Type> = f
+        let params: HashMap<String, Option<Type>> = f
             .inputs
             .iter()
-            .map(|arg| (arg.name.clone(), arg.ty.clone()))
+            .map(|arg| (arg.name.clone(), Some(arg.ty.clone())))
             .collect();
         self.env.scopes.push(params);
         self.walk_block(&mut f.block);
@@ -520,7 +550,7 @@ impl SuffixPass {
                 // expressions anchor from it
                 // (`const C: u32 = 1; select(C, 0, cond)`).
                 let name = c.name.clone();
-                let ty = c.ty.clone();
+                let ty = Some(c.ty.clone());
                 if let Some(scope) = self.env.scopes.last_mut() {
                     scope.insert(name, ty);
                 }
@@ -588,8 +618,11 @@ impl SuffixPass {
     /// constructors) inside them are suffixed, and a type provable from
     /// the (now suffixed) initializer registers in scope — Rust infers
     /// `let mut y = 0u32;` as `u32`, so a later assignment anchors from
-    /// it. Fully-bare initializers stay unregistered: Rust infers
-    /// `let x = 0;` as `i32`, matching WGSL's default.
+    /// it. Fully-bare initializers register as unprovable (`None`):
+    /// the name still shadows outer bindings — anchoring from a
+    /// shadowed outer type can write the wrong suffix — but nothing
+    /// anchors from it; Rust infers `let x = 0;` as `i32`, matching
+    /// WGSL's default, so bare stays valid.
     fn walk_local(&mut self, local: &mut Local) {
         match (&local.ty, &mut local.init) {
             (Some(ty), Some(init)) => self.expect(init, Some(ty)),
@@ -601,9 +634,7 @@ impl SuffixPass {
             (None, Some(init)) => self.env.infer(init),
             _ => None,
         };
-        if let Some(ty) = ty
-            && let Some(scope) = self.env.scopes.last_mut()
-        {
+        if let Some(scope) = self.env.scopes.last_mut() {
             scope.insert(local.name.clone(), ty);
         }
     }
@@ -656,17 +687,14 @@ impl SuffixPass {
             self.expect(&mut f.from, Some(ty));
             self.expect(&mut f.to, Some(ty));
         }
-        let mut seeded = false;
-        if let Some(ty) = var_ty {
-            let mut frame = HashMap::new();
-            frame.insert(f.var.clone(), ty);
-            self.env.scopes.push(frame);
-            seeded = true;
-        }
+        // The loop variable always gets its own frame: a provable type
+        // anchors the body, an unprovable one still shadows any outer
+        // binding of the same name (matching Rust's loop scoping).
+        let mut frame = HashMap::new();
+        frame.insert(f.var.clone(), var_ty);
+        self.env.scopes.push(frame);
         self.walk_block(&mut f.body);
-        if seeded {
-            self.env.scopes.pop();
-        }
+        self.env.scopes.pop();
     }
 
     /// Walk a `switch`: the selector subtree is walked first so nested
@@ -762,12 +790,18 @@ impl SuffixPass {
             }
             Expr::Paren(inner) => self.expect(inner, expected),
             Expr::Array { elems } => {
-                let elem_ty = expected.and_then(|ty| match ty {
-                    Type::Array { elem, .. } | Type::RuntimeArray { elem } => {
-                        Some((**elem).clone())
-                    }
-                    _ => None,
-                });
+                let elem_ty = expected
+                    .and_then(|ty| match ty {
+                        Type::Array { elem, .. } | Type::RuntimeArray { elem } => {
+                            Some((**elem).clone())
+                        }
+                        _ => None,
+                    })
+                    // Self-anchor: with no outer expectation, any
+                    // provable element carries the shared element
+                    // type — Rust unifies the literal, so a suffixed
+                    // sibling anchors the bare ones.
+                    .or_else(|| elems.iter().find_map(|e| self.env.infer(e)));
                 for e in elems {
                     self.expect(e, elem_ty.as_ref());
                 }

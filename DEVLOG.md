@@ -1057,3 +1057,37 @@ builtin-group rules cover. If future review rounds surface more
 validity-class gaps, the fix is a follow-up PR consolidating the walk
 into a proper bottom-up `infer(expr) -> Type` over one environment
 struct — not another round of per-node patches inside this PR.
+
+### 2026-09-22: Bottom-up infer for the suffix pass
+
+**Problem:** the suffix pass's type resolution lived as
+`SuffixPass::expr_ty`, a partial oracle ending in a `_ => None`
+catch-all. Seven review rounds on the #145 PR each surfaced new gaps in
+it — every `Expr` variant or `Type` shape the oracle did not cover was
+a latent review finding (the last one, vector/matrix indexing, became
+wgsl-rs#196). The environment fields (scopes, globals, structs,
+fn_sigs) were interleaved with walk state on `SuffixPass`, so adding
+knowledge meant editing the walker.
+
+**Decision:** consolidate the pass's type knowledge into a `TypeEnv`
+struct — scope stack, module globals, struct registry, fn signatures,
+collected once per module plus any imported signatures — exposing
+`infer(&self, expr: &Expr) -> Option<Type>`, the complete bottom-up
+oracle. The match over `Expr` is exhaustive with no catch-all: every
+variant either has a derivable rule or an explicit `None` with a
+comment naming why, so adding an `Expr` variant is a compile error
+until someone consciously decides whether it anchors. `Option<Type>`
+rather than an in-enum `Type::Unknown` keeps the shared IR vocabulary
+unpolluted and composes with `expect`'s existing `Option<&Type>`
+top-down contract, which is unchanged — the mutation walk still
+propagates expectations and delegates upward questions to
+`env.infer`. `None` keeps its boundary meaning from the entry above:
+"unprovable — do not anchor", never a guess.
+
+The consolidation closed the known gap class structurally: the
+`ArrayIndexing` rule now resolves vector bases to their scalar element
+and matrix bases to a column vector (`m[i][j]` recurses through the
+vector case — the wgsl-rs#196 fix), and `Deref` resolves the pointee
+of a provable `Type::Ptr`. Abstract forms (`scalar_ty: None`) and
+external builtins (texture sampling, atomics, derivatives — no
+signature table) stay explicitly `None`.

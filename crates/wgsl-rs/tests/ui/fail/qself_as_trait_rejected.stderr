@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       the `<T as Trait>::...` form is not supported; trait impls are matched by self type only — write `<T>::method(...)` instead.'
+  --> tests/ui/fail/qself_as_trait_rejected.rs:16:14
+   |
+16 |         <u32 as Zeroable>::zero()
+   |              ^^

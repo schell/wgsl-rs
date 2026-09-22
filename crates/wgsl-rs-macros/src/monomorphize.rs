@@ -103,8 +103,16 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     // Generate template macros for generic functions defined in this module
     let template_macros = ctx.generate_template_macros(module)?;
 
-    // Run same-module monomorphization if there are any generic templates
-    let has_templates = !ctx.templates.is_empty() || !ctx.struct_templates.is_empty();
+    // Run same-module monomorphization if there are any generic templates.
+    // This must also count the impl templates: a module whose only generics
+    // are impl blocks (`impl<T> Trait for [T; 4]` with concrete callers)
+    // needs the pipeline just as much — without it, the generic impl is
+    // rendered raw with `__TP{N}__` placeholders and the instantiations
+    // its call sites reference are never generated.
+    let has_templates = !ctx.templates.is_empty()
+        || !ctx.struct_templates.is_empty()
+        || !ctx.array_impl_templates.is_empty()
+        || !ctx.impl_templates.is_empty();
     if has_templates {
         ctx.discover_instantiations(module)?;
         ctx.process_queue()?;
@@ -813,11 +821,28 @@ impl MonoCtx {
         let mangled_self = mangle_type(&concrete_array_ty)?;
 
         // Check if this concrete array self type has already been
-        // instantiated for this impl block. This is keyed by the mangled
-        // concrete array self type (e.g. `array_u32_4`) to avoid
-        // duplicate generation when the same concrete array type is
-        // encountered multiple times.
-        if !self.array_impl_seen.insert(mangled_self.clone()) {
+        // instantiated for this impl block, to avoid duplicate generation
+        // when the same concrete array type is encountered multiple times.
+        // The key must identify the *impl block*, not just the self type:
+        // several impls can target the same array type (e.g.
+        // `impl<T> Zeroable for [T; 4]` and `impl<T> Valued for [T; 4]`),
+        // and keying on `array_u32_4` alone silently dropped all but the
+        // first. The impl's member names (methods, consts, assoc types)
+        // serve as the per-impl identity — the trait path is discarded by
+        // design (`ItemImpl`), and impls whose members all share a name
+        // would collide in reserved-names mangling regardless.
+        let mut members: Vec<String> = Vec::new();
+        for ii in &impl_template.items {
+            let ident = match ii {
+                crate::parse::ImplItem::Fn(f) => f.ident.to_string(),
+                crate::parse::ImplItem::Const(c) => c.ident.to_string(),
+                crate::parse::ImplItem::Type(t) => t.ident.to_string(),
+            };
+            members.push(ident);
+        }
+        let members_str = members.join("+");
+        let seen_key = mangle(&[&members_str, &mangled_self]);
+        if !self.array_impl_seen.insert(seen_key) {
             return Ok(());
         }
 
@@ -924,12 +949,20 @@ impl MonoCtx {
         // instantiation).
         module.content.retain(|item| match item {
             Item::Fn(f) => {
-                let is_generic_entry_point =
-                    !f.type_params.is_empty() && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
-                f.type_params.is_empty() || is_generic_entry_point
+                // Mirror the template classification from `MonoCtx::new`:
+                // a fn is a template when it has *type or const* params.
+                // (This previously checked type params only, so const-only
+                // template fns leaked into the output raw — with their
+                // const params unresolved, e.g. `fn sum_n(arr:
+                // array<u32, N>)`.)
+                let is_generic_entry_point = (!f.type_params.is_empty()
+                    || !f.const_params.is_empty())
+                    && !matches!(f.fn_attrs, crate::parse::FnAttrs::None);
+                let is_template = !f.type_params.is_empty() || !f.const_params.is_empty();
+                !is_template || is_generic_entry_point
             }
-            Item::Struct(s) => s.type_params.is_empty(),
-            Item::Impl(i) => i.type_params.is_empty(),
+            Item::Struct(s) => s.type_params.is_empty() && s.const_params.is_empty(),
+            Item::Impl(i) => i.type_params.is_empty() && i.const_params.is_empty(),
             _ => true,
         });
 
@@ -1028,6 +1061,33 @@ impl ParseVisitorMut for MonoCtx {
     }
 
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        // QSelf calls (`<[u32; 4]>::zero()`, `<Pair<u32>>::method()`) retain
+        // the parsed qself type on the path, which `walk_expr` never
+        // reaches. Route it through `visit_type` so the concrete type
+        // triggers array-impl / struct instantiation from the *call
+        // itself* — otherwise a caller like
+        // `fn caller() -> u32 { <[u32; 4]>::value() }`, where the array
+        // type appears in no type position, would have the generic impl
+        // removed by `apply` while never emitting the instantiation its
+        // call site references. Types still containing type parameters
+        // are skipped by `visit_type`'s own concreteness gates and are
+        // resolved transitively when the enclosing template is
+        // instantiated (the substituted mono fn walks this same code).
+        match expr {
+            Expr::FnCall {
+                path:
+                    FnPath::TypeMethod {
+                        qself_ty: Some(qty),
+                        ..
+                    },
+                ..
+            }
+            | Expr::TypePath {
+                qself_ty: Some(qty),
+                ..
+            } => self.visit_type(qty)?,
+            _ => {}
+        }
         if let Expr::FnCall {
             path,
             type_args,
@@ -1268,11 +1328,35 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
         //
         // * `T { fields }` becomes `f32 { fields }` for the same reason (the struct
         //   ident is just an `Ident`, not a `Type`).
+        //
+        // QSelf paths (`<T>::method(...)`, `<[T; 4]>::CONSTANT`) carry the parsed
+        // qself type in `qself_ty`; when it contains type parameters, the *structure*
+        // is substituted and the mangled ident re-derived from it. Structure is
+        // never inferred from the mangled string — ordinary Rust identifiers can
+        // contain underscores, so a string component could be a real ident rather
+        // than a nested mangling.
         match expr {
-            Expr::FnCall { path, .. } => {
-                if let FnPath::TypeMethod { ty, .. } = path
-                    && let Some(concrete) = self.subst.get(&ty.to_string())
-                {
+            Expr::FnCall {
+                path: FnPath::TypeMethod { ty, qself_ty, .. },
+                ..
+            } => {
+                if let Some(qty) = qself_ty {
+                    // QSelf path: substitute the retained structure and
+                    // re-derive the mangled ident. This runs
+                    // unconditionally — substituting and re-mangling a
+                    // concrete type is an identity, and *detecting*
+                    // whether a rewrite is needed is exactly what missed
+                    // const-generic array lengths (`<[u32; N]>::zero()`:
+                    // the length is an `Expr`, not a `TypeParam`).
+                    // Substitution covers both: type params via
+                    // `visit_type`, const params via `visit_expr` on
+                    // array lengths.
+                    substitute_type(qty, self.subst, self.consts);
+                    if let Ok(mangled) = mangle_type(qty) {
+                        *ty = Ident::new(&mangled, ty.span());
+                    }
+                } else if let Some(concrete) = self.subst.get(&ty.to_string()) {
+                    // Plain `T::method(...)`: flat lookup on the param name.
                     *ty = type_to_ident(concrete, ty.span());
                 }
             }
@@ -1283,9 +1367,19 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
             }
             // `T::SLAB_SIZE` → `f32::SLAB_SIZE` (or `Self::SLAB_SIZE` →
             // `Wrapper_f32::SLAB_SIZE`) when the base type is in the
-            // substitution map.
-            Expr::TypePath { ty, .. } => {
-                if let Some(concrete) = self.subst.get(&ty.to_string()) {
+            // substitution map. QSelf const paths substitute structurally,
+            // like QSelf method calls above.
+            Expr::TypePath { ty, qself_ty, .. } => {
+                if let Some(qty) = qself_ty {
+                    // QSelf const path: substitute the retained structure
+                    // and re-derive the mangled ident, exactly like QSelf
+                    // method calls above (unconditionally — see the
+                    // `Expr::FnCall` arm).
+                    substitute_type(qty, self.subst, self.consts);
+                    if let Ok(mangled) = mangle_type(qty) {
+                        *ty = Ident::new(&mangled, ty.span());
+                    }
+                } else if let Some(concrete) = self.subst.get(&ty.to_string()) {
                     *ty = type_to_ident(concrete, ty.span());
                 }
             }
@@ -2021,8 +2115,16 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             mangle(&["ptr", space, &elem_m])
         }
         Type::TypeParam { ident } => {
-            // This shouldn't happen for fully resolved instantiations
-            ident.to_string().to_lowercase()
+            // Case-preserving: substitution keys on the param name as
+            // written (e.g. "T"), so mangling must not destroy a
+            // parameter's identity. This arm is reachable for qself types
+            // containing parameters (e.g. `<[T; 4]>::zero()` →
+            // `array_T_4`), which `SubstituteVisitor` re-derives from the
+            // retained `qself_ty` structure after substitution; keeping
+            // the case intact means a concrete ident that merely resembles
+            // a parameter's spelling (a struct `t` vs a param `T`) stays
+            // distinguishable.
+            ident.to_string()
         }
         Type::Phantom { elem, .. } => mangle(&["phantom", &mangle_type(elem)?]),
         Type::AssocType { ty, member, .. } => mangle(&[&mangle_type(ty)?, &member.to_string()]),

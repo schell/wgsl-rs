@@ -159,14 +159,20 @@ impl<T: Zeroable> Zeroable for [T; 4] {
     }
 }
 
+impl Zeroable for u32 {
+    fn zero() -> u32 {
+        0
+    }
+}
+
 pub fn caller_u32_array() -> [u32; 4] {
-    Zeroable::zero::<[u32; 4]>()
+    <[u32; 4]>::zero()
 }
 ```
 
 The call with `[u32; 4]` produces a WGSL function `_2array_u32_4_zero` (the `_2` prefix is the bijective mangled encoding of `array_u32_4`). Similarly, `[f32; 4]` produces `_2array_f32_4_zero`.
 
-Direct `<T>::method()` call syntax (QSelf paths) is supported as well: `<[u32; 4]>::zero()` transpiles to the same `_2array_u32_4_zero` function as the turbofish call above, and `<u32>::zero()` to `u32_zero`. The `<T as Trait>::method()` disambiguation form is rejected — trait impls are matched by self type only. See the [QSelf call syntax example](../examples/qself-call.md) for the full picture.
+The scalar form works the same way: `<u32>::zero()` transpiles to `u32_zero`, and inside generic functions `<[T; 4]>::zero()` is rewritten during monomorphization — see the [QSelf call syntax example](../examples/qself-call.md) for the full picture. The `<T as Trait>::method()` disambiguation form is rejected (trait impls are matched by self type only), as is turbofish on a trait path's method segment (`Zeroable::zero::<[u32; 4]>()`) — use the qualified-self form shown above instead.
 
 ## `PhantomData<T>` Marker Fields
 

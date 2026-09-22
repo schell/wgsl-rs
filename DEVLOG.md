@@ -1037,3 +1037,69 @@ module gained a `test_precedence` entry point with the issue repro; the
 roundtrip suite gained `bit_precedence_u32` (bitwise/shift vs
 comparison on both worlds — the logical operators do not diverge
 between Rust and WGSL, so the coverage lives in `bit_manipulation`).
+
+### 2026-09-22: Trait-path method turbofish stays rejected; docs point at QSelf
+
+**Problem:** `book/src/generics/generic-structs.md` showed
+`Zeroable::zero::<[u32; 4]>()` — turbofish on the *method* segment of a
+trait path — as the way to call a complex-type trait impl, but the parser
+rejects that form ("generic arguments on the method segment are not
+supported"). The example was stale: the only working spellings were the
+generic-function route (`fn go<T: Trait>() -> T { T::zero() }` then
+`go::<[u32; 4]>()`).
+
+**Decision:** Keep the rejection. Now that direct QSelf call syntax is
+supported (#131, PR #193), `<[u32; 4]>::zero()` covers the use case with a
+single syntax per operation, and accepting a second spelling
+(`Trait::method::<T>()`) would add parser surface for no new capability.
+The doc example now uses the QSelf form, the parser's error message points
+callers at it, and a trybuild compile-fail test pins the rejection.
+Turbofish on the *type* segment (`Pair::<f32>::first`) and free-function
+turbofish (`go::<T>()`) remain supported as before.
+
+### 2026-09-22: Modules whose only generics are impl blocks run the full
+monomorphization pipeline
+
+**Problem:** `run()` gated discovery, instantiation, and `apply` on
+`has_templates`, which counted only generic *functions* and *structs*. A
+module whose only generics are impl templates (`impl<T> Trait for [T; 4]`
+with concrete callers) skipped the pipeline entirely: the generic impl
+stayed in the item list and rendered raw with `__TP{N}__` placeholders
+(`fn _2array_T_4_zero() -> array<__TPT__, 4>` calling the nonexistent
+`T_zero()`), while its call sites referenced instantiations that were
+never generated. The old doc example never exposed this because the
+parser rejected its trait-path turbofish form before monomorphization;
+the merged QSelf form gets past parsing and surfaced the gap.
+
+**Decision:** `has_templates` now also counts `array_impl_templates` and
+`impl_templates`, so impl-only-generic modules get the same treatment as
+function/struct-only ones: templates removed, instantiations generated,
+names rewritten. Regression test added to `generic_array_impl.rs` pinning
+the documented generic-impl-plus-QSelf-caller form with an impl-only
+module (no generic functions).
+
+**Call-site discovery (Copilot PR review follow-up):** counting the impl
+maps in `has_templates` was necessary but not sufficient —
+`discover_instantiations` reached array-impl templates only through
+`visit_type` on *type positions* (signatures, locals), and `walk_expr`
+never visits a QSelf path's retained type. A caller like
+`fn caller() -> u32 { <[u32; 4]>::value() }` — where the array type
+appears nowhere else — had the generic impl removed by `apply` while the
+instantiation its call referenced was never emitted. `MonoCtx::visit_expr`
+now routes the retained `qself_ty` through `visit_type`, so the concrete
+QSelf type triggers array-impl / struct instantiation from the call
+itself; types still containing type parameters fall through
+`visit_type`'s concreteness gates and are resolved transitively when the
+enclosing template is instantiated. The regression module gained the
+scalar-returning caller, which previously had nothing to piggyback on.
+
+The scalar-returning regression then exposed a second pre-existing gap:
+`instantiate_array_impl`'s dedup set was keyed by the mangled self type
+alone (`array_u32_4`), so with *several* impls targeting the same array
+type (`impl<T> Zeroable for [T; 4]` and `impl<T> Valued for [T; 4]`), the
+first instantiation marked the self type seen and every further impl was
+silently dropped. The seen-key now identifies the impl block by its
+member names (methods, consts, assoc types — the trait path is discarded
+by design, and impls whose members all share a name would collide in
+reserved-names mangling regardless), so each distinct impl instantiates
+once per concrete self type.

@@ -103,8 +103,16 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     // Generate template macros for generic functions defined in this module
     let template_macros = ctx.generate_template_macros(module)?;
 
-    // Run same-module monomorphization if there are any generic templates
-    let has_templates = !ctx.templates.is_empty() || !ctx.struct_templates.is_empty();
+    // Run same-module monomorphization if there are any generic templates.
+    // This must also count the impl templates: a module whose only generics
+    // are impl blocks (`impl<T> Trait for [T; 4]` with concrete callers)
+    // needs the pipeline just as much — without it, the generic impl is
+    // rendered raw with `__TP{N}__` placeholders and the instantiations
+    // its call sites reference are never generated.
+    let has_templates = !ctx.templates.is_empty()
+        || !ctx.struct_templates.is_empty()
+        || !ctx.array_impl_templates.is_empty()
+        || !ctx.impl_templates.is_empty();
     if has_templates {
         ctx.discover_instantiations(module)?;
         ctx.process_queue()?;
@@ -813,11 +821,28 @@ impl MonoCtx {
         let mangled_self = mangle_type(&concrete_array_ty)?;
 
         // Check if this concrete array self type has already been
-        // instantiated for this impl block. This is keyed by the mangled
-        // concrete array self type (e.g. `array_u32_4`) to avoid
-        // duplicate generation when the same concrete array type is
-        // encountered multiple times.
-        if !self.array_impl_seen.insert(mangled_self.clone()) {
+        // instantiated for this impl block, to avoid duplicate generation
+        // when the same concrete array type is encountered multiple times.
+        // The key must identify the *impl block*, not just the self type:
+        // several impls can target the same array type (e.g.
+        // `impl<T> Zeroable for [T; 4]` and `impl<T> Valued for [T; 4]`),
+        // and keying on `array_u32_4` alone silently dropped all but the
+        // first. The impl's member names (methods, consts, assoc types)
+        // serve as the per-impl identity — the trait path is discarded by
+        // design (`ItemImpl`), and impls whose members all share a name
+        // would collide in reserved-names mangling regardless.
+        let mut members: Vec<String> = Vec::new();
+        for ii in &impl_template.items {
+            let ident = match ii {
+                crate::parse::ImplItem::Fn(f) => f.ident.to_string(),
+                crate::parse::ImplItem::Const(c) => c.ident.to_string(),
+                crate::parse::ImplItem::Type(t) => t.ident.to_string(),
+            };
+            members.push(ident);
+        }
+        let members_str = members.join("+");
+        let seen_key = mangle(&[&members_str, &mangled_self]);
+        if !self.array_impl_seen.insert(seen_key) {
             return Ok(());
         }
 
@@ -1036,6 +1061,33 @@ impl ParseVisitorMut for MonoCtx {
     }
 
     fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        // QSelf calls (`<[u32; 4]>::zero()`, `<Pair<u32>>::method()`) retain
+        // the parsed qself type on the path, which `walk_expr` never
+        // reaches. Route it through `visit_type` so the concrete type
+        // triggers array-impl / struct instantiation from the *call
+        // itself* — otherwise a caller like
+        // `fn caller() -> u32 { <[u32; 4]>::value() }`, where the array
+        // type appears in no type position, would have the generic impl
+        // removed by `apply` while never emitting the instantiation its
+        // call site references. Types still containing type parameters
+        // are skipped by `visit_type`'s own concreteness gates and are
+        // resolved transitively when the enclosing template is
+        // instantiated (the substituted mono fn walks this same code).
+        match expr {
+            Expr::FnCall {
+                path:
+                    FnPath::TypeMethod {
+                        qself_ty: Some(qty),
+                        ..
+                    },
+                ..
+            }
+            | Expr::TypePath {
+                qself_ty: Some(qty),
+                ..
+            } => self.visit_type(qty)?,
+            _ => {}
+        }
         if let Expr::FnCall {
             path,
             type_args,

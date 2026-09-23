@@ -40,7 +40,9 @@ pub use substitute::{
     substitute_types, type_to_ident,
 };
 pub use suffix::{
-    FnSig, fn_signatures, fn_signatures_in_items, suffix_items, suffix_items_with_imports,
-    suffix_module, suffix_module_with_imports,
+    FnSig, TypeImports, fn_signatures, fn_signatures_in_items, suffix_items,
+    suffix_items_with_imports, suffix_items_with_type_imports, suffix_module,
+    suffix_module_with_imports, suffix_module_with_type_imports, type_imports,
+    type_imports_in_items,
 };
 pub use types::*;

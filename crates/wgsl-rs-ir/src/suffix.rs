@@ -102,6 +102,36 @@ pub fn suffix_items_with_imports(items: &mut [Item], imports: &HashMap<String, F
     .walk_items(items);
 }
 
+/// Like [`suffix_module`], but seeds the type environment with
+/// `imports` — globals, struct definitions, and user-fn signatures
+/// harvested from other sources via [`type_imports`] — so references
+/// to imported names anchor too: `get_mut!(IMPORTED_OUTPUT)[0] =
+/// select(0, 1, cond)` anchors from the imported storage's element
+/// type, `min(IMPORTED_LIMIT, 0)` from the imported const, and an
+/// imported struct's constructor fields from its definition. The
+/// module's own declarations shadow imported ones, matching Rust
+/// name resolution.
+pub fn suffix_module_with_type_imports(module: &mut Module, imports: &TypeImports) {
+    SuffixPass {
+        env: imports.as_env(),
+        return_ty: None,
+    }
+    .walk_module(module);
+}
+
+/// Like [`suffix_items`], but seeds the type environment with
+/// `imports` — see [`suffix_module_with_type_imports`]. Used for
+/// cross-source template instantiation, where the template's items
+/// reference globals, structs, and functions defined in other chunks
+/// of the assembled translation unit.
+pub fn suffix_items_with_type_imports(items: &mut [Item], imports: &TypeImports) {
+    SuffixPass {
+        env: imports.as_env(),
+        return_ty: None,
+    }
+    .walk_items(items);
+}
+
 /// A harvested user-function signature: declared parameter types plus
 /// the return type (`None` for `()` returns).
 #[derive(Clone, Debug)]
@@ -157,8 +187,81 @@ pub fn fn_signatures_in_items(items: &[Item]) -> HashMap<String, FnSig> {
     sigs
 }
 
+/// A harvested type environment from other sources' items: the
+/// module-level globals (const items, linkage declarations,
+/// associated consts under mangled render names), struct
+/// definitions, and user-fn signatures a consumer source needs to
+/// anchor its literals.
+///
+/// Built by [`type_imports`] / [`type_imports_in_items`] and threaded
+/// depth-first through source assembly (imports render first, so a
+/// consumer is suffixed with every ancestor's names seeded); a
+/// consumer's own declarations shadow imported ones, matching Rust
+/// name resolution. The fields are opaque — construct via the
+/// harvest fns, combine via [`TypeImports::extend`], and consume via
+/// the `*_with_type_imports` suffix entry points — so the shared IR
+/// vocabulary stays unpolluted.
+#[derive(Clone, Debug, Default)]
+pub struct TypeImports {
+    /// Imported global names → types.
+    globals: HashMap<String, Type>,
+    /// Imported struct definitions by name.
+    structs: HashMap<String, StructDef>,
+    /// Imported user function signatures: callee name → [`FnSig`].
+    /// Free functions key by their name; impl methods key by their
+    /// mangled render name.
+    fn_sigs: HashMap<String, FnSig>,
+}
+
+impl TypeImports {
+    /// Extend with another source's harvested imports; later entries
+    /// overwrite earlier ones on name collision.
+    pub fn extend(&mut self, other: TypeImports) {
+        self.globals.extend(other.globals);
+        self.structs.extend(other.structs);
+        self.fn_sigs.extend(other.fn_sigs);
+    }
+
+    /// The imports as a pre-seeded [`TypeEnv`] — used by the
+    /// `*_with_type_imports` suffix entry points; the consuming
+    /// pass's own collection then shadows these entries.
+    fn as_env(&self) -> TypeEnv {
+        TypeEnv {
+            scopes: Vec::new(),
+            globals: self.globals.clone(),
+            structs: self.structs.clone(),
+            fn_sigs: self.fn_sigs.clone(),
+        }
+    }
+}
+
+/// Harvest a module's type imports — its globals (module consts and
+/// linkage declarations), struct definitions, and user-fn signatures —
+/// for seeding a consuming source's suffix pass via
+/// [`suffix_module_with_type_imports`] /
+/// [`suffix_items_with_type_imports`]. Like [`fn_signatures`], but for
+/// the whole anchoring environment.
+pub fn type_imports(module: &Module) -> TypeImports {
+    type_imports_in_items(&module.items)
+}
+
+/// Like [`type_imports`], but for a bare slice of items — e.g. an
+/// instantiated cross-source template rendered without a [`Module`]
+/// wrapper. Types are taken from the items as-is, so apply any
+/// renaming (such as template instance mangling) before harvesting.
+pub fn type_imports_in_items(items: &[Item]) -> TypeImports {
+    let mut env = TypeEnv::default();
+    env.collect(items);
+    TypeImports {
+        globals: env.globals,
+        structs: env.structs,
+        fn_sigs: env.fn_sigs,
+    }
+}
+
 /// A collected struct definition: type parameter names plus fields as
 /// `(name, type)` pairs.
+#[derive(Clone, Debug)]
 struct StructDef {
     type_params: Vec<String>,
     fields: Vec<(String, Type)>,

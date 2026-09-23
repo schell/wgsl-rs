@@ -192,14 +192,14 @@ impl Source {
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
-        let mut fn_sigs: HashMap<String, ir::FnSig> = HashMap::new();
+        let mut imports = ir::TypeImports::default();
         self.collect(
             &mut out,
             &mut visited_sources,
             &mut seen,
             None,
             &mut needs_tier1,
-            &mut fn_sigs,
+            &mut imports,
         )?;
         // WGSL requires `enable` directives at the very start of the
         // translation unit, before any other declarations. Since `collect`
@@ -222,10 +222,13 @@ impl Source {
     /// mangled_const_args)` 4-tuples to deduplicate cross-source template
     /// instantiations. Including const args ensures `foo::<4>` and
     /// `foo::<8>` aren't incorrectly deduplicated.
-    /// `fn_sigs` accumulates every rendered source's user-function
-    /// signatures (callee name → parameter types), so later sources can
-    /// anchor call arguments into imported functions via
-    /// [`ir::suffix_module_with_imports`].
+    /// `imports` accumulates every rendered source's harvested type
+    /// environment — globals (consts, linkage declarations), struct
+    /// definitions, and user-fn signatures — so later sources anchor
+    /// from imported names too (calls, consts, linkage accesses,
+    /// struct constructors) via
+    /// [`ir::suffix_module_with_type_imports`], with the caller's own
+    /// declarations shadowing imported ones.
     fn collect(
         &self,
         out: &mut String,
@@ -233,12 +236,12 @@ impl Source {
         seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
         needs_tier1: &mut bool,
-        fn_sigs: &mut HashMap<String, ir::FnSig>,
+        imports: &mut ir::TypeImports,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
             if visited_sources.insert(m.id) {
-                m.collect(out, visited_sources, seen, None, needs_tier1, fn_sigs)?;
+                m.collect(out, visited_sources, seen, None, needs_tier1, imports)?;
             }
         }
 
@@ -248,11 +251,11 @@ impl Source {
             ir::substitute_types(&mut ir_module, s);
         }
         ir::deshadow_module(&mut ir_module);
-        // Pre-seed with the signatures of cross-source template
-        // instances this source calls: instance chunks are appended
-        // (and publish their signatures) after this chunk is suffixed,
-        // so a call like `choose::<u32>(select(0, 1, data))` must find
-        // the instance's concrete parameter types now.
+        // Pre-seed with the types of cross-source template instances
+        // this source calls: instance chunks are appended (and publish
+        // their types) after this chunk is suffixed, so a call like
+        // `choose::<u32>(select(0, 1, data))` must find the
+        // instance's concrete parameter types now.
         for inst in self.instantiations {
             let mangled: Vec<String> = inst
                 .mangled_type_args
@@ -266,7 +269,7 @@ impl Source {
                 .map(|s| (*s).to_string())
                 .collect();
             let const_args = (inst.const_args_constructor)();
-            fn_sigs.extend(instance_signatures(
+            imports.extend(instance_type_imports(
                 inst.modules,
                 inst.template_name,
                 &type_args,
@@ -275,13 +278,14 @@ impl Source {
                 &mangled_consts,
             ));
         }
-        // Make this source's own signatures available to later sources,
-        // then suffix with every ancestor's signatures seeded — calls to
-        // imported functions anchor their arguments, and a caller's own
-        // signatures shadow imported ones (matching Rust name
-        // resolution).
-        fn_sigs.extend(ir::fn_signatures(&ir_module));
-        ir::suffix_module_with_imports(&mut ir_module, fn_sigs);
+        // Make this source's own globals, structs, and signatures
+        // available to later sources, then suffix with every
+        // ancestor's types seeded — references to imported names
+        // anchor (calls, consts, linkage accesses, struct
+        // constructors), and a caller's own declarations shadow
+        // imported ones (matching Rust name resolution).
+        imports.extend(ir::type_imports(&ir_module));
+        ir::suffix_module_with_type_imports(&mut ir_module, imports);
         if ir::items_need_tier1_extension(&ir_module.items) {
             *needs_tier1 = true;
         }
@@ -311,7 +315,7 @@ impl Source {
                 out,
                 seen,
                 needs_tier1,
-                fn_sigs,
+                imports,
             )?;
         }
         Ok(())
@@ -337,7 +341,7 @@ fn instantiate_template_into<'a>(
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
-    fn_sigs: &mut HashMap<String, ir::FnSig>,
+    imports: &mut ir::TypeImports,
 ) -> Result<(), SourceError<'a>> {
     let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
 
@@ -377,7 +381,7 @@ fn instantiate_template_into<'a>(
             out,
             seen,
             needs_tier1,
-            fn_sigs,
+            imports,
         )?;
     }
 
@@ -390,11 +394,11 @@ fn instantiate_template_into<'a>(
     );
 
     ir::deshadow_items(&mut items);
-    // Seed with every ancestor's signatures (imports and already-
+    // Seed with every ancestor's types (imports and already-
     // instantiated dependency templates), then publish this instance's
-    // own (renamed) signatures for any later chunk.
-    ir::suffix_items_with_imports(&mut items, fn_sigs);
-    fn_sigs.extend(ir::fn_signatures_in_items(&items));
+    // own (renamed) types for any later chunk.
+    ir::suffix_items_with_type_imports(&mut items, imports);
+    imports.extend(ir::type_imports_in_items(&items));
     if ir::items_need_tier1_extension(&items) {
         *needs_tier1 = true;
     }
@@ -507,27 +511,27 @@ fn build_instance_items(
     items
 }
 
-/// Harvest the signatures a template instance would export, for
-/// pre-seeding the fn-signature accumulator before a calling source's
+/// Harvest the types a template instance would export, for
+/// pre-seeding the type-import accumulator before a calling source's
 /// chunk is suffixed — instance chunks are appended (and publish their
-/// signatures) after the caller is suffixed, so a call like
+/// types) after the caller is suffixed, so a call like
 /// `choose::<u32>(select(0, 1, data))` must find the instance's
 /// concrete parameter types now.
 ///
 /// Resolution failures are ignored here:
 /// [`instantiate_template_into`] reports them with full context when
 /// the instance is actually rendered.
-fn instance_signatures(
+fn instance_type_imports(
     sources: &[&Source],
     template_name: &str,
     type_args: &[ir::Type],
     const_args: &[u32],
     mangled_type_args: &[String],
     mangled_const_args: &[String],
-) -> HashMap<String, ir::FnSig> {
+) -> ir::TypeImports {
     let Ok((_source, template)) = resolve_template(sources, template_name, mangled_type_args)
     else {
-        return HashMap::new();
+        return ir::TypeImports::default();
     };
     let items = build_instance_items(
         template,
@@ -536,7 +540,7 @@ fn instance_signatures(
         mangled_type_args,
         mangled_const_args,
     );
-    ir::fn_signatures_in_items(&items)
+    ir::type_imports_in_items(&items)
 }
 
 #[cfg(feature = "validation")]

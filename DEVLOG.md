@@ -1174,6 +1174,33 @@ of a provable `Type::Ptr`. Abstract forms (`scalar_ty: None`) and
 external builtins (texture sampling, atomics, derivatives — no
 signature table) stay explicitly `None`.
 
+### 2026-09-23: Cross-source suffixing threads the whole type environment
+
+**Problem:** the cross-source accumulator seeded into each chunk's
+suffix pass carried only user-function signatures
+(`HashMap<String, FnSig>`). A consumer chunk suffixing in isolation
+could not see imported linkage declarations —
+`get_mut!(IMPORTED_OUTPUT)[0] = select(0, 1, cond)` stayed bare, the
+wgsl-rs#145 bug class in cross-source form — nor imported
+module/associated consts (`min(LIMIT, 0)`) nor imported struct
+definitions (a select inside an imported constructor's field). The
+2026-09-21 entry had recorded the struct-constructor part as a
+cosmetic gap; with polymorphic builtins inside imported constructors
+it is a validity gap.
+
+**Decision:** the accumulator is now `TypeImports` — globals (module
+consts, linkage declarations, associated consts under mangled render
+names), struct definitions, and fn signatures — harvested per source
+and per instantiated template (post-rename) via `ir::type_imports` /
+`ir::type_imports_in_items`, threaded depth-first through
+`Source::collect` and `instantiate_template_into`. Each chunk suffixes
+with every ancestor's types seeded, and its own declarations shadow
+imported ones, matching Rust name resolution. The fields are opaque
+outside the crate (construct via the harvest fns, combine via
+`TypeImports::extend`), keeping the shared vocabulary unpolluted; the
+signature-only entry points (`fn_signatures*`, `*_with_imports`)
+remain for direct-use compatibility.
+
 ### 2026-09-22: Trait-path method turbofish stays rejected; docs point at QSelf
 
 **Problem:** `book/src/generics/generic-structs.md` showed

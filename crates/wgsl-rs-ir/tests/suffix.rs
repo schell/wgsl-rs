@@ -1960,3 +1960,109 @@ fn arithmetic_prefers_vector_operand() {
         "the vector-shaped arithmetic result should register a vector type, got: {wgsl}"
     );
 }
+
+// ===== Cross-source type imports (review round 3) =====
+
+fn output_consumer() -> Module {
+    module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![Stmt::Assignment {
+            lhs: Expr::ArrayIndexing {
+                lhs: Box::new(ident("OUTPUT")),
+                index: Box::new(bare_int("0")),
+            },
+            rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+        }],
+    )])
+}
+
+#[test]
+fn type_imports_seed_imported_linkage_globals() {
+    // Source A declares `storage!(…, OUTPUT: [u32; 1])`; source B does
+    // `get_mut!(OUTPUT)[0] = select(0, 1, cond);`. The consumer has no
+    // declaration of its own (uses lower to `Expr::Ident`), so without
+    // imported types the select stays bare; seeded with A's harvested
+    // type imports it anchors from the imported storage's element
+    // type — the cross-source form of the linkage test above.
+    let producer = module(vec![Item::Storage(ItemStorage {
+        group: 0,
+        binding: 0,
+        access: StorageAccess::ReadWrite,
+        name: "OUTPUT".to_string(),
+        ty: array_ty(u32_ty(), 1),
+        attrs: vec![],
+    })]);
+
+    let mut bare = output_consumer();
+    suffix_module_with_type_imports(&mut bare, &TypeImports::default());
+    let wgsl = render_module(&bare);
+    assert!(
+        wgsl.contains("select(0, 1, cond)"),
+        "without imported types the select must stay bare, got: {wgsl}"
+    );
+
+    let mut seeded = output_consumer();
+    let imports = type_imports(&producer);
+    suffix_module_with_type_imports(&mut seeded, &imports);
+    let wgsl = render_module(&seeded);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "imported linkage should anchor the select, got: {wgsl}"
+    );
+}
+
+#[test]
+fn type_imports_seed_imported_consts_and_structs() {
+    // Source A declares `const LIMIT: u32 = 4095;` and
+    // `struct Pair { count: u32 }`; source B does `min(LIMIT, 0)` and
+    // builds `Pair { count: select(0, 1, c) }`. The imported const
+    // anchors the min literal, and the imported struct definition
+    // anchors the constructor's field.
+    let producer = module(vec![
+        Item::Const(ItemConst {
+            name: "LIMIT".to_string(),
+            ty: u32_ty(),
+            expr: suffixed_int("4095", "u32"),
+            attrs: vec![],
+        }),
+        struct_item("Pair", &[], &[("count", u32_ty())]),
+    ]);
+    let mut consumer = module(vec![fn_item(
+        "f",
+        vec![arg("c", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "m",
+                None,
+                Some(call("min", vec![ident("LIMIT"), bare_int("0")])),
+            ),
+            local(
+                "p",
+                None,
+                Some(struct_expr(
+                    "Pair",
+                    vec![],
+                    vec![(
+                        "count",
+                        call("select", vec![bare_int("0"), bare_int("1"), ident("c")]),
+                    )],
+                )),
+            ),
+            Stmt::Return(None),
+        ],
+    )]);
+    let imports = type_imports(&producer);
+    suffix_module_with_type_imports(&mut consumer, &imports);
+    let wgsl = render_module(&consumer);
+    assert!(
+        wgsl.contains("min(LIMIT, 0u)"),
+        "the imported const should anchor the min literal, got: {wgsl}"
+    );
+    assert!(
+        wgsl.contains("select(0u, 1u, c)"),
+        "the imported struct registry should anchor the constructor field, got: {wgsl}"
+    );
+}

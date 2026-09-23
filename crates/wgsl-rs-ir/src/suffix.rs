@@ -1100,7 +1100,12 @@ fn vec_ctor_elem(name: &str, type_args: &[Type]) -> Option<Type> {
 /// (`vec3b`) shorthands without a type argument.
 fn vec_ctor_shape(name: &str, type_args: &[Type]) -> Option<(u8, ScalarType)> {
     let rest = name.strip_prefix("vec")?;
-    let digits_end = rest.find(|c: char| !c.is_ascii_digit())?;
+    // An all-digit tail is the turbofish form (`vec4::<T>`), where the
+    // type argument carries the scalar; the shorthand suffix is empty
+    // then.
+    let digits_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
     let (n, suffix) = rest.split_at(digits_end);
     let elements = match n {
         "2" => 2,

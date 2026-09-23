@@ -1,7 +1,9 @@
 //! Roundtrip tests for texture load/sample operations.
 //!
-//! Tests: `texture_load` and `texture_sample` on `Texture2D<f32>` and
-//! `texture_sample` on `Texture3D<f32>`.
+//! Tests: `texture_load` and `texture_sample` on `Texture2D<f32>`,
+//! `texture_sample` on `Texture3D<f32>`, and `texture_load` on an
+//! `unfilterable` `Texture2D<f32>` backed by an R32Float texture
+//! (wgsl-rs#171).
 
 #![allow(dead_code)]
 
@@ -18,6 +20,35 @@ pub mod texture_load_2d {
     use wgsl_rs::std::*;
 
     texture!(group(0), binding(0), TEX: Texture2D<f32>);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        let p = input.position;
+        texture_load(TEX, vec2i(p.x as i32, p.y as i32), 0u32)
+    }
+}
+
+/// Like `texture_load_2d`, but the texture is declared `, unfilterable`
+/// and bound to a non-filterable R32Float texture on the GPU
+/// (wgsl-rs#171): the generated bind group layout must declare
+/// `filterable: false` or bind group creation fails wgpu validation.
+#[wgsl]
+pub mod texture_load_2d_unfilterable {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), TEX: Texture2D<f32>, unfilterable);
 
     pub struct FragInput {
         #[builtin(position)]
@@ -182,6 +213,77 @@ fn create_gpu_source_texture(
     texture
 }
 
+/// Builds deterministic single-channel f32 values for the R32Float test.
+fn build_r32_values() -> Vec<f32> {
+    let mut values = vec![0.0; (WIDTH * HEIGHT) as usize];
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let idx = (y * WIDTH + x) as usize;
+            values[idx] = ((x * 19 + y * 7) % 256) as f32 / 255.0;
+        }
+    }
+    values
+}
+
+/// Creates a GPU R32Float texture and uploads single-channel f32 values.
+/// R32Float is a non-filterable format: binding it requires the generated
+/// layout's sample type to be `Float { filterable: false }` (wgsl-rs#171).
+fn create_gpu_r32float_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    values: &[f32],
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("texture_ops_unfilterable_source"),
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(values),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(WIDTH * 4),
+            rows_per_image: Some(HEIGHT),
+        },
+        wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    texture
+}
+
+/// Writes single-channel values into a CPU `Texture2D<f32>`, replicating
+/// how WGSL `textureLoad` on an `r32float` texture returns `(r, 0, 0, 1)`
+/// for the missing channels.
+fn write_cpu_texture_r32(tex: &wgsl_rs::std::Texture2D<f32>, values: &[f32]) {
+    tex.init(WIDTH, HEIGHT);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let v = values[(y * WIDTH + x) as usize];
+            tex.set_pixel(x, y, [v, 0.0, 0.0, 1.0]);
+        }
+    }
+}
+
 /// Flattens RGBA pixel rows into one f32 vector.
 fn flatten_rgba_pixels(pixels: &[[f32; 4]]) -> Vec<f32> {
     let mut out = Vec::with_capacity(pixels.len() * 4);
@@ -276,6 +378,93 @@ fn render_texture_load_gpu(
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("texture_load_render"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit(Some(encoder.finish()));
+
+    harness::read_rgba32float_texture(device, queue, &target, WIDTH, HEIGHT)
+}
+
+/// Renders the unfilterable texture_load shader against an R32Float source
+/// texture and returns RGBA pixels. Bind group creation here is the
+/// regression check for wgsl-rs#171: with `filterable: true` baked into
+/// the layout, wgpu rejects the R32Float view.
+fn render_texture_load_unfilterable_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source_texture: &wgpu::Texture,
+) -> Vec<[f32; 4]> {
+    let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let target = harness::create_rgba32float_render_target(
+        device,
+        WIDTH,
+        HEIGHT,
+        "texture_load_unfilterable_target",
+    );
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let module = &texture_load_2d_unfilterable::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
+
+    let pipeline_layout =
+        linkage.pipeline_layout(device, Some("texture_load_unfilterable_pipeline_layout"));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("texture_load_unfilterable_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let bind_group = linkage
+        .create_bind_group_named(
+            0,
+            device,
+            &[("TEX", wgpu::BindingResource::TextureView(&source_view))],
+        )
+        .expect("unfilterable texture_load bind group");
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("texture_load_unfilterable_render"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("texture_load_unfilterable_render"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &target_view,
                 depth_slice: None,
@@ -579,7 +768,8 @@ impl RoundtripTest for TextureOperationsTest {
     }
 
     fn description(&self) -> &str {
-        "texture_load and texture_sample on texture_2d<f32> and texture_3d<f32>"
+        "texture_load and texture_sample on texture_2d<f32> and texture_3d<f32>, plus texture_load \
+         on an unfilterable texture bound to R32Float"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -614,6 +804,45 @@ impl RoundtripTest for TextureOperationsTest {
             &gpu_load,
             &cpu_load,
             &load_label_refs,
+            epsilon,
+        ));
+
+        // texture_load on an unfilterable Texture2D<f32> backed by an
+        // R32Float texture (wgsl-rs#171). Binding a non-filterable format
+        // only succeeds when the generated layout declares
+        // `filterable: false`.
+        let r32_values = build_r32_values();
+        let gpu_r32_texture = create_gpu_r32float_texture(device, queue, &r32_values);
+
+        write_cpu_texture_r32(texture_load_2d_unfilterable::TEX, &r32_values);
+        let gpu_load_unfilterable_pixels =
+            render_texture_load_unfilterable_gpu(device, queue, &gpu_r32_texture);
+        let cpu_load_unfilterable_grid = dispatch_fragments(
+            WIDTH,
+            HEIGHT,
+            |_, _| (),
+            |builtins, _| {
+                let result = texture_load_2d_unfilterable::frag_main(
+                    texture_load_2d_unfilterable::FragInput {
+                        position: builtins.position,
+                    },
+                );
+                [result.x, result.y, result.z, result.w]
+            },
+        );
+
+        let gpu_load_unfilterable = flatten_rgba_pixels(&gpu_load_unfilterable_pixels);
+        let cpu_load_unfilterable = flatten_fragment_grid(&cpu_load_unfilterable_grid);
+        let load_unfilterable_labels = build_labels("texture_load_unfilterable");
+        let load_unfilterable_label_refs: Vec<&str> = load_unfilterable_labels
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        results.push(harness::compare_f32_results(
+            "texture_load_unfilterable",
+            &gpu_load_unfilterable,
+            &cpu_load_unfilterable,
+            &load_unfilterable_label_refs,
             epsilon,
         ));
 

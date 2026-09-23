@@ -1103,3 +1103,32 @@ member names (methods, consts, assoc types — the trait path is discarded
 by design, and impls whose members all share a name would collide in
 reserved-names mangling regardless), so each distinct impl instantiates
 once per concrete self type.
+
+### 2026-09-23: Bool vectors render as `vecN<bool>` — never a `vecNb` shorthand
+
+**Problem:** `write_type` emitted every known-scalar vector as the WGSL
+shorthand (`vec4f`, `vec4i`, ...) via `scalar_short`, and
+`scalar_short(Bool)` returned `"b"` — producing `vec2b`. The WGSL spec
+predeclares f/i/u vector aliases only; `vecNb` is an unknown identifier
+to naga (wgsl-rs#169). The gap had been noted as a separate issue during
+the #164 `cmp_eq`/`cmp_ne` mask work: bool-vector params and let
+annotations (`let x: Vec2b = vec2b(false, false);`) broke module
+validation while constructors already lowered correctly through
+`builtin_lookup`'s `("vec2b", "vec2<bool>")` entry — so the bug only
+showed in type position.
+
+**Decision:** in the `Type::Vector` arm of `write_type`, `Bool` renders
+the generic form (`vec2<bool>`) instead of a shorthand suffix; numeric
+shorthands and the abstract `vecN` (unknown scalar) are unchanged. The
+issue suggested emitting `alias vec2b = vec2<bool>;` into the generated
+WGSL, but direct rendering was chosen: it matches the constructor
+lowering (already `vec2<bool>(...)`), needs no alias-emission plumbing or
+per-module usage scan, and cannot collide with user identifiers.
+`type_base_name` keeps the `"b"` suffix for mangling — those are
+identifier fragments, not type references, and mangled names are valid
+WGSL identifiers either way.
+
+**Tests:** `render::tests::renders_bool_vector_as_generic_form` and
+`renders_numeric_vector_shorthands` pin the render; the pinned
+`builtin_shorthand_types_still_parse_in_type_position` table in
+`wgsl-rs-macros` now expects `vecN<bool>` for the bool rows.

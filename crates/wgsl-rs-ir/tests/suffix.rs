@@ -2139,3 +2139,101 @@ fn builtin_vector_assoc_const_registers_vector_type() {
         "the built-in vector assoc const should register a vector type, got: {wgsl}"
     );
 }
+
+#[test]
+fn enum_variant_consts_anchor_literals() {
+    // `enum Mode { On, Off }` + `min(Mode::On, 0)` — variants render
+    // as the mangled `Mode_On` consts and lower to `Expr::TypePath`;
+    // collecting enums registers the variant (and the enum alias) as
+    // u32, so the min literal anchors.
+    let mut m = module(vec![
+        Item::Enum(ItemEnum {
+            name: "Mode".to_string(),
+            variants: vec![
+                EnumVariant {
+                    name: "On".to_string(),
+                    discriminant: None,
+                },
+                EnumVariant {
+                    name: "Off".to_string(),
+                    discriminant: None,
+                },
+            ],
+            attrs: vec![],
+        }),
+        fn_item(
+            "f",
+            vec![],
+            ReturnType::Default,
+            vec![
+                local(
+                    "y",
+                    None,
+                    Some(call(
+                        "min",
+                        vec![
+                            Expr::TypePath {
+                                ty: "Mode".to_string(),
+                                member: "On".to_string(),
+                            },
+                            bare_int("0"),
+                        ],
+                    )),
+                ),
+                Stmt::Return(None),
+            ],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("min(Mode_On, 0u)"),
+        "the enum variant const should anchor the min literal, got: {wgsl}"
+    );
+}
+
+#[test]
+fn pointer_expectation_flows_through_references() {
+    // `fn take(p: ptr<function, u32>)`, called as
+    // `take(&mut [select(0, 1, c)][0])` — the pointer parameter's
+    // pointee flows through the reference into the indexed base, so
+    // the select anchors from the element type.
+    let mut m = module(vec![
+        fn_item(
+            "take",
+            vec![arg(
+                "p",
+                Type::Ptr {
+                    address_space: AddressSpace::Function,
+                    elem: Box::new(u32_ty()),
+                },
+            )],
+            ReturnType::Default,
+            vec![Stmt::Return(None)],
+        ),
+        fn_item(
+            "f",
+            vec![arg("c", Type::Scalar(ScalarType::Bool))],
+            ReturnType::Default,
+            vec![Stmt::Expr {
+                expr: call(
+                    "take",
+                    vec![Expr::Reference(Box::new(Expr::ArrayIndexing {
+                        lhs: Box::new(Expr::Array {
+                            elems: vec![call(
+                                "select",
+                                vec![bare_int("0"), bare_int("1"), ident("c")],
+                            )],
+                        }),
+                        index: Box::new(bare_int("0")),
+                    }))],
+                ),
+                has_semi: true,
+            }],
+        ),
+    ]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, c)"),
+        "the pointee expectation should flow through the reference, got: {wgsl}"
+    );
+}

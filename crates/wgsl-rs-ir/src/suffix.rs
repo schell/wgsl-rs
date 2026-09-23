@@ -331,6 +331,19 @@ impl TypeEnv {
                 Item::Workgroup(w) => {
                     self.globals.insert(w.name.clone(), w.ty.clone());
                 }
+                // Enums render as a `u32` alias plus per-variant consts
+                // under the mangled `Enum_Variant` name, so both the
+                // enum itself and its variants anchor as u32 values.
+                Item::Enum(e) => {
+                    self.globals
+                        .insert(e.name.clone(), Type::Scalar(ScalarType::U32));
+                    for variant in &e.variants {
+                        self.globals.insert(
+                            mangle(&[e.name.as_str(), &variant.name]),
+                            Type::Scalar(ScalarType::U32),
+                        );
+                    }
+                }
                 Item::Impl(imp) => {
                     for impl_item in &imp.items {
                         match impl_item {
@@ -1048,7 +1061,18 @@ impl SuffixPass {
                 }
             }
             Expr::FieldAccess { base, .. } => self.expect(base, None),
-            Expr::Reference(inner) => self.expect(inner, None),
+            Expr::Reference(inner) => {
+                // The reference yields a pointer to the pointee, so an
+                // outer pointer expectation carries the pointee type
+                // into the referenced expression
+                // (`take(&mut [select(0, 1, c)][0])` with
+                // `take(p: ptr<function, u32>)` anchors the select).
+                let pointee = expected.and_then(|ty| match ty {
+                    Type::Ptr { elem, .. } => Some((**elem).clone()),
+                    _ => None,
+                });
+                self.expect(inner, pointee.as_ref());
+            }
             // Identifiers, type paths, and zero-value array lengths
             // (type positions) carry nothing to suffix.
             Expr::Ident(_) | Expr::TypePath { .. } | Expr::ZeroValueArray { .. } => {}

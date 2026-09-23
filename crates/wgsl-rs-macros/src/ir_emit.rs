@@ -122,6 +122,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = t_.binding;
             let n = &t_.name;
             let t = ty(p, &t_.ty);
+            let filterable = t_.filterable;
             let attrs = emit_attrs(p, &t_.attrs);
             quote! {
                 #p::Item::Texture(#p::ItemTexture {
@@ -129,6 +130,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                     binding: #binding,
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    filterable: #filterable,
                     #attrs,
                 })
             }

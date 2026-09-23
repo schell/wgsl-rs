@@ -1132,3 +1132,25 @@ WGSL identifiers either way.
 `renders_numeric_vector_shorthands` pin the render; the pinned
 `builtin_shorthand_types_still_parse_in_type_position` table in
 `wgsl-rs-macros` now expects `vecN<bool>` for the bool rows.
+
+### 2026-09-24: `filterable` is a binding property on `ItemTexture`, not a type variant
+
+**Problem:** `WgpuLinkage` hard-coded `TextureSampleType::Float {
+filterable: true }` for every f32-sampled texture binding (wgsl-rs#171), so
+binding a texture with a non-filterable format (e.g. `R32Float`) to
+`texture!(group(0), binding(0), MY_TEX: Texture2D<f32>);` failed wgpu's
+bind group validation. The backing format is unknown at macro time, so the
+generated layout cannot infer it.
+
+**Decision:** filterability lives on `ir::ItemTexture` as a `filterable:
+bool` (default `true`) rather than on `Type::Texture`. It is a *host
+binding layout* property — WGSL has no unfilterable variant of
+`texture_2d<f32>`, so the rendered WGSL is unchanged; only the generated
+wgpu bind group layout reads the flag. The `texture!` macro exposes it
+with a trailing `, unfilterable` token. Rejected alternatives: a distinct
+`UnfilterableTexture2D<f32>` Rust/IR type (would ripple through
+`Type::Texture`, substitution/mangling, CPU `std` types, and every texture
+builtin, with no WGSL analog to justify it) and a `#[unfilterable]` Rust
+attribute (proc macros cannot see outer attributes, so standalone
+`texture!` declarations would silently drop it — only in-module
+declarations could work).

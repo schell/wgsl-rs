@@ -452,6 +452,7 @@ fn analyze_texture_and_sampler_bindings() {
                     kind: TextureKind::Texture2D,
                     sampled_type: ir::ScalarType::F32,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -461,6 +462,7 @@ fn analyze_texture_and_sampler_bindings() {
                 ty: ir::Type::TextureDepth {
                     kind: TextureDepthKind::Depth2D,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -512,6 +514,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8unorm,
                     access: StorageTextureAccess::Write,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -523,6 +526,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8uint,
                     access: StorageTextureAccess::Read,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -534,6 +538,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::R32float,
                     access: StorageTextureAccess::ReadWrite,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
         ],

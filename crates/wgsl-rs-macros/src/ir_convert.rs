@@ -133,6 +133,7 @@ fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
         binding: lit_int_to_u32(&t.binding)?,
         name: t.name.to_string(),
         ty: ty_from_parse(&t.ty)?,
+        filterable: true,
         attrs: t.attrs.clone(),
     })
 }

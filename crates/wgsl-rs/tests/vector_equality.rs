@@ -66,9 +66,20 @@ mod eq_lowering {
         a.xzy() == b.zyx()
     }
 
-    // NOTE: bool-vector params (`Vec2b` / `Vec2<bool>`) currently render as
-    // the unknown WGSL identifier `vec2b`, so a `Vec2b == Vec2b` case cannot
-    // validate yet. That type-render gap is separate from this fix.
+    /// Bool-vector params compare like numeric vectors — `==` must get
+    /// the `all(...)` wrap on the WGSL side. This case was previously
+    /// impossible: `Vec2b` rendered as the unknown identifier `vec2b`
+    /// before wgsl-rs#169 fixed the type render.
+    pub fn bool_vec_eq(p: Vec2b, q: Vec2b) -> bool {
+        p == q
+    }
+
+    /// Bool vectors may be the return type now that `Vec2<bool>`
+    /// renders as the generic form. `cmp_eq` yields the raw mask on the
+    /// WGSL side.
+    pub fn mask_ret(a: Vec2f, b: Vec2f) -> Vec2<bool> {
+        cmp_eq(a, b)
+    }
 
     /// Monomorphized generic: the wrap must also apply inside the
     /// instantiated copy of `generic_eq`, where `T` has become `Vec2f`.
@@ -83,8 +94,8 @@ mod eq_lowering {
     /// `cmp_eq` is the componentwise escape hatch: it renders as the raw
     /// WGSL `==` operator, yielding a vecN<bool> mask. Feeding it to
     /// `all` exercises the whole path without needing a bool-vector
-    /// return type in the signature (the `Vec2b` alias currently renders
-    /// as an unknown identifier — a separate, pre-existing gap).
+    /// return type in the signature (`mask_ret` above covers the
+    /// bool-vector return case directly).
     pub fn mask_all_eq(a: Vec2f, b: Vec2f) -> bool {
         all(cmp_eq(a, b))
     }
@@ -241,6 +252,18 @@ fn vector_eq_ne_lower_to_all() {
             "return _1generic_eq_vec2f(a, b);",
             "mono call site is rewritten",
         ),
+        (
+            "p: vec2<bool>",
+            "bool-vector params render as the generic form (#169)",
+        ),
+        (
+            "return all((p == q));",
+            "bool-vector == wraps in all() like numeric vectors",
+        ),
+        (
+            "-> vec2<bool>",
+            "bool-vector return type renders as the generic form (#169)",
+        ),
     ] {
         assert!(
             src.contains(needle),
@@ -375,6 +398,10 @@ fn cpu_vector_eq_values() {
     assert!(m::mask_all_eq(v, v));
     assert!(!m::mask_all_eq(v, w));
     assert!(m::mask_any_ne(vec3f(1.0, 2.0, 3.0), vec3f(3.0, 2.0, 1.0)));
+    assert!(m::bool_vec_eq(vec2b(true, false), vec2b(true, false)));
+    assert!(!m::bool_vec_eq(vec2b(true, false), vec2b(false, false)));
+    assert!(m::mask_ret(v, v) == vec2b(true, true));
+    assert!(m::mask_ret(v, w) == vec2b(false, false));
     use infer_gaps as g;
     assert!(g::mask_vs_mask(v, w, v, w));
     assert!(!g::mask_vs_mask(v, w, v, v));

@@ -23,6 +23,8 @@
 //!   `first_leading_bit`, `first_trailing_bit`, `extract_bits`, `insert_bits`
 //! - [`bitcast`] — Bitcast reinterpretation: `bitcast_f32`, `bitcast_u32`,
 //!   `bitcast_i32`, `bitcast_vec4f`, `bitcast_vec4u`
+//! - [`bool_vector_types`] — Bool vector types in type position (#169):
+//!   explicit `Vec2b`/`Vec3b`/`Vec4b` annotations render as `vecN<bool>`
 //! - [`packing`] — Pack/unpack quantization: `pack4x8snorm`, `pack4x8unorm`,
 //!   `pack2x16snorm`, `pack2x16unorm`, `pack2x16float`, `unpack4x8snorm`,
 //!   `unpack4x8unorm`, `unpack2x16snorm`, `unpack2x16unorm`, `unpack2x16float`
@@ -67,6 +69,7 @@ pub mod atomic_operations;
 pub mod basic_numeric;
 pub mod bit_manipulation;
 pub mod bitcast;
+pub mod bool_vector_types;
 pub mod clamping;
 pub mod derivative_operations;
 pub mod exponential;
@@ -102,6 +105,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(type_conversions::TypeConversionsTest),
         Box::new(vector_arithmetic::VectorArithmeticTest),
         Box::new(vector_equality::VectorEqualityTest),
+        Box::new(bool_vector_types::BoolVectorTypesTest),
         Box::new(basic_numeric::BasicNumericTest),
         Box::new(logical_operations::LogicalOperationsTest),
         Box::new(select_operations::SelectOperationsTest),

@@ -568,12 +568,16 @@ fn write_type(w: &mut Writer, ty: &Type) {
             scalar_ty,
         } => {
             // WGSL accepts both `vec4<f32>` and the shorthand `vec4f`.
-            // We always emit the shorthand when the scalar is known.
-            // Without a scalar the abstract `vec4` form is used (only
-            // valid in const contexts).
+            // We emit the shorthand when the scalar is known — except
+            // for bool: the spec predeclares no `vecNb` alias, so bool
+            // vectors must use the generic `vecN<bool>` form
+            // (wgsl-rs#169). Without a scalar the abstract `vec4` form
+            // is used (only valid in const contexts).
             w.write(&format!("vec{elements}"));
-            if let Some(st) = scalar_ty {
-                w.write(scalar_short(*st));
+            match scalar_ty {
+                Some(ScalarType::Bool) => w.write("<bool>"),
+                Some(st) => w.write(scalar_short(*st)),
+                None => {}
             }
         }
         Type::Matrix {
@@ -1297,6 +1301,43 @@ mod tests {
             }),
         };
         assert_eq!(render_expr(&expr), "-(1 + 2)");
+    }
+
+    /// Bool vectors render as the generic `vecN<bool>` form: the WGSL
+    /// spec predeclares f/i/u shorthand aliases only, so `vecNb` is an
+    /// unknown identifier to naga (wgsl-rs#169).
+    #[test]
+    fn renders_bool_vector_as_generic_form() {
+        for (elements, wgsl) in [(2, "vec2<bool>"), (3, "vec3<bool>"), (4, "vec4<bool>")] {
+            let ty = Type::Vector {
+                elements,
+                scalar_ty: Some(ScalarType::Bool),
+            };
+            assert_eq!(render_type(&ty), wgsl);
+        }
+    }
+
+    /// Numeric vectors keep the spec's predeclared shorthand aliases, and
+    /// an unknown scalar keeps the abstract form.
+    #[test]
+    fn renders_numeric_vector_shorthands() {
+        for (elements, st, wgsl) in [
+            (2, ScalarType::F32, "vec2f"),
+            (3, ScalarType::I32, "vec3i"),
+            (4, ScalarType::U32, "vec4u"),
+        ] {
+            let ty = Type::Vector {
+                elements,
+                scalar_ty: Some(st),
+            };
+            assert_eq!(render_type(&ty), wgsl);
+        }
+
+        let abstract_ty = Type::Vector {
+            elements: 2,
+            scalar_ty: None,
+        };
+        assert_eq!(render_type(&abstract_ty), "vec2");
     }
 
     /// Square matrices render as `matCxC<T>` or the shorthand `matCxCf` when

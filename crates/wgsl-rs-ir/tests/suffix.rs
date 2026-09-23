@@ -1873,7 +1873,8 @@ fn unprovable_loop_var_shadows_outer_binding() {
     );
 }
 
-// ===== Round-2 review coverage: vector-valued swizzles, vector-first arithmetic =====
+// ===== Round-2 review coverage: vector-valued swizzles, vector-first
+// arithmetic =====
 
 #[test]
 fn multi_component_swizzle_registers_vector_type() {
@@ -2064,5 +2065,77 @@ fn type_imports_seed_imported_consts_and_structs() {
     assert!(
         wgsl.contains("select(0u, 1u, c)"),
         "the imported struct registry should anchor the constructor field, got: {wgsl}"
+    );
+}
+
+#[test]
+fn turbofish_vector_constructor_registers_vector_type() {
+    // `let mut v = vec4::<u32>(0, 0, 0, 0); v[0] = select(0, 1, cond);` —
+    // the turbofish form carries the scalar type in the type argument
+    // and the element count in the name, so the constructor registers
+    // the vector type and the element assignment anchors.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "v",
+                None,
+                Some(Expr::FnCall {
+                    path: FnPath::Ident("vec4".to_string()),
+                    type_args: vec![u32_ty()],
+                    params: vec![bare_int("0"), bare_int("0"), bare_int("0"), bare_int("0")],
+                }),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("v")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "the turbofish constructor should register a vector type, got: {wgsl}"
+    );
+}
+
+#[test]
+fn builtin_vector_assoc_const_registers_vector_type() {
+    // `let mut v = Vec4u::ZERO; v[0] = select(0, 1, cond);` — built-in
+    // vector associated constants are `Expr::TypePath` (IR:
+    // `vec4u::ZERO`), not harvested globals; the type name encodes the
+    // vector's shape, so the local registers and the element
+    // assignment anchors.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("cond", Type::Scalar(ScalarType::Bool))],
+        ReturnType::Default,
+        vec![
+            local(
+                "v",
+                None,
+                Some(Expr::TypePath {
+                    ty: "vec4u".to_string(),
+                    member: "ZERO".to_string(),
+                }),
+            ),
+            Stmt::Assignment {
+                lhs: Expr::ArrayIndexing {
+                    lhs: Box::new(ident("v")),
+                    index: Box::new(bare_int("0")),
+                },
+                rhs: call("select", vec![bare_int("0"), bare_int("1"), ident("cond")]),
+            },
+        ],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("select(0u, 1u, cond)"),
+        "the built-in vector assoc const should register a vector type, got: {wgsl}"
     );
 }

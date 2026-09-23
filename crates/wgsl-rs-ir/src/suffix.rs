@@ -530,7 +530,11 @@ impl TypeEnv {
             // argument's type; user functions yield their declared
             // return type. User signatures shadow builtins, matching
             // the walk order.
-            Expr::FnCall { path, params, .. } => {
+            Expr::FnCall {
+                path,
+                type_args,
+                params,
+            } => {
                 let callee = match path {
                     FnPath::Ident(name) => name.clone(),
                     FnPath::TypeMethod { ty, method } => mangle(&[ty, method]),
@@ -544,7 +548,7 @@ impl TypeEnv {
                     value_indices
                         .iter()
                         .find_map(|&i| params.get(i).and_then(|p| self.infer(p)))
-                } else if let Some((elements, scalar)) = vec_ctor_shape(&callee) {
+                } else if let Some((elements, scalar)) = vec_ctor_shape(&callee, type_args) {
                     Some(Type::Vector {
                         elements,
                         scalar_ty: Some(scalar),
@@ -557,8 +561,21 @@ impl TypeEnv {
                 }
             }
             // Associated constants are registered under their mangled
-            // render name (`Type_MEMBER`) at collection time.
-            Expr::TypePath { ty, member } => self.globals.get(&mangle(&[ty, member])).cloned(),
+            // render name (`Type_MEMBER`) at collection time. Built-in
+            // vector associated constants (`Vec4u::ZERO`, which lowers
+            // to `vec4u::ZERO` in the IR) are not harvested globals —
+            // they are always the vector's own shape, so fall back to
+            // the type name's encoded shape.
+            Expr::TypePath { ty, member } => self
+                .globals
+                .get(&mangle(&[ty, member]))
+                .cloned()
+                .or_else(|| {
+                    vec_ctor_shape(ty, &[]).map(|(elements, scalar)| Type::Vector {
+                        elements,
+                        scalar_ty: Some(scalar),
+                    })
+                }),
             // A reference is a pointer to the pointee; carrying the
             // pointee through lets deref-assignment targets anchor
             // (`let p = &mut get_mut!(OUTPUT)[0]; *p = select(0,1,c)`).
@@ -1071,14 +1088,17 @@ fn vec_ctor_elem(name: &str, type_args: &[Type]) -> Option<Type> {
     if let [ty] = type_args {
         return Some(ty.clone());
     }
-    let (_, scalar) = vec_ctor_shape(name)?;
+    let (_, scalar) = vec_ctor_shape(name, type_args)?;
     Some(Type::Scalar(scalar))
 }
 
-/// The element count and scalar type encoded in a WGSL vector
-/// constructor name (`vec4u` → `(4, U32)`). Returns `None` for
-/// abstract (`vec3`) and bool (`vec3b`) constructors.
-fn vec_ctor_shape(name: &str) -> Option<(u8, ScalarType)> {
+/// The element count and scalar type of a vector constructor: the
+/// `vecN<f|i|u>` shorthand encodes both in the name; an explicit
+/// `vecN::<T>` type argument carries the scalar type instead (the
+/// name then supplies only the element count — `vec4::<u32>` →
+/// `(4, U32)`). Returns `None` for abstract (`vec3`) and bool
+/// (`vec3b`) shorthands without a type argument.
+fn vec_ctor_shape(name: &str, type_args: &[Type]) -> Option<(u8, ScalarType)> {
     let rest = name.strip_prefix("vec")?;
     let digits_end = rest.find(|c: char| !c.is_ascii_digit())?;
     let (n, suffix) = rest.split_at(digits_end);
@@ -1088,11 +1108,14 @@ fn vec_ctor_shape(name: &str) -> Option<(u8, ScalarType)> {
         "4" => 4,
         _ => return None,
     };
-    let scalar = match suffix {
-        "i" => ScalarType::I32,
-        "u" => ScalarType::U32,
-        "f" => ScalarType::F32,
-        _ => return None,
+    let scalar = match type_args {
+        [Type::Scalar(scalar)] => *scalar,
+        _ => match suffix {
+            "i" => ScalarType::I32,
+            "u" => ScalarType::U32,
+            "f" => ScalarType::F32,
+            _ => return None,
+        },
     };
     Some((elements, scalar))
 }

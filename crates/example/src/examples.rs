@@ -2026,12 +2026,11 @@ pub mod swizzles {
         let _i4: Vec3i = _i3.rgb();
         let _i5: Vec4i = _i4.bbbb();
 
-        // VecN<bool> currently don't work, see issue #169
-        // let _b1 = vec2b(false, true);
-        // let _b2: Vec4b = _b1.xxyy();
-        // let _b3: Vec3b = _b2.zzz();
-        // let _b4: Vec3b = _b3.rgb();
-        // let _b5: Vec4b = _b4.bbbb();
+        let _b1 = vec2b(false, true);
+        let _b2: Vec4b = _b1.xxyy();
+        let _b3: Vec3b = _b2.zzz();
+        let _b4: Vec3b = _b3.rgb();
+        let _b5: Vec4b = _b4.bbbb();
     }
 }
 

@@ -966,6 +966,8 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 let comparison = matches!(s.ty, ir::Type::SamplerComparison);
                 let sampler_ty = if comparison {
                     wgpu::SamplerBindingType::Comparison
+                } else if !s.filterable {
+                    wgpu::SamplerBindingType::NonFiltering
                 } else {
                     wgpu::SamplerBindingType::Filtering
                 };

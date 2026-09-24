@@ -52,14 +52,17 @@ pub mod dual_compute {
     pub fn b() {}
 }
 
-/// An unfilterable f32-sampled texture binding alongside a plain one,
-/// for bind group layout sample-type assertions (wgsl-rs#171).
+/// Unfilterable and plain texture/sampler bindings, for bind group
+/// layout filterability assertions (wgsl-rs#171, wgsl-rs#201).
 #[wgsl]
-pub mod texture_filterability {
+pub mod binding_filterability {
     use wgsl_rs::std::*;
 
     texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32>, unfilterable);
     texture!(group(0), binding(1), FILTERABLE_TEX: Texture2D<f32>);
+    sampler!(group(0), binding(2), UNFILTERABLE_SMP: Sampler, unfilterable);
+    sampler!(group(0), binding(3), FILTERABLE_SMP: Sampler);
+    sampler!(group(0), binding(4), CMP_SMP: SamplerComparison);
 
     #[compute]
     #[workgroup_size(1)]
@@ -515,14 +518,14 @@ fn analyze_texture_and_sampler_bindings() {
 }
 
 /// The `, unfilterable` modifier lowers to
-/// `TextureSampleType::Float { filterable: false }` in the generated
-/// bind group layout entry, while a plain f32-sampled texture stays
-/// filterable (wgsl-rs#171).
+/// `TextureSampleType::Float { filterable: false }` for textures and
+/// `SamplerBindingType::NonFiltering` for samplers, while plain
+/// bindings keep their filterable defaults (wgsl-rs#171, wgsl-rs#201).
 #[test]
-fn analyze_texture_filterability_flags() {
-    let linkage = wg::analyze_wgsl_module(&texture_filterability::WGSL_SOURCE).unwrap();
+fn analyze_binding_filterability_flags() {
+    let linkage = wg::analyze_wgsl_module(&binding_filterability::WGSL_SOURCE).unwrap();
     let bg = linkage.bind_group(0).unwrap();
-    assert_eq!(bg.entries.len(), 2);
+    assert_eq!(bg.entries.len(), 5);
 
     assert!(
         matches!(
@@ -545,6 +548,30 @@ fn analyze_texture_filterability_flags() {
         ),
         "expected `filterable: true` without the modifier, got {:?}",
         bg.entries[1].ty
+    );
+    assert!(
+        matches!(
+            bg.entries[2].ty,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering)
+        ),
+        "expected `NonFiltering` for the `, unfilterable` sampler, got {:?}",
+        bg.entries[2].ty
+    );
+    assert!(
+        matches!(
+            bg.entries[3].ty,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+        ),
+        "expected `Filtering` without the modifier, got {:?}",
+        bg.entries[3].ty
+    );
+    assert!(
+        matches!(
+            bg.entries[4].ty,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
+        ),
+        "expected `Comparison` unchanged, got {:?}",
+        bg.entries[4].ty
     );
 }
 

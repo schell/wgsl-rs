@@ -465,9 +465,9 @@ pub(crate) fn emit_warning(_warning: &Warning) {
     {
         use proc_macro::{Diagnostic, Level};
 
-        // proc_macro::Span is only available during actual proc macro expansion.
-        // In unit tests, attempting to use it will panic. We catch this and silently
-        // ignore the warning in test contexts.
+        // proc_macro::Span is only available during actual proc macro
+        // expansion. In unit tests, attempting to use it will panic. We
+        // catch this and silently ignore the warning in test contexts.
         let result = std::panic::catch_unwind(|| {
             let span = _warning
                 .spans
@@ -494,7 +494,8 @@ pub(crate) fn emit_warning(_warning: &Warning) {
                 .emit();
         });
 
-        // Silently ignore if we're not in a proc macro context (e.g., unit tests)
+        // Silently ignore if we're not in a proc macro context (e.g., unit
+        // tests)
         let _ = result;
     }
 }
@@ -1318,7 +1319,8 @@ impl Type {
                 let seg0 = &type_path.path.segments[0];
                 let seg1 = &type_path.path.segments[1];
                 if seg1.arguments.is_empty() {
-                    // Parse the first segment as a type (handles Self, T, Id, etc.)
+                    // Parse the first segment as a type (handles Self, T, Id,
+                    // etc.)
                     let base_ty = Type::parse(
                         &syn::Type::Path(syn::TypePath {
                             qself: None,
@@ -1366,7 +1368,8 @@ impl Type {
                         });
                     }
 
-                    // Expect this to be a vector alias, a scalar type, or a struct
+                    // Expect this to be a vector alias, a scalar type, or a
+                    // struct
                     Ok(match ident_str.as_str() {
                         "i32" | "u32" | "f32" | "bool" => Type::Scalar {
                             ty: ScalarType::try_from(ident)?,
@@ -1663,7 +1666,8 @@ impl Type {
                                             }
                                             .fail()?
                                         }
-                                        // The `Mat{N}<f32>` shorthand is square.
+                                        // The `Mat{N}<f32>` shorthand is
+                                        // square.
                                         Ok(Type::Matrix {
                                             columns: size,
                                             rows: size,
@@ -2426,12 +2430,14 @@ impl Expr {
                 qself,
                 path,
             }) => {
-                // Qualified-self path: `<T>::member` (e.g. `<[u32; 4]>::CONSTANT`).
-                // The qself type is mangled into the same ident used for
-                // impl-block self-types, so the path resolves to the right
+                // Qualified-self path: `<T>::member` (e.g. `<[u32;
+                // 4]>::CONSTANT`). The qself type is mangled
+                // into the same ident used for impl-block
+                // self-types, so the path resolves to the right
                 // `Type_member` WGSL identifier (issue #131).
                 if let Some(q) = qself.as_ref() {
-                    // `<T as Trait>::member` is rejected — see `parse_qself_ty`.
+                    // `<T as Trait>::member` is rejected — see
+                    // `parse_qself_ty`.
                     let (ty, qself_ty) = parse_qself_ty(q, ctx)?;
                     if path.segments.len() != 1 {
                         return UnsupportedSnafu {
@@ -2990,8 +2996,9 @@ impl Expr {
                 mutability,
                 expr,
             }) => {
-                // WGSL doesn't distinguish between `&` and `&mut` at the syntax level
-                // (mutability is determined by the address space and access mode)
+                // WGSL doesn't distinguish between `&` and `&mut` at the syntax
+                // level (mutability is determined by the
+                // address space and access mode)
                 let _ = mutability;
                 Self::Reference {
                     and_token: *and_token,
@@ -4851,7 +4858,8 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
     type Error = Error;
 
     fn try_from(value: &Vec<syn::Attribute>) -> Result<Self, Self::Error> {
-        // First pass: find the shader stage attribute (vertex, fragment, compute)
+        // First pass: find the shader stage attribute (vertex, fragment,
+        // compute)
         let mut stage: Option<(&str, Ident)> = None;
 
         for syn::Attribute {
@@ -4914,7 +4922,8 @@ impl TryFrom<&Vec<syn::Attribute>> for FnAttrs {
                         .fail();
                     };
 
-                    // Parse the workgroup size values (1-3 integers separated by commas)
+                    // Parse the workgroup size values (1-3 integers separated
+                    // by commas)
                     let tokens = list.tokens.clone();
                     let parsed: WorkgroupSizeArgs =
                         syn::parse2(tokens).map_err(|e| Error::Unsupported {
@@ -5891,7 +5900,8 @@ impl syn::parse::Parse for ItemStorage {
         input.parse::<syn::Token![,]>()?;
 
         // Check for optional access mode (read_only or read_write)
-        // If the next token is an ident that's "read_write" or "read_only", consume it
+        // If the next token is an ident that's "read_write" or "read_only",
+        // consume it
         let access = if input.peek(syn::Ident) {
             let lookahead = input.fork();
             let ident: syn::Ident = lookahead.parse()?;
@@ -6009,6 +6019,12 @@ pub(crate) struct ItemSampler {
     // We keep the Rust type around
     #[expect(dead_code, reason = "Will be used eventually")]
     pub rust_ty: syn::Type,
+    /// Whether the trailing `, unfilterable` modifier was present. Only
+    /// valid on plain `Sampler` declarations; lowers to `filterable:
+    /// false` in the IR item so the generated wgpu bind group layout uses
+    /// `SamplerBindingType::NonFiltering`, which is required to sample
+    /// unfilterable texture bindings.
+    pub unfilterable: bool,
     /// Attributes preserved from Rust source on the macro item.
     pub attrs: Vec<ir::Attribute>,
 }
@@ -6045,6 +6061,34 @@ impl syn::parse::Parse for ItemSampler {
             }
         }
 
+        // Optional trailing `, unfilterable`: declares that the sampler is
+        // non-filtering, so the generated wgpu bind group layout uses
+        // `SamplerBindingType::NonFiltering` and can pair with
+        // unfilterable texture bindings. The WGSL output is unchanged.
+        let mut unfilterable = false;
+        if input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+            let ident: syn::Ident = input.parse()?;
+            if ident != "unfilterable" {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "expected `unfilterable`; it is the only sampler! modifier",
+                ));
+            }
+            match &ty {
+                Type::Sampler { .. } => {}
+                Type::SamplerComparison { .. } => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        "`unfilterable` only applies to `Sampler`; `SamplerComparison` layouts \
+                         have no filtering flag",
+                    ));
+                }
+                _ => unreachable!("sampler! validated the type above"),
+            }
+            unfilterable = true;
+        }
+
         Ok(ItemSampler {
             group,
             binding,
@@ -6052,6 +6096,7 @@ impl syn::parse::Parse for ItemSampler {
             colon_token,
             ty,
             rust_ty,
+            unfilterable,
             group_ident,
             group_paren_token,
             binding_ident,
@@ -6788,7 +6833,8 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         }
 
         // For trait impls (e.g. `impl Foo for Bar { ... }`), we ignore the
-        // trait path and just use the self_ty + methods, same as inherent impls.
+        // trait path and just use the self_ty + methods, same as inherent
+        // impls.
         let is_trait_impl = trait_.is_some();
 
         // Build parse context with type and const params so method bodies
@@ -7187,8 +7233,9 @@ impl TryFrom<&syn::Item> for Item {
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
             syn::Item::Impl(item_impl) => {
                 // Both inherent impl blocks and trait impl blocks are parsed.
-                // Trait impl methods generate the same Type_method WGSL functions
-                // as inherent impl methods. The trait name is ignored.
+                // Trait impl methods generate the same Type_method WGSL
+                // functions as inherent impl methods. The trait
+                // name is ignored.
                 Ok(Item::Impl(ItemImpl::try_from(item_impl)?))
             }
             syn::Item::Enum(item_enum) => Ok(Item::Enum(ItemEnum::try_from(item_enum)?)),
@@ -7702,7 +7749,8 @@ mod test {
     // Tests for to_snake_case function
     #[test]
     fn to_snake_case_screaming_case() {
-        // SCREAMING_CASE (all uppercase with underscores) should just be lowercased
+        // SCREAMING_CASE (all uppercase with underscores) should just be
+        // lowercased
         assert_eq!(to_snake_case("FRAME"), "frame");
         assert_eq!(to_snake_case("FRAME_BUFFER"), "frame_buffer");
         assert_eq!(to_snake_case("MY_CONSTANT"), "my_constant");
@@ -8848,8 +8896,8 @@ mod test {
 
     #[test]
     fn enum_variant_usage_via_type_path() {
-        // This test verifies that EnumName::Variant works via the existing TypePath
-        // mechanism
+        // This test verifies that EnumName::Variant works via the existing
+        // TypePath mechanism
         let expr: syn::Expr = syn::parse_quote! { State::Running };
         let expr = Expr::try_from(&expr).unwrap();
         let wgsl = expr.to_wgsl();
@@ -9256,8 +9304,8 @@ mod test {
             syn::Expr::ForLoop(f) => f,
             _ => panic!("Expected ForLoop"),
         };
-        // On nightly, parsing succeeds (warning would be emitted during real macro
-        // expansion)
+        // On nightly, parsing succeeds (warning would be emitted during real
+        // macro expansion)
         let result = ForLoop::try_from(for_loop);
         assert!(
             result.is_ok(),
@@ -9581,7 +9629,8 @@ mod test {
 
     #[test]
     fn builtin_function_call_translates_to_wgsl_name() {
-        // Test that snake_case builtin function calls are translated to camelCase WGSL
+        // Test that snake_case builtin function calls are translated to
+        // camelCase WGSL
         let expr: syn::Expr = syn::parse_quote! {
             count_leading_zeros(x)
         };
@@ -9905,6 +9954,58 @@ mod test {
         assert!(
             result.is_err(),
             "Expected error when using non-sampler type, but parsing succeeded"
+        );
+    }
+
+    #[test]
+    fn parse_sampler_unfilterable() {
+        let sampler: ItemSampler =
+            syn::parse_str("group(0), binding(1), MY_SMP: Sampler, unfilterable").unwrap();
+        assert!(
+            sampler.unfilterable,
+            "expected the `, unfilterable` modifier to be recorded"
+        );
+        // The modifier is host-side only; the WGSL output is unchanged.
+        let wgsl = sampler.to_wgsl();
+        assert!(
+            wgsl.contains(": sampler;"),
+            "Expected ': sampler;' in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("unfilterable"),
+            "Expected no 'unfilterable' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn parse_sampler_defaults_to_filterable() {
+        let sampler: ItemSampler = syn::parse_str("group(0), binding(1), MY_SMP: Sampler").unwrap();
+        assert!(
+            !sampler.unfilterable,
+            "expected no modifier recorded without `, unfilterable`"
+        );
+    }
+
+    #[test]
+    fn parse_sampler_unfilterable_rejects_comparison() {
+        let result = syn::parse_str::<ItemSampler>(
+            "group(0), binding(1), CMP: SamplerComparison, unfilterable",
+        );
+        assert!(
+            result.is_err(),
+            "Expected error for `unfilterable` on a comparison sampler"
+        );
+    }
+
+    #[test]
+    fn parse_sampler_rejects_unknown_modifier() {
+        let result =
+            syn::parse_str::<ItemSampler>("group(0), binding(1), MY_SMP: Sampler, filterable");
+        assert!(
+            result.is_err(),
+            "Expected error for an unknown sampler! modifier"
         );
     }
 
@@ -10494,7 +10595,8 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Fn(f) => {
-                // The body should contain a trailing expr (return) with a FnCall
+                // The body should contain a trailing expr (return) with a
+                // FnCall
                 let last_stmt = f.block.stmt.last().unwrap();
                 match last_stmt {
                     Stmt::Expr { expr, .. } => match expr {
@@ -10782,7 +10884,8 @@ mod test {
         let item = Item::try_from(&item).unwrap();
         match item {
             Item::Fn(f) => {
-                // Check that the local variable has a Struct type with type_args
+                // Check that the local variable has a Struct type with
+                // type_args
                 let first_stmt = &f.block.stmt[0];
                 match first_stmt {
                     Stmt::Local(local) => {
@@ -10841,7 +10944,8 @@ mod test {
                 match &impl_item.items[0] {
                     ImplItem::Fn(f) => {
                         assert_eq!(f.ident.to_string(), "first");
-                        // The parameter type should be Struct with TypeParam args
+                        // The parameter type should be Struct with TypeParam
+                        // args
                         let param_ty = &f.inputs.first().unwrap().ty;
                         match param_ty {
                             Type::Struct {

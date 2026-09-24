@@ -123,7 +123,7 @@ fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
         binding: lit_int_to_u32(&s.binding)?,
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
-        filterable: true,
+        filterable: !s.unfilterable,
         attrs: s.attrs.clone(),
     })
 }
@@ -983,6 +983,28 @@ mod tests {
         let ir_texture = item_texture(&parsed).unwrap();
         assert!(
             ir_texture.filterable,
+            "expected `filterable: true` without the `, unfilterable` modifier"
+        );
+    }
+
+    #[test]
+    fn unfilterable_sampler_threads_into_ir() {
+        let parsed: parse::ItemSampler =
+            syn::parse_str("group(0), binding(1), MY_SMP: Sampler, unfilterable").unwrap();
+        let ir_sampler = item_sampler(&parsed).unwrap();
+        assert!(
+            !ir_sampler.filterable,
+            "expected `filterable: false` for the `, unfilterable` modifier"
+        );
+    }
+
+    #[test]
+    fn sampler_defaults_to_filterable_in_ir() {
+        let parsed: parse::ItemSampler =
+            syn::parse_str("group(0), binding(1), MY_SMP: Sampler").unwrap();
+        let ir_sampler = item_sampler(&parsed).unwrap();
+        assert!(
+            ir_sampler.filterable,
             "expected `filterable: true` without the `, unfilterable` modifier"
         );
     }

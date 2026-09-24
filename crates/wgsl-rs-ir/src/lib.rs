@@ -26,6 +26,7 @@ pub mod deshadow;
 pub mod mangle;
 pub mod render;
 mod substitute;
+pub mod suffix;
 mod types;
 
 pub use deshadow::{deshadow_items, deshadow_module};
@@ -37,5 +38,11 @@ pub use render::{
 pub use substitute::{
     rename_items, substitute_consts, substitute_consts_in_items, substitute_items,
     substitute_types, type_to_ident,
+};
+pub use suffix::{
+    FnSig, TypeImports, fn_signatures, fn_signatures_in_items, suffix_items,
+    suffix_items_with_imports, suffix_items_with_type_imports, suffix_module,
+    suffix_module_with_imports, suffix_module_with_type_imports, type_imports,
+    type_imports_in_items,
 };
 pub use types::*;

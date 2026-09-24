@@ -766,6 +766,7 @@ fn record_fn_idents(
 pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
     let module_label = ir_module.name;
     ir::deshadow_module(&mut ir_module);
+    ir::suffix_module(&mut ir_module);
     let mut linkage = WgpuLinkage {
         module_label,
         ir: ir_module,

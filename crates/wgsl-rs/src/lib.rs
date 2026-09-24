@@ -192,12 +192,14 @@ impl Source {
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
+        let mut imports = ir::TypeImports::default();
         self.collect(
             &mut out,
             &mut visited_sources,
             &mut seen,
             None,
             &mut needs_tier1,
+            &mut imports,
         )?;
         // WGSL requires `enable` directives at the very start of the
         // translation unit, before any other declarations. Since `collect`
@@ -220,6 +222,13 @@ impl Source {
     /// mangled_const_args)` 4-tuples to deduplicate cross-source template
     /// instantiations. Including const args ensures `foo::<4>` and
     /// `foo::<8>` aren't incorrectly deduplicated.
+    /// `imports` accumulates every rendered source's harvested type
+    /// environment — globals (consts, linkage declarations), struct
+    /// definitions, and user-fn signatures — so later sources anchor
+    /// from imported names too (calls, consts, linkage accesses,
+    /// struct constructors) via
+    /// [`ir::suffix_module_with_type_imports`], with the caller's own
+    /// declarations shadowing imported ones.
     fn collect(
         &self,
         out: &mut String,
@@ -227,11 +236,12 @@ impl Source {
         seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
         subst: Option<&HashMap<String, ir::Type>>,
         needs_tier1: &mut bool,
+        imports: &mut ir::TypeImports,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
             if visited_sources.insert(m.id) {
-                m.collect(out, visited_sources, seen, None, needs_tier1)?;
+                m.collect(out, visited_sources, seen, None, needs_tier1, imports)?;
             }
         }
 
@@ -241,6 +251,41 @@ impl Source {
             ir::substitute_types(&mut ir_module, s);
         }
         ir::deshadow_module(&mut ir_module);
+        // Pre-seed with the types of cross-source template instances
+        // this source calls: instance chunks are appended (and publish
+        // their types) after this chunk is suffixed, so a call like
+        // `choose::<u32>(select(0, 1, data))` must find the
+        // instance's concrete parameter types now.
+        for inst in self.instantiations {
+            let mangled: Vec<String> = inst
+                .mangled_type_args
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let type_args = (inst.type_args_constructor)();
+            let mangled_consts: Vec<String> = inst
+                .mangled_const_args
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let const_args = (inst.const_args_constructor)();
+            imports.extend(instance_type_imports(
+                inst.modules,
+                inst.template_name,
+                &type_args,
+                &const_args,
+                &mangled,
+                &mangled_consts,
+            ));
+        }
+        // Make this source's own globals, structs, and signatures
+        // available to later sources, then suffix with every
+        // ancestor's types seeded — references to imported names
+        // anchor (calls, consts, linkage accesses, struct
+        // constructors), and a caller's own declarations shadow
+        // imported ones (matching Rust name resolution).
+        imports.extend(ir::type_imports(&ir_module));
+        ir::suffix_module_with_type_imports(&mut ir_module, imports);
         if ir::items_need_tier1_extension(&ir_module.items) {
             *needs_tier1 = true;
         }
@@ -270,6 +315,7 @@ impl Source {
                 out,
                 seen,
                 needs_tier1,
+                imports,
             )?;
         }
         Ok(())
@@ -295,7 +341,78 @@ fn instantiate_template_into<'a>(
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
+    imports: &mut ir::TypeImports,
 ) -> Result<(), SourceError<'a>> {
+    let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
+
+    let key = (
+        source.id,
+        template_name.to_string(),
+        mangled_type_args.to_vec(),
+        mangled_const_args.to_vec(),
+    );
+    if !seen.insert(key) {
+        return Ok(()); // Already instantiated
+    }
+
+    // Recursively instantiate dependencies first.
+    for dep in template.dependencies {
+        let dep_mangled: Vec<String> = dep
+            .type_param_mapping
+            .iter()
+            .map(|&idx| mangled_type_args[idx].clone())
+            .collect();
+        let dep_args: Vec<ir::Type> = dep
+            .type_param_mapping
+            .iter()
+            .map(|&idx| type_args[idx].clone())
+            .collect();
+        // Dependencies currently share the caller's const args by
+        // reference; a full const-param-mapping parallel to
+        // `type_param_mapping` is a future extension. For now we pass
+        // the const args through unchanged.
+        instantiate_template_into(
+            &[source],
+            dep.callee,
+            &dep_mangled,
+            &dep_args,
+            mangled_const_args,
+            const_args,
+            out,
+            seen,
+            needs_tier1,
+            imports,
+        )?;
+    }
+
+    let mut items = build_instance_items(
+        template,
+        type_args,
+        const_args,
+        mangled_type_args,
+        mangled_const_args,
+    );
+
+    ir::deshadow_items(&mut items);
+    // Seed with every ancestor's types (imports and already-
+    // instantiated dependency templates), then publish this instance's
+    // own (renamed) types for any later chunk.
+    ir::suffix_items_with_type_imports(&mut items, imports);
+    imports.extend(ir::type_imports_in_items(&items));
+    if ir::items_need_tier1_extension(&items) {
+        *needs_tier1 = true;
+    }
+    out.push_str(&ir::render_items(&items));
+    Ok(())
+}
+
+/// Resolve `template_name` to exactly one template among `sources`,
+/// producing the structured errors `instantiate_template_into` reports.
+fn resolve_template<'a>(
+    sources: &[&'a Source],
+    template_name: &str,
+    mangled_type_args: &[String],
+) -> Result<(&'a Source, &'a GenericTemplate), SourceError<'a>> {
     let available_templates: Vec<String> = sources
         .iter()
         .copied()
@@ -343,45 +460,21 @@ fn instantiate_template_into<'a>(
         );
     };
 
-    let key = (
-        source.id,
-        template_name.to_string(),
-        mangled_type_args.to_vec(),
-        mangled_const_args.to_vec(),
-    );
-    if !seen.insert(key) {
-        return Ok(()); // Already instantiated
-    }
+    Ok((source, template))
+}
 
-    // Recursively instantiate dependencies first.
-    for dep in template.dependencies {
-        let dep_mangled: Vec<String> = dep
-            .type_param_mapping
-            .iter()
-            .map(|&idx| mangled_type_args[idx].clone())
-            .collect();
-        let dep_args: Vec<ir::Type> = dep
-            .type_param_mapping
-            .iter()
-            .map(|&idx| type_args[idx].clone())
-            .collect();
-        // Dependencies currently share the caller's const args by
-        // reference; a full const-param-mapping parallel to
-        // `type_param_mapping` is a future extension. For now we pass
-        // the const args through unchanged.
-        instantiate_template_into(
-            &[source],
-            dep.callee,
-            &dep_mangled,
-            &dep_args,
-            mangled_const_args,
-            const_args,
-            out,
-            seen,
-            needs_tier1,
-        )?;
-    }
-
+/// Build a template instance's items: run the template's IR
+/// constructor, substitute its type and const parameters, and rename
+/// the instance to its mangled name. Uses `ir::mangle` so that names
+/// with underscores in either the template name or the type-arg-mangled
+/// strings are escaped unambiguously (see issue #112).
+fn build_instance_items(
+    template: &GenericTemplate,
+    type_args: &[ir::Type],
+    const_args: &[u32],
+    mangled_type_args: &[String],
+    mangled_const_args: &[String],
+) -> Vec<ir::Item> {
     // Build substitution maps: type params -> concrete types, const
     // params -> concrete u32 values.
     let mut subst: HashMap<String, ir::Type> = HashMap::new();
@@ -397,10 +490,6 @@ fn instantiate_template_into<'a>(
     ir::substitute_items(&mut items, &subst);
     ir::substitute_consts_in_items(&mut items, &consts);
 
-    // Mangle the template's name to a concrete instance name so multiple
-    // monomorphizations can coexist. Uses `ir::mangle` so that names with
-    // underscores in either the template name or the type-arg-mangled
-    // strings are escaped unambiguously (see issue #112).
     let instance_name = if mangled_type_args.is_empty() && mangled_const_args.is_empty() {
         template.name.to_string()
     } else {
@@ -419,13 +508,39 @@ fn instantiate_template_into<'a>(
     if instance_name != template.name {
         ir::rename_items(&mut items, template.name, &instance_name);
     }
+    items
+}
 
-    ir::deshadow_items(&mut items);
-    if ir::items_need_tier1_extension(&items) {
-        *needs_tier1 = true;
-    }
-    out.push_str(&ir::render_items(&items));
-    Ok(())
+/// Harvest the types a template instance would export, for
+/// pre-seeding the type-import accumulator before a calling source's
+/// chunk is suffixed — instance chunks are appended (and publish their
+/// types) after the caller is suffixed, so a call like
+/// `choose::<u32>(select(0, 1, data))` must find the instance's
+/// concrete parameter types now.
+///
+/// Resolution failures are ignored here:
+/// [`instantiate_template_into`] reports them with full context when
+/// the instance is actually rendered.
+fn instance_type_imports(
+    sources: &[&Source],
+    template_name: &str,
+    type_args: &[ir::Type],
+    const_args: &[u32],
+    mangled_type_args: &[String],
+    mangled_const_args: &[String],
+) -> ir::TypeImports {
+    let Ok((_source, template)) = resolve_template(sources, template_name, mangled_type_args)
+    else {
+        return ir::TypeImports::default();
+    };
+    let items = build_instance_items(
+        template,
+        type_args,
+        const_args,
+        mangled_type_args,
+        mangled_const_args,
+    );
+    ir::type_imports_in_items(&items)
 }
 
 #[cfg(feature = "validation")]
@@ -532,12 +647,19 @@ mod test {
     fn module_source() {
         let source = c::WGSL_SOURCE.wgsl_source().unwrap();
         c::main();
-        assert!(source.contains("const THREE: u32 = 3;"), "got:\n{source}");
+        assert!(source.contains("const THREE: u32 = 3u;"), "got:\n{source}");
         assert!(
             source.contains("fn add_three_to_x_minus_y(x: u32, y: u32) -> u32"),
             "got:\n{source}"
         );
         assert!(source.contains("fn main()"), "got:\n{source}");
+        // Cross-source call arguments are suffixed via the fn-signature
+        // accumulator threaded through `collect` (module `c` imports
+        // `add_three_to_x_minus_y` from module `b`).
+        assert!(
+            source.contains("add_three_to_x_minus_y(1337u, 666u)"),
+            "got:\n{source}"
+        );
 
         // Verify that imported source outputs are not duplicated.
         // Source C imports B, which imports A. Source A's `THREE` const

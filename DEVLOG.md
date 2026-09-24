@@ -1038,6 +1038,169 @@ roundtrip suite gained `bit_precedence_u32` (bitwise/shift vs
 comparison on both worlds — the logical operators do not diverge
 between Rust and WGSL, so the coverage lives in `bit_manipulation`).
 
+### 2026-09-21: Literal-suffix inference runs at the deshadow slot (wgsl-rs#145)
+
+**Problem:** Rust infers unsuffixed integer literals from context (`0` is
+`u32` when the return type is `u32`), but WGSL defaults them to i32 through
+polymorphic builtins — `select(0, 1, data)` in a `u32` context compiles in
+Rust and fails naga validation (issue #145, discovered during crabslab
+`SlabItem` development). Bare `Lit::Int` nodes reach the renderer from four
+distinct sources: the user's source (preserved as-is by `#[wgsl]`), runtime
+const substitution (`substitute_consts_in_items` inserts `Lit::Int` with an
+empty suffix), runtime type substitution (`substitute_types` /
+`substitute_items`), and extension lowering (`WgslExtension::modify_ir`).
+No compile-time placement can see all four.
+
+**Decision:** the suffix pass lives in `wgsl-rs-ir` (like `deshadow`) and
+runs exactly where deshadow already runs — on freshly built and
+substituted IR, immediately after `deshadow_*` and immediately before
+`render_*`. Three call sites: `Source::collect` (wgsl-rs/src/lib.rs),
+`instantiate_template_into` (items-level, for cross-source templates,
+mirroring `deshadow_items`), and `analyze_ir_module`
+(wgsl-rs/src/linkage/wgpu.rs — the linkage stores the suffixed IR, so
+`WgpuLinkage::wgsl_source` renders it as-is).
+
+Rejected alternatives: running in the macro-emitted constructors or
+`instantiate` (builder.rs) — misses runtime substitution and extension
+lowering, and would need every emitted call site regenerated. Running
+inside `render_module` — the renderer is pure `&Module` (and renders
+template placeholder modules too); inference is a whole-module mutation
+and belongs in the pipeline, not the emitter.
+
+**Semantics:** a scope-tracking walk propagates expected types from anchors
+(function return types, `Local.ty`, const items, assignment and compound
+assignment RHS, array/struct/vector constructors, casts, builtin and
+user-function call args, binary operands) down to leaf literals, writing
+Rust-style suffixes (`u32` / `i32` — the forms `render` already translates)
+only onto empty-suffix ints with a concrete scalar expectation. Only empty
+suffixes are written, so the pass is idempotent and re-runnable. Type
+positions (`Type::Array.len`, `Expr::ZeroValueArray.len`) are never
+suffixed — WGSL wants abstract integers there. Floats are out of scope:
+WGSL abstract-float coerces, and Rust cannot place an unsuffixed int in an
+f32 context without an explicit conversion call. Ordering with deshadow:
+suffix runs after — deshadow is the name authority (it renames declarations
+and uses consistently, so either order is correct, but one order is
+specified).
+
+### 2026-09-21: Suffix pass coverage extended to `instantiate` and `Module::wgsl_source` (review follow-up)
+
+**Problem (review of the #145 PR):** the deshadow-slot wiring covered
+`Source::wgsl_source` and the linkage path, but three public paths still
+emitted un-normalized IR: the macro-emitted `instantiate::<…>()`
+returns a concrete module whose callers (and the generated validation
+tests, which call `render_module` directly) rendered bare literals;
+`Module::wgsl_source` was a pure render of possibly-substituted IR; and
+each source chunk was suffixed in isolation, so calls to *imported* user
+functions had no signature to anchor from.
+
+**Decision:** the emitted `instantiate` applies `suffix_module` after
+its substitutions (builder.rs) — so every module flowing out of the
+generic path is normalized; `Module::wgsl_source` clones, suffixes, and
+renders (`render_module` itself stays a pure emitter, per the original
+placement decision); and `Source::collect` threads a fn-signature
+accumulator (`ir::fn_signatures` / `ir::suffix_module_with_imports`)
+through its depth-first import walk — imports render first, so every
+source suffixes with all ancestor signatures seeded, and a caller's own
+signatures shadow imported ones, matching Rust name resolution. Impl
+associated consts (`ImplItem::Const`) anchor from their declared types
+like module-level consts. The lookup environment's global fallback
+covers module consts and linkage declarations (uniforms, storage,
+workgroup vars) — uses lower to `Expr::Ident`, so
+`get_mut!(OUTPUT)[0] = …` anchors from the declared buffer type. Cross-source template instantiation seeds from
+the same accumulator (`suffix_items_with_imports`), and each instantiated
+template publishes its renamed signatures (`fn_signatures_in_items`) for
+later chunks — dependency templates are instantiated first, so
+template-to-template calls are covered too. Imported struct-constructor
+field types are not threaded across chunks; WGSL's abstract-integer
+coercion keeps those valid, so the unsuffixed fields are a documented
+cosmetic gap.
+
+### 2026-09-22: The suffix pass is an anchoring pass, not a type checker
+
+**Problem:** five review rounds on the #145 PR each surfaced new gaps in
+the suffix pass's partial inference — missing environment entries
+(imports, linkage declarations, associated constants), missing node
+kinds in the type oracle (`expr_ty`), and missing propagation paths
+(selectors, unaries, indexed bases, unannotated locals). Each finding
+was real, and several were genuine invalid-WGSL bugs; but the pattern
+has a single root cause: the pass emulates type inference with ad-hoc
+per-node rules, and any node kind or environment entry those rules do
+not cover is a latent review finding.
+
+**Decision:** land the current coverage — the signature registry carries
+return types (`FnSig`), un-annotated locals register a type provable
+from their initializer, and associated constants register under their
+mangled render name — and draw the boundary explicitly: the pass
+anchors literals where a type is provable; it is not a type checker.
+Contexts it cannot prove must render *valid* WGSL with bare literals —
+WGSL's abstract-integer coercion is the safety net, and bare literals
+only break validity through polymorphic overload resolution, which the
+builtin-group rules cover. If future review rounds surface more
+validity-class gaps, the fix is a follow-up PR consolidating the walk
+into a proper bottom-up `infer(expr) -> Type` over one environment
+struct — not another round of per-node patches inside this PR.
+
+### 2026-09-22: Bottom-up infer for the suffix pass
+
+**Problem:** the suffix pass's type resolution lived as
+`SuffixPass::expr_ty`, a partial oracle ending in a `_ => None`
+catch-all. Seven review rounds on the #145 PR each surfaced new gaps in
+it — every `Expr` variant or `Type` shape the oracle did not cover was
+a latent review finding (the last one, vector/matrix indexing, became
+wgsl-rs#196). The environment fields (scopes, globals, structs,
+fn_sigs) were interleaved with walk state on `SuffixPass`, so adding
+knowledge meant editing the walker.
+
+**Decision:** consolidate the pass's type knowledge into a `TypeEnv`
+struct — scope stack, module globals, struct registry, fn signatures,
+collected once per module plus any imported signatures — exposing
+`infer(&self, expr: &Expr) -> Option<Type>`, the complete bottom-up
+oracle. The match over `Expr` is exhaustive with no catch-all: every
+variant either has a derivable rule or an explicit `None` with a
+comment naming why, so adding an `Expr` variant is a compile error
+until someone consciously decides whether it anchors. `Option<Type>`
+rather than an in-enum `Type::Unknown` keeps the shared IR vocabulary
+unpolluted and composes with `expect`'s existing `Option<&Type>`
+top-down contract, which is unchanged — the mutation walk still
+propagates expectations and delegates upward questions to
+`env.infer`. `None` keeps its boundary meaning from the entry above:
+"unprovable — do not anchor", never a guess.
+
+The consolidation closed the known gap class structurally: the
+`ArrayIndexing` rule now resolves vector bases to their scalar element
+and matrix bases to a column vector (`m[i][j]` recurses through the
+vector case — the wgsl-rs#196 fix), and `Deref` resolves the pointee
+of a provable `Type::Ptr`. Abstract forms (`scalar_ty: None`) and
+external builtins (texture sampling, atomics, derivatives — no
+signature table) stay explicitly `None`.
+
+### 2026-09-23: Cross-source suffixing threads the whole type environment
+
+**Problem:** the cross-source accumulator seeded into each chunk's
+suffix pass carried only user-function signatures
+(`HashMap<String, FnSig>`). A consumer chunk suffixing in isolation
+could not see imported linkage declarations —
+`get_mut!(IMPORTED_OUTPUT)[0] = select(0, 1, cond)` stayed bare, the
+wgsl-rs#145 bug class in cross-source form — nor imported
+module/associated consts (`min(LIMIT, 0)`) nor imported struct
+definitions (a select inside an imported constructor's field). The
+2026-09-21 entry had recorded the struct-constructor part as a
+cosmetic gap; with polymorphic builtins inside imported constructors
+it is a validity gap.
+
+**Decision:** the accumulator is now `TypeImports` — globals (module
+consts, linkage declarations, associated consts under mangled render
+names), struct definitions, and fn signatures — harvested per source
+and per instantiated template (post-rename) via `ir::type_imports` /
+`ir::type_imports_in_items`, threaded depth-first through
+`Source::collect` and `instantiate_template_into`. Each chunk suffixes
+with every ancestor's types seeded, and its own declarations shadow
+imported ones, matching Rust name resolution. The fields are opaque
+outside the crate (construct via the harvest fns, combine via
+`TypeImports::extend`), keeping the shared vocabulary unpolluted; the
+signature-only entry points (`fn_signatures*`, `*_with_imports`)
+remain for direct-use compatibility.
+
 ### 2026-09-22: Trait-path method turbofish stays rejected; docs point at QSelf
 
 **Problem:** `book/src/generics/generic-structs.md` showed

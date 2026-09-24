@@ -869,9 +869,9 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     }
 
     // Strip #[wgsl_allow] attributes before emitting Rust code.
-    // These attributes are used during parsing but must be removed from the output
-    // because statement-level attributes require the unstable stmt_expr_attributes
-    // feature.
+    // These attributes are used during parsing but must be removed from the
+    // output because statement-level attributes require the unstable
+    // stmt_expr_attributes feature.
     StripWgslAllowAttrs.visit_item_mod_mut(&mut input_mod);
 
     // Strip inter-stage IO attributes (#[builtin], #[location], etc.) from
@@ -1575,6 +1575,7 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// sampler!(group(G), binding(B), NAME: Sampler);
 /// sampler!(group(G), binding(B), NAME: SamplerComparison);
+/// sampler!(group(G), binding(B), NAME: Sampler, unfilterable);
 /// ```
 ///
 /// # Description
@@ -1587,6 +1588,11 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// - `@group(G) @binding(B) var NAME: sampler;` for regular samplers
 /// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison
 ///   samplers
+///
+/// The `unfilterable` modifier does not change the WGSL output. It only
+/// sets `SamplerBindingType::NonFiltering` on the generated wgpu bind
+/// group layout entry, so the sampler can pair with unfilterable texture
+/// bindings (e.g. `R32Float` textures).
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:

@@ -1317,3 +1317,22 @@ builtin, with no WGSL analog to justify it) and a `#[unfilterable]` Rust
 attribute (proc macros cannot see outer attributes, so standalone
 `texture!` declarations would silently drop it — only in-module
 declarations could work).
+
+### 2026-09-25: Non-filtering samplers reuse the texture `filterable` pattern
+
+**Problem:** after wgsl-rs#171, unfilterable texture bindings could be
+declared but not sampled: `WgpuLinkage` declared every non-comparison
+`sampler!` binding as `SamplerBindingType::Filtering`, and wgpu rejects
+that pairing with `Float { filterable: false }` at pipeline validation.
+The manual documented `texture_load` as the only path (wgsl-rs#201).
+
+**Decision:** samplers mirror the 2026-09-24 `filterable`-on-`ItemTexture`
+decision exactly: a host-side `filterable: bool` on `ir::ItemSampler`
+(default `true`) exposed through a trailing `, unfilterable` token on
+`sampler!`. WGSL has no non-filtering variant of `sampler`, so the
+rendered WGSL is unchanged; the flag only selects
+`SamplerBindingType::NonFiltering` in the generated bind group layout.
+The token is rejected on `sampler_comparison` declarations, whose layout
+is always `Comparison`. The CPU sampler is untouched: a non-filtering
+GPU sampler is nearest-only by definition, which is exactly
+`SamplerState::default()`.

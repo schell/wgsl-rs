@@ -39,7 +39,9 @@ texture!(group(0), binding(0), HEIGHTS: Texture2D<f32>, unfilterable);
 
 The modifier is only valid on `<f32>`-sampled textures; integer-sampled, depth, and storage textures reject it with a compile error, since their layouts have no filtering flag.
 
-The WGSL output is unchanged — WGSL has no unfilterable variant of `texture_2d<f32>`. The modifier only sets `filterable: false` on the generated wgpu bind group layout entry, so binding a non-filterable format (e.g. `R32Float`) passes validation. Read texels with `texture_load`, or sample with a sampler created using `FilterMode::Nearest`.
+The WGSL output is unchanged — WGSL has no unfilterable variant of `texture_2d<f32>`. The modifier only sets `filterable: false` on the generated wgpu bind group layout entry, so binding a non-filterable format (e.g. `R32Float`) passes validation.
+
+Read texels with `texture_load`. Sampling is not supported yet: every `sampler!` binding is declared as a filtering sampler in the generated layout, and wgpu rejects a filtering sampler in combination with an unfilterable texture. Sampling these textures would require a non-filtering sampler declaration.
 
 ### Storage Textures
 

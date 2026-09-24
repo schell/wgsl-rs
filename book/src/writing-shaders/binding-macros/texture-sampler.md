@@ -41,7 +41,13 @@ The modifier is only valid on `<f32>`-sampled textures; integer-sampled, depth, 
 
 The WGSL output is unchanged — WGSL has no unfilterable variant of `texture_2d<f32>`. The modifier only sets `filterable: false` on the generated wgpu bind group layout entry, so binding a non-filterable format (e.g. `R32Float`) passes validation.
 
-Read texels with `texture_load`. Sampling is not supported yet: every `sampler!` binding is declared as a filtering sampler in the generated layout, and wgpu rejects a filtering sampler in combination with an unfilterable texture. Sampling these textures would require a non-filtering sampler declaration.
+Read texels with `texture_load`, or sample through a non-filtering sampler declared with the same modifier:
+
+```rust
+sampler!(group(0), binding(1), HEIGHTS_SMP: Sampler, unfilterable);
+```
+
+The bound wgpu sampler must use `FilterMode::Nearest` for all filters — a non-filtering layout slot rejects filtering samplers. WGSL output is unchanged: `sampler` has no non-filtering variant, so the modifier only sets `SamplerBindingType::NonFiltering` on the generated bind group layout entry.
 
 ### Storage Textures
 
@@ -86,6 +92,7 @@ Access mode markers:
 ```rust
 sampler!(group(N), binding(M), NAME: Sampler);
 sampler!(group(N), binding(M), NAME: SamplerComparison);
+sampler!(group(N), binding(M), NAME: Sampler, unfilterable);
 ```
 
 Generates:
@@ -94,6 +101,10 @@ Generates:
 @group(N) @binding(M) var NAME: sampler;
 @group(N) @binding(M) var NAME: sampler_comparison;
 ```
+
+The `unfilterable` modifier does not change the WGSL output; it sets
+`SamplerBindingType::NonFiltering` on the generated wgpu bind group layout
+entry (see [Unfilterable Textures](#unfilterable-textures)).
 
 ## Two-Level Binding
 

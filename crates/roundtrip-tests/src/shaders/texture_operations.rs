@@ -1,9 +1,10 @@
 //! Roundtrip tests for texture load/sample operations.
 //!
 //! Tests: `texture_load` and `texture_sample` on `Texture2D<f32>`,
-//! `texture_sample` on `Texture3D<f32>`, and `texture_load` on an
-//! `unfilterable` `Texture2D<f32>` backed by an R32Float texture
-//! (wgsl-rs#171).
+//! `texture_sample` on `Texture3D<f32>`, and unfilterable
+//! `Texture2D<f32>` bindings backed by an R32Float texture — loaded
+//! and sampled through a non-filtering sampler (wgsl-rs#171,
+//! wgsl-rs#201).
 
 #![allow(dead_code)]
 
@@ -66,6 +67,41 @@ pub mod texture_load_2d_unfilterable {
     pub fn frag_main(input: FragInput) -> Vec4f {
         let p = input.position;
         texture_load(TEX, vec2i(p.x as i32, p.y as i32), 0u32)
+    }
+}
+
+/// An unfilterable texture sampled through a non-filtering sampler
+/// (wgsl-rs#201): the generated layout pair
+/// `Float { filterable: false }` + `SamplerBindingType::NonFiltering`
+/// must pass wgpu validation, and nearest sampling must agree between
+/// CPU and GPU.
+#[wgsl]
+pub mod texture_sample_2d_unfilterable {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), TEX: Texture2D<f32>, unfilterable);
+    sampler!(group(0), binding(1), SMP: Sampler, unfilterable);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        let dims = texture_dimensions(TEX);
+        let uv = vec2f(
+            input.position.x / dims.x() as f32,
+            input.position.y / dims.y() as f32,
+        );
+        texture_sample(TEX, SMP, uv)
     }
 }
 
@@ -485,6 +521,104 @@ fn render_texture_load_unfilterable_gpu(
     harness::read_rgba32float_texture(device, queue, &target, WIDTH, HEIGHT)
 }
 
+/// Renders the unfilterable texture_sample shader against an R32Float
+/// source texture through a non-filtering (all-Nearest) sampler. The
+/// bind group creation is the regression check for wgsl-rs#201: with a
+/// `Filtering` sampler slot in the layout, wgpu rejects the pairing
+/// with the unfilterable texture entry.
+fn render_texture_sample_unfilterable_gpu(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source_texture: &wgpu::Texture,
+) -> Vec<[f32; 4]> {
+    let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("texture_sample_unfilterable_sampler"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let target = harness::create_rgba32float_render_target(
+        device,
+        WIDTH,
+        HEIGHT,
+        "texture_sample_unfilterable_target",
+    );
+    let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // Runtime IR-based wgpu linkage analysis (issue #120).
+    let module = &texture_sample_2d_unfilterable::WGSL_SOURCE;
+    let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(module).unwrap();
+    let module = linkage.shader_module(device);
+
+    let pipeline_layout =
+        linkage.pipeline_layout(device, Some("texture_sample_unfilterable_pipeline_layout"));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("texture_sample_unfilterable_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(
+                    &module,
+                    &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let bind_group = linkage
+        .create_bind_group_named(
+            0,
+            device,
+            &[
+                ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                ("SMP", wgpu::BindingResource::Sampler(&sampler)),
+            ],
+        )
+        .expect("texture_sample_unfilterable bind group");
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("texture_sample_unfilterable_render"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("texture_sample_unfilterable_render"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit(Some(encoder.finish()));
+
+    harness::read_rgba32float_texture(device, queue, &target, WIDTH, HEIGHT)
+}
+
 /// Renders the texture_sample shader and returns RGBA pixels.
 fn render_texture_sample_gpu(
     device: &wgpu::Device,
@@ -768,8 +902,8 @@ impl RoundtripTest for TextureOperationsTest {
     }
 
     fn description(&self) -> &str {
-        "texture_load and texture_sample on texture_2d<f32> and texture_3d<f32>, plus texture_load \
-         on an unfilterable texture bound to R32Float"
+        "texture_load and texture_sample on texture_2d<f32> and texture_3d<f32>, plus unfilterable \
+         textures bound to R32Float: loaded and sampled through a non-filtering sampler"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -843,6 +977,43 @@ impl RoundtripTest for TextureOperationsTest {
             &gpu_load_unfilterable,
             &cpu_load_unfilterable,
             &load_unfilterable_label_refs,
+            epsilon,
+        ));
+
+        // texture_sample on the unfilterable Texture2D<f32> through the
+        // non-filtering sampler (wgsl-rs#201). wgpu only accepts the
+        // pairing when the layout declares `NonFiltering`, and the CPU
+        // (nearest-only) sampler must produce the same samples.
+        write_cpu_texture_r32(texture_sample_2d_unfilterable::TEX, &r32_values);
+        texture_sample_2d_unfilterable::SMP.set(SamplerState::default());
+        let gpu_sample_unfilterable_pixels =
+            render_texture_sample_unfilterable_gpu(device, queue, &gpu_r32_texture);
+        let cpu_sample_unfilterable_grid = dispatch_fragments(
+            WIDTH,
+            HEIGHT,
+            |_, _| (),
+            |builtins, _| {
+                let result = texture_sample_2d_unfilterable::frag_main(
+                    texture_sample_2d_unfilterable::FragInput {
+                        position: builtins.position,
+                    },
+                );
+                [result.x, result.y, result.z, result.w]
+            },
+        );
+
+        let gpu_sample_unfilterable = flatten_rgba_pixels(&gpu_sample_unfilterable_pixels);
+        let cpu_sample_unfilterable = flatten_fragment_grid(&cpu_sample_unfilterable_grid);
+        let sample_unfilterable_labels = build_labels("texture_sample_unfilterable");
+        let sample_unfilterable_label_refs: Vec<&str> = sample_unfilterable_labels
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        results.push(harness::compare_f32_results(
+            "texture_sample_unfilterable",
+            &gpu_sample_unfilterable,
+            &cpu_sample_unfilterable,
+            &sample_unfilterable_label_refs,
             epsilon,
         ));
 

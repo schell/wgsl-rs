@@ -910,6 +910,13 @@ pub struct ItemTexture {
     pub binding: u32,
     pub name: String,
     pub ty: Type,
+    /// Whether the texture's f32 sample type allows filtering. Host-side
+    /// only: WGSL has no unfilterable variant of `texture_2d<f32>`, but a
+    /// wgpu bind group layout must declare `TextureSampleType::Float {
+    /// filterable: false }` for textures backed by non-filterable formats
+    /// (e.g. `R32Float`). Defaults to `true`; the `texture!` macro's
+    /// `unfilterable` token sets it to `false`.
+    pub filterable: bool,
     /// Attributes preserved from Rust source.
     pub attrs: Vec<Attribute>,
 }

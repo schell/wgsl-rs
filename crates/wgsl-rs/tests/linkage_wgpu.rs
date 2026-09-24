@@ -52,6 +52,20 @@ pub mod dual_compute {
     pub fn b() {}
 }
 
+/// An unfilterable f32-sampled texture binding alongside a plain one,
+/// for bind group layout sample-type assertions (wgsl-rs#171).
+#[wgsl]
+pub mod texture_filterability {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32>, unfilterable);
+    texture!(group(0), binding(1), FILTERABLE_TEX: Texture2D<f32>);
+
+    #[compute]
+    #[workgroup_size(1)]
+    pub fn main() {}
+}
+
 /// A struct used as a uniform's element type, to exercise WGSL §14.4.1
 /// struct layout.
 #[wgsl]
@@ -452,6 +466,7 @@ fn analyze_texture_and_sampler_bindings() {
                     kind: TextureKind::Texture2D,
                     sampled_type: ir::ScalarType::F32,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -461,6 +476,7 @@ fn analyze_texture_and_sampler_bindings() {
                 ty: ir::Type::TextureDepth {
                     kind: TextureDepthKind::Depth2D,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -496,6 +512,40 @@ fn analyze_texture_and_sampler_bindings() {
     ));
 }
 
+/// The `, unfilterable` modifier lowers to
+/// `TextureSampleType::Float { filterable: false }` in the generated
+/// bind group layout entry, while a plain f32-sampled texture stays
+/// filterable (wgsl-rs#171).
+#[test]
+fn analyze_texture_filterability_flags() {
+    let linkage = wg::analyze_wgsl_module(&texture_filterability::WGSL_SOURCE).unwrap();
+    let bg = linkage.bind_group(0).unwrap();
+    assert_eq!(bg.entries.len(), 2);
+
+    assert!(
+        matches!(
+            bg.entries[0].ty,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                ..
+            }
+        ),
+        "expected `filterable: false` for the `, unfilterable` texture, got {:?}",
+        bg.entries[0].ty
+    );
+    assert!(
+        matches!(
+            bg.entries[1].ty,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                ..
+            }
+        ),
+        "expected `filterable: true` without the modifier, got {:?}",
+        bg.entries[1].ty
+    );
+}
+
 #[test]
 fn analyze_storage_texture_bindings() {
     use wgsl_rs::ir::{StorageTextureAccess, TexelFormat, TextureStorageKind};
@@ -512,6 +562,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8unorm,
                     access: StorageTextureAccess::Write,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -523,6 +574,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8uint,
                     access: StorageTextureAccess::Read,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -534,6 +586,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::R32float,
                     access: StorageTextureAccess::ReadWrite,
                 },
+                filterable: true,
                 attrs: vec![],
             }),
         ],

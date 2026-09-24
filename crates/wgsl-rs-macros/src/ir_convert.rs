@@ -133,6 +133,7 @@ fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
         binding: lit_int_to_u32(&t.binding)?,
         name: t.name.to_string(),
         ty: ty_from_parse(&t.ty)?,
+        filterable: !t.unfilterable,
         attrs: t.attrs.clone(),
     })
 }
@@ -955,4 +956,31 @@ fn case_selector(s: &parse::CaseSelector) -> Result<ir::CaseSelector> {
         parse::CaseSelector::Expr(e) => ir::CaseSelector::Expr(expr_from_parse(e)?),
         parse::CaseSelector::Default(_) => ir::CaseSelector::Default,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unfilterable_texture_threads_into_ir() {
+        let parsed: parse::ItemTexture =
+            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>, unfilterable").unwrap();
+        let ir_texture = item_texture(&parsed).unwrap();
+        assert!(
+            !ir_texture.filterable,
+            "expected `filterable: false` for the `, unfilterable` modifier"
+        );
+    }
+
+    #[test]
+    fn texture_defaults_to_filterable_in_ir() {
+        let parsed: parse::ItemTexture =
+            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>").unwrap();
+        let ir_texture = item_texture(&parsed).unwrap();
+        assert!(
+            ir_texture.filterable,
+            "expected `filterable: true` without the `, unfilterable` modifier"
+        );
+    }
 }

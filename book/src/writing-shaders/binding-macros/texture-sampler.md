@@ -6,6 +6,7 @@ Declare texture and sampler bindings.
 
 ```rust
 texture!(group(N), binding(M), NAME: TextureKind<SampleType>);
+texture!(group(N), binding(M), NAME: Texture2D<f32>, unfilterable);
 ```
 
 Generates:
@@ -27,6 +28,20 @@ Generates:
 | `TextureMultisampled2D` | |
 
 The sample type for color textures is typically `<f32>`. Depth textures need no sample type parameter.
+
+### Unfilterable Textures
+
+Some texture formats are not filterable on the GPU — `R32Float`, `Rg32Float`, and other 32-bit float formats. Bind group layouts must declare this, or binding such a texture fails wgpu validation. Declare it with the `unfilterable` modifier:
+
+```rust
+texture!(group(0), binding(0), HEIGHTS: Texture2D<f32>, unfilterable);
+```
+
+The modifier is only valid on `<f32>`-sampled textures; integer-sampled, depth, and storage textures reject it with a compile error, since their layouts have no filtering flag.
+
+The WGSL output is unchanged — WGSL has no unfilterable variant of `texture_2d<f32>`. The modifier only sets `filterable: false` on the generated wgpu bind group layout entry, so binding a non-filterable format (e.g. `R32Float`) passes validation.
+
+Read texels with `texture_load`. Sampling is not supported yet: every `sampler!` binding is declared as a filtering sampler in the generated layout, and wgpu rejects a filtering sampler in combination with an unfilterable texture. Sampling these textures would require a non-filtering sampler declaration.
 
 ### Storage Textures
 

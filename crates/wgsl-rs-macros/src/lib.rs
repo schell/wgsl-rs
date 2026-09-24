@@ -1632,6 +1632,9 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// texture!(group(G), binding(B), NAME: Texture2D<f32>);
 /// texture!(group(G), binding(B), NAME: TextureCube<i32>);
 ///
+/// // Unfilterable f32-sampled textures (non-filterable formats, e.g. R32Float)
+/// texture!(group(G), binding(B), NAME: Texture2D<f32>, unfilterable);
+///
 /// // Depth textures (no type parameter)
 /// texture!(group(G), binding(B), NAME: TextureDepth2D);
 /// texture!(group(G), binding(B), NAME: TextureDepthCube);
@@ -1678,6 +1681,10 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// - `@group(G) @binding(B) var NAME: texture_depth_2d;` for depth textures
 /// - `@group(G) @binding(B) var NAME: texture_storage_2d<rgba8unorm, write>;`
 ///   for storage textures
+///
+/// The `unfilterable` modifier does not change the WGSL output. It only sets
+/// `filterable: false` on the generated wgpu bind group layout entry, for
+/// textures backed by non-filterable formats (e.g. `R32Float`).
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:

@@ -1465,7 +1465,9 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
     match &item.ty {
         ir::Type::Texture { sampled_type, .. } => {
             let sample = match sampled_type {
-                ir::ScalarType::F32 => wgpu::TextureSampleType::Float { filterable: true },
+                ir::ScalarType::F32 => wgpu::TextureSampleType::Float {
+                    filterable: item.filterable,
+                },
                 ir::ScalarType::I32 => wgpu::TextureSampleType::Sint,
                 ir::ScalarType::U32 => wgpu::TextureSampleType::Uint,
                 ir::ScalarType::Bool => unreachable!("textures can't be bool-sampled"),

@@ -6121,6 +6121,11 @@ pub(crate) struct ItemTexture {
     // We keep the Rust type around
     #[expect(dead_code, reason = "Might be used later")]
     pub rust_ty: syn::Type,
+    /// Whether the trailing `, unfilterable` modifier was present. Only
+    /// valid on f32-sampled textures; lowers to `filterable: false` in the
+    /// IR item so the generated wgpu bind group layout can accept
+    /// non-filterable formats (e.g. `R32Float`).
+    pub unfilterable: bool,
     /// Attributes preserved from Rust source on the macro item.
     pub attrs: Vec<ir::Attribute>,
 }
@@ -6158,6 +6163,38 @@ impl syn::parse::Parse for ItemTexture {
             }
         }
 
+        // Optional trailing `, unfilterable`: declares that the texture is
+        // bound with a non-filterable format (e.g. `R32Float`) so the
+        // generated wgpu bind group layout uses
+        // `TextureSampleType::Float { filterable: false }`. The WGSL
+        // output is unchanged.
+        let mut unfilterable = false;
+        if input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+            let ident: syn::Ident = input.parse()?;
+            if ident != "unfilterable" {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "expected `unfilterable`; it is the only texture! modifier",
+                ));
+            }
+            match &ty {
+                Type::Texture {
+                    sampled_type: ScalarType::F32,
+                    ..
+                } => {}
+                _ => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        "`unfilterable` only applies to f32-sampled textures (e.g. \
+                         Texture2D<f32>); integer-sampled, depth, and storage textures have no \
+                         filterable layout flag",
+                    ));
+                }
+            }
+            unfilterable = true;
+        }
+
         Ok(ItemTexture {
             group,
             binding,
@@ -6165,6 +6202,7 @@ impl syn::parse::Parse for ItemTexture {
             colon_token,
             ty,
             rust_ty,
+            unfilterable,
             group_ident,
             group_paren_token,
             binding_ident,
@@ -10146,6 +10184,79 @@ mod test {
         assert!(
             result.is_err(),
             "Expected error when using Sampler in texture! macro, but parsing succeeded"
+        );
+    }
+
+    #[test]
+    fn parse_texture_item_unfilterable() {
+        let texture: ItemTexture =
+            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>, unfilterable").unwrap();
+        assert!(
+            texture.unfilterable,
+            "expected the `, unfilterable` modifier to be recorded"
+        );
+        // The modifier is host-side only; the WGSL output is unchanged.
+        let wgsl = texture.to_wgsl();
+        assert!(
+            wgsl.contains(": texture_2d<f32>;"),
+            "Expected ': texture_2d<f32>;' in WGSL, got: {}",
+            wgsl
+        );
+        assert!(
+            !wgsl.contains("unfilterable"),
+            "Expected no 'unfilterable' in WGSL, got: {}",
+            wgsl
+        );
+    }
+
+    #[test]
+    fn parse_texture_item_defaults_to_filterable() {
+        let texture: ItemTexture =
+            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>").unwrap();
+        assert!(
+            !texture.unfilterable,
+            "expected no modifier recorded without `, unfilterable`"
+        );
+    }
+
+    #[test]
+    fn parse_texture_item_unfilterable_rejects_integer_sampled() {
+        let result =
+            syn::parse_str::<ItemTexture>("group(0), binding(0), T: Texture2D<i32>, unfilterable");
+        assert!(
+            result.is_err(),
+            "Expected error for `unfilterable` on an integer-sampled texture"
+        );
+    }
+
+    #[test]
+    fn parse_texture_item_unfilterable_rejects_depth() {
+        let result =
+            syn::parse_str::<ItemTexture>("group(0), binding(0), T: TextureDepth2D, unfilterable");
+        assert!(
+            result.is_err(),
+            "Expected error for `unfilterable` on a depth texture"
+        );
+    }
+
+    #[test]
+    fn parse_texture_item_unfilterable_rejects_storage() {
+        let result = syn::parse_str::<ItemTexture>(
+            "group(0), binding(0), T: TextureStorage2D<Rgba8unorm, Write>, unfilterable",
+        );
+        assert!(
+            result.is_err(),
+            "Expected error for `unfilterable` on a storage texture"
+        );
+    }
+
+    #[test]
+    fn parse_texture_item_rejects_unknown_modifier() {
+        let result =
+            syn::parse_str::<ItemTexture>("group(0), binding(0), T: Texture2D<f32>, filterable");
+        assert!(
+            result.is_err(),
+            "Expected error for an unknown texture! modifier"
         );
     }
 

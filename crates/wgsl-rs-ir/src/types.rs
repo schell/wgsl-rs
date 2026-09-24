@@ -899,6 +899,15 @@ pub struct ItemSampler {
     pub binding: u32,
     pub name: String,
     pub ty: Type,
+    /// Whether the sampler can perform filtering. Host-side only: WGSL
+    /// has no non-filtering variant of `sampler`, but a wgpu bind group
+    /// layout can declare `SamplerBindingType::NonFiltering`, which is
+    /// required to sample unfilterable f32 textures (see
+    /// `ItemTexture::filterable`). Defaults to `true`; the `sampler!`
+    /// macro's `unfilterable` token sets it to `false`. Meaningless for
+    /// comparison samplers, whose layout is always
+    /// `SamplerBindingType::Comparison`.
+    pub filterable: bool,
     /// Attributes preserved from Rust source.
     pub attrs: Vec<Attribute>,
 }

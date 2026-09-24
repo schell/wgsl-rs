@@ -106,6 +106,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = s.binding;
             let n = &s.name;
             let t = ty(p, &s.ty);
+            let filterable = s.filterable;
             let attrs = emit_attrs(p, &s.attrs);
             quote! {
                 #p::Item::Sampler(#p::ItemSampler {
@@ -113,6 +114,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
                     binding: #binding,
                     name: ::std::string::String::from(#n),
                     ty: #t,
+                    filterable: #filterable,
                     #attrs,
                 })
             }

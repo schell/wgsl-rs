@@ -234,8 +234,8 @@ fn uniform_with_struct_is_sized_by_wgsl_rules() {
 fn storage_array_size_uses_wgsl_array_strides() {
     let linkage = wg::analyze_wgsl_module(&shape_provider::WGSL_SOURCE).unwrap();
     let circles = linkage.buffer("CIRCLES").expect("CIRCLES binding");
-    // Circle is { center: Vec2f (align 8, size 8), radius: f32 (align 4, size 4) }
-    //   struct align = 8, size = roundUp(12, 8) = 16
+    // Circle is { center: Vec2f (align 8, size 8), radius: f32 (align 4, size
+    // 4) }   struct align = 8, size = roundUp(12, 8) = 16
     // array<[16], 16>: align 8, size = 16 * roundUp(16, 8) = 16 * 16 = 256
     assert_eq!(circles.size, 256, "expected 256-byte array<Circle, 16>");
 }
@@ -484,6 +484,7 @@ fn analyze_texture_and_sampler_bindings() {
                 binding: 2,
                 name: "SAMP".to_string(),
                 ty: ir::Type::Sampler,
+                filterable: true,
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -491,6 +492,7 @@ fn analyze_texture_and_sampler_bindings() {
                 binding: 3,
                 name: "CSAMP".to_string(),
                 ty: ir::Type::SamplerComparison,
+                filterable: true,
                 attrs: vec![],
             }),
         ],

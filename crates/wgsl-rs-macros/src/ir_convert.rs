@@ -123,6 +123,7 @@ fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
         binding: lit_int_to_u32(&s.binding)?,
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
+        filterable: true,
         attrs: s.attrs.clone(),
     })
 }
@@ -672,8 +673,9 @@ pub fn expr_from_parse(e: &parse::Expr) -> Result<ir::Expr> {
         parse::Expr::TypePath { ty, member, .. } => ir::Expr::TypePath {
             ty: {
                 let t = ty.to_string();
-                // for builtin WGSL types, we need to convert the type name, e.g. Vec3f -> vec3f
-                // this is needed so that associated constants are mapped correctly
+                // for builtin WGSL types, we need to convert the type name,
+                // e.g. Vec3f -> vec3f this is needed so that
+                // associated constants are mapped correctly
                 parse::builtin_wgsl_type_name(&t).unwrap_or(t)
             },
             member: member.to_string(),
@@ -708,9 +710,10 @@ fn lit(l: &parse::Lit) -> Result<ir::Lit> {
         },
         parse::Lit::Float(f) => {
             // Rust float literals may carry a type suffix like `_f32`, `_f64`,
-            // or `_f16` (e.g. `0.0_f32`). WGSL does not recognize these suffixes,
-            // so the suffix must be stripped before storing the text. WGSL only
-            // has `f32` (and `f16` behind an extension), so the plain mantissa
+            // or `_f16` (e.g. `0.0_f32`). WGSL does not recognize these
+            // suffixes, so the suffix must be stripped before
+            // storing the text. WGSL only has `f32` (and `f16`
+            // behind an extension), so the plain mantissa
             // (e.g. `0.0`) is valid WGSL. `f64` is unsupported and produces a
             // compile error.
             let raw = f.to_string();

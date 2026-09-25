@@ -40,7 +40,9 @@
 //! - [`literal_suffixes`] — Type-directed literal suffixes (#145): bare
 //!   literals in `u32`-inferred contexts (`select` in an array literal,
 //!   comparison-anchored and `min`-grouped literals) render with WGSL `u`
-//!   suffixes; GPU and CPU agree
+//!   suffixes; plus backward loop-variable inference (#154) — a fully-bare
+//!   `for` range whose body uses the variable as `u32` adopts the type. GPU and
+//!   CPU agree
 //! - [`vector_equality`] — Vector comparisons (#164): `==`/`!=` lowered to
 //!   `all(...)`/`!(all(...))`, plus the `cmp_eq`/`cmp_ne` componentwise masks
 //! - [`select_operations`] — Conditional selection: `select` on scalar and
@@ -114,6 +116,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(basic_numeric::BasicNumericTest),
         Box::new(logical_operations::LogicalOperationsTest),
         Box::new(literal_suffixes::LiteralSuffixTest),
+        Box::new(literal_suffixes::LoopVarTypeTest),
         Box::new(select_operations::SelectOperationsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),

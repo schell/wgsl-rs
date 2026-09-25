@@ -7,7 +7,10 @@
 //!
 //! Covers the issue #145 repro shape (`select` inside a `[u32; 1]`
 //! array literal), comparison-anchored literals, and same-type builtin
-//! groups (`min`).
+//! groups (`min`), plus the issue #154 shape: a fully-bare `for` range
+//! whose body pins the loop variable to `u32` — the suffix pass must
+//! adopt the type backward, or the loop variable renders `i32` against
+//! a `u32` body and naga rejects the module.
 
 use wgsl_rs::wgsl;
 
@@ -104,6 +107,92 @@ impl RoundtripTest for LiteralSuffixTest {
 
         results.push(harness::compare_u32_results(
             "literal_suffixes",
+            gpu_results,
+            &cpu_results,
+            &label_refs,
+        ));
+
+        results
+    }
+}
+
+/// The issue #154 shape: a fully-bare range whose body uses the loop
+/// variable as `u32`. rustc infers `i: u32` backward from the `let`, so
+/// the suffix pass must adopt it — otherwise the loop variable renders
+/// `i32` against `i + 1u` and naga rejects the module.
+#[wgsl]
+pub mod bare_loop_vars {
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), INPUT: [u32; 64]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+
+    #[compute]
+    #[workgroup_size(64)]
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let input = get!(INPUT);
+        let mut acc: u32 = 0;
+        for i in 0..4 {
+            let step: u32 = i + 1;
+            acc += step * input[idx];
+        }
+        get_mut!(OUTPUT)[idx] = acc;
+    }
+}
+
+pub struct LoopVarTypeTest;
+
+impl RoundtripTest for LoopVarTypeTest {
+    fn name(&self) -> &str {
+        "loop_var_types"
+    }
+
+    fn description(&self) -> &str {
+        "backward loop-variable type inference in the suffix pass (wgsl-rs#154)"
+    }
+
+    fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
+        use wgsl_rs::std::*;
+
+        let mut results = Vec::new();
+
+        let inputs = literal_suffix_inputs();
+        let input_bytes = bytemuck::cast_slice::<u32, u8>(&inputs);
+
+        let mut linkage =
+            wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bare_loop_vars::WGSL_SOURCE).unwrap();
+        let gpu_output = harness::run_gpu_compute_linked(&mut harness::GpuComputeParamsLinked {
+            device,
+            queue,
+            linkage: &mut linkage,
+            entry: "main",
+            input_data: input_bytes,
+            output_size: (N * std::mem::size_of::<u32>()) as u64,
+            workgroup_count: (1, 1, 1),
+        });
+
+        let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
+
+        bare_loop_vars::INPUT.set(inputs);
+        bare_loop_vars::OUTPUT.set([0u32; N]);
+        dispatch_workgroups(
+            (1, 1, 1),
+            linkage
+                .compute_entry("main")
+                .expect("main entry present")
+                .workgroup_size,
+            |builtins| {
+                bare_loop_vars::main(builtins.global_invocation_id);
+            },
+        );
+        let cpu_results: Vec<u32> = bare_loop_vars::OUTPUT.get().to_vec();
+
+        let labels: Vec<String> = (0..N).map(|i| format!("loop_var_types[{i}]")).collect();
+        let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+
+        results.push(harness::compare_u32_results(
+            "loop_var_types",
             gpu_results,
             &cpu_results,
             &label_refs,

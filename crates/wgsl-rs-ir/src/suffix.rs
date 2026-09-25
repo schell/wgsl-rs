@@ -21,7 +21,9 @@
 //! * casts,
 //! * binary and comparison operands (a bare literal adopts the provable scalar
 //!   type of the other operand),
-//! * `for` bounds when the loop variable's type is explicit,
+//! * `for` bounds from the loop variable's type — provable from a range bound,
+//!   or probed backward from the body's uses of the variable (`for i in 0..1 {
+//!   let x: u32 = i + 1; }` infers `i: u32`, wgsl-rs#154),
 //! * `switch` case selectors from the selector's type.
 //!
 //! Like [`crate::deshadow`], this is a whole-module IR mutation intended
@@ -115,6 +117,7 @@ pub fn suffix_module_with_type_imports(module: &mut Module, imports: &TypeImport
     SuffixPass {
         env: imports.as_env(),
         return_ty: None,
+        ..SuffixPass::default()
     }
     .walk_module(module);
 }
@@ -128,6 +131,7 @@ pub fn suffix_items_with_type_imports(items: &mut [Item], imports: &TypeImports)
     SuffixPass {
         env: imports.as_env(),
         return_ty: None,
+        ..SuffixPass::default()
     }
     .walk_items(items);
 }
@@ -630,6 +634,17 @@ struct SuffixPass {
     env: TypeEnv,
     /// The current function's declared return type, if any.
     return_ty: Option<Type>,
+    /// Backward loop-variable inference state (see [`Self::walk_for`]):
+    /// a stack of `(variable, anchors)` frames, one per `for` loop whose
+    /// untyped variable is currently being probed. Recording targets the
+    /// innermost frame matching the name, so same-name shadowing records
+    /// to the shadowing loop.
+    loop_probes: Vec<(String, Vec<ScalarType>)>,
+    /// Depth of conversion contexts (cast operands, shift counts) in
+    /// which an expectation must not pin a probed loop variable: a cast
+    /// converts rather than unifies, and a shift count is `u32` in WGSL
+    /// but independently typed in Rust.
+    probe_suppressed: usize,
 }
 
 impl SuffixPass {
@@ -810,7 +825,12 @@ impl SuffixPass {
             Some(CompoundOp::ShlAssign | CompoundOp::ShrAssign)
         ) {
             let u32_ty = Type::Scalar(ScalarType::U32);
+            // Shift-assign counts are independently typed in Rust, like
+            // shift counts — see `expect` — so they must not pin a
+            // probed loop variable.
+            self.probe_suppressed += 1;
             self.expect(rhs, Some(&u32_ty));
+            self.probe_suppressed -= 1;
             return;
         }
         let target_ty = self.env.infer(lhs);
@@ -835,13 +855,38 @@ impl SuffixPass {
     /// Parsed Rust loops never annotate the loop variable (`for i: u32
     /// in …` is not valid Rust — the IR field stays `None`), so its
     /// type is inferred from a provable range bound, mirroring Rust's
-    /// own inference. Fully-bare ranges (`for i in 0..8`) infer `i32`
-    /// in both Rust and WGSL and stay bare.
+    /// own inference. Fully-bare ranges (`for i in 0..8`) stay bare —
+    /// `i32` in both Rust and WGSL — *unless the body pins the
+    /// variable to another concrete type*: rustc resolves that backward
+    /// from the use sites (`for i in 0..1 { let x: u32 = i + 1; }`
+    /// infers `i: u32`, wgsl-rs#154), so the pass probes for it. The
+    /// body is walked once with the variable registered as an
+    /// unprovable scope binding and pushed onto [`Self::loop_probes`];
+    /// [`Self::expect`] records every concrete `u32` / `i32`
+    /// expectation that lands on it. Unanimous anchors adopt the type:
+    /// the bounds get suffixed and the body re-walks with the variable
+    /// typed (only empty suffixes are ever written, so the second walk
+    /// is idempotent). No anchors, or conflicting ones (source that
+    /// would not have compiled as Rust), leave the loop bare — the pass
+    /// never guesses (see the DEVLOG entry for 2026-09-22).
     fn walk_for(&mut self, f: &mut ForLoop) {
-        let var_ty = f
+        let mut var_ty = f
             .var_ty
             .clone()
             .or_else(|| self.env.infer(&f.from).or_else(|| self.env.infer(&f.to)));
+        if var_ty.is_none() && !f.body.stmts.is_empty() {
+            // Probe walk: the frame registers the variable as unprovable,
+            // so its uses resolve to it (never an outer same-name
+            // binding) and record onto the probe frame.
+            let mut frame = HashMap::new();
+            frame.insert(f.var.clone(), None);
+            self.env.scopes.push(frame);
+            self.loop_probes.push((f.var.clone(), Vec::new()));
+            self.walk_block(&mut f.body);
+            let probed = self.take_probe();
+            self.env.scopes.pop();
+            var_ty = probed;
+        }
         if let Some(ty) = &var_ty {
             self.expect(&mut f.from, Some(ty));
             self.expect(&mut f.to, Some(ty));
@@ -854,6 +899,20 @@ impl SuffixPass {
         self.env.scopes.push(frame);
         self.walk_block(&mut f.body);
         self.env.scopes.pop();
+    }
+
+    /// Adopt the probed loop-variable type from the innermost probe
+    /// frame: `Some` for a unanimous anchor set, `None` for conflicting
+    /// anchors (invalid Rust — the source would not have compiled) or
+    /// an empty set, both of which leave the loop bare.
+    fn take_probe(&mut self) -> Option<Type> {
+        let (_, anchors) = self.loop_probes.pop()?;
+        let scalar = *anchors.first()?;
+        if anchors.iter().all(|a| *a == scalar) {
+            Some(Type::Scalar(scalar))
+        } else {
+            None
+        }
     }
 
     /// Walk a `switch`: the selector subtree is walked first so nested
@@ -985,7 +1044,15 @@ impl SuffixPass {
                     self.expect(&mut field.expr, field_ty.as_ref());
                 }
             }
-            Expr::Cast { lhs, ty } => self.expect(lhs, Some(ty)),
+            Expr::Cast { lhs, ty } => {
+                // A cast converts instead of unifying — the operand's
+                // type is decoupled from the outer context (`for i in
+                // 0..1 { (i as u32); }` keeps `i` i32 in Rust) — so
+                // nothing inside a cast pins a probed loop variable.
+                self.probe_suppressed += 1;
+                self.expect(lhs, Some(ty));
+                self.probe_suppressed -= 1;
+            }
             Expr::Binary { lhs, op, rhs } => {
                 // Shifts are handled separately: the count is `u32` in
                 // WGSL, not the result type — Rust infers it
@@ -995,7 +1062,12 @@ impl SuffixPass {
                     let u32_ty = Type::Scalar(ScalarType::U32);
                     // The shifted value shares the outer expectation.
                     self.expect(lhs, expected);
+                    // The count is u32 in WGSL but independently typed
+                    // in Rust (`x << i` compiles with an i32 count), so
+                    // it must not pin a probed loop variable.
+                    self.probe_suppressed += 1;
                     self.expect(rhs, Some(&u32_ty));
+                    self.probe_suppressed -= 1;
                 } else {
                     // Arithmetic operators pass an outer expectation to
                     // their operands (the operands share the result
@@ -1073,9 +1145,31 @@ impl SuffixPass {
                 });
                 self.expect(inner, pointee.as_ref());
             }
-            // Identifiers, type paths, and zero-value array lengths
-            // (type positions) carry nothing to suffix.
-            Expr::Ident(_) | Expr::TypePath { .. } | Expr::ZeroValueArray { .. } => {}
+            Expr::Ident(name) => {
+                // Backward loop-var inference (see `walk_for`): a
+                // concrete expectation landing on an untyped `for`
+                // variable is an anchor rustc would have unified with
+                // the variable's inferred type. Record it onto the
+                // innermost matching probe frame; the scope lookup must
+                // agree the use resolves to an unprovable binding, so
+                // typed bindings never record (an adopted variable on
+                // the body re-walk, an inner shadowing `let`).
+                if self.probe_suppressed == 0
+                    && self.env.lookup(name).is_none()
+                    && let Some(Type::Scalar(scalar)) = expected
+                    && matches!(scalar, ScalarType::U32 | ScalarType::I32)
+                    && let Some((_, anchors)) = self
+                        .loop_probes
+                        .iter_mut()
+                        .rev()
+                        .find(|(probe, _)| probe == name)
+                {
+                    anchors.push(*scalar);
+                }
+            }
+            // Type paths and zero-value array lengths (type positions)
+            // carry nothing to suffix.
+            Expr::TypePath { .. } | Expr::ZeroValueArray { .. } => {}
         }
     }
 }

@@ -1162,6 +1162,191 @@ fn for_bounds_infer_from_typed_range_bound() {
 }
 
 #[test]
+fn bare_loop_var_adopts_type_from_body_anchor() {
+    // wgsl-rs#154: `for i in 0..1 { let x: u32 = i + 1; }` — rustc
+    // infers `i: u32` backward from the body, so the bounds must adopt
+    // u32 too, else `i + 1u` mixes an i32 loop variable with a u32.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        ReturnType::Default,
+        vec![Stmt::For(ForLoop {
+            var: "i".to_string(),
+            var_ty: None,
+            from: bare_int("0"),
+            to: bare_int("1"),
+            inclusive: false,
+            body: Block {
+                stmts: vec![local(
+                    "x",
+                    Some(u32_ty()),
+                    Some(Expr::Binary {
+                        lhs: Box::new(ident("i")),
+                        op: BinOp::Add,
+                        rhs: Box::new(bare_int("1")),
+                    }),
+                )],
+            },
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("var i = 0u;"), "got: {wgsl}");
+    assert!(wgsl.contains("i < 1u;"), "got: {wgsl}");
+    assert!(wgsl.contains("i + 1u"), "got: {wgsl}");
+}
+
+#[test]
+fn bare_loop_var_adopts_from_typed_comparison_operand() {
+    // `for i in 0..4 { if i < limit {} }` with `limit: u32` — the
+    // comparison anchor mirrors rustc, which unifies `i` with `limit`.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![arg("limit", u32_ty())],
+        ReturnType::Default,
+        vec![Stmt::For(ForLoop {
+            var: "i".to_string(),
+            var_ty: None,
+            from: bare_int("0"),
+            to: bare_int("4"),
+            inclusive: false,
+            body: Block {
+                stmts: vec![Stmt::If(StmtIf {
+                    condition: Expr::Binary {
+                        lhs: Box::new(ident("i")),
+                        op: BinOp::Lt,
+                        rhs: Box::new(ident("limit")),
+                    },
+                    then_block: Block { stmts: vec![] },
+                    else_branch: None,
+                })],
+            },
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("var i = 0u;"), "got: {wgsl}");
+    assert!(wgsl.contains("i < 4u;"), "got: {wgsl}");
+}
+
+#[test]
+fn cast_operand_does_not_pin_bare_loop_var() {
+    // `for i in 0..1 { let x: u32 = i as u32; }` — the cast converts
+    // rather than unifies, so rustc keeps `i` i32 and the loop stays
+    // bare; `i32` matches WGSL's abstract-int concretization.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        ReturnType::Default,
+        vec![Stmt::For(ForLoop {
+            var: "i".to_string(),
+            var_ty: None,
+            from: bare_int("0"),
+            to: bare_int("1"),
+            inclusive: false,
+            body: Block {
+                stmts: vec![local(
+                    "x",
+                    Some(u32_ty()),
+                    Some(Expr::Cast {
+                        lhs: Box::new(ident("i")),
+                        ty: Box::new(u32_ty()),
+                    }),
+                )],
+            },
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("var i = 0;"), "got: {wgsl}");
+    assert!(wgsl.contains("i < 1;"), "got: {wgsl}");
+    assert!(wgsl.contains("u32(i)"), "got: {wgsl}");
+}
+
+#[test]
+fn conflicting_body_anchors_leave_loop_bare() {
+    // `let x: u32 = i + 1; let y: i32 = i + 1;` cannot compile as Rust
+    // — rustc rejects the mismatched unifications — so the probe
+    // leaves the loop bare rather than guessing.
+    let i_plus_one = || Expr::Binary {
+        lhs: Box::new(ident("i")),
+        op: BinOp::Add,
+        rhs: Box::new(bare_int("1")),
+    };
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        ReturnType::Default,
+        vec![Stmt::For(ForLoop {
+            var: "i".to_string(),
+            var_ty: None,
+            from: bare_int("0"),
+            to: bare_int("1"),
+            inclusive: false,
+            body: Block {
+                stmts: vec![
+                    local("x", Some(u32_ty()), Some(i_plus_one())),
+                    local("y", Some(i32_ty()), Some(i_plus_one())),
+                ],
+            },
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("var i = 0;"), "got: {wgsl}");
+    // The per-local expectations still suffix their own literals.
+    assert!(wgsl.contains("i + 1u"), "got: {wgsl}");
+    assert!(wgsl.contains("i + 1i"), "got: {wgsl}");
+}
+
+#[test]
+fn nested_same_name_loops_probe_independently() {
+    // `for i in 0..1 { let a: u32 = i + 1; for i in 0..2 { let b: i32
+    // = i + 1; } }` — the inner `i` shadows the outer: each probe
+    // adopts from its own body (outer u32, inner i32), never the
+    // other's anchors.
+    let i_plus_one = || Expr::Binary {
+        lhs: Box::new(ident("i")),
+        op: BinOp::Add,
+        rhs: Box::new(bare_int("1")),
+    };
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        ReturnType::Default,
+        vec![Stmt::For(ForLoop {
+            var: "i".to_string(),
+            var_ty: None,
+            from: bare_int("0"),
+            to: bare_int("1"),
+            inclusive: false,
+            body: Block {
+                stmts: vec![
+                    local("a", Some(u32_ty()), Some(i_plus_one())),
+                    Stmt::For(ForLoop {
+                        var: "i".to_string(),
+                        var_ty: None,
+                        from: bare_int("0"),
+                        to: bare_int("2"),
+                        inclusive: false,
+                        body: Block {
+                            stmts: vec![local("b", Some(i32_ty()), Some(i_plus_one()))],
+                        },
+                    }),
+                ],
+            },
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(
+        wgsl.contains("var i = 0u;"),
+        "outer adopts u32, got: {wgsl}"
+    );
+    assert!(wgsl.contains("i < 1u;"), "got: {wgsl}");
+    assert!(
+        wgsl.contains("var i = 0i;"),
+        "inner adopts i32, got: {wgsl}"
+    );
+    assert!(wgsl.contains("i < 2i;"), "got: {wgsl}");
+}
+
+#[test]
 fn switch_selector_subtree_is_walked() {
     // `match x + select(0, 1, c)` with `x: u32` — the selector subtree
     // is walked (the select anchors through the binary operand), and
@@ -1878,9 +2063,10 @@ fn unprovable_loop_var_shadows_outer_binding() {
 
 #[test]
 fn multi_component_swizzle_registers_vector_type() {
-    // `let v = vec4u(0, 0, 0, 0); let mut w = v.xy(); w[0] = select(0, 1, cond);` —
-    // the two-component swizzle is vector-valued, so `w` registers a
-    // vec2 of the base scalar and the element assignment anchors.
+    // `let v = vec4u(0, 0, 0, 0); let mut w = v.xy(); w[0] = select(0, 1,
+    // cond);` — the two-component swizzle is vector-valued, so `w`
+    // registers a vec2 of the base scalar and the element assignment
+    // anchors.
     let mut m = module(vec![fn_item(
         "f",
         vec![arg("cond", Type::Scalar(ScalarType::Bool))],

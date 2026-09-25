@@ -1336,3 +1336,46 @@ The token is rejected on `sampler_comparison` declarations, whose layout
 is always `Comparison`. The CPU sampler is untouched: a non-filtering
 GPU sampler is nearest-only by definition, which is exactly
 `SamplerState::default()`.
+
+### 2026-09-25: Backward loop-variable inference is a probe, not a constraint solver (wgsl-rs#154)
+
+**Problem:** `for i in 0..1 { let x: u32 = i + 1; }` compiled as Rust —
+rustc infers `i: u32` backward from the body — but rendered invalid
+WGSL: the suffix pass inferred the loop variable's type only forward
+from the range bounds, so a fully-bare range left the variable
+untyped, WGSL concretized it to i32, and the body's `1` (anchored u32
+by the `let`) rendered as `i + 1u`, which naga rejects as an i32+u32
+add. This was the original #154 repro; the typed-bound forms
+(`0..1u32`, `0u32..1u32`) were already covered by the forward rule.
+A blanket error or warning on bare bounds was rejected: bare i32 loops
+are idiomatic and working (`for i in 0..16` in the roundtrip corpus),
+parse-time placement cannot see template or runtime-substituted bounds
+(the 2026-09-21 deshadow-slot decision), and rustc accepting the
+source means a diagnostic would enshrine the two-worlds divergence as
+policy instead of fixing the bug.
+
+**Decision:** extend `walk_for` with a probe — the pass stays an
+anchoring pass, never a type checker. When neither bound proves the
+variable's type, the body is walked once with the variable registered
+as an unprovable scope binding and its name pushed onto a probe frame;
+`expect`'s identifier case records every concrete `u32`/`i32`
+expectation that lands on the name, targeting the innermost matching
+frame so same-name shadowing records to the shadowing loop. Unanimous
+anchors adopt the type: the bounds get suffixed and the body re-walks
+with the variable typed (idempotent — only empty suffixes are ever
+written). Conflicting anchors (source that would not have compiled as
+Rust) or none leave the loop bare, preserving the "unprovable — do
+not anchor" boundary from 2026-09-22. Three conversion contexts never
+pin the variable, mirroring rustc: cast operands (`i as u32` converts
+rather than unifies, so the loop stays i32-legal), and shift /
+shift-assign counts (u32 in WGSL but independently typed in Rust —
+`x << i` compiles with an i32 count). Recording also requires the
+scope lookup to resolve the name unprovable, so an adopted variable on
+the body re-walk and inner shadowing `let`s never record.
+
+Known one-hop limits, consistent with the pass's design: transitive
+anchoring (`let y = i; let x: u32 = y + 1;`) and array indexing
+(`a[i]` anchors nothing; index positions rely on abstract-int
+coercion) do not pin the variable — indexing with a bare-range loop
+variable remains invalid WGSL and needs its own decision, as does the
+WGSL-side shift-count typing when the count is the variable itself.

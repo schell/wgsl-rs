@@ -67,6 +67,21 @@ pub fn sum_inclusive(n: u32) -> u32 {
 }
 ```
 
+The loop variable's type follows its uses, like Rust. A typed bound types the variable (`n: u32` in the examples above), and a fully-bare range falls back to `i32` unless the body pins the variable to another type:
+
+```rust
+pub fn weighted_steps() -> u32 {
+    let mut total: u32 = 0;
+    for i in 0..4 {
+        let step: u32 = i + 1;
+        total += step;
+    }
+    total
+}
+```
+
+Here rustc infers `i: u32` from the `let`, so the loop variable is `u32` on the GPU side too.
+
 Loop bounds must be literals or `const`. For variable bounds, annotate the expression with `#[wgsl_allow(non_literal_loop_bounds)]`:
 
 ```rust

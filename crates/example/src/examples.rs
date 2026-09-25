@@ -1127,6 +1127,11 @@ pub mod texture_example {
     texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
     // A sampler for filtering the texture
     sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+    // A cube texture (e.g. skybox) and its array sibling
+    texture!(group(1), binding(0), SKYBOX: TextureCube<f32>);
+    texture!(group(1), binding(1), SKYBOX_ARRAY: TextureCubeArray<f32>);
+    // Cube gather also works on integer-sampled cube textures (WGSL 17.7.2)
+    texture!(group(1), binding(2), SKYBOX_I: TextureCube<i32>);
 
     // Fragment input with texture coordinates
     pub struct FragmentInput {
@@ -1147,6 +1152,22 @@ pub mod texture_example {
         let albedo = texture_sample(DIFFUSE_TEX, TEX_SAMPLER, input.uv);
 
         FragmentOutput { color: albedo }
+    }
+
+    // Gather one component from the 4 texels around the skybox direction.
+    pub fn skybox_gather(dir: Vec3f) -> Vec4f {
+        texture_gather(0u32, SKYBOX, TEX_SAMPLER, dir)
+    }
+
+    // Gather from a cube array layer with an i32 array index.
+    pub fn skybox_array_gather(dir: Vec3f, layer: i32) -> Vec4f {
+        texture_gather_array(1u32, SKYBOX_ARRAY, TEX_SAMPLER, dir, layer)
+    }
+
+    // Gather the red channel of an integer-sampled cube, converted to f32.
+    pub fn skybox_gather_i32(dir: Vec3f) -> Vec4f {
+        let g = texture_gather(0u32, SKYBOX_I, TEX_SAMPLER, dir);
+        vec4f(f32(g.x()), f32(g.y()), f32(g.z()), f32(g.w()))
     }
 }
 

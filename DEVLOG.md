@@ -1385,3 +1385,50 @@ anchoring (`let y = i; let x: u32 = y + 1;`) and array indexing
 coercion) do not pin the variable — indexing with a bare-range loop
 variable remains invalid WGSL and needs its own decision, as does the
 WGSL-side shift-count typing when the count is the variable itself.
+
+### 2026-09-25: Non-depth sampled textures take `f32` levels only; cube gather reuses the 2D gather (wgsl-rs#157)
+
+**Problem:** `TextureSampleLevel<_, i32>` and `<_, u32>` existed for
+`Texture1D<f32>`, `Texture2D<f32>`, `Texture3D<f32>`, and `TextureCube<f32>`,
+but the WGSL spec only permits integer levels on *depth* textures. The
+runtime's trait impls are the Rust-world type checker — this is the
+mechanism behind "Rust type system catches all WGSL errors" (see
+2025-12-27) — so these impls let Rust-world code compile while the
+rendered `textureSampleLevel(tex, s, coords, 1u)` failed WGSL
+validation. The `texture_cube<ST>` and `texture_cube_array<ST>`
+`textureGather` overloads (`ST` in {f32, i32, u32}) were also missing
+entirely.
+
+**Decision:** delete the integer-level impls; only `TextureSampleLevel<_, f32>`
+remains for non-depth sampled textures (depth textures keep their
+integer-level overloads per the spec — this crate does not expose them).
+For gather, the 4-texel gather logic (address modes, `floor(u*w - 0.5)`
+texel selection, clamping, and the spec's `(u_min,v_max), (u_max,v_max),
+(u_max,v_min), (u_min,v_min)` component order) moved from the
+`Texture2D<f32>` impl into a generic `gather_texture_2d` helper.
+`TextureGather<Vec3f>` for `TextureCube<f32/i32/u32>` and
+`TextureGatherArray<Vec3f, u32|i32>` for `TextureCubeArray<f32/i32/u32>`
+layer on top: `select_cube_face` maps the direction to a face and
+projected `(u, v)`, then the shared helper gathers from that face's 2D
+data. This mirrors the sampling side, where `sample_texture_cube` already
+delegates to `sample_texture_2d`, and keeps one gather code path for all
+texture kinds. Integer sampled types return `Vec4i`/`Vec4u`, and i32
+array indices clamp negatives to 0 the same way the existing i32-index
+sample impls do.
+
+**Known divergence (cube face edges):** the GPU roundtrip test (Metal,
+`advanced_cube_gather`/`advanced_cube_array_gather`) exposed that GPU
+cube `textureGather` fetches texels that fall past a face edge
+*seamlessly* from the adjacent face (standard cube-map hardware
+behavior, matching the spec's "handled as in ordinary texture sampling"),
+while this crate's CPU clamps within the face — for gather and for
+`textureSample` alike, since `sample_texture_cube` delegates to the
+face-clamping 2D path. The two worlds agree bit-exactly whenever the 2x2
+gather footprint stays inside the face; the roundtrip sweep keeps
+directions in the face interior for that reason. Matching the seamless
+behavior would require per-texel re-projection through the inverse cube
+transform for gather and cross-face bilinear interpolation for
+`textureSample` — a follow-up of its own; cube *corners* (footprint off
+the face on both axes) are additionally hardware-ambiguous (observed: a
+component-2 gather returning a value not present in any face's blue
+channel).

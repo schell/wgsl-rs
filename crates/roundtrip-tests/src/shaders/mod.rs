@@ -58,7 +58,8 @@
 //! - [`texture_operations`] — Texture functions: `texture_load`,
 //!   `texture_sample` on 2D sampled textures
 //! - [`advanced_texture_operations`] — Advanced texture builtins:
-//!   `texture_sample_grad/level/bias`, offsets, gather, and 2D-array variants
+//!   `texture_sample_grad/level/bias`, offsets, gather (2D, 2D-array, cube,
+//!   cube-array), and 2D-array variants
 //! - [`storage_texture_operations`] — Storage texture builtins:
 //!   `texture_store`, `texture_load_storage` on `texture_storage_2d`
 //!
@@ -67,7 +68,7 @@
 //! The following categories are intended for future implementation:
 //! - **Depth texture GPU roundtrip** — `texture_sample_compare*` and
 //!   `texture_gather_compare*` (depth upload/readback path)
-//! - **Additional texture families** — cube/3D/multisampled and remaining
+//! - **Additional texture families** — 3D/multisampled and remaining
 //!   gather/sample variant combinations
 
 pub mod advanced_texture_operations;

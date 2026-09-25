@@ -1365,13 +1365,19 @@ anchors adopt the type: the bounds get suffixed and the body re-walks
 with the variable typed (idempotent — only empty suffixes are ever
 written). Conflicting anchors (source that would not have compiled as
 Rust) or none leave the loop bare, preserving the "unprovable — do
-not anchor" boundary from 2026-09-22. Three conversion contexts never
-pin the variable, mirroring rustc: cast operands (`i as u32` converts
-rather than unifies, so the loop stays i32-legal), and shift /
-shift-assign counts (u32 in WGSL but independently typed in Rust —
-`x << i` compiles with an i32 count). Recording also requires the
+not anchor" boundary from 2026-09-22. Shift and shift-assign counts
+never pin the variable, mirroring rustc (u32 in WGSL but independently
+typed in Rust — `x << i` compiles with an i32 count). Recording also
+requires the
 scope lookup to resolve the name unprovable, so an adopted variable on
-the body re-walk and inner shadowing `let`s never record.
+the body re-walk and inner shadowing `let`s never record. The PR review
+tightened casts further: the pass's pre-existing cast-target
+expectation (`5 as u32` suffixing the literal to `5u`) suffixes
+mixed-type operands invalid — `(i + 1) as u32` with an i32 loop
+variable rendered `u32(i + 1u)`, an i32+u32 add naga rejects — and
+rustc infers cast operands independently of the target anyway (the
+literal falls back to i32), so cast operands are walked bare and
+anchor only through their own typed siblings.
 
 Known one-hop limits, consistent with the pass's design: transitive
 anchoring (`let y = i; let x: u32 = y + 1;`) and array indexing

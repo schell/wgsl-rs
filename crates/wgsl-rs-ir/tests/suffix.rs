@@ -479,7 +479,12 @@ fn generic_struct_fields_substitute_type_args() {
 }
 
 #[test]
-fn cast_propagates_target_type() {
+fn cast_operand_walks_bare() {
+    // `5 as u32` — rustc infers the literal independently of the cast
+    // target (it falls back to i32), so no expectation flows into the
+    // operand. Walking it with the target type breaks mixed-type
+    // operands: `(i + 1) as u32` with an i32 `i` rendered `u32(i +
+    // 1u)`, an i32+u32 add naga rejects (PR #203 review).
     let mut m = module(vec![fn_item(
         "f",
         vec![],
@@ -490,7 +495,8 @@ fn cast_propagates_target_type() {
         }))],
     )]);
     let wgsl = render(&mut m);
-    assert!(wgsl.contains("5u"), "got: {wgsl}");
+    assert!(wgsl.contains("u32(5)"), "got: {wgsl}");
+    assert!(!wgsl.contains("5u"), "got: {wgsl}");
 }
 
 #[test]
@@ -1258,6 +1264,44 @@ fn cast_operand_does_not_pin_bare_loop_var() {
     assert!(wgsl.contains("var i = 0;"), "got: {wgsl}");
     assert!(wgsl.contains("i < 1;"), "got: {wgsl}");
     assert!(wgsl.contains("u32(i)"), "got: {wgsl}");
+}
+
+#[test]
+fn cast_operand_mixed_types_stay_coherent() {
+    // PR #203 review: `for i in 0..1 { let x: u32 = (i + 1) as u32; }`
+    // — rustc keeps `i` i32 (the cast decouples the operand from the
+    // outer context), so the inner `1` must not adopt the cast target
+    // either: it rendered `u32(i + 1u)`, an i32+u32 add naga rejects.
+    let mut m = module(vec![fn_item(
+        "f",
+        vec![],
+        ReturnType::Default,
+        vec![Stmt::For(ForLoop {
+            var: "i".to_string(),
+            var_ty: None,
+            from: bare_int("0"),
+            to: bare_int("1"),
+            inclusive: false,
+            body: Block {
+                stmts: vec![local(
+                    "x",
+                    Some(u32_ty()),
+                    Some(Expr::Cast {
+                        lhs: Box::new(Expr::Binary {
+                            lhs: Box::new(ident("i")),
+                            op: BinOp::Add,
+                            rhs: Box::new(bare_int("1")),
+                        }),
+                        ty: Box::new(u32_ty()),
+                    }),
+                )],
+            },
+        })],
+    )]);
+    let wgsl = render(&mut m);
+    assert!(wgsl.contains("var i = 0;"), "got: {wgsl}");
+    assert!(wgsl.contains("u32((i + 1))"), "got: {wgsl}");
+    assert!(!wgsl.contains("1u"), "got: {wgsl}");
 }
 
 #[test]

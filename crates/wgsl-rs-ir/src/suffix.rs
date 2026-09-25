@@ -18,7 +18,6 @@
 //!   elements, swizzles),
 //! * array literals and struct constructor fields (struct constructors
 //!   self-anchor through the struct registry even without an outer annotation),
-//! * casts,
 //! * binary and comparison operands (a bare literal adopts the provable scalar
 //!   type of the other operand),
 //! * `for` bounds from the loop variable's type — provable from a range bound,
@@ -40,6 +39,10 @@
 //!   are never suffixed — WGSL wants abstract integers there.
 //! * Array-index expressions stay bare: WGSL coerces the abstract integer in
 //!   `a[0]` to either index type, so there is nothing to fix.
+//! * Cast operands are walked bare: rustc infers the operand independently of
+//!   the cast target (`5 as u32` keeps the literal at its `i32` fallback), and
+//!   a target expectation suffixes mixed-type operands invalid — `(i + 1) as
+//!   u32` with an `i32` `i` must not render `u32(i + 1u)`.
 //! * Float expectations never touch integer literals: the IR cannot contain an
 //!   integer literal in an `f32` context, because Rust would have rejected the
 //!   source.
@@ -640,10 +643,10 @@ struct SuffixPass {
     /// innermost frame matching the name, so same-name shadowing records
     /// to the shadowing loop.
     loop_probes: Vec<(String, Vec<ScalarType>)>,
-    /// Depth of conversion contexts (cast operands, shift counts) in
-    /// which an expectation must not pin a probed loop variable: a cast
-    /// converts rather than unifies, and a shift count is `u32` in WGSL
-    /// but independently typed in Rust.
+    /// Depth of conversion contexts (shift and shift-assign counts) in
+    /// which an expectation must not pin a probed loop variable: the
+    /// count is `u32` in WGSL but independently typed in Rust, so
+    /// adopting it would diverge from rustc's inference.
     probe_suppressed: usize,
 }
 
@@ -1044,14 +1047,18 @@ impl SuffixPass {
                     self.expect(&mut field.expr, field_ty.as_ref());
                 }
             }
-            Expr::Cast { lhs, ty } => {
-                // A cast converts instead of unifying — the operand's
-                // type is decoupled from the outer context (`for i in
-                // 0..1 { (i as u32); }` keeps `i` i32 in Rust) — so
-                // nothing inside a cast pins a probed loop variable.
-                self.probe_suppressed += 1;
-                self.expect(lhs, Some(ty));
-                self.probe_suppressed -= 1;
+            Expr::Cast { lhs, .. } => {
+                // A cast converts instead of unifying: rustc infers the
+                // operand independently of the target (`5 as u32`
+                // keeps the literal at its i32 fallback), and an
+                // expectation here suffixes mixed-type operands
+                // invalid — `(i + 1) as u32` with an i32 loop
+                // variable must not render `u32(i + 1u)`. Walked
+                // bare, the operand's own typed siblings still
+                // anchor through the binary walk, and a probed loop
+                // var records only from those real unifications —
+                // the same ones rustc makes.
+                self.expect(lhs, None);
             }
             Expr::Binary { lhs, op, rhs } => {
                 // Shifts are handled separately: the count is `u32` in

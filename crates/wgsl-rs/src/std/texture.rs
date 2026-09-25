@@ -366,29 +366,6 @@ impl TextureSampleLevel<f32, f32> for Texture1D<f32> {
     }
 }
 
-impl TextureSampleLevel<f32, i32> for Texture1D<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: f32, level: i32) -> Self::Output {
-        let sampler_state = sampler.get();
-        let level = if level < 0 { 0u32 } else { level as u32 };
-        let data = self.get();
-        let result = sample_texture_1d(&data, &sampler_state, coords, level);
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
-impl TextureSampleLevel<f32, u32> for Texture1D<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: f32, level: u32) -> Self::Output {
-        let sampler_state = sampler.get();
-        let data = self.get();
-        let result = sample_texture_1d(&data, &sampler_state, coords, level);
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
 impl TextureSampleBias<f32, f32> for Texture1D<f32> {
     type Output = Vec4f;
 
@@ -632,29 +609,6 @@ impl TextureSampleLevel<Vec2f, f32> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleLevel<Vec2f, i32> for Texture2D<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: Vec2f, level: i32) -> Self::Output {
-        let sampler_state = sampler.get();
-        let level = if level < 0 { 0u32 } else { level as u32 };
-        let data = self.get();
-        let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), level);
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
-impl TextureSampleLevel<Vec2f, u32> for Texture2D<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: Vec2f, level: u32) -> Self::Output {
-        let sampler_state = sampler.get();
-        let data = self.get();
-        let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), level);
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
 impl TextureSampleBaseClampToEdge<Vec2f> for Texture2D<f32> {
     type Output = Vec4f;
 
@@ -791,29 +745,8 @@ impl TextureGather<Vec2f> for Texture2D<f32> {
     fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
-        let (w, h) = data.dimensions(0);
-        if w == 0 || h == 0 {
-            return vec4f(0.0, 0.0, 0.0, 0.0);
-        }
-        let u = SamplerState::apply_address_mode(sampler_state.address_mode_u, coords.x());
-        let v = SamplerState::apply_address_mode(sampler_state.address_mode_v, coords.y());
-        let texel_x = (u * w as f32 - 0.5).floor();
-        let texel_y = (v * h as f32 - 0.5).floor();
-        let c = component.min(3) as usize;
-        let get = |x: f32, y: f32| -> f32 {
-            let xi = (x as i32).clamp(0, w as i32 - 1) as u32;
-            let yi = (y as i32).clamp(0, h as i32 - 1) as u32;
-            data.get_pixel(xi, yi, 0).map(|p| p[c]).unwrap_or(0.0)
-        };
-        // WGSL gather component order:
-        // x = (u_min, v_max), y = (u_max, v_max), z = (u_max, v_min), w = (u_min,
-        // v_min)
-        vec4f(
-            get(texel_x, texel_y + 1.0),
-            get(texel_x + 1.0, texel_y + 1.0),
-            get(texel_x + 1.0, texel_y),
-            get(texel_x, texel_y),
-        )
+        let g = gather_texture_2d(&data, &sampler_state, coords.x(), coords.y(), component);
+        vec4f(g[0], g[1], g[2], g[3])
     }
 }
 
@@ -1337,43 +1270,6 @@ impl TextureSampleLevel<Vec3f, f32> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleLevel<Vec3f, i32> for Texture3D<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: i32) -> Self::Output {
-        let level = if level < 0 { 0u32 } else { level as u32 };
-        let sampler_state = sampler.get();
-        let data = self.get();
-        let result = sample_texture_3d(
-            &data,
-            &sampler_state,
-            coords.x(),
-            coords.y(),
-            coords.z(),
-            level,
-        );
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
-impl TextureSampleLevel<Vec3f, u32> for Texture3D<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: u32) -> Self::Output {
-        let sampler_state = sampler.get();
-        let data = self.get();
-        let result = sample_texture_3d(
-            &data,
-            &sampler_state,
-            coords.x(),
-            coords.y(),
-            coords.z(),
-            level,
-        );
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
 impl TextureSampleLevelOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
     type Output = Vec4f;
 
@@ -1581,43 +1477,6 @@ impl TextureSampleLevel<Vec3f, f32> for TextureCube<f32> {
     }
 }
 
-impl TextureSampleLevel<Vec3f, i32> for TextureCube<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: i32) -> Self::Output {
-        let level = if level < 0 { 0u32 } else { level as u32 };
-        let sampler_state = sampler.get();
-        let data = self.get();
-        let result = sample_texture_cube(
-            &data,
-            &sampler_state,
-            coords.x(),
-            coords.y(),
-            coords.z(),
-            level,
-        );
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
-impl TextureSampleLevel<Vec3f, u32> for TextureCube<f32> {
-    type Output = Vec4f;
-
-    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: u32) -> Self::Output {
-        let sampler_state = sampler.get();
-        let data = self.get();
-        let result = sample_texture_cube(
-            &data,
-            &sampler_state,
-            coords.x(),
-            coords.y(),
-            coords.z(),
-            level,
-        );
-        vec4f(result[0], result[1], result[2], result[3])
-    }
-}
-
 impl TextureSampleBias<Vec3f, f32> for TextureCube<f32> {
     type Output = Vec4f;
 
@@ -1645,6 +1504,60 @@ impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for TextureCube<f32> {
         let result =
             sample_texture_cube(&data, &sampler_state, coords.x(), coords.y(), coords.z(), 0);
         vec4f(result[0], result[1], result[2], result[3])
+    }
+}
+
+impl TextureGather<Vec3f> for TextureCube<f32> {
+    type Output = Vec4f;
+
+    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_cube(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            component,
+        );
+        vec4f(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGather<Vec3f> for TextureCube<i32> {
+    type Output = Vec4i;
+
+    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_cube(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            component,
+        );
+        vec4i(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGather<Vec3f> for TextureCube<u32> {
+    type Output = Vec4u;
+
+    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_cube(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            component,
+        );
+        vec4u(g[0], g[1], g[2], g[3])
     }
 }
 
@@ -1879,6 +1792,123 @@ impl TextureSampleGradArray<Vec3f, i32, Vec3f, Vec3f> for TextureCubeArray<f32> 
         ddy: Vec3f,
     ) -> Self::Output {
         self.sample_grad_array(sampler, coords, array_index.max(0) as u32, ddx, ddy)
+    }
+}
+
+impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: u32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            component,
+        );
+        vec4f(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<f32> {
+    type Output = Vec4f;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: i32,
+    ) -> Self::Output {
+        self.gather_array(component, sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<i32> {
+    type Output = Vec4i;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: u32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            component,
+        );
+        vec4i(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<i32> {
+    type Output = Vec4i;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: i32,
+    ) -> Self::Output {
+        self.gather_array(component, sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<u32> {
+    type Output = Vec4u;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: u32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+            component,
+        );
+        vec4u(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<u32> {
+    type Output = Vec4u;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec3f,
+        array_index: i32,
+    ) -> Self::Output {
+        self.gather_array(component, sampler, coords, array_index.max(0) as u32)
     }
 }
 
@@ -4553,5 +4583,177 @@ mod tests {
         assert!((color.x() - 0.3).abs() < 0.001);
         assert!((color.y() - 0.6).abs() < 0.001);
         assert!((color.z() - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_cube_gather() {
+        // A 2x2 face with four distinct colors. Gathering along the face's
+        // major axis lands at u = v = 0.5, so the base texel is (0, 0) and the
+        // gathered 2x2 block covers the whole face in WGSL order:
+        // x = (u_min, v_max), y = (u_max, v_max), z = (u_max, v_min),
+        // w = (u_min, v_min).
+        let tex: TextureCube<f32> = TextureCube::new(0, 0);
+        tex.init(2);
+        tex.data.write().faces[0].set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]); // red
+        tex.data.write().faces[0].set_pixel(1, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
+        tex.data.write().faces[0].set_pixel(0, 1, 0, [0.0, 0.0, 1.0, 1.0]); // blue
+        tex.data.write().faces[0].set_pixel(1, 1, 0, [1.0, 1.0, 0.0, 1.0]); // yellow
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Direction (1, 0, 0) selects the +X face at its center.
+        let g = texture_gather(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0));
+        assert!((g.x() - 0.0).abs() < 0.001, "expected blue's r");
+        assert!((g.y() - 1.0).abs() < 0.001, "expected yellow's r");
+        assert!((g.z() - 0.0).abs() < 0.001, "expected green's r");
+        assert!((g.w() - 1.0).abs() < 0.001, "expected red's r");
+
+        // Component 1 gathers the green channel instead.
+        let g = texture_gather(1u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0));
+        assert!((g.x() - 0.0).abs() < 0.001, "expected blue's g");
+        assert!((g.y() - 1.0).abs() < 0.001, "expected yellow's g");
+        assert!((g.z() - 1.0).abs() < 0.001, "expected green's g");
+        assert!((g.w() - 0.0).abs() < 0.001, "expected red's g");
+
+        // Face selection: the -X face is selected by (-1, 0, 0) and is
+        // untouched, so the gather reads default (0.0) texels.
+        let g = texture_gather(0u32, &tex, &sampler, vec3f(-1.0, 0.0, 0.0));
+        assert!((g.x() - 0.0).abs() < 0.001, "expected default -X texels");
+        assert!((g.y() - 0.0).abs() < 0.001, "expected default -X texels");
+        assert!((g.z() - 0.0).abs() < 0.001, "expected default -X texels");
+        assert!((g.w() - 0.0).abs() < 0.001, "expected default -X texels");
+    }
+
+    #[test]
+    fn test_texture_cube_gather_integer_sampled_types() {
+        // Per WGSL spec 17.7.2, textureGather supports texture_cube<i32> and
+        // texture_cube<u32> in addition to texture_cube<f32>.
+        let tex_i: TextureCube<i32> = TextureCube::new(0, 0);
+        tex_i.init(2);
+        tex_i.data.write().faces[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_i.data.write().faces[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_i.data.write().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_i.data.write().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+
+        let tex_u: TextureCube<u32> = TextureCube::new(0, 0);
+        tex_u.init(2);
+        tex_u.data.write().faces[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_u.data.write().faces[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_u.data.write().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_u.data.write().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let g = texture_gather(0u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0));
+        assert_eq!(g, vec4i(30, 40, 20, 10));
+
+        let g = texture_gather(0u32, &tex_u, &sampler, vec3f(1.0, 0.0, 0.0));
+        assert_eq!(g, vec4u(30, 40, 20, 10));
+
+        // The component selector also works on integer sampled types.
+        let g = texture_gather(3u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0));
+        assert_eq!(g, vec4i(100, 100, 100, 100));
+    }
+
+    #[test]
+    fn test_texture_cube_gather_zero_direction() {
+        // A zero-length direction is degenerate (GPU behavior undefined);
+        // the CPU implementation deterministically gathers from face 0 at
+        // its center rather than producing NaN.
+        let tex: TextureCube<f32> = TextureCube::new(0, 0);
+        tex.init(2);
+        for y in 0..2 {
+            for x in 0..2 {
+                tex.data.write().faces[0].set_pixel(x, y, 0, [0.5, 0.0, 0.0, 1.0]);
+            }
+        }
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let g = texture_gather(0u32, &tex, &sampler, vec3f(0.0, 0.0, 0.0));
+        assert!(g.x().is_finite(), "zero direction should not produce NaN");
+        assert!((g.x() - 0.5).abs() < 0.001);
+        assert!((g.y() - 0.5).abs() < 0.001);
+        assert!((g.z() - 0.5).abs() < 0.001);
+        assert!((g.w() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_cube_array_gather() {
+        let tex: TextureCubeArray<f32> = TextureCubeArray::new(0, 0);
+        tex.init(2, 2);
+        // Layer 0, +X face: r = 0.5 everywhere.
+        for y in 0..2 {
+            for x in 0..2 {
+                tex.data.write().cubes[0].faces[0].set_pixel(x, y, 0, [0.5, 0.0, 0.0, 1.0]);
+            }
+        }
+        // Layer 1, +X face: r = 0.75 everywhere.
+        for y in 0..2 {
+            for x in 0..2 {
+                tex.data.write().cubes[1].faces[0].set_pixel(x, y, 0, [0.75, 0.0, 0.0, 1.0]);
+            }
+        }
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // u32 array index selects the layer.
+        let g = texture_gather_array(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
+        assert!((g.x() - 0.5).abs() < 0.001, "expected layer 0");
+        assert!((g.w() - 0.5).abs() < 0.001, "expected layer 0");
+
+        let g = texture_gather_array(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0), 1u32);
+        assert!((g.x() - 0.75).abs() < 0.001, "expected layer 1");
+        assert!((g.w() - 0.75).abs() < 0.001, "expected layer 1");
+
+        // i32 array indices are accepted per spec; negatives clamp to 0.
+        let g = texture_gather_array(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0), 1i32);
+        assert!(
+            (g.x() - 0.75).abs() < 0.001,
+            "expected layer 1 via i32 index"
+        );
+
+        let g = texture_gather_array(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0), -1i32);
+        assert!(
+            (g.x() - 0.5).abs() < 0.001,
+            "negative index clamps to layer 0"
+        );
+
+        // Out-of-range indices clamp to the last layer.
+        let g = texture_gather_array(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0), 99u32);
+        assert!(
+            (g.x() - 0.75).abs() < 0.001,
+            "out-of-range index clamps to last layer"
+        );
+    }
+
+    #[test]
+    fn test_texture_cube_array_gather_integer_sampled_types() {
+        let tex_i: TextureCubeArray<i32> = TextureCubeArray::new(0, 0);
+        tex_i.init(2, 1);
+        tex_i.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [7, 0, 0, 1]);
+        tex_i.data.write().cubes[0].faces[0].set_pixel(1, 0, 0, [8, 0, 0, 1]);
+        tex_i.data.write().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
+        tex_i.data.write().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
+
+        let tex_u: TextureCubeArray<u32> = TextureCubeArray::new(0, 0);
+        tex_u.init(2, 1);
+        tex_u.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [7, 0, 0, 1]);
+        tex_u.data.write().cubes[0].faces[0].set_pixel(1, 0, 0, [8, 0, 0, 1]);
+        tex_u.data.write().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
+        tex_u.data.write().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let g = texture_gather_array(0u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
+        assert_eq!(g, vec4i(9, 11, 8, 7));
+
+        let g = texture_gather_array(0i32, &tex_u, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
+        assert_eq!(g, vec4u(9, 11, 8, 7));
     }
 }

@@ -829,6 +829,9 @@ pub trait TextureSampleArray<Coords, ArrayIndex> {
 }
 
 /// Trait for textures that support `textureSampleLevel`.
+///
+/// Per the WGSL spec, the `level` parameter must be `f32` for non-depth
+/// sampled textures; only depth textures accept `i32`/`u32` levels.
 pub trait TextureSampleLevel<Coords, Level> {
     /// The output type
     type Output;
@@ -2623,5 +2626,83 @@ pub(crate) fn sample_texture_cube_array<T: Copy + Default + Into<f32> + From<f32
     data.cubes
         .get(layer)
         .map(|cube| sample_texture_cube(cube, sampler_state, dx, dy, dz, level))
+        .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
+}
+
+/// Gathers one component from the 4 texels that would be used in bilinear
+/// filtering of a 2D texture.
+///
+/// `u` and `v` are normalized coordinates; the sampler's address modes are
+/// applied before texel selection. The returned values follow the WGSL
+/// `textureGather` component order: `x` = (u_min, v_max), `y` = (u_max,
+/// v_max), `z` = (u_max, v_min), `w` = (u_min, v_min). Per the spec, the
+/// gather always reads mip level 0.
+pub(crate) fn gather_texture_2d<T: Copy + Default>(
+    data: &TextureData2D<T>,
+    sampler_state: &SamplerState,
+    u: f32,
+    v: f32,
+    component: u32,
+) -> [T; 4] {
+    let (w, h) = data.dimensions(0);
+    if w == 0 || h == 0 {
+        return std::array::from_fn(|_| T::default());
+    }
+    let u = SamplerState::apply_address_mode(sampler_state.address_mode_u, u);
+    let v = SamplerState::apply_address_mode(sampler_state.address_mode_v, v);
+    let texel_x = (u * w as f32 - 0.5).floor();
+    let texel_y = (v * h as f32 - 0.5).floor();
+    let c = component.min(3) as usize;
+    let get = |x: f32, y: f32| -> T {
+        let xi = (x as i32).clamp(0, w as i32 - 1) as u32;
+        let yi = (y as i32).clamp(0, h as i32 - 1) as u32;
+        data.get_pixel(xi, yi, 0).map(|p| p[c]).unwrap_or_default()
+    };
+    // WGSL gather component order:
+    // x = (u_min, v_max), y = (u_max, v_max), z = (u_max, v_min), w = (u_min,
+    // v_min)
+    [
+        get(texel_x, texel_y + 1.0),
+        get(texel_x + 1.0, texel_y + 1.0),
+        get(texel_x + 1.0, texel_y),
+        get(texel_x, texel_y),
+    ]
+}
+
+/// Gathers one component from the 4 texels of the cube face selected by the
+/// direction `(dx, dy, dz)`.
+///
+/// Face selection and `(u, v)` projection follow [`select_cube_face`]; the
+/// gather itself is performed on the selected face via [`gather_texture_2d`].
+pub(crate) fn gather_texture_cube<T: Copy + Default>(
+    data: &TextureDataCube<T>,
+    sampler_state: &SamplerState,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+    component: u32,
+) -> [T; 4] {
+    let (face, u, v) = select_cube_face(dx, dy, dz);
+    gather_texture_2d(&data.faces[face], sampler_state, u, v, component)
+}
+
+/// Gathers one component from the 4 texels of the cube layer selected by
+/// `array_index`.
+///
+/// The `array_index` is clamped to `[0, num_layers - 1]` before gathering
+/// from the selected cube via [`gather_texture_cube`].
+pub(crate) fn gather_texture_cube_array<T: Copy + Default>(
+    data: &TextureDataCubeArray<T>,
+    sampler_state: &SamplerState,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+    array_index: u32,
+    component: u32,
+) -> [T; 4] {
+    let layer = (array_index as usize).min(data.cubes.len().saturating_sub(1));
+    data.cubes
+        .get(layer)
+        .map(|cube| gather_texture_cube(cube, sampler_state, dx, dy, dz, component))
         .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
 }

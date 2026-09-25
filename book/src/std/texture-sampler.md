@@ -37,6 +37,32 @@ transpiler picks the right overload from argument types.
 > `texture_sample` and `texture_sample_bias`/`texture_sample_compare` are
 > restricted to the fragment stage in WGSL.
 
+> The `level` parameter of `texture_sample_level` must be `f32`, per the
+> WGSL spec. wgsl-rs does not expose a level parameter for depth textures
+> (`texture_sample_compare_level` always samples at mip 0).
+
+## Gather functions
+
+`textureGather` reads one channel of the 4 texels that would be used in
+bilinear filtering, returning them as a `vec4<ST>` in the order
+`(u_min,v_max), (u_max,v_max), (u_max,v_min), (u_min,v_min)`.
+
+| Function | WGSL Equivalent | Texture kinds |
+|----------|-----------------|---------------|
+| `texture_gather(component, tex, sampler, coords)` | `textureGather` | 2D, cube |
+| `texture_gather(component, tex, sampler, coords)` | `textureGather` | 2D, cube |
+| `texture_gather_offset(component, tex, sampler, coords, offset)` | `textureGather` | 2D |
+| `texture_gather_array(component, tex, sampler, coords, array_index)` | `textureGather` | cube array |
+| `texture_gather_depth(tex, sampler, coords)` | `textureGather` | depth 2D |
+| `texture_gather_depth(tex, sampler, coords, offset)` | `textureGather` | depth 2D |
+| `texture_gather_depth_array(tex, sampler, coords, array_index)` | `textureGather` | depth 2D array |
+| `texture_gather_compare(tex, cmp_sampler, coords, ref)` | `textureGatherCompare` | depth 2D |
+| `texture_gather_compare(tex, cmp_sampler, coords, ref, offset)` | `textureGatherCompare` | depth 2D |
+| `texture_gather_compare_array(tex, cmp_sampler, coords, array_index, ref)` | `textureGatherCompare` | depth 2D array |
+
+Cube gathers support `f32`, `i32`, and `u32` sampled types, and cube-array
+gathers accept `u32` or `i32` array indices, matching the WGSL spec.
+
 ## Load / store / query
 
 | Function | WGSL Equivalent | Description |

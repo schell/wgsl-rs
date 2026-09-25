@@ -1,7 +1,7 @@
 //! Roundtrip tests for advanced texture builtins.
 //!
-//! Covers gradient/level/bias/offset sampling, gather, and depth compare
-//! variants for 2D and 2D-array textures.
+//! Covers gradient/level/bias/offset sampling, gather (2D, 2D-array, cube,
+//! and cube-array), and depth compare variants.
 
 #![allow(dead_code)]
 
@@ -120,6 +120,101 @@ pub mod tex2d_array_variants {
         let c = texture_sample_grad_array(TEX, S, uv, layer, ddx, ddy);
         let d = texture_sample_array_offset(TEX, S, uv, layer, vec2i(1, 0));
         vec4f(a.x, b.y, c.z, d.w)
+    }
+}
+
+#[wgsl]
+pub mod tex_cube_gather_variants {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), CUBE_TEX: TextureCube<f32>);
+    sampler!(group(0), binding(1), S: Sampler);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        // Map the 8x8 target onto the 6 cube faces: rows 0-5 select a face
+        // band, columns sweep (a, b) across the non-major axes. Values stay
+        // within (-0.6, 0.6) so the band axis is the strict major axis and
+        // the 2x2 gather footprint stays inside the face: GPUs fetch cube
+        // face-edge texels seamlessly from the adjacent face, while the CPU
+        // clamps within the face (a documented two-worlds divergence), so
+        // the sweep stays in the face interior.
+        let a = (input.position.x - 4.0) / 6.0;
+        let b = (input.position.y - 4.0) / 6.0;
+        let band = u32(input.position.y) % 6u32;
+        let mut dir = vec3f(a, b, 1.0);
+        if band == 0u32 {
+            dir = vec3f(1.0, a, b);
+        } else if band == 1u32 {
+            dir = vec3f(-1.0, a, b);
+        } else if band == 2u32 {
+            dir = vec3f(a, 1.0, b);
+        } else if band == 3u32 {
+            dir = vec3f(a, -1.0, b);
+        } else if band == 5u32 {
+            dir = vec3f(a, b, -1.0);
+        }
+        let g0 = texture_gather(0u32, CUBE_TEX, S, dir);
+        let g1 = texture_gather(2u32, CUBE_TEX, S, dir);
+        vec4f(g0.x, g0.w, g1.y, g1.z)
+    }
+}
+
+#[wgsl]
+pub mod tex_cube_array_gather_variants {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), CUBE_ARRAY_TEX: TextureCubeArray<f32>);
+    sampler!(group(0), binding(1), S: Sampler);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        let a = (input.position.x - 4.0) / 6.0;
+        let b = (input.position.y - 4.0) / 6.0;
+        let band = u32(input.position.y) % 6u32;
+        let mut dir = vec3f(a, b, 1.0);
+        if band == 0u32 {
+            dir = vec3f(1.0, a, b);
+        } else if band == 1u32 {
+            dir = vec3f(-1.0, a, b);
+        } else if band == 2u32 {
+            dir = vec3f(a, 1.0, b);
+        } else if band == 3u32 {
+            dir = vec3f(a, -1.0, b);
+        } else if band == 5u32 {
+            dir = vec3f(a, b, -1.0);
+        }
+        // Alternate between the two layers per column, exercising both the
+        // u32 and i32 array index overloads.
+        let layer = u32(input.position.x) % 2u32;
+        let layer_i = i32(layer);
+        let g0 = texture_gather_array(0u32, CUBE_ARRAY_TEX, S, dir, layer);
+        let g1 = texture_gather_array(3u32, CUBE_ARRAY_TEX, S, dir, layer_i);
+        vec4f(g0.x, g0.w, g1.y, g1.z)
     }
 }
 
@@ -305,6 +400,76 @@ fn write_cpu_texture2d_array(tex: &wgsl_rs::std::Texture2DArray<f32>, layers: &[
     tex.set(data);
 }
 
+/// Face size for the cube textures (each of the 6 faces is FACE x FACE).
+const FACE: u32 = 4;
+
+fn build_cube_face_pixels(face: u32, offset: u32) -> Vec<[u8; 4]> {
+    let mut pixels = vec![[0u8; 4]; (FACE * FACE) as usize];
+    for y in 0..FACE {
+        for x in 0..FACE {
+            let idx = (y * FACE + x) as usize;
+            pixels[idx] = [
+                ((x * 17 + y * 9 + face * 31 + offset) % 256) as u8,
+                ((x * 7 + y * 21 + face * 13 + offset) % 256) as u8,
+                ((x * 13 + y * 5 + face * 29 + offset) % 256) as u8,
+                ((x * 3 + y * 11 + face * 41 + offset) % 256) as u8,
+            ];
+        }
+    }
+    pixels
+}
+
+fn write_cpu_texture_cube(tex: &wgsl_rs::std::TextureCube<f32>, faces: &[Vec<[u8; 4]>]) {
+    let mut data = wgsl_rs::std::TextureDataCube::<f32>::new(FACE);
+    for (face, pixels) in faces.iter().enumerate() {
+        for y in 0..FACE {
+            for x in 0..FACE {
+                let px = pixels[(y * FACE + x) as usize];
+                data.faces[face].set_pixel(
+                    x,
+                    y,
+                    0,
+                    [
+                        px[0] as f32 / 255.0,
+                        px[1] as f32 / 255.0,
+                        px[2] as f32 / 255.0,
+                        px[3] as f32 / 255.0,
+                    ],
+                );
+            }
+        }
+    }
+    tex.set(data);
+}
+
+fn write_cpu_texture_cube_array(
+    tex: &wgsl_rs::std::TextureCubeArray<f32>,
+    layers: &[Vec<Vec<[u8; 4]>>],
+) {
+    let mut data = wgsl_rs::std::TextureDataCubeArray::<f32>::new(FACE, LAYERS);
+    for (layer, faces) in layers.iter().enumerate() {
+        for (face, pixels) in faces.iter().enumerate() {
+            for y in 0..FACE {
+                for x in 0..FACE {
+                    let px = pixels[(y * FACE + x) as usize];
+                    data.cubes[layer].faces[face].set_pixel(
+                        x,
+                        y,
+                        0,
+                        [
+                            px[0] as f32 / 255.0,
+                            px[1] as f32 / 255.0,
+                            px[2] as f32 / 255.0,
+                            px[3] as f32 / 255.0,
+                        ],
+                    );
+                }
+            }
+        }
+    }
+    tex.set(data);
+}
+
 fn write_cpu_depth2d(tex: &wgsl_rs::std::TextureDepth2D, depth: &[f32]) {
     let mut data = wgsl_rs::std::TextureDataDepth2D::new(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
@@ -413,6 +578,111 @@ fn create_gpu_texture2d_array_rgba8(
                 depth_or_array_layers: 1,
             },
         );
+    }
+    texture
+}
+
+/// Creates a 6-layer `Rgba8Unorm` texture suitable for a cube view.
+///
+/// Array layers follow the WebGPU cube face order: 0=+X, 1=-X, 2=+Y, 3=-Y,
+/// 4=+Z, 5=-Z.
+fn create_gpu_texture_cube_rgba8(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    faces: &[Vec<[u8; 4]>],
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("advanced_cube_source"),
+        size: wgpu::Extent3d {
+            width: FACE,
+            height: FACE,
+            depth_or_array_layers: 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    for face in 0..6 {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: face,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&faces[face as usize]),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(FACE * 4),
+                rows_per_image: Some(FACE),
+            },
+            wgpu::Extent3d {
+                width: FACE,
+                height: FACE,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    texture
+}
+
+/// Creates a 12-layer `Rgba8Unorm` texture suitable for a cube-array view.
+///
+/// Cube-array layer `i` occupies array layers `6i..6i+6`.
+fn create_gpu_texture_cube_array_rgba8(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layers: &[Vec<Vec<[u8; 4]>>],
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("advanced_cube_array_source"),
+        size: wgpu::Extent3d {
+            width: FACE,
+            height: FACE,
+            depth_or_array_layers: layers.len() as u32 * 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    for (layer, faces) in layers.iter().enumerate() {
+        for face in 0..6u32 {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer as u32 * 6 + face,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&faces[face as usize]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(FACE * 4),
+                    rows_per_image: Some(FACE),
+                },
+                wgpu::Extent3d {
+                    width: FACE,
+                    height: FACE,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
     }
     texture
 }
@@ -678,7 +948,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
     }
 
     fn description(&self) -> &str {
-        "sample_grad/level/bias/offset, gather, and compare variants for 2D/2D-array textures"
+        "sample_grad/level/bias/offset, gather (2D/2D-array/cube/cube-array), and compare variants"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -888,6 +1158,165 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 },
             );
             results.push(compare_rgba("advanced_tex2d_array_variants", &gpu, &cpu));
+        }
+
+        {
+            let cube_faces: Vec<Vec<[u8; 4]>> =
+                (0..6).map(|face| build_cube_face_pixels(face, 0)).collect();
+            let gpu_cube = create_gpu_texture_cube_rgba8(device, queue, &cube_faces);
+            let source_view = gpu_cube.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
+            });
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_cube_gather_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+
+            let mut linkage =
+                wgsl_rs::linkage::wgpu::analyze_wgsl_module(&tex_cube_gather_variants::WGSL_SOURCE)
+                    .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_cube_gather"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("CUBE_TEX", wgpu::BindingResource::TextureView(&source_view)),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_cube_gather bind group");
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_cube_gather",
+                &pipeline_layout,
+                &bg,
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            );
+
+            write_cpu_texture_cube(tex_cube_gather_variants::CUBE_TEX, &cube_faces);
+            tex_cube_gather_variants::S.set(SamplerState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result =
+                        tex_cube_gather_variants::frag_main(tex_cube_gather_variants::FragInput {
+                            position: builtins.position,
+                        });
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_cube_gather", &gpu, &cpu));
+        }
+
+        {
+            let cube_array_layers: Vec<Vec<Vec<[u8; 4]>>> = (0..LAYERS)
+                .map(|layer| {
+                    (0..6)
+                        .map(|face| build_cube_face_pixels(face, layer * 47))
+                        .collect()
+                })
+                .collect();
+            let gpu_cube_array =
+                create_gpu_texture_cube_array_rgba8(device, queue, &cube_array_layers);
+            let source_view = gpu_cube_array.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::CubeArray),
+                ..Default::default()
+            });
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_cube_array_gather_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &tex_cube_array_gather_variants::WGSL_SOURCE,
+            )
+            .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_cube_array_gather"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        (
+                            "CUBE_ARRAY_TEX",
+                            wgpu::BindingResource::TextureView(&source_view),
+                        ),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_cube_array_gather bind group");
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_cube_array_gather",
+                &pipeline_layout,
+                &bg,
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            );
+
+            write_cpu_texture_cube_array(
+                tex_cube_array_gather_variants::CUBE_ARRAY_TEX,
+                &cube_array_layers,
+            );
+            tex_cube_array_gather_variants::S.set(SamplerState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result = tex_cube_array_gather_variants::frag_main(
+                        tex_cube_array_gather_variants::FragInput {
+                            position: builtins.position,
+                        },
+                    );
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_cube_array_gather", &gpu, &cpu));
         }
 
         {

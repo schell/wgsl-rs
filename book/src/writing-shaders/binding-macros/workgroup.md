@@ -26,6 +26,7 @@ The Rust-side static is backed by a `LazyLock<RwLock<T>>`, so CPU code can read 
 
 ## Access
 
+- `load!(NAME)` copies the value out as a plain value.
 - `get!(NAME)` reads.
 - `get_mut!(NAME)` writes.
 

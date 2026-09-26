@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       load!(TEX) — textures and samplers are handles in WGSL, not loadable values; use the texture builtins (e.g. textureLoad) instead.'
+  --> tests/ui/fail/load_texture.rs:11:23
+   |
+11 |         let t = load!(TEX);
+   |                       ^^^

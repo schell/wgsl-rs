@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       load!(COUNTER) — atomics must be read with atomicLoad; write atomic_load(&get!(COUNTER)).'
+  --> tests/ui/fail/load_atomic.rs:11:15
+   |
+11 |         load!(COUNTER)
+   |               ^^^^^^^

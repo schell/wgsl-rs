@@ -59,4 +59,4 @@ let current: u32 = atomicLoad(&COUNTER);
 atomicAdd(&COUNTER, 1u32);
 ```
 
-Use the `get!` accessor for read-only atomic loads and `get_mut!` for mutating atomic operations, mirroring the storage-buffer conventions in [Binding Macros](../writing-shaders/binding-macros.md).
+Use the `get!` accessor for read-only atomic loads and `get_mut!` for mutating atomic operations, mirroring the storage-buffer conventions in [Binding Macros](../writing-shaders/binding-macros.md). Atomics are the one kind of module variable that `load!` cannot read — a plain value read of an atomic is invalid WGSL, so `load!(COUNTER)` is a compile error; read atomics through `atomic_load(&get!(COUNTER))`.

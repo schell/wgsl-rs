@@ -82,6 +82,7 @@ pub mod derivative_operations;
 pub mod exponential;
 pub mod geometric;
 pub mod literal_suffixes;
+pub mod load_macro;
 pub mod logical_operations;
 pub mod matrix_operations;
 pub mod modf_frexp_ldexp;
@@ -118,6 +119,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(logical_operations::LogicalOperationsTest),
         Box::new(literal_suffixes::LiteralSuffixTest),
         Box::new(literal_suffixes::LoopVarTypeTest),
+        Box::new(load_macro::LoadMacroTest),
         Box::new(select_operations::SelectOperationsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),

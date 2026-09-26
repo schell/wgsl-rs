@@ -12,8 +12,10 @@ use crate::parse::InterStageIo;
 
 mod builder;
 mod builtins;
+mod deref_validation;
 mod ir_convert;
 mod ir_emit;
+mod load_validation;
 mod module_id;
 mod monomorphize;
 mod parse;
@@ -729,13 +731,31 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let crate_path = attrs.crate_path();
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
-    let mono_result = monomorphize::run(&mut wgsl_module)?;
+    let mut mono_result = monomorphize::run(&mut wgsl_module)?;
     // Resolve associated type projections (e.g. `Self::Array`, `T::Array`)
     // to concrete types using the impl-block index.
     monomorphize::resolve_assoc_types(&mut wgsl_module)?;
     // Lower vector `==`/`!=` to `all(...)` wraps (#164). Runs after mono so
     // monomorphized functions have concrete param types.
     vector_cmp::rewrite(&mut wgsl_module.content);
+    // Validate `load!` targets against the module's declarations
+    // (textures/samplers, atomics, runtime arrays, unknown idents). The
+    // declaration table comes from the module body; monomorphized
+    // template bodies carry their own copies of generic functions and
+    // are checked against the same table.
+    let load_table = load_validation::ModuleVarTable::from_items(&wgsl_module.content, &crate_path);
+    load_validation::validate_items(&load_table, &mut wgsl_module.content)?;
+    for tmpl in mono_result.template_macros.iter_mut() {
+        load_validation::validate_items(&load_table, &mut tmpl.items)?;
+    }
+    // Error on derefs of locals that provably hold module variable values
+    // (e.g. `let u = get!(U); *u`) — they render invalid WGSL (wgsl-rs#153).
+    // Derefs of linkage accessors are elided at IR conversion; real
+    // pointers (`&x`, `ptr!`) pass through unchanged.
+    deref_validation::validate_items(&mut wgsl_module.content)?;
+    for tmpl in mono_result.template_macros.iter_mut() {
+        deref_validation::validate_items(&mut tmpl.items)?;
+    }
     let imports = wgsl_module.imports(&crate_path);
 
     // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the

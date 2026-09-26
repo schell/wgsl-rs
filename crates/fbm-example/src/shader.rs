@@ -86,11 +86,10 @@ pub mod fbm_shader {
     /// time.
     #[fragment]
     pub fn frag_main(input: FragIn) -> Vec4f {
-        // Load uniforms into local values.
-        // The f32() / vec2f() wrappers bridge the Rust ModuleVarReadGuard
-        // to plain values; in WGSL these become identity type constructors.
-        let res = vec2f(get!(U_RESOLUTION).x(), get!(U_RESOLUTION).y());
-        let time = f32(get!(U_TIME));
+        // Load uniforms into local values. `load!` copies the value out of
+        // the guard; in WGSL it is the bare variable reference.
+        let res = load!(U_RESOLUTION);
+        let time = load!(U_TIME);
         let st = input.frag_coord.xy() / res * 3.0;
 
         let qx = fbm(st + 0.00 * time);

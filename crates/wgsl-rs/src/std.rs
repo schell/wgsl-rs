@@ -30,7 +30,7 @@ pub use wgsl_rs_macros::{
     wgsl_ignore, workgroup, workgroup_size,
 };
 
-pub use crate::{discard, get, get_mut, slab_copy};
+pub use crate::{discard, get, get_mut, load, slab_copy};
 
 mod atomic;
 mod bitcast;
@@ -648,6 +648,42 @@ macro_rules! get_mut {
     };
 }
 
+/// Copies the value of a uniform, storage, or workgroup variable into a local.
+///
+/// `get!` returns a lock guard that dereferences to `&T`, which cannot be used
+/// directly in arithmetic. `load!` copies the value out of the guard and
+/// returns plain `T` by value, so it works in expressions. In WGSL this
+/// transpiles to the bare variable name (a plain value read).
+///
+/// The value type must be `Copy`; all built-in WGSL value types are.
+///
+/// # Forms
+///
+/// - `load!(VAR)` — loads the value of a concrete module variable.
+/// - `load!(VAR, T)` — loads the value of a *generic* module variable,
+///   downcasting to the concrete type `T` (like `get!(VAR, T)`).
+///
+/// # Example
+/// ```ignore
+/// uniform!(group(0), binding(0), U_RESOLUTION: Vec2f);
+///
+/// // Value semantics: usable directly in arithmetic
+/// let st = frag_coord.xy() / load!(U_RESOLUTION) * 3.0;
+/// ```
+#[macro_export]
+macro_rules! load {
+    ($var:ident) => {{
+        // The `let` binding forces the copy into an owned value; `*$var.get()`
+        // alone would be a place expression that still borrows the guard.
+        let v = *$var.get();
+        v
+    }};
+    ($var:ident, $ty:ty) => {{
+        let v = *$var.get_typed::<$ty>();
+        v
+    }};
+}
+
 /// Copy `$size` elements from `$src` starting at `$src_offset` into `$dest`
 /// starting at `$dest_offset`.
 ///
@@ -936,4 +972,31 @@ impl<T> ArrayLength for &RuntimeArray<T> {
 /// ```
 pub fn array_length(array: impl ArrayLength) -> u32 {
     array.array_length()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_copies_concrete_module_var_values() {
+        static U: Uniform<f32> = Uniform::new(0, 0);
+        static S: Storage<f32, Read> = Storage::new(0, 1);
+        static W: Workgroup<f32> = Workgroup::new();
+
+        U.set(1.5_f32);
+        S.set(2.5_f32);
+        W.set(3.5_f32);
+
+        assert_eq!(load!(U), 1.5_f32);
+        assert_eq!(load!(S), 2.5_f32);
+        assert_eq!(load!(W), 3.5_f32);
+    }
+
+    #[test]
+    fn load_typed_copies_generic_module_var_values() {
+        static G: Uniform = Uniform::new(0, 0);
+        G.set_typed(4.5_f32);
+        assert_eq!(load!(G, f32), 4.5_f32);
+    }
 }

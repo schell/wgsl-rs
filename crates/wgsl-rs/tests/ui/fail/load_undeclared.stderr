@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       load!(MISSING) — 'MISSING' is not a uniform!, storage! or workgroup! variable declared in this module.'
+  --> tests/ui/fail/load_undeclared.rs:10:15
+   |
+10 |         load!(MISSING)
+   |               ^^^^^^^

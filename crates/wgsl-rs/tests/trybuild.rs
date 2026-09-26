@@ -123,3 +123,39 @@ fn method_segment_turbofish_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/method_segment_turbofish_rejected.rs");
 }
+
+#[test]
+fn load_on_texture_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_texture.rs");
+}
+
+#[test]
+fn load_on_atomic_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_atomic.rs");
+}
+
+#[test]
+fn load_on_runtime_array_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_runtime_array.rs");
+}
+
+#[test]
+fn load_on_undeclared_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_undeclared.rs");
+}
+
+#[test]
+fn load_generic_one_arg_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_generic_one_arg.rs");
+}
+
+#[test]
+fn deref_of_value_local_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/deref_value_local.rs");
+}

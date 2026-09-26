@@ -2374,8 +2374,8 @@ pub enum Expr {
         elem_type: Box<Type>,
         len: Box<Expr>,
     },
-    /// Access to a generic linkage variable via `get!(VAR)` / `get!(VAR, T)`
-    /// or `get_mut!(VAR)` / `get_mut!(VAR, T)`.
+    /// Access to a generic linkage variable via `get!(VAR)` / `get!(VAR, T)`,
+    /// `get_mut!(VAR)` / `get_mut!(VAR, T)`, or `load!(VAR)` / `load!(VAR, T)`.
     ///
     /// The one-argument form (`get!(VAR)`) has `type_arg = None` and is used
     /// for concrete linkage variables. The two-argument form (`get!(VAR, T)`)
@@ -2384,7 +2384,7 @@ pub enum Expr {
     /// In WGSL output, this emits just the identifier. The type argument is
     /// only used for constraint collection during builder generation.
     LinkageAccess {
-        /// Whether this is `get!` or `get_mut!`.
+        /// Whether this is `get!`, `get_mut!`, or `load!`.
         kind: LinkageKind,
         /// The variable name (e.g., `FRAME`, `BINS`).
         ident: syn::Ident,
@@ -2399,11 +2399,12 @@ pub enum Expr {
     },
 }
 
-/// Whether a linkage access is `get!` or `get_mut!`.
+/// Whether a linkage access is `get!`, `get_mut!`, or `load!`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkageKind {
     Get,
     GetMut,
+    Load,
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -3011,21 +3012,21 @@ impl Expr {
                     UnsupportedSnafu {
                         span: mac.path.span(),
                         note: format!(
-                            "unsupported macro '{}!' in expression position, only mutate! is \
-                             supported",
+                            "unsupported macro '{}!' in expression position, only get!, get_mut!, \
+                             load! and mutate! are supported",
                             mac.path.to_token_stream()
                         ),
                     }
                     .fail()
                 };
-                // `get!`/`get_mut!` accept two forms:
+                // `get!`/`get_mut!`/`load!` accept two forms:
                 //   - `get!(IDENT)` for concrete module variables
                 //   - `get!(IDENT, T)` for generic module variables
                 // Both are preserved as `Expr::LinkageAccess` so the type
                 // argument can be collected for constraint checking during
                 // builder generation. In WGSL output, only the identifier
                 // is emitted.
-                let noop_macros = ["get_mut", "get"];
+                let noop_macros = ["load", "get_mut", "get"];
                 if let Some(macro_ident) = mac.path.get_ident() {
                     let macro_ident_str = macro_ident.to_string();
                     if noop_macros.contains(&macro_ident_str.as_str()) {
@@ -3056,10 +3057,10 @@ impl Expr {
                                 }
                                 .build()
                             })?;
-                        let kind = if macro_ident_str == "get_mut" {
-                            LinkageKind::GetMut
-                        } else {
-                            LinkageKind::Get
+                        let kind = match macro_ident_str.as_str() {
+                            "get_mut" => LinkageKind::GetMut,
+                            "load" => LinkageKind::Load,
+                            _ => LinkageKind::Get,
                         };
                         // Store the type argument as a `syn::Type` rather than
                         // converting to `parse::Type`. The type arg is a
@@ -3552,7 +3553,7 @@ impl Stmt {
                     if let Some(span) = expr_contains_linkage_access(&c.expr) {
                         return Err(Error::unsupported(
                             span,
-                            "get!/get_mut! cannot be used in const initializers (WGSL const \
+                            "get!/get_mut!/load! cannot be used in const initializers (WGSL const \
                              expressions cannot access storage/uniform buffers)"
                                 .to_string(),
                         ));

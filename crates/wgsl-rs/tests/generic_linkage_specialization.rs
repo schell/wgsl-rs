@@ -59,8 +59,10 @@ pub mod generic_linkage {
         // `T: Wgsl + Zeroable`
         //
         // These constraints are still solvable, as Vec4<f32> is `Zeroable`.
-        let mut bins = get_mut!(BINS, T);
-        *bins = T::zero();
+        // Assign through the accessor directly — a local bound from
+        // `get_mut!` holds a guard on the CPU and a value in WGSL, so
+        // dereferencing it would render invalid WGSL (issue #153).
+        *get_mut!(BINS, T) = T::zero();
     }
 
     #[compute]
@@ -71,7 +73,7 @@ pub mod generic_linkage {
         // `f32: std::any::Any + WgslScalar + Zeroable`
         // but we also need to show that f32 != [T; 4].
         // Maybe we could use associated types here?
-        let mut bins = get_mut!(BINS, f32);
-        *bins = 0.0;
+        // Assign through the accessor directly (see `main_zeroable`).
+        *get_mut!(BINS, f32) = 0.0;
     }
 }

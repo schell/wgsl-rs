@@ -1432,3 +1432,87 @@ transform for gather and cross-face bilinear interpolation for
 the face on both axes) are additionally hardware-ambiguous (observed: a
 component-2 gather returning a value not present in any face's blue
 channel).
+
+### 2026-09-26: `load!` — value semantics for module variables (wgsl-rs#86, #153)
+
+**Problem:** `get!(VAR)` returns a `ModuleVarReadGuard<T>` on the CPU, so
+uniform reads in expressions needed guard bridging — `f32(get!(U_TIME))`,
+`vec2f(get!(U_RESOLUTION).x(), get!(U_RESOLUTION).y())` — and the bridge
+rendered as identity constructors in WGSL. Worse, `*get!(VAR)` (the natural
+Rust spelling for dereferencing the guard) compiled fine but rendered
+`*VAR`, which wgpu rejects because module vars are value references in
+WGSL, not pointers (wgsl-rs#153).
+
+**Decision:** add a `load!` macro alongside `get!`/`get_mut!`. On the CPU it
+copies the value out of the read guard (`{ let v = *get!(X); v }`, so the
+value type must be `Copy`); in WGSL it renders the bare variable name, so
+`load!(U)` works directly in arithmetic with no bridge. `get!`/`get_mut!`
+keep their guard semantics — borrow-style uses like `&get!(A)` for atomics
+and `get!(SLAB)[idx]` indexing still work as before. Both `load!(VAR)` and
+`load!(VAR, T)` forms exist, mirroring `get!`.
+
+### 2026-09-26: `load!` targets are validated at expansion time; generics fail open
+
+**Problem:** without checks, `load!` could target bindings whose WGSL
+counterpart is not a loadable value — textures and samplers (handles),
+`Atomic<T>` values (WGSL requires `atomicLoad`), runtime-sized arrays
+(not copyable) — and each of these compiled fine, then failed wgpu
+validation at runtime. The same bug class as wgsl-rs#153: Rust code that
+compiles must not produce invalid WGSL (see 2025-12-27).
+
+**Decision:** validate `load!` targets in a dedicated pass
+(`load_validation.rs`) that runs after monomorphization, over the module
+body and every template body. A module-var table (name → kind + declared
+type) is built from the declarations; `load!` idents that resolve in the
+table are checked for binding kind (texture/sampler → error) and type
+shape (`Atomic`/`RuntimeArray` → error with the WGSL-correct alternative
+in the note). Unknown idents error too — unless the module imports
+another wgsl module (the prelude import `use <crate>::std::*` does not
+count), in which case the ident may be an imported module variable that
+the table cannot see, so validation fails open.
+
+Generic declarations (`uniform!(..., FRAME: impl Convert<f32>)`) with
+`load!(FRAME, T)` also fail open: the concrete type is only known at
+instantiation, and the `validate_with_instantiation_types` auto-test plus
+runtime wgpu validation backstop those cases. The two-argument form's
+type argument is still checked syntactically at its outermost
+constructor (`load!(BINS, RuntimeArray<f32>)` → error;
+`load!(BINS, Vec4<T>)` → allow). These checks are a footgun net, not a
+type system. One-argument `load!` on a generic variable errors with
+"use the two-argument form" — clearer than rustc's method-not-found.
+Note: wgsl-rs only supports `read_only`/`read_write` storage access
+modes (no write-only), so no access-mode check is needed — every
+`storage!` declaration is readable.
+
+### 2026-09-26: Guard-artifact derefs are elided; value-local derefs are compile errors (wgsl-rs#153)
+
+**Problem:** `*get!(VAR)` compiles on the CPU (the guard derefs to `T`)
+but rendered `*VAR` in WGSL — module variables are value references, not
+pointers, so wgpu rejected the shader ("the operand of the `*` operator
+must be a pointer"). The same applied to the left-hand side
+(`*get_mut!(VAR) = v`) and through a local (`let u = get!(U); *u`). In
+each case Rust code that compiles produced invalid WGSL — the bug class
+the 2025-12-27 decision forbids.
+
+**Decision:** a deref whose operand is a linkage accessor
+(`get!`/`get_mut!`/`load!`, one- or two-argument) is a Rust-side guard
+artifact: it is elided at IR conversion and the bare variable reference
+is emitted instead, on both sides of an assignment (`*get!(U)` renders
+`U`; `*get_mut!(DATA) = v` renders `DATA = v`). Real WGSL pointers —
+`&expr` references (including the atomics pattern
+`atomic_load(&get!(A))`) and `ptr!` — are untouched. Dereferencing a
+*local* that provably holds a module variable value (bound via
+`get!`/`get_mut!`/`load!`, or `*get!(VAR)`) is a compile error whose
+note points at `load!`; locals of unprovable shape (parameters, calls,
+names shadowed with mixed shapes) fail open — wgpu validation is the
+backstop. Rejected alternatives: a `store!(VAR, v)` macro (larger API
+surface; the natural Rust spelling now works), making `get!` return `T`
+directly (breaks borrow-style atomics and indexing), render-time type
+checks (local-value typing lives in the macro crate, which also gives
+better spans).
+
+Notably, the validator caught latent invalid WGSL in an existing
+`skip_validation` template test (`generic_linkage_specialization`):
+`let mut bins = get_mut!(BINS, T); *bins = T::zero();` had been
+rendering `*bins` all along. It now assigns through the accessor:
+`*get_mut!(BINS, T) = T::zero();`.

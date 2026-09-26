@@ -50,7 +50,7 @@ pub fn scale(p: Vec2f) -> Vec2f {
 }
 ```
 
-`load!` requires the value type to be `Copy` (all built-in value types are). It is a compile error on textures, samplers, and atomics — atomics must be read with `atomic_load(&get!(COUNTER))`.
+`load!` requires the value type to be `Copy` (all built-in value types are). It is a compile error on textures, samplers, atomics (read them with `atomic_load(&get!(COUNTER))`), and runtime-sized arrays — and the two-argument form is only for generic module variables.
 
 ## Derefs of Accessors
 

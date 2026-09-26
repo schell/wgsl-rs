@@ -743,7 +743,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // declaration table comes from the module body; monomorphized
     // template bodies carry their own copies of generic functions and
     // are checked against the same table.
-    let load_table = load_validation::ModuleVarTable::from_items(&wgsl_module.content);
+    let load_table = load_validation::ModuleVarTable::from_items(&wgsl_module.content, &crate_path);
     load_validation::validate_items(&load_table, &mut wgsl_module.content)?;
     for tmpl in mono_result.template_macros.iter_mut() {
         load_validation::validate_items(&load_table, &mut tmpl.items)?;

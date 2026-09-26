@@ -1479,7 +1479,10 @@ type argument is still checked syntactically at its outermost
 constructor (`load!(BINS, RuntimeArray<f32>)` → error;
 `load!(BINS, Vec4<T>)` → allow). These checks are a footgun net, not a
 type system. One-argument `load!` on a generic variable errors with
-"use the two-argument form" — clearer than rustc's method-not-found.
+"use the two-argument form" — clearer than rustc's method-not-found. The
+two-argument form on a *concrete* variable is rejected the same way (it
+has no `get_typed` on the CPU side, so it would fail to compile there
+regardless).
 Note: wgsl-rs only supports `read_only`/`read_write` storage access
 modes (no write-only), so no access-mode check is needed — every
 `storage!` declaration is readable.

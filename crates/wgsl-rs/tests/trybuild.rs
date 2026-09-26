@@ -131,6 +131,18 @@ fn load_on_texture_is_rejected() {
 }
 
 #[test]
+fn load_on_sampler_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_sampler.rs");
+}
+
+#[test]
+fn load_concrete_two_arg_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/load_concrete_two_arg.rs");
+}
+
+#[test]
 fn load_on_atomic_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/load_atomic.rs");

@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       load!(U_TIME, T) — 'U_TIME' is a concrete module variable; use the one-argument form load!(U_TIME).'
+  --> tests/ui/fail/load_concrete_two_arg.rs:13:15
+   |
+13 |         load!(U_TIME, f32)
+   |               ^^^^^^

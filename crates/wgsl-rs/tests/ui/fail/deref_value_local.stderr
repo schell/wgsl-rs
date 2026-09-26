@@ -1,5 +1,5 @@
 error: Parsing error: 'Encountered unsupported Rust syntax:
-       '*u' dereferences a local that holds a module variable value. In WGSL, module variables are values, not pointers — bind the value with load! (let u = load!(VAR);) or deref the accessor directly (*get!(VAR)).'
+       '*u' dereferences a local that holds a module variable value. In WGSL, module variables are values, not pointers — bind the value with load! (let u = load!(U);) or deref the accessor directly (*get!(U)).'
   --> tests/ui/fail/deref_value_local.rs:14:10
    |
 14 |         *u

@@ -594,16 +594,17 @@ pub fn expr_from_parse(e: &parse::Expr) -> Result<ir::Expr> {
             rhs: Box::new(expr_from_parse(rhs)?),
         },
         parse::Expr::Unary { op, expr } => {
-            // A deref of a linkage accessor (`*get!(VAR)`, `*get_mut!(VAR)`,
-            // `*load!(VAR)`) is a Rust-side guard artifact: module variables
-            // are value references in WGSL, not pointers, so the `*` is
-            // elided and the bare variable reference is emitted instead
-            // (wgsl-rs#153). This applies on both sides of an assignment:
-            // `*get_mut!(VAR) = v` renders as `VAR = v`. Derefs of anything
-            // else (real pointers from `&expr` / `ptr!`) are checked by the
-            // deref validation pass and rendered unchanged.
+            // A deref of a linkage accessor (`*get!(VAR)`,
+            // `*get_mut!(VAR)`) is a Rust-side guard artifact: module
+            // variables are value references in WGSL, not pointers, so
+            // the `*` is elided and the bare variable reference is
+            // emitted instead (wgsl-rs#153). This applies on both sides of
+            // an assignment: `*get_mut!(VAR) = v` renders as `VAR = v`.
+            // Derefs of anything else (real pointers from `&expr` /
+            // `ptr!`) are checked by the deref validation pass and
+            // rendered unchanged.
             if let parse::UnOp::Deref(_) = op
-                && matches!(paren_peel(expr.as_ref()), parse::Expr::LinkageAccess { .. })
+                && matches!(expr.peel_parens(), parse::Expr::LinkageAccess { .. })
             {
                 return expr_from_parse(expr);
             }
@@ -791,14 +792,6 @@ fn compound_op(op: &parse::CompoundOp) -> ir::CompoundOp {
         parse::CompoundOp::BitXorAssign(_) => ir::CompoundOp::BitXorAssign,
         parse::CompoundOp::ShlAssign(_) => ir::CompoundOp::ShlAssign,
         parse::CompoundOp::ShrAssign(_) => ir::CompoundOp::ShrAssign,
-    }
-}
-
-/// Peel parentheses from an expression: `((x))` → `x`.
-fn paren_peel(e: &parse::Expr) -> &parse::Expr {
-    match e {
-        parse::Expr::Paren { inner, .. } => paren_peel(inner),
-        other => other,
     }
 }
 

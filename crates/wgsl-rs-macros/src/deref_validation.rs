@@ -11,9 +11,9 @@
 //! are compile errors here, with a note pointing at `load!`.
 //!
 //! Locals that cannot be proven to hold values (function parameters,
-//! calls, field accesses, shadowed bindings with mixed shapes) fail
-//! open — wgpu validation is the backstop. These checks are a footgun
-//! net, not a type system.
+//! calls, field accesses, names shadowed across scopes with differing
+//! shapes) fail open — wgpu validation is the backstop. These checks are
+//! a footgun net, not a type system.
 
 use std::collections::HashMap;
 
@@ -23,14 +23,33 @@ use crate::{
 };
 
 /// What a let-bound local holds, as far as its initializer can prove.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum LocalShape {
-    /// Holds a module variable value (`get!(VAR)`, `load!(VAR)`,
-    /// `*get!(VAR)`): a WGSL value, not a pointer.
-    Value,
+    /// Holds a module variable value (`get!(VAR)`, `*get!(VAR)`): a WGSL
+    /// value, not a pointer. Carries the module variable's name so the
+    /// error can suggest the concrete `load!` spelling.
+    Value(String),
     /// Holds a WGSL pointer (`&expr`): deref is valid.
     Pointer,
     /// Shape is not provable from the initializer alone; fail open.
+    Unknown,
+}
+
+impl LocalShape {
+    /// The shape's kind, ignoring the `Value` payload.
+    fn kind(&self) -> ShapeKind {
+        match self {
+            LocalShape::Value(_) => ShapeKind::Value,
+            LocalShape::Pointer => ShapeKind::Pointer,
+            LocalShape::Unknown => ShapeKind::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShapeKind {
+    Value,
+    Pointer,
     Unknown,
 }
 
@@ -48,16 +67,24 @@ pub(crate) fn validate_items(items: &mut [Item]) -> Result<(), Error> {
 /// Visitor that errors on derefs of locals that provably hold module
 /// variable values.
 struct DerefVisitor {
-    /// Let-bound locals of the function currently being visited, mapped
-    /// to the shape of their bindings. A name bound multiple times with
-    /// differing shapes is `Unknown` (fail open), since the scopes are
-    /// flattened.
+    /// Locals of the function currently being visited, mapped to the shape
+    /// of their bindings. Parameters are seeded as `Unknown`, and a name
+    /// bound multiple times with differing shapes is `Unknown` (fail
+    /// open), since the scopes are flattened.
     locals: HashMap<String, LocalShape>,
 }
 
 impl ParseVisitorMut for DerefVisitor {
     fn visit_fn(&mut self, f: &mut crate::parse::ItemFn) -> Result<(), Error> {
         self.locals.clear();
+        // Seed parameters as `Unknown`: a parameter may be a real WGSL
+        // pointer (`ptr!`), and a branch-local `let` shadowing a parameter
+        // must not poison derefs of the parameter outside that branch.
+        // With the parameter in the map, a colliding `let` downgrades the
+        // name to `Unknown` (fail open) instead of `Value`.
+        for arg in &f.inputs {
+            note_shape(&mut self.locals, arg.ident.to_string(), LocalShape::Unknown);
+        }
         collect_locals(&f.block, &mut self.locals);
         walk_fn(self, f)
     }
@@ -67,27 +94,19 @@ impl ParseVisitorMut for DerefVisitor {
             op: UnOp::Deref(_),
             expr,
         } = e
-            && let Expr::Ident(ident) = paren_peel(expr.as_ref())
-            && self.locals.get(&ident.to_string()) == Some(&LocalShape::Value)
+            && let Expr::Ident(ident) = expr.peel_parens()
+            && let Some(LocalShape::Value(var)) = self.locals.get(&ident.to_string())
         {
             return Err(Error::unsupported(
                 ident.span(),
                 format!(
                     "'*{ident}' dereferences a local that holds a module variable value. In WGSL, \
                      module variables are values, not pointers — bind the value with load! (let \
-                     {ident} = load!(VAR);) or deref the accessor directly (*get!(VAR))"
+                     {ident} = load!({var});) or deref the accessor directly (*get!({var}))"
                 ),
             ));
         }
         walk_expr(self, e)
-    }
-}
-
-/// Peel parentheses from an expression: `((x))` → `x`.
-fn paren_peel(e: &Expr) -> &Expr {
-    match e {
-        Expr::Paren { inner, .. } => paren_peel(inner),
-        other => other,
     }
 }
 
@@ -147,7 +166,7 @@ fn note_shape(locals: &mut HashMap<String, LocalShape>, name: String, shape: Loc
     locals
         .entry(name)
         .and_modify(|existing| {
-            if *existing != shape {
+            if existing.kind() != shape.kind() {
                 *existing = LocalShape::Unknown;
             }
         })
@@ -156,18 +175,18 @@ fn note_shape(locals: &mut HashMap<String, LocalShape>, name: String, shape: Loc
 
 /// The shape a binding takes from its initializer.
 fn init_shape(expr: &Expr) -> LocalShape {
-    match paren_peel(expr) {
+    match expr.peel_parens() {
         // `&expr` is always a WGSL pointer.
         Expr::Reference { .. } => LocalShape::Pointer,
         // A linkage accessor yields a guard on the CPU; in WGSL the bare
         // variable reference is a value, not a pointer.
-        Expr::LinkageAccess { .. } => LocalShape::Value,
+        Expr::LinkageAccess { ident, .. } => LocalShape::Value(ident.to_string()),
         Expr::Unary {
             op: UnOp::Deref(_),
             expr,
-        } => match paren_peel(expr.as_ref()) {
+        } => match expr.peel_parens() {
             // `*get!(VAR)` copies the value out — a value, not a pointer.
-            Expr::LinkageAccess { .. } => LocalShape::Value,
+            Expr::LinkageAccess { ident, .. } => LocalShape::Value(ident.to_string()),
             // `*&expr` takes the referenced value's shape, which is not
             // provable here; fail open.
             _ => LocalShape::Unknown,

@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    parse::{Error, Expr, Item, LinkageKind, Type},
+    parse::{Error, Expr, Item, LinkageKind, Type, is_wgsl_std_import},
     parse_visitor::{ParseVisitorMut, walk_expr},
 };
 
@@ -59,7 +59,7 @@ pub(crate) struct ModuleVarTable {
 
 impl ModuleVarTable {
     /// Build the table from the module's parsed items.
-    pub fn from_items(items: &[Item]) -> Self {
+    pub fn from_items(items: &[Item], crate_path: &syn::Path) -> Self {
         let mut vars = HashMap::new();
         let mut has_imports = false;
         for item in items {
@@ -114,10 +114,10 @@ impl ModuleVarTable {
                         // `use <crate_path>::std::*` is the built-in prelude
                         // import; it never carries module variables. Any
                         // other import may be another wgsl module, whose
-                        // variables this table cannot see.
-                        let is_std_import =
-                            module.segments.last().is_some_and(|seg| seg.ident == "std");
-                        if !is_std_import {
+                        // variables this table cannot see. The check matches
+                        // the full crate path so a user module named `std`
+                        // is not mistaken for the prelude.
+                        if !is_wgsl_std_import(crate_path, module) {
                             has_imports = true;
                         }
                     }
@@ -185,23 +185,17 @@ impl LoadVisitor<'_> {
                 ),
             ));
         }
+        // Declared-type shape errors apply to both forms — the declaration
+        // is the source of truth for what the variable holds.
+        match &info.ty {
+            Type::Atomic { .. } => return Err(not_loadable(ident, "Atomic")),
+            Type::RuntimeArray { .. } => return Err(not_loadable(ident, "RuntimeArray")),
+            _ => {}
+        }
         match type_arg {
-            // Two-argument generic form: check the syntactically outermost
-            // constructor of the type argument. Anything else may still be
-            // generic (`Vec4<T>`), so fail open — instantiation and wgpu
-            // validate the rest.
-            Some(ty) => {
-                if let Some(name) = outermost_path_ident(ty)
-                    && (name == "Atomic" || name == "RuntimeArray")
-                {
-                    return Err(not_loadable(ident, &name));
-                }
-                Ok(())
-            }
-            // One-argument form: check the declared type when concrete.
+            // One-argument form: fine on concrete variables; generic ones
+            // need the explicit type.
             None => match &info.ty {
-                Type::Atomic { .. } => Err(not_loadable(ident, "Atomic")),
-                Type::RuntimeArray { .. } => Err(not_loadable(ident, "RuntimeArray")),
                 Type::TypeParam { .. } => Err(Error::unsupported(
                     ident.span(),
                     format!(
@@ -210,6 +204,31 @@ impl LoadVisitor<'_> {
                     ),
                 )),
                 _ => Ok(()),
+            },
+            // Two-argument form: for generic variables only. On a generic
+            // declaration, check the syntactically outermost constructor
+            // of the type argument — anything else may still be generic
+            // (`Vec4<T>`), so fail open to instantiation and wgpu
+            // validation.
+            Some(ty) => match &info.ty {
+                Type::TypeParam { .. } => {
+                    if let Some(name) = outermost_path_ident(ty)
+                        && (name == "Atomic" || name == "RuntimeArray")
+                    {
+                        return Err(not_loadable(ident, &name));
+                    }
+                    Ok(())
+                }
+                // Concrete variables have no `get_typed` on the CPU side, so
+                // the two-argument form would fail to compile there anyway;
+                // reject it here with a clearer note.
+                _ => Err(Error::unsupported(
+                    ident.span(),
+                    format!(
+                        "load!({ident}, T) — '{ident}' is a concrete module variable; use the \
+                         one-argument form load!({ident})"
+                    ),
+                )),
             },
         }
     }

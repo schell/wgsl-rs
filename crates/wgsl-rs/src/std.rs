@@ -673,6 +673,8 @@ macro_rules! get_mut {
 #[macro_export]
 macro_rules! load {
     ($var:ident) => {{
+        // The `let` binding forces the copy into an owned value; `*$var.get()`
+        // alone would be a place expression that still borrows the guard.
         let v = *$var.get();
         v
     }};

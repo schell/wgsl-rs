@@ -20,7 +20,7 @@ pub mod hello_triangle {
 
     #[fragment]
     pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(get!(FRAME)) / 128.0), 0.0, 1.0)
+        vec4f(1.0, sin(f32(load!(FRAME)) / 128.0), 0.0, 1.0)
     }
 }
 ```
@@ -57,13 +57,15 @@ Argument annotations carry WGSL I/O attributes through to the generated signatur
 
 `Vec4f` and `Vec2f` are type aliases for `vec4<f32>` and `vec2<f32>` exposed by `wgsl_rs::std`. The lowercase `vec2f` / `vec4f` functions are the matching constructors. They mirror WGSL exactly, so Rust expressions like `vec4f(1.0, 0.0, 0.0, 1.0)` transpile directly to `vec4<f32>(1.0, 0.0, 0.0, 1.0)`.
 
-## `get!(FRAME)`
+## `load!(FRAME)`
 
 ```rust
-sin(f32(get!(FRAME)) / 128.0)
+sin(f32(load!(FRAME)) / 128.0)
 ```
 
-`get!(...)` is the runtime accessor for a declared uniform. On the Rust side it reads the bound value; in the generated WGSL it expands to the bare uniform reference `FRAME`. This lets the same expression serve both CPU evaluation (e.g. in dispatch-runtime tests) and the shader.
+`load!(...)` copies a declared uniform's value into a local, so it can be used directly in expressions. On the Rust side it reads the bound value; in the generated WGSL it expands to the bare uniform reference `FRAME`. This lets the same expression serve both CPU evaluation (e.g. in dispatch-runtime tests) and the shader.
+
+The `f32(...)` conversion is a real type conversion (`FRAME` is a `u32`), not part of the accessor. The sibling accessor `get!(...)` returns a guard instead of a value — useful for borrow-style access like field access or indexing.
 
 ## Generated WGSL
 

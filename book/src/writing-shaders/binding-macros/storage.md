@@ -34,7 +34,8 @@ pub static NAME: Storage<Type>;
 
 ## Access
 
-- `get!(NAME)` reads the buffer.
+- `load!(NAME)` copies the value out of the buffer as a plain value.
+- `get!(NAME)` reads the buffer as a guard.
 - `get_mut!(NAME)` writes to the buffer (only valid for `read_write`).
 
 ## Example: Compute Shader

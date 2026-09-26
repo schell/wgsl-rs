@@ -2374,8 +2374,8 @@ pub enum Expr {
         elem_type: Box<Type>,
         len: Box<Expr>,
     },
-    /// Access to a generic linkage variable via `get!(VAR)` / `get!(VAR, T)`
-    /// or `get_mut!(VAR)` / `get_mut!(VAR, T)`.
+    /// Access to a generic linkage variable via `get!(VAR)` / `get!(VAR, T)`,
+    /// `get_mut!(VAR)` / `get_mut!(VAR, T)`, or `load!(VAR)` / `load!(VAR, T)`.
     ///
     /// The one-argument form (`get!(VAR)`) has `type_arg = None` and is used
     /// for concrete linkage variables. The two-argument form (`get!(VAR, T)`)
@@ -2384,7 +2384,7 @@ pub enum Expr {
     /// In WGSL output, this emits just the identifier. The type argument is
     /// only used for constraint collection during builder generation.
     LinkageAccess {
-        /// Whether this is `get!` or `get_mut!`.
+        /// Whether this is `get!`, `get_mut!`, or `load!`.
         kind: LinkageKind,
         /// The variable name (e.g., `FRAME`, `BINS`).
         ident: syn::Ident,
@@ -2399,11 +2399,12 @@ pub enum Expr {
     },
 }
 
-/// Whether a linkage access is `get!` or `get_mut!`.
+/// Whether a linkage access is `get!`, `get_mut!`, or `load!`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkageKind {
     Get,
     GetMut,
+    Load,
 }
 
 impl TryFrom<&syn::Expr> for Expr {
@@ -3011,21 +3012,21 @@ impl Expr {
                     UnsupportedSnafu {
                         span: mac.path.span(),
                         note: format!(
-                            "unsupported macro '{}!' in expression position, only mutate! is \
-                             supported",
+                            "unsupported macro '{}!' in expression position, only get!, get_mut!, \
+                             load! are supported",
                             mac.path.to_token_stream()
                         ),
                     }
                     .fail()
                 };
-                // `get!`/`get_mut!` accept two forms:
+                // `get!`/`get_mut!`/`load!` accept two forms:
                 //   - `get!(IDENT)` for concrete module variables
                 //   - `get!(IDENT, T)` for generic module variables
                 // Both are preserved as `Expr::LinkageAccess` so the type
                 // argument can be collected for constraint checking during
                 // builder generation. In WGSL output, only the identifier
                 // is emitted.
-                let noop_macros = ["get_mut", "get"];
+                let noop_macros = ["load", "get_mut", "get"];
                 if let Some(macro_ident) = mac.path.get_ident() {
                     let macro_ident_str = macro_ident.to_string();
                     if noop_macros.contains(&macro_ident_str.as_str()) {
@@ -3056,10 +3057,10 @@ impl Expr {
                                 }
                                 .build()
                             })?;
-                        let kind = if macro_ident_str == "get_mut" {
-                            LinkageKind::GetMut
-                        } else {
-                            LinkageKind::Get
+                        let kind = match macro_ident_str.as_str() {
+                            "get_mut" => LinkageKind::GetMut,
+                            "load" => LinkageKind::Load,
+                            _ => LinkageKind::Get,
                         };
                         // Store the type argument as a `syn::Type` rather than
                         // converting to `parse::Type`. The type arg is a
@@ -3094,6 +3095,14 @@ impl Expr {
     /// Returns true if this expression is a literal value.
     pub fn is_literal(&self) -> bool {
         matches!(self, Expr::Lit(_))
+    }
+
+    /// Peel parentheses from an expression: `((x))` → `x`.
+    pub(crate) fn peel_parens(&self) -> &Expr {
+        match self {
+            Expr::Paren { inner, .. } => inner.peel_parens(),
+            other => other,
+        }
     }
 
     /// Returns the span of this expression.
@@ -3552,7 +3561,7 @@ impl Stmt {
                     if let Some(span) = expr_contains_linkage_access(&c.expr) {
                         return Err(Error::unsupported(
                             span,
-                            "get!/get_mut! cannot be used in const initializers (WGSL const \
+                            "get!/get_mut!/load! cannot be used in const initializers (WGSL const \
                              expressions cannot access storage/uniform buffers)"
                                 .to_string(),
                         ));
@@ -5536,6 +5545,25 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
     }
 }
 
+/// Returns true if `path` is the `std` prelude import of the wgsl-rs crate
+/// (e.g. `wgsl_rs::std` or a `crate_path`-configured equivalent).
+pub(crate) fn is_wgsl_std_import(wgsl_rs_crate_path: &syn::Path, path: &syn::Path) -> bool {
+    let wgsl_std = {
+        let mut std = wgsl_rs_crate_path.clone();
+        if !std.segments.empty_or_trailing() {
+            std.segments.push_punct(syn::token::PathSep::default());
+        }
+        std.segments.push_value(syn::PathSegment {
+            ident: quote::format_ident!("std"),
+            arguments: syn::PathArguments::None,
+        });
+        std
+    };
+    let wgsl_std = wgsl_std.into_token_stream().to_string();
+    let path = path.into_token_stream().to_string();
+    wgsl_std == path
+}
+
 impl ItemMod {
     pub fn syn_item_has_wgsl_ignore_attribute(item: &syn::Item) -> bool {
         let attrs: &[_] = match item {
@@ -5560,23 +5588,6 @@ impl ItemMod {
     }
 
     pub fn imports(&mut self, wgsl_rs_crate_path: &syn::Path) -> Vec<proc_macro2::TokenStream> {
-        fn is_wgsl_std(wgsl_rs_crate_path: &syn::Path, path: &syn::Path) -> bool {
-            let wgsl_std = {
-                let mut std = wgsl_rs_crate_path.clone();
-                if !std.segments.empty_or_trailing() {
-                    std.segments.push_punct(syn::token::PathSep::default());
-                }
-                std.segments.push_value(syn::PathSegment {
-                    ident: quote::format_ident!("std"),
-                    arguments: syn::PathArguments::None,
-                });
-                std
-            };
-            let wgsl_std = wgsl_std.into_token_stream().to_string();
-            let path = path.into_token_stream().to_string();
-            wgsl_std == path
-        }
-
         // Only import `builtin_constants` when the module actually uses a
         // builtin associated constant (`Vec3f::X` style). Importing
         // unconditionally injects ~58 const declarations into every
@@ -5591,7 +5602,7 @@ impl ItemMod {
                     // If this import is `use wgsl_rs::std::*;`, import the
                     // built-in constants (e.g. Vec3f::ZERO) only when one is
                     // actually used by the module.
-                    if is_wgsl_std(wgsl_rs_crate_path, path) {
+                    if is_wgsl_std_import(wgsl_rs_crate_path, path) {
                         if uses_builtin_consts {
                             imports.push(quote! {
                                 #wgsl_rs_crate_path::std::builtin_constants::WGSL_SOURCE

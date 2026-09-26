@@ -75,7 +75,7 @@ pub mod hello_triangle {
 
     #[fragment]
     pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(get!(FRAME)) / 128.0), 0.0, 1.0)
+        vec4f(1.0, sin(f32(load!(FRAME)) / 128.0), 0.0, 1.0)
     }
 }
 
@@ -261,7 +261,8 @@ pub mod impl_example {
         // Create a light using the explicit receiver syntax
         let light = Light::new(vec3f(0.0, 5.0, 0.0), Light::DEFAULT_INTENSITY);
 
-        // Call a method using explicit path syntax: Type::method(receiver, args)
+        // Call a method using explicit path syntax: Type::method(receiver,
+        // args)
         let attenuation = Light::attenuate(light, Light::DEFAULT_RANGE / 5.0);
 
         // Return a color based on attenuation
@@ -965,8 +966,8 @@ pub mod switch_example {
         let x: i32 = 1;
         let mut result = 0.0;
         // No default arm - WGSL will get auto-generated `default: {}`
-        // But Rust requires exhaustive matching, so we use a catch-all underscore
-        // that will be optimized out in the test below
+        // But Rust requires exhaustive matching, so we use a catch-all
+        // underscore that will be optimized out in the test below
         match x {
             0 => {
                 result = 0.0;
@@ -1059,7 +1060,8 @@ pub mod ptr_example {
     }
 
     // Double a value in-place through a pointer.
-    // Note: We use *p = *p * 2.0 instead of *p *= 2.0 to demonstrate dereference.
+    // Note: We use *p = *p * 2.0 instead of *p *= 2.0 to demonstrate
+    // dereference.
     pub fn double_value(p: ptr!(function, f32)) {
         *p = *p * 2.0;
     }
@@ -1104,8 +1106,9 @@ pub mod atomic_example {
     #[workgroup_size(64)]
     pub fn main(#[builtin(local_invocation_index)] local_idx: u32) {
         // Each invocation can access the shared atomic counter
-        // Note: atomicLoad/atomicStore builtins will be added in a future update
-        // For now, this demonstrates the type parsing and code generation
+        // Note: atomicLoad/atomicStore builtins will be added in a future
+        // update For now, this demonstrates the type parsing and code
+        // generation
         let _idx = local_idx;
     }
 }
@@ -2066,7 +2069,8 @@ pub mod builtin_constants {
         // non-square only have `ZERO`
         let _m1 = Mat4x3f::ZERO;
 
-        // vectors have `ONE`, `ZERO`, and `X`, `Y`, `Z`, `W` (where appropriate)
+        // vectors have `ONE`, `ZERO`, and `X`, `Y`, `Z`, `W` (where
+        // appropriate)
         let _v0 = Vec4f::X + Vec4f::ONE;
         let _v1 = Vec3u::ZERO;
         let _v2 = Vec2i::Y - Vec2i::X;

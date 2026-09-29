@@ -974,6 +974,129 @@ macro_rules! impl_vec4_rem {
     };
 }
 
+/// Implements vector-vector bitwise operations (BitAnd, BitOr, BitXor) for
+/// Vec2.
+///
+/// WGSL defines `&`, `|`, `^` only for the integer vector types (i32, u32) —
+/// never f32 or bool — so this macro is instantiated for those scalars
+/// only. Right-hand sides are same-type only; the spec has no scalar-RHS
+/// form. Bitwise ops cannot overflow, so unlike the arithmetic ops no
+/// wrapping variants are needed: both worlds agree bit-for-bit (wgsl-rs#186).
+macro_rules! impl_vec2_bitwise_ops {
+    ($scalar:ty) => {
+        impl std::ops::BitAnd for Vec2<$scalar> {
+            type Output = Self;
+            fn bitand(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x & rhs.x,
+                    y: self.y & rhs.y,
+                }
+            }
+        }
+        impl std::ops::BitOr for Vec2<$scalar> {
+            type Output = Self;
+            fn bitor(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x | rhs.x,
+                    y: self.y | rhs.y,
+                }
+            }
+        }
+        impl std::ops::BitXor for Vec2<$scalar> {
+            type Output = Self;
+            fn bitxor(self, rhs: Self) -> Self {
+                Vec2 {
+                    x: self.x ^ rhs.x,
+                    y: self.y ^ rhs.y,
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-vector bitwise operations (BitAnd, BitOr, BitXor) for
+/// Vec3.
+///
+/// See [`impl_vec2_bitwise_ops!`] for the integer-only scope rationale
+/// (wgsl-rs#186).
+macro_rules! impl_vec3_bitwise_ops {
+    ($scalar:ty) => {
+        impl std::ops::BitAnd for Vec3<$scalar> {
+            type Output = Self;
+            fn bitand(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x & rhs.x,
+                    y: self.y & rhs.y,
+                    z: self.z & rhs.z,
+                }
+            }
+        }
+        impl std::ops::BitOr for Vec3<$scalar> {
+            type Output = Self;
+            fn bitor(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x | rhs.x,
+                    y: self.y | rhs.y,
+                    z: self.z | rhs.z,
+                }
+            }
+        }
+        impl std::ops::BitXor for Vec3<$scalar> {
+            type Output = Self;
+            fn bitxor(self, rhs: Self) -> Self {
+                Vec3 {
+                    x: self.x ^ rhs.x,
+                    y: self.y ^ rhs.y,
+                    z: self.z ^ rhs.z,
+                }
+            }
+        }
+    };
+}
+
+/// Implements vector-vector bitwise operations (BitAnd, BitOr, BitXor) for
+/// Vec4.
+///
+/// See [`impl_vec2_bitwise_ops!`] for the integer-only scope rationale
+/// (wgsl-rs#186).
+macro_rules! impl_vec4_bitwise_ops {
+    ($scalar:ty) => {
+        impl std::ops::BitAnd for Vec4<$scalar> {
+            type Output = Self;
+            fn bitand(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x & rhs.x,
+                    y: self.y & rhs.y,
+                    z: self.z & rhs.z,
+                    w: self.w & rhs.w,
+                }
+            }
+        }
+        impl std::ops::BitOr for Vec4<$scalar> {
+            type Output = Self;
+            fn bitor(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x | rhs.x,
+                    y: self.y | rhs.y,
+                    z: self.z | rhs.z,
+                    w: self.w | rhs.w,
+                }
+            }
+        }
+        impl std::ops::BitXor for Vec4<$scalar> {
+            type Output = Self;
+            fn bitxor(self, rhs: Self) -> Self {
+                Vec4 {
+                    x: self.x ^ rhs.x,
+                    y: self.y ^ rhs.y,
+                    z: self.z ^ rhs.z,
+                    w: self.w ^ rhs.w,
+                }
+            }
+        }
+    };
+}
+
 /// Implements vector-scalar and scalar-vector binary operations for Vec2.
 macro_rules! impl_vec2_scalar_ops {
     ($scalar:ty) => {
@@ -1727,6 +1850,77 @@ macro_rules! impl_vec4_assign_ops {
     };
 }
 
+/// Implements bitwise compound assignment operations (BitAndAssign,
+/// BitOrAssign, BitXorAssign) for Vec2 with same-type right-hand sides.
+///
+/// `&=`, `|=`, `^=` are valid WGSL wherever the bitwise binary ops are
+/// (wgsl-rs#186). These delegate to the binary operators defined above.
+macro_rules! impl_vec2_bitwise_assign_ops {
+    ($scalar:ty) => {
+        impl std::ops::BitAndAssign for Vec2<$scalar> {
+            fn bitand_assign(&mut self, rhs: Self) {
+                *self = *self & rhs;
+            }
+        }
+        impl std::ops::BitOrAssign for Vec2<$scalar> {
+            fn bitor_assign(&mut self, rhs: Self) {
+                *self = *self | rhs;
+            }
+        }
+        impl std::ops::BitXorAssign for Vec2<$scalar> {
+            fn bitxor_assign(&mut self, rhs: Self) {
+                *self = *self ^ rhs;
+            }
+        }
+    };
+}
+
+/// Implements bitwise compound assignment operations (BitAndAssign,
+/// BitOrAssign, BitXorAssign) for Vec3 with same-type right-hand sides
+/// (wgsl-rs#186).
+macro_rules! impl_vec3_bitwise_assign_ops {
+    ($scalar:ty) => {
+        impl std::ops::BitAndAssign for Vec3<$scalar> {
+            fn bitand_assign(&mut self, rhs: Self) {
+                *self = *self & rhs;
+            }
+        }
+        impl std::ops::BitOrAssign for Vec3<$scalar> {
+            fn bitor_assign(&mut self, rhs: Self) {
+                *self = *self | rhs;
+            }
+        }
+        impl std::ops::BitXorAssign for Vec3<$scalar> {
+            fn bitxor_assign(&mut self, rhs: Self) {
+                *self = *self ^ rhs;
+            }
+        }
+    };
+}
+
+/// Implements bitwise compound assignment operations (BitAndAssign,
+/// BitOrAssign, BitXorAssign) for Vec4 with same-type right-hand sides
+/// (wgsl-rs#186).
+macro_rules! impl_vec4_bitwise_assign_ops {
+    ($scalar:ty) => {
+        impl std::ops::BitAndAssign for Vec4<$scalar> {
+            fn bitand_assign(&mut self, rhs: Self) {
+                *self = *self & rhs;
+            }
+        }
+        impl std::ops::BitOrAssign for Vec4<$scalar> {
+            fn bitor_assign(&mut self, rhs: Self) {
+                *self = *self | rhs;
+            }
+        }
+        impl std::ops::BitXorAssign for Vec4<$scalar> {
+            fn bitxor_assign(&mut self, rhs: Self) {
+                *self = *self ^ rhs;
+            }
+        }
+    };
+}
+
 // Float vectors: Add, Sub, Mul, Div, Rem
 impl_vec2_ops!(f32);
 impl_vec3_ops!(f32);
@@ -1772,6 +1966,25 @@ impl_vec4_assign_ops!(i32);
 impl_vec2_assign_ops!(u32);
 impl_vec3_assign_ops!(u32);
 impl_vec4_assign_ops!(u32);
+
+// Bitwise vector ops (wgsl-rs#186): `&`, `|`, `^` and `&=`, `|=`, `^=`,
+// componentwise. WGSL defines these only for the integer vector types
+// (i32, u32) — not f32, not bool — so they are instantiated for those
+// scalars only, with same-type right-hand sides (the spec has no
+// scalar-RHS form). Bitwise ops cannot overflow, so no wrapping variants
+// are needed; both worlds agree bit-for-bit.
+impl_vec2_bitwise_ops!(i32);
+impl_vec3_bitwise_ops!(i32);
+impl_vec4_bitwise_ops!(i32);
+impl_vec2_bitwise_ops!(u32);
+impl_vec3_bitwise_ops!(u32);
+impl_vec4_bitwise_ops!(u32);
+impl_vec2_bitwise_assign_ops!(i32);
+impl_vec3_bitwise_assign_ops!(i32);
+impl_vec4_bitwise_assign_ops!(i32);
+impl_vec2_bitwise_assign_ops!(u32);
+impl_vec3_bitwise_assign_ops!(u32);
+impl_vec4_bitwise_assign_ops!(u32);
 
 // Neg impls for signed types.
 
@@ -2083,6 +2296,154 @@ mod test {
         let mut m = Vec2 { x: i32::MIN, y: 1 };
         m *= -1;
         assert_eq!(m, Vec2 { x: i32::MIN, y: -1 });
+    }
+
+    #[test]
+    fn can_compile_module_with_bitwise_vector_ops() {
+        #[crate::wgsl(crate_path = crate)]
+        mod bitwise_vector_ops {
+            use crate::std::*;
+
+            pub fn _main() {
+                let a2 = vec2i(0b1100, 0b1010);
+                let b2 = vec2i(0b0110, 0b0001);
+                let _and2 = a2 & b2;
+                let _or2 = a2 | b2;
+                let _xor2 = a2 ^ b2;
+
+                let a3 = vec3u(0xF0u32, 0x0Fu32, 0xFFu32);
+                let b3 = vec3u(0x0Fu32, 0xF0u32, 0x0Fu32);
+                let _and3 = a3 & b3;
+                let _or3 = a3 | b3;
+                let _xor3 = a3 ^ b3;
+
+                let a4 = vec4u(0xF0F0u32, 0x0F0Fu32, 0xFFFFu32, 0x1234u32);
+                let b4 = vec4u(0x0FF0u32, 0xF00Fu32, 0x00FFu32, 0x4321u32);
+                let _and4 = a4 & b4;
+                let _or4 = a4 | b4;
+                let _xor4 = a4 ^ b4;
+
+                // Compound assignment (wgsl-rs#186): `&=`, `|=`, `^=` are
+                // valid WGSL wherever the bitwise binary ops are.
+                let mut c = a4;
+                c &= b4;
+                let mut d = a3;
+                d |= b3;
+                let mut e = a2;
+                e ^= b2;
+
+                // Mixed precedence (wgsl-rs#159): parses as
+                // `(a4 & b4) == b4` in Rust. The renderer parenthesizes so
+                // WGSL re-parses the same tree, and the vector `==`
+                // lowering (wgsl-rs#164) wraps it in `all(...)`.
+                let _cmp = select(0u32, 1u32, a4 & b4 == b4);
+            }
+        }
+
+        // The lowering must emit the WGSL bitwise compound assignment
+        // operators rather than expanded `x = x op y` forms, and binary
+        // expressions must render parenthesized (wgsl-rs#159) so the
+        // bitwise/comparison precedence divergence cannot re-bind them.
+        let src = bitwise_vector_ops::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("&="));
+        assert!(src.contains("|="));
+        assert!(src.contains("^="));
+        assert!(src.contains("(a4 & b4)"));
+        assert!(src.contains("(a4 | b4)"));
+        assert!(src.contains("(a4 ^ b4)"));
+        #[cfg(feature = "validation")]
+        bitwise_vector_ops::WGSL_SOURCE.validate().unwrap();
+    }
+
+    #[test]
+    fn bitwise_vector_ops_match_componentwise_scalars() {
+        let a = vec4u(0xF0F0F0F0, 0x0F0F0F0F, 0xFFFF0000, 0x12345678);
+        let b = vec4u(0x0FF00FF0, 0xF00FF00F, 0x00FFFF00, 0x87654321);
+        assert_eq!(
+            a & b,
+            vec4u(a.x() & b.x(), a.y() & b.y(), a.z() & b.z(), a.w() & b.w())
+        );
+        assert_eq!(
+            a | b,
+            vec4u(a.x() | b.x(), a.y() | b.y(), a.z() | b.z(), a.w() | b.w())
+        );
+        assert_eq!(
+            a ^ b,
+            vec4u(a.x() ^ b.x(), a.y() ^ b.y(), a.z() ^ b.z(), a.w() ^ b.w())
+        );
+
+        let mut c = a;
+        c &= b;
+        assert_eq!(c, a & b);
+        let mut d = a;
+        d |= b;
+        assert_eq!(d, a | b);
+        let mut e = a;
+        e ^= b;
+        assert_eq!(e, a ^ b);
+
+        // Signed vectors, including negative components.
+        let si = vec3i(-1, i32::MIN, 0x55555555);
+        let sj = vec3i(0x0F0F0F0F, -1, i32::MAX);
+        assert_eq!(
+            si & sj,
+            vec3i(si.x() & sj.x(), si.y() & sj.y(), si.z() & sj.z())
+        );
+        assert_eq!(
+            si | sj,
+            vec3i(si.x() | sj.x(), si.y() | sj.y(), si.z() | sj.z())
+        );
+        assert_eq!(
+            si ^ sj,
+            vec3i(si.x() ^ sj.x(), si.y() ^ sj.y(), si.z() ^ sj.z())
+        );
+
+        // Vec3 compound assignment — the one instantiation family the GPU
+        // modules check only partially — all three ops, both signs.
+        let mut h = si;
+        h &= sj;
+        assert_eq!(h, si & sj);
+        h = si;
+        h |= sj;
+        assert_eq!(h, si | sj);
+        h = si;
+        h ^= sj;
+        assert_eq!(h, si ^ sj);
+
+        let v3 = vec3u(0xF0F0F0F0, 0x0F0F0F0F, 0x12345678);
+        let w3 = vec3u(0x0F0F0F0F, 0xF0F0F0F0, 0x87654321);
+        let mut j = v3;
+        j &= w3;
+        assert_eq!(j, v3 & w3);
+        j = v3;
+        j |= w3;
+        assert_eq!(j, v3 | w3);
+        j = v3;
+        j ^= w3;
+        assert_eq!(j, v3 ^ w3);
+
+        let mut f = vec2i(0x7FFFFFFF, i32::MIN);
+        f &= vec2i(0x0F0F0F0F, 0xFF00FF00u32 as i32);
+        assert_eq!(
+            f,
+            vec2i(0x7FFFFFFF & 0x0F0F0F0F, i32::MIN & 0xFF00FF00u32 as i32)
+        );
+        f |= vec2i(0x70007000, 0x00FF00FF);
+        assert_eq!(
+            f,
+            vec2i(
+                (0x7FFFFFFF & 0x0F0F0F0F) | 0x70007000,
+                (i32::MIN & 0xFF00FF00u32 as i32) | 0x00FF00FF
+            )
+        );
+        f ^= vec2i(-1, -1);
+        assert_eq!(
+            f,
+            vec2i(
+                ((0x7FFFFFFF & 0x0F0F0F0F) | 0x70007000) ^ -1,
+                ((i32::MIN & 0xFF00FF00u32 as i32) | 0x00FF00FF) ^ -1
+            )
+        );
     }
 
     #[test]

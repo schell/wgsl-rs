@@ -41,6 +41,13 @@ wgsl-rs transpiles Rust operators to their WGSL equivalents. Most have a 1:1 map
 | `a << n` | `a << n` | shift left |
 | `a >> n` | `a >> n` | shift right |
 
+`&`, `|`, and `^` work on the integer types — `i32`, `u32`, and their
+vectors (`Vec2i`/`Vec3i`/`Vec4i` and the `u` equivalents) — with vector
+operands applying the operator componentwise. Floating-point and boolean
+vectors do not support them. The shifts are currently scalar-only: `<<`
+and `>>` do not compile on vectors in wgsl-rs, even though the WGSL spec
+permits them.
+
 ## Precedence & Parentheses
 
 Rust and WGSL disagree about the relative precedence of the bitwise and
@@ -67,9 +74,8 @@ fn hit(x: u32) -> bool {
 ```
 
 Explicit grouping is preserved — for integer operands, `!(a & b)` renders as `~(a & b)`, while the parentheses remain around `a & b`. For boolean expressions, `!` remains WGSL's logical-not operator.
-redundant (`(a + b)` where `a + b` would do). That is harmless: it
-guarantees your expression structure survives WGSL's precedence rules
-exactly as you wrote it in Rust. See
+
+Generated WGSL may contain visually redundant parentheses (`(a + b)` where `a + b` would do). That is harmless: it guarantees your expression structure survives WGSL's precedence rules exactly as you wrote it in Rust. See
 [issue #159](https://github.com/schell/wgsl-rs/issues/159) for the
 original report.
 

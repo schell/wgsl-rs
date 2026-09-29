@@ -149,6 +149,27 @@ fn u32__1from_array(arr: array<u32, 1>) -> u32 {
 
 `Self::Array` in method signatures is resolved to the concrete type (`[u32; 1]` → `array<u32, 1>`) before rendering.
 
+The same applies to associated types on generic array impls. When a concrete array type triggers instantiation, the alias is emitted with the element type substituted, keyed by the mangled array self type:
+
+```rust
+impl<T: SlabItem> SlabItem for [T; 4] {
+    type Array = [T; 4];
+    fn to_array(data: Self) -> Self::Array {
+        data
+    }
+}
+```
+
+Instantiating with `T = u32` produces:
+
+```wgsl
+alias _2array_u32_4_Array = array<u32, 4>;
+
+fn _2array_u32_4__1to_array(data: array<u32, 4>) -> array<u32, 4> {
+    return data;
+}
+```
+
 ## Enums
 
 `#[repr(u32)]` enums with explicit discriminants transpile to a `u32` alias plus `const` variants:

@@ -1519,3 +1519,22 @@ Notably, the validator caught latent invalid WGSL in an existing
 `let mut bins = get_mut!(BINS, T); *bins = T::zero();` had been
 rendering `*bins` all along. It now assigns through the accessor:
 `*get_mut!(BINS, T) = T::zero();`.
+
+### 2026-09-30: Associated type aliases on array impls mirror the struct path (wgsl-rs#144)
+
+**Problem:** PR #143 monomorphized `ImplItem::Type` aliases for generic
+struct impls but left the array-impl branch (`instantiate_array_impl`) a
+no-op — the alias was silently dropped, and any `Type::AssocType`
+reference to `[T; N]::Array` failed to find a WGSL alias at render time.
+
+**Decision:** Mirror the struct emission, with one divergence: the
+synthetic impl block carries the concrete `Type::Array` as its self type
+instead of a `Type::Struct` holding the mangled name. `ir_convert`
+already mangles concrete array self types and the IR renderer composes
+alias names and `Type::AssocType` reference names from the same mangled
+components, so the alias and its references agree with no renderer
+changes. The parse-side assoc-type resolution pass
+(`resolve_assoc_types`) also gained a `Type::Array` arm in
+`type_name_for_assoc`, keyed by `mangle_type`, so array-based
+projections resolve to concrete types in signatures like struct-based
+projections do rather than rendering as symbolic alias names.

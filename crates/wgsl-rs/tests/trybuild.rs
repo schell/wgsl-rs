@@ -113,6 +113,12 @@ fn assoc_type_generic_compiles() {
 }
 
 #[test]
+fn assoc_type_on_array_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/assoc_type_on_array.rs");
+}
+
+#[test]
 fn qself_as_trait_form_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/qself_as_trait_rejected.rs");

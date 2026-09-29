@@ -929,10 +929,38 @@ impl MonoCtx {
 
                     self.generated.push(Item::Const(Box::new(mono_const)));
                 }
-                crate::parse::ImplItem::Type(_) => {
-                    // Associated type aliases on array impls are not yet
-                    // monomorphized — they're rare and would need the same
-                    // alias emission logic as struct impls.
+                crate::parse::ImplItem::Type(t) => {
+                    // Substitute type params in the associated type alias's
+                    // type, then emit as a synthetic impl block containing
+                    // a single `ImplItem::Type` so the IR renderer emits a
+                    // module-scope WGSL
+                    // `alias <MangledSelf>_<member> = <ty>;` (e.g.
+                    // `alias _2array_u32_4_Array = array<u32, 4>;`),
+                    // mirroring the struct-impl path in
+                    // `instantiate_struct`. The self type is the concrete
+                    // `Type::Array` (not a `Type::Struct` carrying the
+                    // mangled name): `ir_convert::item_impl` already
+                    // mangles concrete array self types, and the IR
+                    // renderer mangles `Type::AssocType` references with
+                    // the same components, so reference and alias agree.
+                    let mut mono_ty = (*t.ty).clone();
+                    substitute_type(&mut mono_ty, &subst, &consts);
+
+                    let alias_item =
+                        crate::parse::ImplItem::Type(Box::new(crate::parse::ItemTypeAlias {
+                            ident: t.ident.clone(),
+                            ty: Box::new(mono_ty),
+                        }));
+                    let alias_impl = crate::parse::ItemImpl {
+                        type_params: Vec::new(),
+                        const_params: Vec::new(),
+                        _impl_token: <syn::Token![impl]>::default(),
+                        self_ty: concrete_array_ty.clone(),
+                        _brace_token: syn::token::Brace::default(),
+                        items: vec![alias_item],
+                        attrs: Vec::new(),
+                    };
+                    self.generated.push(Item::Impl(alias_impl));
                 }
             }
         }
@@ -2299,6 +2327,12 @@ fn type_name_for_assoc(ty: &Type) -> Option<String> {
         }
         Type::Scalar { ty, .. } => Some(scalar_wgsl_name(ty).to_string()),
         Type::TypeParam { ident } => Some(ident.to_string()),
+        // Concrete array bases (e.g. `<[u32; 4]>::Array` after `Self`
+        // substitution inside array impl blocks) key the assoc-type index
+        // by their mangled name, matching `build_assoc_type_index`'s
+        // fallback for concrete array self types. A miss is a safe no-op —
+        // the reference keeps rendering as a WGSL alias name.
+        Type::Array { .. } => mangle_type(ty).ok(),
         Type::AssocType { ty, member, .. } => {
             let inner = type_name_for_assoc(ty)?;
             Some(mangle(&[&inner, &member.to_string()]))
@@ -2671,6 +2705,10 @@ mod test {
     fn mono_wgsl(input: syn::ItemMod) -> String {
         let mut wgsl_module = ItemMod::try_from(&input).unwrap();
         super::run(&mut wgsl_module).unwrap();
+        // Resolve associated type projections, mirroring the `go_wgsl`
+        // pipeline order (lib.rs: `run` -> `resolve_assoc_types`) so unit
+        // tests cover the resolution pass too.
+        super::resolve_assoc_types(&mut wgsl_module).unwrap();
         let ir_items = ir_convert::items_from_parse(&wgsl_module.content)
             .expect("parse -> IR conversion should succeed for monomorphized output");
         wgsl_rs_ir::render_items(&ir_items)
@@ -2925,6 +2963,67 @@ mod test {
         assert!(
             wgsl.contains("_2array_u32_4_zero"),
             "Array trait impl should generate _2array_u32_4_zero, got:\n{wgsl}"
+        );
+    }
+
+    /// A generic array impl's associated type aliases are monomorphized
+    /// into module-scope WGSL `alias` declarations, mirroring the struct
+    /// impl path (wgsl-rs#144).
+    #[test]
+    fn mono_generic_array_impl_assoc_type_alias() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub trait Slab {
+                    type Array;
+                    fn zero() -> Self;
+                }
+
+                impl Slab for u32 {
+                    type Array = [u32; 1];
+                    fn zero() -> u32 {
+                        0u32
+                    }
+                }
+
+                impl<T: Slab> Slab for [T; 4] {
+                    type Array = [T; 4];
+                    fn zero() -> Self::Array {
+                        [T::zero(), T::zero(), T::zero(), T::zero()]
+                    }
+                }
+
+                pub fn use_it() -> u32 {
+                    let a: [u32; 4] = <[u32; 4]>::zero();
+                    a[0]
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        // `array_u32_4` contains 2 underscores, so composing it with the
+        // alias member name escapes it as `_2array_u32_4_Array`.
+        assert!(
+            wgsl.contains("alias _2array_u32_4_Array = array<u32, 4>;"),
+            "Expected array impl assoc type alias to be emitted, got:\n{wgsl}"
+        );
+        // The scalar impl's alias renders alongside it (no mangling
+        // escape needed: `u32` has no underscores).
+        assert!(
+            wgsl.contains("alias u32_Array = array<u32, 1>;"),
+            "Expected scalar impl assoc type alias to be emitted, got:\n{wgsl}"
+        );
+        // The method still monomorphizes alongside the alias.
+        assert!(
+            wgsl.contains("_2array_u32_4_zero"),
+            "Expected monomorphized array method, got:\n{wgsl}"
+        );
+        // The `Self::Array` return type resolves to the concrete array
+        // type via `resolve_assoc_types` (the `Type::Array` arm in
+        // `type_name_for_assoc`) — deleting that arm renders the symbolic
+        // alias name here and fails this assertion.
+        assert!(
+            wgsl.contains("fn _2array_u32_4_zero() -> array<u32, 4>"),
+            "Expected the Self::Array return type to resolve to the concrete array type, \
+             got:\n{wgsl}"
         );
     }
 

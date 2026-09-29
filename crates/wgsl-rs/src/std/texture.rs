@@ -709,8 +709,8 @@ impl TextureSampleGrad<Vec2f, Vec2f, Vec2f> for Texture2D<f32> {
     ) -> Self::Output {
         // TODO: do thes comments still make sense?
         // * On CPU, gradients are used to approximate mip level selection.
-        // * On CPU, we approximate by sampling at level 0 (gradients would select mip
-        //   level on GPU).
+        // * On CPU, we approximate by sampling at level 0 (gradients would
+        //   select mip level on GPU).
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), 0);
@@ -752,6 +752,66 @@ impl TextureGather<Vec2f> for Texture2D<f32> {
 
 impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<f32> {
     type Output = Vec4f;
+
+    fn gather_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let offset_u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let offset_v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        drop(data);
+        self.gather(component, sampler, vec2f(offset_u, offset_v))
+    }
+}
+
+impl TextureGather<Vec2f> for Texture2D<i32> {
+    type Output = Vec4i;
+
+    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_2d(&data, &sampler_state, coords.x(), coords.y(), component);
+        vec4i(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGather<Vec2f> for Texture2D<u32> {
+    type Output = Vec4u;
+
+    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_2d(&data, &sampler_state, coords.x(), coords.y(), component);
+        vec4u(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<i32> {
+    type Output = Vec4i;
+
+    fn gather_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let data = self.get();
+        let (w, h) = data.dimensions(0);
+        let offset_u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let offset_v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        drop(data);
+        self.gather(component, sampler, vec2f(offset_u, offset_v))
+    }
+}
+
+impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<u32> {
+    type Output = Vec4u;
 
     fn gather_offset(
         &self,
@@ -1059,6 +1119,258 @@ impl TextureSampleGradArrayOffset<Vec2f, u32, Vec2f, Vec2f, Vec2i> for Texture2D
         } else {
             vec4f(0.0, 0.0, 0.0, 0.0)
         }
+    }
+}
+
+impl TextureGatherArray<Vec2f, u32> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_2d_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            array_index,
+            component,
+        );
+        vec4f(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherArray<Vec2f, i32> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+    ) -> Self::Output {
+        self.gather_array(component, sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        let (w, h) = data
+            .layers
+            .get(layer as usize)
+            .map(|layer_data| layer_data.dimensions(0))
+            .unwrap_or((1, 1));
+        let offset_u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let offset_v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        drop(data);
+        self.gather_array(component, sampler, vec2f(offset_u, offset_v), array_index)
+    }
+}
+
+impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<f32> {
+    type Output = Vec4f;
+
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        self.gather_array_offset(
+            component,
+            sampler,
+            coords,
+            array_index.max(0) as u32,
+            offset,
+        )
+    }
+}
+
+impl TextureGatherArray<Vec2f, u32> for Texture2DArray<i32> {
+    type Output = Vec4i;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_2d_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            array_index,
+            component,
+        );
+        vec4i(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherArray<Vec2f, i32> for Texture2DArray<i32> {
+    type Output = Vec4i;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+    ) -> Self::Output {
+        self.gather_array(component, sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<i32> {
+    type Output = Vec4i;
+
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        let (w, h) = data
+            .layers
+            .get(layer as usize)
+            .map(|layer_data| layer_data.dimensions(0))
+            .unwrap_or((1, 1));
+        let offset_u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let offset_v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        drop(data);
+        self.gather_array(component, sampler, vec2f(offset_u, offset_v), array_index)
+    }
+}
+
+impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<i32> {
+    type Output = Vec4i;
+
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        self.gather_array_offset(
+            component,
+            sampler,
+            coords,
+            array_index.max(0) as u32,
+            offset,
+        )
+    }
+}
+
+impl TextureGatherArray<Vec2f, u32> for Texture2DArray<u32> {
+    type Output = Vec4u;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+    ) -> Self::Output {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let g = gather_texture_2d_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            array_index,
+            component,
+        );
+        vec4u(g[0], g[1], g[2], g[3])
+    }
+}
+
+impl TextureGatherArray<Vec2f, i32> for Texture2DArray<u32> {
+    type Output = Vec4u;
+
+    fn gather_array(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+    ) -> Self::Output {
+        self.gather_array(component, sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<u32> {
+    type Output = Vec4u;
+
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: u32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        let data = self.get();
+        let layer = array_index.min(data.num_layers().saturating_sub(1));
+        let (w, h) = data
+            .layers
+            .get(layer as usize)
+            .map(|layer_data| layer_data.dimensions(0))
+            .unwrap_or((1, 1));
+        let offset_u = coords.x() + offset.x() as f32 / w.max(1) as f32;
+        let offset_v = coords.y() + offset.y() as f32 / h.max(1) as f32;
+        drop(data);
+        self.gather_array(component, sampler, vec2f(offset_u, offset_v), array_index)
+    }
+}
+
+impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<u32> {
+    type Output = Vec4u;
+
+    fn gather_array_offset(
+        &self,
+        component: u32,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+        offset: Vec2i,
+    ) -> Self::Output {
+        self.gather_array_offset(
+            component,
+            sampler,
+            coords,
+            array_index.max(0) as u32,
+            offset,
+        )
     }
 }
 
@@ -2590,6 +2902,18 @@ impl TextureGatherCompareArray<Vec2f, u32, f32> for TextureDepth2DArray {
     }
 }
 
+impl TextureGatherCompareArray<Vec2f, i32, f32> for TextureDepth2DArray {
+    fn gather_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: i32,
+        depth_ref: f32,
+    ) -> Vec4f {
+        self.gather_compare_array(sampler, coords, array_index.max(0) as u32, depth_ref)
+    }
+}
+
 impl TextureGatherCompareArrayOffset<Vec2f, u32, f32, Vec2i> for TextureDepth2DArray {
     fn gather_compare_array_offset(
         &self,
@@ -2619,6 +2943,25 @@ impl TextureGatherCompareArrayOffset<Vec2f, u32, f32, Vec2i> for TextureDepth2DA
     }
 }
 
+impl TextureGatherCompareArrayOffset<Vec2f, i32, f32, Vec2i> for TextureDepth2DArray {
+    fn gather_compare_array_offset(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec2f,
+        array_index: i32,
+        depth_ref: f32,
+        offset: Vec2i,
+    ) -> Vec4f {
+        self.gather_compare_array_offset(
+            sampler,
+            coords,
+            array_index.max(0) as u32,
+            depth_ref,
+            offset,
+        )
+    }
+}
+
 impl TextureGatherDepthArray<Vec2f, u32> for TextureDepth2DArray {
     fn gather_depth_array(&self, sampler: &Sampler, coords: Vec2f, array_index: u32) -> Vec4f {
         let sampler_state = sampler.get();
@@ -2630,6 +2973,12 @@ impl TextureGatherDepthArray<Vec2f, u32> for TextureDepth2DArray {
         } else {
             vec4f(0.0, 0.0, 0.0, 0.0)
         }
+    }
+}
+
+impl TextureGatherDepthArray<Vec2f, i32> for TextureDepth2DArray {
+    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec2f, array_index: i32) -> Vec4f {
+        self.gather_depth_array(sampler, coords, array_index.max(0) as u32)
     }
 }
 
@@ -2653,6 +3002,18 @@ impl TextureGatherDepthArrayOffset<Vec2f, u32, Vec2i> for TextureDepth2DArray {
         } else {
             vec4f(0.0, 0.0, 0.0, 0.0)
         }
+    }
+}
+
+impl TextureGatherDepthArrayOffset<Vec2f, i32, Vec2i> for TextureDepth2DArray {
+    fn gather_depth_array_offset(
+        &self,
+        sampler: &Sampler,
+        coords: Vec2f,
+        array_index: i32,
+        offset: Vec2i,
+    ) -> Vec4f {
+        self.gather_depth_array_offset(sampler, coords, array_index.max(0) as u32, offset)
     }
 }
 
@@ -2814,6 +3175,97 @@ impl TextureNumLayersQuery for TextureDepthCubeArray {
 impl TextureNumLevelsQuery for TextureDepthCubeArray {
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
+    }
+}
+
+impl TextureGatherDepth<Vec3f> for TextureDepthCube {
+    fn gather_depth(&self, sampler: &Sampler, coords: Vec3f) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let texels =
+            gather_depth_texture_cube(&data, &sampler_state, coords.x(), coords.y(), coords.z());
+        vec4f(texels[0], texels[1], texels[2], texels[3])
+    }
+}
+
+impl TextureGatherDepthArray<Vec3f, u32> for TextureDepthCubeArray {
+    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec3f, array_index: u32) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let texels = gather_depth_texture_cube_array(
+            &data,
+            &sampler_state,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+        );
+        vec4f(texels[0], texels[1], texels[2], texels[3])
+    }
+}
+
+impl TextureGatherDepthArray<Vec3f, i32> for TextureDepthCubeArray {
+    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec3f, array_index: i32) -> Vec4f {
+        self.gather_depth_array(sampler, coords, array_index.max(0) as u32)
+    }
+}
+
+impl TextureGatherCompare<Vec3f, f32> for TextureDepthCube {
+    fn gather_compare(&self, sampler: &SamplerComparison, coords: Vec3f, depth_ref: f32) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let texels = gather_depth_texture_cube(
+            &data,
+            &sampler_state.sampler,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+        );
+        vec4f(
+            sampler_state.compare.compare(texels[0], depth_ref),
+            sampler_state.compare.compare(texels[1], depth_ref),
+            sampler_state.compare.compare(texels[2], depth_ref),
+            sampler_state.compare.compare(texels[3], depth_ref),
+        )
+    }
+}
+
+impl TextureGatherCompareArray<Vec3f, u32, f32> for TextureDepthCubeArray {
+    fn gather_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec3f,
+        array_index: u32,
+        depth_ref: f32,
+    ) -> Vec4f {
+        let sampler_state = sampler.get();
+        let data = self.get();
+        let texels = gather_depth_texture_cube_array(
+            &data,
+            &sampler_state.sampler,
+            coords.x(),
+            coords.y(),
+            coords.z(),
+            array_index,
+        );
+        vec4f(
+            sampler_state.compare.compare(texels[0], depth_ref),
+            sampler_state.compare.compare(texels[1], depth_ref),
+            sampler_state.compare.compare(texels[2], depth_ref),
+            sampler_state.compare.compare(texels[3], depth_ref),
+        )
+    }
+}
+
+impl TextureGatherCompareArray<Vec3f, i32, f32> for TextureDepthCubeArray {
+    fn gather_compare_array(
+        &self,
+        sampler: &SamplerComparison,
+        coords: Vec3f,
+        array_index: i32,
+        depth_ref: f32,
+    ) -> Vec4f {
+        self.gather_compare_array(sampler, coords, array_index.max(0) as u32, depth_ref)
     }
 }
 
@@ -3741,8 +4193,8 @@ mod tests {
 
     #[test]
     fn test_compare_function() {
-        // Per WebGPU spec, compare(sample, reference) passes when reference <op>
-        // sample. Less: reference < sample
+        // Per WebGPU spec, compare(sample, reference) passes when reference
+        // <op> sample. Less: reference < sample
         assert!((CompareFunction::Less.compare(0.5, 0.3) - 1.0).abs() < 0.001); // 0.3 < 0.5
         assert!((CompareFunction::Less.compare(0.3, 0.5) - 0.0).abs() < 0.001); // 0.5 not < 0.3
         // Greater: reference > sample
@@ -3841,12 +4293,14 @@ mod tests {
         });
 
         // Sample near (0.25, 0.25) on a 4x4 texture.
-        // The 4 gathered texels should be the 2x2 block at (0,0),(1,0),(0,1),(1,1).
-        // Per WebGPU spec, Less comparison passes when depth_ref < sampled_depth:
-        //   (0,0)=0.2: 0.5 < 0.2 => false => 0.0   (u_min, v_min) => w component
-        //   (1,0)=0.4: 0.5 < 0.4 => false => 0.0   (u_max, v_min) => z component
-        //   (0,1)=0.6: 0.5 < 0.6 => true  => 1.0   (u_min, v_max) => x component
-        //   (1,1)=0.8: 0.5 < 0.8 => true  => 1.0   (u_max, v_max) => y component
+        // The 4 gathered texels should be the 2x2 block at
+        // (0,0),(1,0),(0,1),(1,1). Per WebGPU spec, Less comparison
+        // passes when depth_ref < sampled_depth:   (0,0)=0.2: 0.5 < 0.2
+        // => false => 0.0   (u_min, v_min) => w component   (1,0)=0.4:
+        // 0.5 < 0.4 => false => 0.0   (u_max, v_min) => z component
+        //   (0,1)=0.6: 0.5 < 0.6 => true  => 1.0   (u_min, v_max) => x
+        // component   (1,1)=0.8: 0.5 < 0.8 => true  => 1.0   (u_max,
+        // v_max) => y component
         let result = texture_gather_compare(&tex, &sampler, vec2f(0.25, 0.25), 0.5);
         assert!((result.x() - 1.0).abs() < 0.001); // (u_min, v_max): 0.5 < 0.6
         assert!((result.y() - 1.0).abs() < 0.001); // (u_max, v_max): 0.5 < 0.8
@@ -3861,7 +4315,8 @@ mod tests {
         assert!((result.z() - 0.0).abs() < 0.001);
         assert!((result.w() - 0.0).abs() < 0.001);
 
-        // With depth_ref = 0.1, all texels should pass (0.1 < all of 0.2,0.4,0.6,0.8)
+        // With depth_ref = 0.1, all texels should pass (0.1 < all of
+        // 0.2,0.4,0.6,0.8)
         let result = texture_gather_compare(&tex, &sampler, vec2f(0.25, 0.25), 0.1);
         assert!((result.x() - 1.0).abs() < 0.001);
         assert!((result.y() - 1.0).abs() < 0.001);
@@ -3930,7 +4385,8 @@ mod tests {
         let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
-        // On CPU, gradients sample at level 0, so this behaves like a regular sample.
+        // On CPU, gradients sample at level 0, so this behaves like a regular
+        // sample.
         let color = texture_sample_grad(
             &tex,
             &sampler,
@@ -4036,7 +4492,8 @@ mod tests {
             ..Default::default()
         });
 
-        // textureSampleCompareLevel always samples at mip 0 (no level param in WGSL)
+        // textureSampleCompareLevel always samples at mip 0 (no level param in
+        // WGSL)
         let result = texture_sample_compare_level(&tex, &sampler, vec2f(0.5, 0.5), 0.3);
         assert!((result - 1.0).abs() < 0.001); // 0.3 < 0.5 => pass
 
@@ -4148,9 +4605,9 @@ mod tests {
             ..Default::default()
         });
 
-        // Sample at (0.25, 0.25) with offset (1, 0): gathers the shifted 2x2 block.
-        // depth_ref = 0.5: Less comparison passes when depth_ref < sampled_depth
-        //   (1,0)=0.2: 0.5 < 0.2 => false => 0.0   => w
+        // Sample at (0.25, 0.25) with offset (1, 0): gathers the shifted 2x2
+        // block. depth_ref = 0.5: Less comparison passes when depth_ref
+        // < sampled_depth   (1,0)=0.2: 0.5 < 0.2 => false => 0.0   => w
         //   (2,0)=0.4: 0.5 < 0.4 => false => 0.0   => z
         //   (1,1)=0.6: 0.5 < 0.6 => true  => 1.0   => x
         //   (2,1)=0.8: 0.5 < 0.8 => true  => 1.0   => y
@@ -4412,8 +4869,8 @@ mod tests {
         // 2x2x2 texture: only texel (0,0,0) is non-zero.
         // Under linear filtering at coords (0,0,0):
         //   half_texel = 0.5/2 = 0.25
-        //   u - 0.25 = -0.25, scaled by 2 -> -0.5, floor.clamp -> texel 0, frac 0.5
-        //   So x0=0, x1=1, fx=0.5 (similarly y, z)
+        //   u - 0.25 = -0.25, scaled by 2 -> -0.5, floor.clamp -> texel 0, frac
+        // 0.5   So x0=0, x1=1, fx=0.5 (similarly y, z)
         //   Only c000 = [1,0,0,1]; all other 7 corners are [0,0,0,0].
         //   Trilinear: 0.5^3 weight on c000 -> r = 0.125, w = 0.125.
         let tex: Texture3D<f32> = Texture3D::new(0, 0);
@@ -4439,7 +4896,8 @@ mod tests {
 
         // At coords (1,1,1) with linear filtering:
         //   u=1, u-0.25=0.75, *2=1.5, floor=1, frac=0.5 -> x0=1, x1=1, fx=0.5
-        // So c000 is not reached (x0=1, not 0). All 8 corners are 0. Result = 0.
+        // So c000 is not reached (x0=1, not 0). All 8 corners are 0. Result =
+        // 0.
         let color = texture_sample(&tex, &sampler, vec3f(1.0, 1.0, 1.0));
         assert!((color.x() - 0.0).abs() < 0.001);
 
@@ -4755,5 +5213,468 @@ mod tests {
 
         let g = texture_gather_array(0i32, &tex_u, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
         assert_eq!(g, vec4u(9, 11, 8, 7));
+    }
+
+    #[test]
+    fn test_texture_2d_gather_integer_sampled_types() {
+        // Per WGSL spec 17.7.2, textureGather supports texture_2d<i32> and
+        // texture_2d<u32> in addition to texture_2d<f32>.
+        let tex_i: Texture2D<i32> = Texture2D::new(0, 0);
+        tex_i.init(2, 2);
+        tex_i.set_pixel(0, 0, [10, 0, 0, 100]);
+        tex_i.set_pixel(1, 0, [20, 0, 0, 100]);
+        tex_i.set_pixel(0, 1, [30, 0, 0, 100]);
+        tex_i.set_pixel(1, 1, [40, 0, 0, 100]);
+
+        let tex_u: Texture2D<u32> = Texture2D::new(0, 0);
+        tex_u.init(2, 2);
+        tex_u.set_pixel(0, 0, [10, 0, 0, 100]);
+        tex_u.set_pixel(1, 0, [20, 0, 0, 100]);
+        tex_u.set_pixel(0, 1, [30, 0, 0, 100]);
+        tex_u.set_pixel(1, 1, [40, 0, 0, 100]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Gathering at the center of a 2x2 texture covers the whole texture
+        // in WGSL order: x = (u_min, v_max), y = (u_max, v_max),
+        // z = (u_max, v_min), w = (u_min, v_min).
+        let g = texture_gather(0u32, &tex_i, &sampler, vec2f(0.5, 0.5));
+        assert_eq!(g, vec4i(30, 40, 20, 10));
+
+        let g = texture_gather(0u32, &tex_u, &sampler, vec2f(0.5, 0.5));
+        assert_eq!(g, vec4u(30, 40, 20, 10));
+
+        // The component selector also works on integer sampled types.
+        let g = texture_gather(3u32, &tex_i, &sampler, vec2f(0.5, 0.5));
+        assert_eq!(g, vec4i(100, 100, 100, 100));
+
+        let g = texture_gather(1u32, &tex_u, &sampler, vec2f(0.5, 0.5));
+        assert_eq!(g, vec4u(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_texture_2d_gather_offset_integer_sampled_types() {
+        let tex_i: Texture2D<i32> = Texture2D::new(0, 0);
+        tex_i.init(4, 4);
+        // A 2x2 block of values at (1,0),(2,0),(1,1),(2,1).
+        tex_i.set_pixel(1, 0, [15, 0, 0, 100]);
+        tex_i.set_pixel(2, 0, [25, 0, 0, 100]);
+        tex_i.set_pixel(1, 1, [35, 0, 0, 100]);
+        tex_i.set_pixel(2, 1, [45, 0, 0, 100]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Gathers at (0.25, 0.25) with offset (1, 0) shift the 2x2 gather
+        // window right by one texel onto the value block.
+        let g = texture_gather_offset(0u32, &tex_i, &sampler, vec2f(0.25, 0.25), vec2i(1, 0));
+        assert_eq!(g, vec4i(35, 45, 25, 15));
+
+        // A negative offset shifts the window left onto column 0, which is
+        // all zeros; the out-of-bounds column clamps to the texture edge.
+        let g = texture_gather_offset(0u32, &tex_i, &sampler, vec2f(0.5, 0.25), vec2i(-1, 0));
+        assert_eq!(g, vec4i(0, 35, 15, 0));
+
+        let tex_u: Texture2D<u32> = Texture2D::new(0, 0);
+        tex_u.init(4, 4);
+        tex_u.set_pixel(1, 0, [15, 0, 0, 100]);
+        tex_u.set_pixel(2, 0, [25, 0, 0, 100]);
+        tex_u.set_pixel(1, 1, [35, 0, 0, 100]);
+        tex_u.set_pixel(2, 1, [45, 0, 0, 100]);
+
+        let g = texture_gather_offset(0u32, &tex_u, &sampler, vec2f(0.25, 0.25), vec2i(1, 0));
+        assert_eq!(g, vec4u(35, 45, 25, 15));
+    }
+
+    #[test]
+    fn test_texture_2d_array_gather() {
+        let tex: Texture2DArray<f32> = Texture2DArray::new(0, 0);
+        tex.init(2, 2, 2);
+        // Layer 0 r channel covers 0.1..0.4, layer 1 covers 0.5..0.8, in
+        // the order (0,0), (1,0), (0,1), (1,1).
+        let values = [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]];
+        for (layer, vals) in values.iter().enumerate() {
+            for y in 0..2u32 {
+                for x in 0..2u32 {
+                    tex.data.write().layers[layer].set_pixel(
+                        x,
+                        y,
+                        0,
+                        [vals[(x + 2 * y) as usize], 0.0, 0.0, 1.0],
+                    );
+                }
+            }
+        }
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Gathering at the center of a 2x2 layer covers the whole layer in
+        // WGSL order: x = (u_min, v_max), y = (u_max, v_max),
+        // z = (u_max, v_min), w = (u_min, v_min).
+        let g = texture_gather_array(0u32, &tex, &sampler, vec2f(0.5, 0.5), 0u32);
+        assert!((g.x() - 0.3).abs() < 0.001);
+        assert!((g.y() - 0.4).abs() < 0.001);
+        assert!((g.z() - 0.2).abs() < 0.001);
+        assert!((g.w() - 0.1).abs() < 0.001);
+
+        // u32 array index selects the layer.
+        let g = texture_gather_array(0u32, &tex, &sampler, vec2f(0.5, 0.5), 1u32);
+        assert!((g.x() - 0.7).abs() < 0.001);
+        assert!((g.w() - 0.5).abs() < 0.001);
+
+        // i32 array indices are accepted per spec; negatives clamp to 0.
+        let g = texture_gather_array(0u32, &tex, &sampler, vec2f(0.5, 0.5), 1i32);
+        assert!(
+            (g.x() - 0.7).abs() < 0.001,
+            "expected layer 1 via i32 index"
+        );
+
+        let g = texture_gather_array(0u32, &tex, &sampler, vec2f(0.5, 0.5), -1i32);
+        assert!(
+            (g.x() - 0.3).abs() < 0.001,
+            "negative index clamps to layer 0"
+        );
+
+        // Out-of-range indices clamp to the last layer.
+        let g = texture_gather_array(0u32, &tex, &sampler, vec2f(0.5, 0.5), 99u32);
+        assert!(
+            (g.x() - 0.7).abs() < 0.001,
+            "out-of-range index clamps to last layer"
+        );
+    }
+
+    #[test]
+    fn test_texture_2d_array_gather_integer_sampled_types() {
+        // Per WGSL spec 17.7.2, textureGather supports texture_2d_array<i32>
+        // and texture_2d_array<u32> in addition to <f32>.
+        let tex_i: Texture2DArray<i32> = Texture2DArray::new(0, 0);
+        tex_i.init(2, 2, 1);
+        tex_i.data.write().layers[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_i.data.write().layers[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_i.data.write().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_i.data.write().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+
+        let tex_u: Texture2DArray<u32> = Texture2DArray::new(0, 0);
+        tex_u.init(2, 2, 1);
+        tex_u.data.write().layers[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_u.data.write().layers[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_u.data.write().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_u.data.write().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        let g = texture_gather_array(0u32, &tex_i, &sampler, vec2f(0.5, 0.5), 0u32);
+        assert_eq!(g, vec4i(30, 40, 20, 10));
+
+        let g = texture_gather_array(0u32, &tex_u, &sampler, vec2f(0.5, 0.5), 0u32);
+        assert_eq!(g, vec4u(30, 40, 20, 10));
+    }
+
+    #[test]
+    fn test_texture_2d_array_gather_offset() {
+        // 4x4x2 array; layer 1 carries the value block at
+        // (1,0),(2,0),(1,1),(2,1); layer 0 is left empty (zeros).
+        let tex: Texture2DArray<f32> = Texture2DArray::new(0, 0);
+        tex.init(4, 4, 2);
+        tex.data.write().layers[1].set_pixel(1, 0, 0, [0.15, 0.0, 0.0, 1.0]);
+        tex.data.write().layers[1].set_pixel(2, 0, 0, [0.25, 0.0, 0.0, 1.0]);
+        tex.data.write().layers[1].set_pixel(1, 1, 0, [0.35, 0.0, 0.0, 1.0]);
+        tex.data.write().layers[1].set_pixel(2, 1, 0, [0.45, 0.0, 0.0, 1.0]);
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Gather at (0.25, 0.25) with offset (1, 0) shifts the 2x2 gather
+        // window right by one texel onto the value block.
+        let g =
+            texture_gather_array_offset(0u32, &tex, &sampler, vec2f(0.25, 0.25), 1u32, vec2i(1, 0));
+        assert!((g.x() - 0.35).abs() < 0.001);
+        assert!((g.y() - 0.45).abs() < 0.001);
+        assert!((g.z() - 0.25).abs() < 0.001);
+        assert!((g.w() - 0.15).abs() < 0.001);
+
+        // i32 index selects the same layer.
+        let g =
+            texture_gather_array_offset(0u32, &tex, &sampler, vec2f(0.25, 0.25), 1i32, vec2i(1, 0));
+        assert!((g.x() - 0.35).abs() < 0.001);
+
+        // A negative index clamps to layer 0, which is empty.
+        let g = texture_gather_array_offset(
+            0u32,
+            &tex,
+            &sampler,
+            vec2f(0.25, 0.25),
+            -1i32,
+            vec2i(1, 0),
+        );
+        assert!(g.x().abs() < 0.001);
+        assert!(g.w().abs() < 0.001);
+
+        // Out-of-range indices clamp to the last layer (the block layer).
+        let g = texture_gather_array_offset(
+            0u32,
+            &tex,
+            &sampler,
+            vec2f(0.25, 0.25),
+            99u32,
+            vec2i(1, 0),
+        );
+        assert!((g.x() - 0.35).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_depth_2d_array_gather_forms() {
+        // Covers the depth 2D array gather family — plain, offset, and
+        // compare variants — with both u32 and i32 array indices.
+        let tex: TextureDepth2DArray = TextureDepth2DArray::new(0, 0);
+        tex.init(4, 4, 2);
+        // Layer 1 carries a 2x2 depth block at (1,0),(2,0),(1,1),(2,1);
+        // layer 0 is left empty (zeros).
+        {
+            let mut guard = tex.data.write();
+            guard.layers[1].mips[0][0][1] = 0.15;
+            guard.layers[1].mips[0][0][2] = 0.25;
+            guard.layers[1].mips[0][1][1] = 0.35;
+            guard.layers[1].mips[0][1][2] = 0.45;
+        }
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Gather at (0.5, 0.25) lands on the (1,0)-based window:
+        // x = (1,1)=0.35, y = (2,1)=0.45, z = (2,0)=0.25, w = (1,0)=0.15.
+        let g = texture_gather_depth_array(&tex, &sampler, vec2f(0.5, 0.25), 1u32);
+        assert!((g.x() - 0.35).abs() < 0.001);
+        assert!((g.y() - 0.45).abs() < 0.001);
+        assert!((g.z() - 0.25).abs() < 0.001);
+        assert!((g.w() - 0.15).abs() < 0.001);
+
+        // i32 index selects the same layer; negative clamps to the empty
+        // layer 0, out-of-range clamps to the last layer.
+        let g = texture_gather_depth_array(&tex, &sampler, vec2f(0.5, 0.25), 1i32);
+        assert!(
+            (g.x() - 0.35).abs() < 0.001,
+            "expected layer 1 via i32 index"
+        );
+
+        let g = texture_gather_depth_array(&tex, &sampler, vec2f(0.5, 0.25), -1i32);
+        assert!(g.x().abs() < 0.001, "negative index clamps to layer 0");
+
+        let g = texture_gather_depth_array(&tex, &sampler, vec2f(0.5, 0.25), 99u32);
+        assert!(
+            (g.x() - 0.35).abs() < 0.001,
+            "out-of-range index clamps to last layer"
+        );
+
+        // Offset form: (0.25, 0.25) + offset (1, 0) reaches the same window.
+        let g =
+            texture_gather_depth_array_offset(&tex, &sampler, vec2f(0.25, 0.25), 1u32, vec2i(1, 0));
+        assert!((g.x() - 0.35).abs() < 0.001);
+
+        let g =
+            texture_gather_depth_array_offset(&tex, &sampler, vec2f(0.25, 0.25), 1i32, vec2i(1, 0));
+        assert!(
+            (g.x() - 0.35).abs() < 0.001,
+            "expected layer 1 via i32 index"
+        );
+
+        // Compare forms with Less: passes when reference < sampled depth.
+        let cmp: SamplerComparison = SamplerComparison::new(0, 0);
+        cmp.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        let g = texture_gather_compare_array(&tex, &cmp, vec2f(0.5, 0.25), 1u32, 0.3);
+        assert_eq!(g, vec4f(1.0, 1.0, 0.0, 0.0));
+
+        let g = texture_gather_compare_array(&tex, &cmp, vec2f(0.5, 0.25), 1i32, 0.3);
+        assert_eq!(g, vec4f(1.0, 1.0, 0.0, 0.0));
+
+        let g = texture_gather_compare_array_offset(
+            &tex,
+            &cmp,
+            vec2f(0.25, 0.25),
+            1u32,
+            0.3,
+            vec2i(1, 0),
+        );
+        assert_eq!(g, vec4f(1.0, 1.0, 0.0, 0.0));
+
+        let g = texture_gather_compare_array_offset(
+            &tex,
+            &cmp,
+            vec2f(0.25, 0.25),
+            1i32,
+            0.3,
+            vec2i(1, 0),
+        );
+        assert_eq!(g, vec4f(1.0, 1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_texture_depth_cube_gather_depth() {
+        // Per WGSL spec 17.7.2, textureGather supports the depth cube forms
+        // (no component parameter). Each face gets a distinct 2x2 depth
+        // block so face selection is observable.
+        let tex: TextureDepthCube = TextureDepthCube::new(0, 0);
+        tex.init(2);
+        // Face 0 (+X): depths 0.1..0.4 in (0,0),(1,0),(0,1),(1,1).
+        tex.data.write().faces[0].mips[0][0][0] = 0.1;
+        tex.data.write().faces[0].mips[0][0][1] = 0.2;
+        tex.data.write().faces[0].mips[0][1][0] = 0.3;
+        tex.data.write().faces[0].mips[0][1][1] = 0.4;
+        // Face 2 (+Y): depths 0.5..0.8.
+        tex.data.write().faces[2].mips[0][0][0] = 0.5;
+        tex.data.write().faces[2].mips[0][0][1] = 0.6;
+        tex.data.write().faces[2].mips[0][1][0] = 0.7;
+        tex.data.write().faces[2].mips[0][1][1] = 0.8;
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // Direction (1, 0, 0) selects face 0 at its center; the gather
+        // window covers the whole 2x2 face in WGSL order:
+        // x = (u_min, v_max), y = (u_max, v_max), z = (u_max, v_min),
+        // w = (u_min, v_min).
+        let g = texture_gather_depth(&tex, &sampler, vec3f(1.0, 0.0, 0.0));
+        assert!((g.x() - 0.3).abs() < 0.001);
+        assert!((g.y() - 0.4).abs() < 0.001);
+        assert!((g.z() - 0.2).abs() < 0.001);
+        assert!((g.w() - 0.1).abs() < 0.001);
+
+        // Direction (0, 1, 0) selects face 2 (+Y).
+        let g = texture_gather_depth(&tex, &sampler, vec3f(0.0, 1.0, 0.0));
+        assert!((g.x() - 0.7).abs() < 0.001);
+        assert!((g.y() - 0.8).abs() < 0.001);
+        assert!((g.z() - 0.6).abs() < 0.001);
+        assert!((g.w() - 0.5).abs() < 0.001);
+
+        // An untouched face gathers default (0.0) depth texels.
+        let g = texture_gather_depth(&tex, &sampler, vec3f(0.0, 0.0, -1.0));
+        assert!(g.x().abs() < 0.001);
+        assert!(g.w().abs() < 0.001);
+    }
+
+    #[test]
+    fn test_texture_depth_cube_array_gather_depth() {
+        let tex: TextureDepthCubeArray = TextureDepthCubeArray::new(0, 0);
+        tex.init(2, 2);
+        // Layer 0, face 0: 0.1..0.4; layer 1, face 0: 0.5..0.8.
+        let values = [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]];
+        for (layer, vals) in values.iter().enumerate() {
+            let mut guard = tex.data.write();
+            guard.cubes[layer].faces[0].mips[0][0][0] = vals[0];
+            guard.cubes[layer].faces[0].mips[0][0][1] = vals[1];
+            guard.cubes[layer].faces[0].mips[0][1][0] = vals[2];
+            guard.cubes[layer].faces[0].mips[0][1][1] = vals[3];
+        }
+
+        let sampler = Sampler::new(0, 0);
+        sampler.init();
+
+        // u32 array index selects the cube layer.
+        let g = texture_gather_depth_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
+        assert!((g.x() - 0.3).abs() < 0.001, "expected layer 0");
+        assert!((g.w() - 0.1).abs() < 0.001);
+
+        let g = texture_gather_depth_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 1u32);
+        assert!((g.x() - 0.7).abs() < 0.001, "expected layer 1");
+        assert!((g.w() - 0.5).abs() < 0.001);
+
+        // Out-of-range indices clamp to the last layer.
+        let g = texture_gather_depth_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 99u32);
+        assert!(
+            (g.x() - 0.7).abs() < 0.001,
+            "out-of-range index clamps to last layer"
+        );
+
+        // i32 array indices are accepted per spec; negatives clamp to 0.
+        let g = texture_gather_depth_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 1i32);
+        assert!(
+            (g.x() - 0.7).abs() < 0.001,
+            "expected layer 1 via i32 index"
+        );
+
+        let g = texture_gather_depth_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), -1i32);
+        assert!(
+            (g.x() - 0.3).abs() < 0.001,
+            "negative index clamps to layer 0"
+        );
+    }
+
+    #[test]
+    fn test_texture_depth_cube_gather_compare() {
+        let tex: TextureDepthCube = TextureDepthCube::new(0, 0);
+        tex.init(2);
+        // Face 0 (+X): depths 0.1..0.4 in (0,0),(1,0),(0,1),(1,1).
+        tex.data.write().faces[0].mips[0][0][0] = 0.1;
+        tex.data.write().faces[0].mips[0][0][1] = 0.2;
+        tex.data.write().faces[0].mips[0][1][0] = 0.3;
+        tex.data.write().faces[0].mips[0][1][1] = 0.4;
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::Less,
+            ..Default::default()
+        });
+
+        // Gather order: x = (0,1)=0.3, y = (1,1)=0.4, z = (1,0)=0.2,
+        // w = (0,0)=0.1. Less passes when reference < sampled depth.
+        let g = texture_gather_compare(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 0.25);
+        assert_eq!(g, vec4f(1.0, 1.0, 0.0, 0.0));
+
+        // A small reference passes on all four texels.
+        let g = texture_gather_compare(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 0.05);
+        assert_eq!(g, vec4f(1.0, 1.0, 1.0, 1.0));
+
+        // A large reference passes on none.
+        let g = texture_gather_compare(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 0.9);
+        assert_eq!(g, vec4f(0.0, 0.0, 0.0, 0.0));
+
+        // An untouched face has depth 0.0, which never passes Less.
+        let g = texture_gather_compare(&tex, &sampler, vec3f(-1.0, 0.0, 0.0), 0.25);
+        assert_eq!(g, vec4f(0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_texture_depth_cube_array_gather_compare() {
+        let tex: TextureDepthCubeArray = TextureDepthCubeArray::new(0, 0);
+        tex.init(2, 2);
+        // Layer 0, face 0: 0.1..0.4; layer 1, face 0: 0.5..0.8.
+        let values = [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]];
+        for (layer, vals) in values.iter().enumerate() {
+            let mut guard = tex.data.write();
+            guard.cubes[layer].faces[0].mips[0][0][0] = vals[0];
+            guard.cubes[layer].faces[0].mips[0][0][1] = vals[1];
+            guard.cubes[layer].faces[0].mips[0][1][0] = vals[2];
+            guard.cubes[layer].faces[0].mips[0][1][1] = vals[3];
+        }
+
+        let sampler: SamplerComparison = SamplerComparison::new(0, 0);
+        sampler.set(SamplerComparisonState {
+            compare: CompareFunction::LessEqual,
+            ..Default::default()
+        });
+
+        // Layer 0: texels 0.3/0.4/0.2/0.1. LessEqual passes when
+        // reference <= sampled depth.
+        let g = texture_gather_compare_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 0u32, 0.3);
+        assert_eq!(g, vec4f(1.0, 1.0, 0.0, 0.0));
+
+        // Layer 1: texels 0.7/0.8/0.6/0.5.
+        let g = texture_gather_compare_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 1u32, 0.55);
+        assert_eq!(g, vec4f(1.0, 1.0, 1.0, 0.0));
+
+        // Out-of-range indices clamp to the last layer.
+        let g = texture_gather_compare_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 99u32, 0.55);
+        assert_eq!(g, vec4f(1.0, 1.0, 1.0, 0.0));
+
+        // i32 array indices are accepted per spec.
+        let g = texture_gather_compare_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 1i32, 0.55);
+        assert_eq!(g, vec4f(1.0, 1.0, 1.0, 0.0));
     }
 }

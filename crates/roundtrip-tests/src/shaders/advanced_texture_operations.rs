@@ -1,7 +1,8 @@
 //! Roundtrip tests for advanced texture builtins.
 //!
 //! Covers gradient/level/bias/offset sampling, gather (2D, 2D-array, cube,
-//! and cube-array), and depth compare variants.
+//! cube-array, and depth cube, including integer sampled types), and depth
+//! compare variants.
 
 #![allow(dead_code)]
 
@@ -78,6 +79,81 @@ pub mod tex2d_gather_variants {
         );
         let g0 = texture_gather(0u32, TEX, S, uv);
         let g1 = texture_gather_offset(1u32, TEX, S, uv, vec2i(1, 0));
+        vec4f(g0.x, g0.y, g1.z, g1.w)
+    }
+}
+
+#[wgsl]
+pub mod tex2d_gather_integer_variants {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), TEX_I: Texture2D<i32>);
+    texture!(group(0), binding(1), TEX_U: Texture2D<u32>);
+    // Integer textures are non-filterable; the `unfilterable` sampler
+    // modifier produces a NonFiltering bind-group layout entry on the GPU
+    // side (WGSL output is unchanged).
+    sampler!(group(0), binding(2), S: Sampler, unfilterable);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        let dims = texture_dimensions(TEX_I);
+        let uv = vec2f(
+            input.position.x / dims.x() as f32,
+            input.position.y / dims.y() as f32,
+        );
+        // Integer sampled types per WGSL spec 17.7.2, plus the offset form.
+        let gi = texture_gather(0u32, TEX_I, S, uv);
+        let gu = texture_gather(1u32, TEX_U, S, uv);
+        let go = texture_gather_offset(2u32, TEX_U, S, uv, vec2i(1, 0));
+        vec4f(f32(gi.x), f32(gu.y), f32(go.z), f32(gi.w))
+    }
+}
+
+#[wgsl]
+pub mod tex2d_array_gather_variants {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), TEX: Texture2DArray<f32>);
+    sampler!(group(0), binding(1), S: Sampler);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        let dims = texture_dimensions(TEX);
+        let uv = vec2f(
+            input.position.x / dims.x() as f32,
+            input.position.y / dims.y() as f32,
+        );
+        let mut layer = 0u32;
+        if (input.position.x as i32 & 1) != 0 {
+            layer = 1u32;
+        }
+        // 2D-array gathers with array index and array+offset forms.
+        let g0 = texture_gather_array(0u32, TEX, S, uv, layer);
+        let g1 = texture_gather_array_offset(2u32, TEX, S, uv, layer, vec2i(1, 0));
         vec4f(g0.x, g0.y, g1.z, g1.w)
     }
 }
@@ -219,6 +295,108 @@ pub mod tex_cube_array_gather_variants {
 }
 
 #[wgsl]
+pub mod depth_cube_gather_variants {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), CUBE_TEX: TextureDepthCube);
+    texture!(group(0), binding(1), CUBE_ARRAY_TEX: TextureDepthCubeArray);
+    sampler!(group(0), binding(2), S: Sampler);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        // Direction sweep across the 6 face bands, kept inside face
+        // interiors for the same two-worlds reason as
+        // tex_cube_gather_variants.
+        let a = (input.position.x - 4.0) / 6.0;
+        let b = (input.position.y - 4.0) / 6.0;
+        let band = u32(input.position.y) % 6u32;
+        let mut dir = vec3f(a, b, 1.0);
+        if band == 0u32 {
+            dir = vec3f(1.0, a, b);
+        } else if band == 1u32 {
+            dir = vec3f(-1.0, a, b);
+        } else if band == 2u32 {
+            dir = vec3f(a, 1.0, b);
+        } else if band == 3u32 {
+            dir = vec3f(a, -1.0, b);
+        } else if band == 5u32 {
+            dir = vec3f(a, b, -1.0);
+        }
+        // Depth cube gathers take a plain sampler and no component.
+        let g = texture_gather_depth(CUBE_TEX, S, dir);
+        let mut layer = 0u32;
+        if (input.position.x as i32 & 1) != 0 {
+            layer = 1u32;
+        }
+        let ga = texture_gather_depth_array(CUBE_ARRAY_TEX, S, dir, layer);
+        vec4f(g.x, g.w, ga.y, ga.z)
+    }
+}
+
+#[wgsl]
+pub mod depth_cube_gather_compare_variants {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), CUBE_TEX: TextureDepthCube);
+    texture!(group(0), binding(1), CUBE_ARRAY_TEX: TextureDepthCubeArray);
+    sampler!(group(0), binding(2), DEPTH_SAMPLER: SamplerComparison);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> Vec4f {
+        // Same face-band sweep as depth_cube_gather_variants.
+        let a = (input.position.x - 4.0) / 6.0;
+        let b = (input.position.y - 4.0) / 6.0;
+        let band = u32(input.position.y) % 6u32;
+        let mut dir = vec3f(a, b, 1.0);
+        if band == 0u32 {
+            dir = vec3f(1.0, a, b);
+        } else if band == 1u32 {
+            dir = vec3f(-1.0, a, b);
+        } else if band == 2u32 {
+            dir = vec3f(a, 1.0, b);
+        } else if band == 3u32 {
+            dir = vec3f(a, -1.0, b);
+        } else if band == 5u32 {
+            dir = vec3f(a, b, -1.0);
+        }
+        // Sweep the reference across [0, 1) so both compare outcomes are
+        // exercised per face.
+        let depth_ref = input.position.x / 8.0;
+        let d = texture_gather_compare(CUBE_TEX, DEPTH_SAMPLER, dir, depth_ref);
+        let mut layer = 0u32;
+        if (input.position.x as i32 & 1) != 0 {
+            layer = 1u32;
+        }
+        let da = texture_gather_compare_array(CUBE_ARRAY_TEX, DEPTH_SAMPLER, dir, layer, depth_ref);
+        vec4f(d.x, d.w, da.y, da.z)
+    }
+}
+
+#[wgsl]
 pub mod depth2d_compare_variants {
     use wgsl_rs::std::*;
 
@@ -331,6 +509,43 @@ pub mod fill_depth_2d {
     }
 }
 
+#[wgsl]
+pub mod fill_depth_cube_face {
+    use wgsl_rs::std::*;
+
+    // Per-face identifier (face + cube_index * 6). Keeps every cube face
+    // and array layer distinguishable so cube gathers actually verify face
+    // selection on the GPU.
+    uniform!(group(0), binding(0), FACE_ID: u32);
+
+    pub struct FragInput {
+        #[builtin(position)]
+        pub position: Vec4f,
+    }
+
+    pub struct FragOutput {
+        #[builtin(frag_depth)]
+        pub depth: f32,
+    }
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x, y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main(input: FragInput) -> FragOutput {
+        let x = u32(input.position.x);
+        let y = u32(input.position.y);
+        let off = f32(load!(FACE_ID)) * 0.13;
+        FragOutput {
+            depth: clamp((x as f32 * 0.07 + y as f32 * 0.11 + off) % 1.0, 0.0, 1.0),
+        }
+    }
+}
+
 fn build_rgba8_pixels(offset: u32) -> Vec<[u8; 4]> {
     let mut pixels = vec![[0u8; 4]; (WIDTH * HEIGHT) as usize];
     for y in 0..HEIGHT {
@@ -341,6 +556,39 @@ fn build_rgba8_pixels(offset: u32) -> Vec<[u8; 4]> {
                 ((x * 7 + y * 21 + offset) % 256) as u8,
                 ((x * 13 + y * 5 + offset) % 256) as u8,
                 255,
+            ];
+        }
+    }
+    pixels
+}
+
+fn build_i32_pixels() -> Vec<[i32; 4]> {
+    let mut pixels = vec![[0i32; 4]; (WIDTH * HEIGHT) as usize];
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let idx = (y * WIDTH + x) as usize;
+            // Centered around zero so signedness is exercised on the GPU.
+            pixels[idx] = [
+                ((x * 17 + y * 9) % 256) as i32 - 128,
+                ((x * 7 + y * 21) % 256) as i32 - 128,
+                ((x * 13 + y * 5) % 256) as i32 - 128,
+                (x * 3 + y * 11) as i32,
+            ];
+        }
+    }
+    pixels
+}
+
+fn build_u32_pixels() -> Vec<[u32; 4]> {
+    let mut pixels = vec![[0u32; 4]; (WIDTH * HEIGHT) as usize];
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let idx = (y * WIDTH + x) as usize;
+            pixels[idx] = [
+                (x * 17 + y * 9 + 1000) % 65536,
+                (x * 7 + y * 21 + 2000) % 65536,
+                (x * 13 + y * 5 + 3000) % 65536,
+                x * 3 + y * 11 + 4000,
             ];
         }
     }
@@ -373,6 +621,24 @@ fn write_cpu_texture2d(tex: &wgsl_rs::std::Texture2D<f32>, rgba8: &[[u8; 4]]) {
                     px[3] as f32 / 255.0,
                 ],
             );
+        }
+    }
+}
+
+fn write_cpu_texture2d_i32(tex: &wgsl_rs::std::Texture2D<i32>, pixels: &[[i32; 4]]) {
+    tex.init(WIDTH, HEIGHT);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            tex.set_pixel(x, y, pixels[(y * WIDTH + x) as usize]);
+        }
+    }
+}
+
+fn write_cpu_texture2d_u32(tex: &wgsl_rs::std::Texture2D<u32>, pixels: &[[u32; 4]]) {
+    tex.init(WIDTH, HEIGHT);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            tex.set_pixel(x, y, pixels[(y * WIDTH + x) as usize]);
         }
     }
 }
@@ -493,6 +759,41 @@ fn write_cpu_depth2d_array(tex: &wgsl_rs::std::TextureDepth2DArray, layers: &[Ve
     tex.set(data);
 }
 
+/// Mirrors the `fill_depth_cube_face` shader: the per-face offset keeps every
+/// face and array layer distinguishable on both sides of the roundtrip.
+fn depth_cube_face_value(x: u32, y: u32, face_id: u32) -> f32 {
+    ((x as f32 * 0.07 + y as f32 * 0.11 + face_id as f32 * 0.13) % 1.0).clamp(0.0, 1.0)
+}
+
+fn write_cpu_depth_cube(tex: &wgsl_rs::std::TextureDepthCube) {
+    let mut data = wgsl_rs::std::TextureDataDepthCube::new(FACE);
+    for face in 0..6u32 {
+        for y in 0..FACE {
+            for x in 0..FACE {
+                data.faces[face as usize].mips[0][y as usize][x as usize] =
+                    depth_cube_face_value(x, y, face);
+            }
+        }
+    }
+    tex.set(data);
+}
+
+fn write_cpu_depth_cube_array(tex: &wgsl_rs::std::TextureDepthCubeArray) {
+    let mut data = wgsl_rs::std::TextureDataDepthCubeArray::new(FACE, LAYERS);
+    for cube in 0..LAYERS {
+        for face in 0..6u32 {
+            let face_id = cube * 6 + face;
+            for y in 0..FACE {
+                for x in 0..FACE {
+                    data.cubes[cube as usize].faces[face as usize].mips[0][y as usize]
+                        [x as usize] = depth_cube_face_value(x, y, face_id);
+                }
+            }
+        }
+    }
+    tex.set(data);
+}
+
 fn create_gpu_texture2d_rgba8(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -523,6 +824,49 @@ fn create_gpu_texture2d_rgba8(
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(WIDTH * 4),
+            rows_per_image: Some(HEIGHT),
+        },
+        wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    );
+    texture
+}
+
+fn create_gpu_texture2d_32bit_integer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &'static str,
+    format: wgpu::TextureFormat,
+    bytes: &[u8],
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(WIDTH * 16),
             rows_per_image: Some(HEIGHT),
         },
         wgpu::Extent3d {
@@ -849,6 +1193,117 @@ fn fill_gpu_depth2d_array(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::T
     depth_tex
 }
 
+/// Renders per-face deterministic depth values into a `Depth32Float` cube
+/// (or cube-array) depth texture by rendering each face layer separately
+/// with the `fill_depth_cube_face` shader, passing a distinct `FACE_ID`
+/// uniform per face. `cubes` is the number of cube layers (1 for a plain
+/// depth cube).
+fn fill_gpu_depth_cube(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &'static str,
+    cubes: u32,
+) -> wgpu::Texture {
+    let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: FACE,
+            height: FACE,
+            depth_or_array_layers: cubes * 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+
+    let mut linkage =
+        wgsl_rs::linkage::wgpu::analyze_wgsl_module(&fill_depth_cube_face::WGSL_SOURCE).unwrap();
+    let module = linkage.shader_module(device);
+    let pipeline_layout = linkage.pipeline_layout(device, Some("fill_depth_cube_layout"));
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("fill_depth_cube_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: linkage
+            .vertex_entry("vtx_main")
+            .expect("vtx_main entry present")
+            .vertex_state(&module),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(
+            linkage
+                .fragment_entry("frag_main")
+                .expect("frag_main entry present")
+                .fragment_state(&module, &[]),
+        ),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("fill_depth_cube"),
+    });
+
+    // One buffer per face, written before the encoder is submitted:
+    // `queue.write_buffer` takes effect immediately, so reusing a single
+    // buffer across passes in the same encoder would leave every pass
+    // reading the last-written value.
+    for face_id in 0..(cubes * 6) {
+        let face_id_buffer = linkage
+            .buffer("FACE_ID")
+            .expect("FACE_ID binding present")
+            .create_buffer(device);
+        queue.write_buffer(&face_id_buffer, 0, &face_id.to_ne_bytes());
+
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("fill_depth_cube_face_view"),
+            format: Some(wgpu::TextureFormat::Depth32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: face_id,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let bg = linkage
+            .create_bind_group_named(
+                0,
+                device,
+                &[("FACE_ID", face_id_buffer.as_entire_binding())],
+            )
+            .expect("fill_depth_cube bind group");
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fill_depth_cube_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+    queue.submit(Some(encoder.finish()));
+    depth_tex
+}
+
 fn render_one_target(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -948,7 +1403,8 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
     }
 
     fn description(&self) -> &str {
-        "sample_grad/level/bias/offset, gather (2D/2D-array/cube/cube-array), and compare variants"
+        "sample_grad/level/bias/offset, gather (2D/2D-array/cube/cube-array/depth-cube, integer \
+         types), and compare variants"
     }
 
     fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<ComparisonResult> {
@@ -961,6 +1417,22 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
         let color_layers = vec![color0.clone(), color1.clone()];
         let gpu_tex2d = create_gpu_texture2d_rgba8(device, queue, &color0);
         let gpu_tex2d_array = create_gpu_texture2d_array_rgba8(device, queue, &color_layers);
+        let pixels_i32 = build_i32_pixels();
+        let pixels_u32 = build_u32_pixels();
+        let gpu_tex2d_sint = create_gpu_texture2d_32bit_integer(
+            device,
+            queue,
+            "advanced_tex2d_sint_source",
+            wgpu::TextureFormat::Rgba32Sint,
+            bytemuck::cast_slice(&pixels_i32),
+        );
+        let gpu_tex2d_uint = create_gpu_texture2d_32bit_integer(
+            device,
+            queue,
+            "advanced_tex2d_uint_source",
+            wgpu::TextureFormat::Rgba32Uint,
+            bytemuck::cast_slice(&pixels_u32),
+        );
 
         {
             let source_view = gpu_tex2d.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1090,6 +1562,148 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 },
             );
             results.push(compare_rgba("advanced_tex2d_gather", &gpu, &cpu));
+        }
+
+        {
+            let source_view_i = gpu_tex2d_sint.create_view(&wgpu::TextureViewDescriptor::default());
+            let source_view_u = gpu_tex2d_uint.create_view(&wgpu::TextureViewDescriptor::default());
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_tex2d_gather_integer_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &tex2d_gather_integer_variants::WGSL_SOURCE,
+            )
+            .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_tex2d_gather_integer"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("TEX_I", wgpu::BindingResource::TextureView(&source_view_i)),
+                        ("TEX_U", wgpu::BindingResource::TextureView(&source_view_u)),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_tex2d_gather_integer bind group");
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_tex2d_gather_integer",
+                &pipeline_layout,
+                &bg,
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            );
+
+            write_cpu_texture2d_i32(tex2d_gather_integer_variants::TEX_I, &pixels_i32);
+            write_cpu_texture2d_u32(tex2d_gather_integer_variants::TEX_U, &pixels_u32);
+            tex2d_gather_integer_variants::S.set(SamplerState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result = tex2d_gather_integer_variants::frag_main(
+                        tex2d_gather_integer_variants::FragInput {
+                            position: builtins.position,
+                        },
+                    );
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_tex2d_gather_integer", &gpu, &cpu));
+        }
+
+        {
+            let source_view = gpu_tex2d_array.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_tex2d_array_gather_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &tex2d_array_gather_variants::WGSL_SOURCE,
+            )
+            .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_tex2d_array_gather"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_tex2d_array_gather bind group");
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_tex2d_array_gather",
+                &pipeline_layout,
+                &bg,
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            );
+
+            write_cpu_texture2d_array(tex2d_array_gather_variants::TEX, &color_layers);
+            tex2d_array_gather_variants::S.set(SamplerState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result = tex2d_array_gather_variants::frag_main(
+                        tex2d_array_gather_variants::FragInput {
+                            position: builtins.position,
+                        },
+                    );
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_tex2d_array_gather", &gpu, &cpu));
         }
 
         {
@@ -1474,6 +2088,192 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                 },
             );
             results.push(compare_rgba("advanced_depth2d_array_compare", &gpu, &cpu));
+        }
+
+        {
+            let gpu_depth_cube =
+                fill_gpu_depth_cube(device, queue, "advanced_depth_cube_source", 1);
+            let gpu_depth_cube_array =
+                fill_gpu_depth_cube(device, queue, "advanced_depth_cube_array_source", LAYERS);
+
+            let cube_view = gpu_depth_cube.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
+            });
+            let cube_array_view = gpu_depth_cube_array.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::CubeArray),
+                ..Default::default()
+            });
+            // Depth gathers take a plain (non-comparison) sampler.
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_depth_cube_gather_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            });
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &depth_cube_gather_variants::WGSL_SOURCE,
+            )
+            .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_depth_cube_gather"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("CUBE_TEX", wgpu::BindingResource::TextureView(&cube_view)),
+                        (
+                            "CUBE_ARRAY_TEX",
+                            wgpu::BindingResource::TextureView(&cube_array_view),
+                        ),
+                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                    ],
+                )
+                .expect("advanced_depth_cube_gather bind group");
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_depth_cube_gather",
+                &pipeline_layout,
+                &bg,
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            );
+
+            write_cpu_depth_cube(depth_cube_gather_variants::CUBE_TEX);
+            write_cpu_depth_cube_array(depth_cube_gather_variants::CUBE_ARRAY_TEX);
+            depth_cube_gather_variants::S.set(SamplerState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result = depth_cube_gather_variants::frag_main(
+                        depth_cube_gather_variants::FragInput {
+                            position: builtins.position,
+                        },
+                    );
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba("advanced_depth_cube_gather", &gpu, &cpu));
+        }
+
+        {
+            let gpu_depth_cube =
+                fill_gpu_depth_cube(device, queue, "advanced_depth_cube_cmp_source", 1);
+            let gpu_depth_cube_array = fill_gpu_depth_cube(
+                device,
+                queue,
+                "advanced_depth_cube_cmp_array_source",
+                LAYERS,
+            );
+
+            let cube_view = gpu_depth_cube.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
+            });
+            let cube_array_view = gpu_depth_cube_array.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::CubeArray),
+                ..Default::default()
+            });
+            // SamplerComparisonState::default() is LessEqual; keep the GPU
+            // sampler in sync.
+            let cmp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("advanced_depth_cube_cmp_sampler"),
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                ..Default::default()
+            });
+            let mut linkage = wgsl_rs::linkage::wgpu::analyze_wgsl_module(
+                &depth_cube_gather_compare_variants::WGSL_SOURCE,
+            )
+            .unwrap();
+            let module = linkage.shader_module(device);
+            let pipeline_layout =
+                linkage.pipeline_layout(device, Some("advanced_depth_cube_gather_compare"));
+            let bg = linkage
+                .create_bind_group_named(
+                    0,
+                    device,
+                    &[
+                        ("CUBE_TEX", wgpu::BindingResource::TextureView(&cube_view)),
+                        (
+                            "CUBE_ARRAY_TEX",
+                            wgpu::BindingResource::TextureView(&cube_array_view),
+                        ),
+                        (
+                            "DEPTH_SAMPLER",
+                            wgpu::BindingResource::Sampler(&cmp_sampler),
+                        ),
+                    ],
+                )
+                .expect("advanced_depth_cube_gather_compare bind group");
+
+            let gpu = render_one_target(
+                device,
+                queue,
+                "advanced_depth_cube_gather_compare",
+                &pipeline_layout,
+                &bg,
+                linkage
+                    .vertex_entry("vtx_main")
+                    .expect("vtx_main entry present")
+                    .vertex_state(&module),
+                linkage
+                    .fragment_entry("frag_main")
+                    .expect("frag_main entry present")
+                    .fragment_state(
+                        &module,
+                        &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::all(),
+                        })],
+                    ),
+            );
+
+            write_cpu_depth_cube(depth_cube_gather_compare_variants::CUBE_TEX);
+            write_cpu_depth_cube_array(depth_cube_gather_compare_variants::CUBE_ARRAY_TEX);
+            depth_cube_gather_compare_variants::DEPTH_SAMPLER
+                .set(SamplerComparisonState::default());
+            let cpu = dispatch_fragments(
+                WIDTH,
+                HEIGHT,
+                |_, _| (),
+                |builtins, _| {
+                    let result = depth_cube_gather_compare_variants::frag_main(
+                        depth_cube_gather_compare_variants::FragInput {
+                            position: builtins.position,
+                        },
+                    );
+                    [result.x, result.y, result.z, result.w]
+                },
+            );
+            results.push(compare_rgba(
+                "advanced_depth_cube_gather_compare",
+                &gpu,
+                &cpu,
+            ));
         }
 
         results

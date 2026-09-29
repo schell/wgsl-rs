@@ -709,8 +709,8 @@ impl TextureSampleGrad<Vec2f, Vec2f, Vec2f> for Texture2D<f32> {
     ) -> Self::Output {
         // TODO: do thes comments still make sense?
         // * On CPU, gradients are used to approximate mip level selection.
-        // * On CPU, we approximate by sampling at level 0 (gradients would
-        //   select mip level on GPU).
+        // * On CPU, we approximate by sampling at level 0 (gradients would select mip
+        //   level on GPU).
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), 0);

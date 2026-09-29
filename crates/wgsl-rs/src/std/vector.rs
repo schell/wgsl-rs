@@ -2398,6 +2398,30 @@ mod test {
             vec3i(si.x() ^ sj.x(), si.y() ^ sj.y(), si.z() ^ sj.z())
         );
 
+        // Vec3 compound assignment — the one instantiation family the GPU
+        // modules check only partially — all three ops, both signs.
+        let mut h = si;
+        h &= sj;
+        assert_eq!(h, si & sj);
+        h = si;
+        h |= sj;
+        assert_eq!(h, si | sj);
+        h = si;
+        h ^= sj;
+        assert_eq!(h, si ^ sj);
+
+        let v3 = vec3u(0xF0F0F0F0, 0x0F0F0F0F, 0x12345678);
+        let w3 = vec3u(0x0F0F0F0F, 0xF0F0F0F0, 0x87654321);
+        let mut j = v3;
+        j &= w3;
+        assert_eq!(j, v3 & w3);
+        j = v3;
+        j |= w3;
+        assert_eq!(j, v3 | w3);
+        j = v3;
+        j ^= w3;
+        assert_eq!(j, v3 ^ w3);
+
         let mut f = vec2i(0x7FFFFFFF, i32::MIN);
         f &= vec2i(0x0F0F0F0F, 0xFF00FF00u32 as i32);
         assert_eq!(

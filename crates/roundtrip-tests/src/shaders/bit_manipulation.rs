@@ -150,11 +150,11 @@ pub mod bit_vector_binary_u32 {
 }
 
 /// Vector bitwise ops via swizzles plus mixed-precedence vector comparisons
-/// (wgsl-rs#186 composing with #159 and #164): Vec3u `|`/`^` via swizzles,
-/// and `a & b == b` on Vec4u and Vec2u — which parses as `(a & b) == b` in
-/// Rust (bitwise binds tighter than comparison) and renders as
-/// `all((a & b) == b)` so WGSL's vecN<bool> result reduces to the bool
-/// Rust's PartialEq produces.
+/// (wgsl-rs#186 composing with #159 and #164): a Vec3u compound `|=` via
+/// swizzles, Vec3u `^`, and `a & b == b` on Vec4u and Vec2u — which parses
+/// as `(a & b) == b` in Rust (bitwise binds tighter than comparison) and
+/// renders as `all((a & b) == b)` so WGSL's vecN<bool> result reduces to
+/// the bool Rust's PartialEq produces.
 #[wgsl]
 pub mod bit_vector_swizzle_cmp_u32 {
     use wgsl_rs::std::*;
@@ -182,8 +182,10 @@ pub mod bit_vector_swizzle_cmp_u32 {
             input[base + 7],
         );
 
-        // Vec3u ops via swizzles.
-        let or3 = a.xyz() | b.zyx();
+        // Vec3u compound assign via swizzles.
+        let mut or3 = a.xyz();
+        or3 |= b.zyx();
+        // Vec3u binary op via swizzles.
         let xor3 = a.xyz() ^ b.zyx();
         // Mixed-precedence comparisons on vector operands (the wgsl-rs#159
         // repro shape, riding the wgsl-rs#164 vector `==` lowering).
@@ -246,14 +248,15 @@ pub mod bit_vector_assign_u32 {
     }
 }
 
-/// Signed vector bitwise ops (wgsl-rs#186): `&`, `|`, `^` on Vec4i, `&=` on
-/// Vec4i, and a Vec3i op via swizzles.
+/// Signed vector bitwise ops (wgsl-rs#186): `&`, `|`, `^` on Vec4i, a full
+/// four-lane check of `&=` on Vec4i, and a Vec3i compound `|=` via
+/// swizzles.
 #[wgsl]
 pub mod bit_vector_ops_i32 {
     use wgsl_rs::std::*;
 
     storage!(group(0), binding(0), INPUT: [i32; 512]); // 64 vec4i pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 256]); // 4 results * 64
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 320]); // 5 results * 64
 
     #[compute]
     #[workgroup_size(64)]
@@ -277,14 +280,16 @@ pub mod bit_vector_ops_i32 {
 
         let mut c = a;
         c &= b;
-        // Vec3i op via swizzles.
-        let or3 = a.xyz() | b.zyx();
+        // Vec3i compound assign via swizzles.
+        let mut g = a.xyz();
+        g |= b.zyx();
 
-        let out_base = idx * 4;
+        let out_base = idx * 5;
         get_mut!(OUTPUT)[out_base] = a & b;
         get_mut!(OUTPUT)[out_base + 1] = a | b;
         get_mut!(OUTPUT)[out_base + 2] = a ^ b;
-        get_mut!(OUTPUT)[out_base + 3] = vec4i(c.x(), or3.y(), 0, 0);
+        get_mut!(OUTPUT)[out_base + 3] = c;
+        get_mut!(OUTPUT)[out_base + 4] = vec4i(g.x(), g.y(), g.z(), 0);
     }
 }
 
@@ -635,7 +640,7 @@ impl RoundtripTest for BitManipulationTest {
             let cpu_output = bit_vector_swizzle_cmp_u32::OUTPUT.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
-            const OPS: [&str; 4] = ["or3", "xor3", "eq4", "eq2"];
+            const OPS: [&str; 4] = ["or_assign3", "xor3", "eq4", "eq2"];
             let labels: Vec<String> = (0..N)
                 .flat_map(|idx| {
                     (0..4).flat_map(move |op| {
@@ -704,7 +709,7 @@ impl RoundtripTest for BitManipulationTest {
             let (a_in, b_in) = bit_vector_inputs_i32();
             let flattened = flatten_bit_vector_pairs(&a_in, &b_in);
             let input_bytes = bytemuck::cast_slice(&flattened);
-            let output_size = (N * 4 * 4 * std::mem::size_of::<i32>()) as u64;
+            let output_size = (N * 5 * 4 * std::mem::size_of::<i32>()) as u64;
 
             let mut linkage =
                 wgsl_rs::linkage::wgpu::analyze_wgsl_module(&bit_vector_ops_i32::WGSL_SOURCE)
@@ -722,7 +727,7 @@ impl RoundtripTest for BitManipulationTest {
 
             use wgsl_rs::std::*;
             bit_vector_ops_i32::INPUT.set(flattened);
-            bit_vector_ops_i32::OUTPUT.set([Vec4i::default(); 256]);
+            bit_vector_ops_i32::OUTPUT.set([Vec4i::default(); 320]);
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
                 bit_vector_ops_i32::main(builtins.global_invocation_id);
             });
@@ -735,10 +740,10 @@ impl RoundtripTest for BitManipulationTest {
                 .map(|x: i32| x as u32)
                 .collect();
 
-            const OPS: [&str; 4] = ["and4i", "or4i", "xor4i", "assign4i+or3i"];
+            const OPS: [&str; 5] = ["and4i", "or4i", "xor4i", "and_assign4i", "or_assign3i"];
             let labels: Vec<String> = (0..N)
                 .flat_map(|idx| {
-                    (0..4).flat_map(move |op| {
+                    (0..5).flat_map(move |op| {
                         (0..4).map(move |lane| format!("{} inv{} l{}", OPS[op], idx, lane))
                     })
                 })

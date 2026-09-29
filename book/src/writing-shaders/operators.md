@@ -41,10 +41,12 @@ wgsl-rs transpiles Rust operators to their WGSL equivalents. Most have a 1:1 map
 | `a << n` | `a << n` | shift left |
 | `a >> n` | `a >> n` | shift right |
 
-These work on the integer types — `i32`, `u32`, and their vectors
-(`Vec2i`/`Vec3i`/`Vec4i` and the `u` equivalents) — with vector operands
-applying the operator componentwise, matching the WGSL spec. Floating-point
-and boolean vectors do not support them.
+`&`, `|`, and `^` work on the integer types — `i32`, `u32`, and their
+vectors (`Vec2i`/`Vec3i`/`Vec4i` and the `u` equivalents) — with vector
+operands applying the operator componentwise. Floating-point and boolean
+vectors do not support them. The shifts are currently scalar-only: `<<`
+and `>>` do not compile on vectors in wgsl-rs, even though the WGSL spec
+permits them.
 
 ## Precedence & Parentheses
 

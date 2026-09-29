@@ -153,7 +153,7 @@ pub mod bit_vector_binary_u32 {
 /// (wgsl-rs#186 composing with #159 and #164): a Vec3u compound `|=` via
 /// swizzles, Vec3u `^`, and `a & b == b` on Vec4u and Vec2u — which parses
 /// as `(a & b) == b` in Rust (bitwise binds tighter than comparison) and
-/// renders as `all((a & b) == b)` so WGSL's vecN<bool> result reduces to
+/// renders as `all((a & b) == b)` so WGSL's `vecN<bool>` result reduces to
 /// the bool Rust's PartialEq produces.
 #[wgsl]
 pub mod bit_vector_swizzle_cmp_u32 {

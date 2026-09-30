@@ -1,5 +1,8 @@
 # wgsl-rs
 
+[![crates.io](https://img.shields.io/crates/v/wgsl-rs.svg)](https://crates.io/crates/wgsl-rs)
+[![docs.rs](https://docs.rs/wgsl-rs/badge.svg)](https://docs.rs/wgsl-rs)
+
 With **wgsl-rs** you write a subset of Rust code and it automatically generates
 WGSL shaders and `wgpu` runtime linkage. Rust code written this way is fully
 operational (it can be run on the CPU) while the transpiled WGSL is isomorphic
@@ -11,6 +14,18 @@ definitions between the two.
 
 Procedural macros are provided by the
 [`wgsl-rs-macros`](./crates/wgsl-rs-macros) crate.
+
+## Installation
+
+```sh
+cargo add wgsl-rs@0.1.0-beta.1
+```
+
+The beta publishes as a semver pre-release, so the explicit version pin is
+required (a plain `cargo add wgsl-rs` won't select it). Requires Rust 1.87+.
+See the manual's
+[Installation](https://renderling.xyz/wgsl-rs/manual/getting-started/installation.html)
+chapter for features and prerequisites.
 
 ## Operator's Manual
 
@@ -38,12 +53,7 @@ Or serve it with live reload:
 mdbook serve book/ --open
 ```
 
-## Roadmap to Beta
-
-There is a project plan for getting to beta
-[here](https://github.com/users/schell/projects/3/views/1).
-
-### Can it Hello World?
+## Can it Hello World?
 
 Yes! This is the canonical `hello_triangle` shader — ordinary Rust that the
 `#[wgsl]` macro transpiles to WGSL. It is also valid Rust you can compile,

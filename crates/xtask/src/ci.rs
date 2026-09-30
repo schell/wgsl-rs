@@ -81,6 +81,7 @@ impl CiAction {
             CiAction::PrCheck => {
                 CiAction::Fmt.run();
                 CiAction::Clippy.run();
+                CiAction::Docs.run();
                 CiAction::AllTests.run();
             }
         }

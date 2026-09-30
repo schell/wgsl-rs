@@ -2,6 +2,7 @@
 name = "id-collision-shader-b"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 wgsl-rs = { path = "../wgsl-rs" }

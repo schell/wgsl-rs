@@ -1538,3 +1538,27 @@ changes. The parse-side assoc-type resolution pass
 `type_name_for_assoc`, keyed by `mangle_type`, so array-based
 projections resolve to concrete types in signatures like struct-based
 projections do rather than rendering as symbolic alias names.
+
+### 2026-09-30: Ship the beta as a semver pre-release (`0.1.0-beta.1`), not plain `0.1.0`
+
+**Problem:** NLnet M1's deliverable is explicitly a *beta* release, but
+every manifest sat at `0.1.0`, which reads as a normal release. Shipping
+`0.1.0` now would also permanently burn that version slot on a beta;
+crates.io has no take-backs.
+
+**Decision:** All five publishable crates (`wgsl-rs`, `wgsl-rs-ir`,
+`wgsl-rs-macros`, `wgsl-rs-layout`, `wgsl-rs-layout-macros`) bump to
+`0.1.0-beta.1` and publish together at that version, in dependency order.
+
+- The pre-release names the milestone honestly and leaves room to iterate
+  (`beta.2`, `beta.3`, ...) on the same train before a clean `0.1.0` marks
+  the eventual stable.
+- One shared version keeps the inter-crate path-dep requirements a single
+  story.
+- Tradeoff accepted: cargo will not resolve a bare `wgsl-rs` requirement to
+  a prerelease, so early adopters must pin `=0.1.0-beta.1` (or `cargo add
+  wgsl-rs@0.1.0-beta.1`). For a beta whose consumers are known early
+  adopters, that friction beats a misleading version number.
+- MSRV: `rust-version = "1.87"` on all five, driven by wgpu/naga 29
+  (both declare `rust_version = "1.87"`; edition 2024 alone would need only
+  1.85).

@@ -398,6 +398,9 @@ pub trait IrModuleExt {
     ///
     /// Equivalent to the free function [`crate::validate_wgsl_source`]
     /// called on the output of [`wgsl_rs_ir::Module::wgsl_source`].
+    ///
+    /// Only available with the `validation` feature enabled.
+    #[cfg(feature = "validation")]
     fn validate(&self) -> Result<(), String>;
 }
 
@@ -406,6 +409,7 @@ impl IrModuleExt for wgsl_rs_ir::Module {
         analyze_ir_module(self.clone())
     }
 
+    #[cfg(feature = "validation")]
     fn validate(&self) -> Result<(), String> {
         crate::validate_wgsl_source(&self.wgsl_source())
     }

@@ -2,24 +2,32 @@
 
 ## Prerequisites
 
-- **Rust** (stable toolchain). Install via [rustup](https://rustup.rs/) if you don't already have it.
+- **Rust** 1.87+ (stable toolchain). Install via [rustup](https://rustup.rs/) if you don't already have it.
 - **A GPU** with a driver supported by [wgpu](https://wgpu.rs/). Required for roundtrip tests and running example renderers. On macOS, Metal works out of the box.
 
 ## Adding wgsl-rs to your project
 
-Add `wgsl-rs` to your `Cargo.toml`. The crate re-exports its proc macros, so you only need the one dependency:
+Add `wgsl-rs` to your `Cargo.toml` with the explicit beta pin — cargo won't
+resolve a pre-release version from a bare version requirement:
 
-```toml
-[dependencies]
-wgsl-rs = { version = "0.1" }
+```sh
+cargo add wgsl-rs@0.1.0-beta.1
 ```
 
-If you prefer to depend on the macro crate directly, the equivalent is:
+which adds:
 
 ```toml
 [dependencies]
-wgsl-rs = { version = "0.1" }
-wgsl-rs-macros = { version = "0.1" }
+wgsl-rs = "0.1.0-beta.1"
+```
+
+The crate re-exports its proc macros, so you only need the one dependency. If
+you prefer to depend on the macro crate directly as well, the equivalent is:
+
+```toml
+[dependencies]
+wgsl-rs = "0.1.0-beta.1"
+wgsl-rs-macros = "0.1.0-beta.1"
 ```
 
 The `validation` feature is enabled by default and pulls in [naga](https://github.com/gfx-rs/naga) to validate generated WGSL at test time. No extra configuration is required to get it.

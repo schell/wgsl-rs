@@ -50,18 +50,21 @@ bilinear filtering, returning them as a `vec4<ST>` in the order
 | Function | WGSL Equivalent | Texture kinds |
 |----------|-----------------|---------------|
 | `texture_gather(component, tex, sampler, coords)` | `textureGather` | 2D, cube |
-| `texture_gather(component, tex, sampler, coords)` | `textureGather` | 2D, cube |
 | `texture_gather_offset(component, tex, sampler, coords, offset)` | `textureGather` | 2D |
-| `texture_gather_array(component, tex, sampler, coords, array_index)` | `textureGather` | cube array |
-| `texture_gather_depth(tex, sampler, coords)` | `textureGather` | depth 2D |
+| `texture_gather_array(component, tex, sampler, coords, array_index)` | `textureGather` | 2D array, cube array |
+| `texture_gather_array_offset(component, tex, sampler, coords, array_index, offset)` | `textureGather` | 2D array |
+| `texture_gather_depth(tex, sampler, coords)` | `textureGather` | depth 2D, depth cube |
 | `texture_gather_depth(tex, sampler, coords, offset)` | `textureGather` | depth 2D |
-| `texture_gather_depth_array(tex, sampler, coords, array_index)` | `textureGather` | depth 2D array |
-| `texture_gather_compare(tex, cmp_sampler, coords, ref)` | `textureGatherCompare` | depth 2D |
+| `texture_gather_depth_array(tex, sampler, coords, array_index)` | `textureGather` | depth 2D array, depth cube array |
+| `texture_gather_depth_array(tex, sampler, coords, array_index, offset)` | `textureGather` | depth 2D array |
+| `texture_gather_compare(tex, cmp_sampler, coords, ref)` | `textureGatherCompare` | depth 2D, depth cube |
 | `texture_gather_compare(tex, cmp_sampler, coords, ref, offset)` | `textureGatherCompare` | depth 2D |
-| `texture_gather_compare_array(tex, cmp_sampler, coords, array_index, ref)` | `textureGatherCompare` | depth 2D array |
+| `texture_gather_compare_array(tex, cmp_sampler, coords, array_index, ref)` | `textureGatherCompare` | depth 2D array, depth cube array |
+| `texture_gather_compare_array(tex, cmp_sampler, coords, array_index, ref, offset)` | `textureGatherCompare` | depth 2D array |
 
-Cube gathers support `f32`, `i32`, and `u32` sampled types, and cube-array
-gathers accept `u32` or `i32` array indices, matching the WGSL spec.
+2D, 2D-array, and cube gathers support `f32`, `i32`, and `u32` sampled
+types; all array gather forms accept `u32` or `i32` array indices, matching
+the WGSL spec.
 
 ## Load / store / query
 

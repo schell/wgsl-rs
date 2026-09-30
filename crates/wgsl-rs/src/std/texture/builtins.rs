@@ -2706,3 +2706,60 @@ pub(crate) fn gather_texture_cube_array<T: Copy + Default>(
         .map(|cube| gather_texture_cube(cube, sampler_state, dx, dy, dz, component))
         .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
 }
+
+/// Gathers one component from the 4 texels of the 2D array layer selected by
+/// `array_index`.
+///
+/// The `array_index` is clamped to `[0, num_layers - 1]` before gathering
+/// from the selected layer via [`gather_texture_2d`].
+pub(crate) fn gather_texture_2d_array<T: Copy + Default>(
+    data: &TextureData2DArray<T>,
+    sampler_state: &SamplerState,
+    u: f32,
+    v: f32,
+    array_index: u32,
+    component: u32,
+) -> [T; 4] {
+    let layer = (array_index as usize).min(data.layers.len().saturating_sub(1));
+    data.layers
+        .get(layer)
+        .map(|layer_data| gather_texture_2d(layer_data, sampler_state, u, v, component))
+        .unwrap_or_else(|| std::array::from_fn(|_| T::default()))
+}
+
+/// Gathers the depth values of the 4 texels of the cube face selected by
+/// the direction `(dx, dy, dz)`.
+///
+/// Face selection and `(u, v)` projection follow [`select_cube_face`]; the
+/// gather itself is performed on the selected face via
+/// [`gather_4_depth_texels`].
+pub(crate) fn gather_depth_texture_cube(
+    data: &TextureDataDepthCube,
+    sampler_state: &SamplerState,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+) -> [f32; 4] {
+    let (face, u, v) = select_cube_face(dx, dy, dz);
+    gather_4_depth_texels(&data.faces[face], sampler_state, u, v)
+}
+
+/// Gathers the depth values of the 4 texels of the cube layer selected by
+/// `array_index`.
+///
+/// The `array_index` is clamped to `[0, num_layers - 1]` before gathering
+/// from the selected cube via [`gather_depth_texture_cube`].
+pub(crate) fn gather_depth_texture_cube_array(
+    data: &TextureDataDepthCubeArray,
+    sampler_state: &SamplerState,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+    array_index: u32,
+) -> [f32; 4] {
+    let layer = (array_index as usize).min(data.cubes.len().saturating_sub(1));
+    data.cubes
+        .get(layer)
+        .map(|cube| gather_depth_texture_cube(cube, sampler_state, dx, dy, dz))
+        .unwrap_or([0.0, 0.0, 0.0, 0.0])
+}

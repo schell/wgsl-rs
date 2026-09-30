@@ -2,6 +2,7 @@
 name = "id-collision-app"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 id-collision-shader-a = { path = "../id-collision-shader-a" }

@@ -1,6 +1,6 @@
 [package]
 name = "wgsl-rs"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2024"
 description = "Write WGSL shaders in a subset of Rust: CPU-runnable, GPU-rendered, with wgpu runtime linkage."
 license = "MIT"

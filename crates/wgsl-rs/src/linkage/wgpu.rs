@@ -251,11 +251,12 @@ impl core::fmt::Display for WgpuLinkage {
             };
             writeln!(
                 f,
-                "      @group({}) @binding({}): {} ({}, {size})",
+                "      @group({}) @binding({}): {} ({}, {size}, {ty})",
                 b.group,
                 b.binding,
                 b.binding_name,
-                buffer_kind_label(&b.kind)
+                buffer_kind_label(&b.kind),
+                ty = &b.ty
             )?;
         }
 
@@ -797,6 +798,10 @@ pub struct BufferDescriptorInfo {
     /// `wgpu::BufferDescriptor` along with the borrow of
     /// [`Self::binding_name`].
     pub usage: wgpu::BufferUsages,
+    /// The buffer's IR type.
+    ///
+    /// Here because it's useful for users to see the type from the runtime/CPU side.
+    pub ty: crate::ir::Type,
 }
 
 impl BufferDescriptorInfo {
@@ -1035,6 +1040,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                     usage: wgpu::BufferUsages::UNIFORM
                         | wgpu::BufferUsages::COPY_DST
                         | wgpu::BufferUsages::COPY_SRC,
+                    ty: u.ty.clone(),
                 });
             }
             ir::Item::Storage(s) => {
@@ -1080,6 +1086,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_DST
                         | wgpu::BufferUsages::COPY_SRC,
+                    ty: s.ty.clone(),
                 });
             }
             ir::Item::Sampler(s) => {

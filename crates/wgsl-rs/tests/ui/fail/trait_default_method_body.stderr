@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       default trait method bodies are not supported in WGSL; only trait impls generate WGSL functions, so implement the method in every impl, or mark the trait `#[wgsl_ignore]` if it is CPU-only.'
+ --> tests/ui/fail/trait_default_method_body.rs:6:9
+  |
+6 |         fn add(a: Self, b: Self) -> Self {
+  |         ^^

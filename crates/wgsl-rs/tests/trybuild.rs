@@ -177,3 +177,9 @@ fn deref_of_value_local_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/deref_value_local.rs");
 }
+
+#[test]
+fn trait_default_method_body_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/trait_default_method_body.rs");
+}

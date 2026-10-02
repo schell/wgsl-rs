@@ -7250,7 +7250,45 @@ impl TryFrom<&syn::Item> for Item {
                 Ok(Item::Impl(ItemImpl::try_from(item_impl)?))
             }
             syn::Item::Enum(item_enum) => Ok(Item::Enum(ItemEnum::try_from(item_enum)?)),
-            syn::Item::Trait(_) => Ok(Item::Trait),
+            syn::Item::Trait(item_trait) => {
+                // Trait definitions are Rust-only and produce no WGSL output,
+                // but default method bodies (and default associated const
+                // values) are unsupported syntax: only trait impls generate
+                // WGSL functions and consts, so a default body has nothing to
+                // attach to. An impl that omits the method leaves call sites
+                // referencing a `Type_method` function that is never emitted —
+                // a "two worlds" split where the CPU runs the default while
+                // WGSL fails naga validation with an unknown-identifier error
+                // far from the cause. `#[wgsl_ignore]`d traits return
+                // `Item::Ignored` above and never reach this check, so
+                // CPU-only traits keep working.
+                for trait_item in &item_trait.items {
+                    match trait_item {
+                        syn::TraitItem::Fn(method) if method.default.is_some() => {
+                            UnsupportedSnafu {
+                                span: method.sig.span(),
+                                note: "default trait method bodies are not supported in WGSL; \
+                                       only trait impls generate WGSL functions, so implement the \
+                                       method in every impl, or mark the trait `#[wgsl_ignore]` \
+                                       if it is CPU-only",
+                            }
+                            .fail()?
+                        }
+                        syn::TraitItem::Const(const_item) if const_item.default.is_some() => {
+                            UnsupportedSnafu {
+                                span: const_item.ident.span(),
+                                note: "default associated const values in traits are not \
+                                       supported in WGSL; only trait impls generate WGSL consts, \
+                                       so provide the const in every impl, or mark the trait \
+                                       `#[wgsl_ignore]` if it is CPU-only",
+                            }
+                            .fail()?
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Item::Trait)
+            }
             _ => UnsupportedSnafu {
                 span: value.span(),
                 note: format!(
@@ -10397,6 +10435,53 @@ mod test {
         assert!(
             matches!(result, Ok(Item::Trait)),
             "trait definitions should be accepted as passthrough"
+        );
+    }
+
+    #[test]
+    fn parse_trait_definition_with_default_method_is_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            trait MyTrait {
+                fn bar() -> u32 {
+                    0
+                }
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Err(Error::Unsupported { .. })),
+            "trait definitions with default method bodies should be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_trait_definition_with_default_const_is_rejected() {
+        let item: syn::Item = syn::parse_quote! {
+            trait MyTrait {
+                const N: usize = 4;
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Err(Error::Unsupported { .. })),
+            "trait definitions with default associated consts should be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_ignored_trait_definition_with_default_body_is_accepted() {
+        let item: syn::Item = syn::parse_quote! {
+            #[wgsl_ignore]
+            trait MyTrait {
+                fn bar() -> u32 {
+                    0
+                }
+            }
+        };
+        let result = Item::try_from(&item);
+        assert!(
+            matches!(result, Ok(Item::Ignored)),
+            "`#[wgsl_ignore]`d traits may carry default bodies"
         );
     }
 

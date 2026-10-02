@@ -2,6 +2,17 @@
 
 use crate::help::*;
 
+/// The nightly pinned for formatting.
+///
+/// `rustfmt.toml` uses nightly-only options, and a floating nightly
+/// drifts (a September 2026 nightly changed comment wrapping, failing
+/// every open PR on files its PR never touched). The workspace toolchain
+/// is stable (see rust-toolchain.toml), so formatting selects this
+/// nightly explicitly. CI's fmt job reads this constant from the source.
+/// Bump deliberately, then reformat the workspace with
+/// `cargo +nightly-YYYY-MM-DD fmt --all` and commit the diff.
+pub const PINNED_FMT_NIGHTLY: &str = "nightly-2026-08-22";
+
 #[derive(clap::Subcommand)]
 pub enum CiAction {
     /// Run unit tests with `nextest`.
@@ -72,7 +83,10 @@ impl CiAction {
                 "clippy --all-features --all-targets -- -D warnings",
             ),
 
-            CiAction::Fmt => cmd("cargo", "fmt --all -- --check"),
+            CiAction::Fmt => cmd(
+                "cargo",
+                format!("+{PINNED_FMT_NIGHTLY} fmt --all -- --check"),
+            ),
             CiAction::Docs => cmd_with_env(
                 "cargo",
                 "doc --all-features --no-deps",

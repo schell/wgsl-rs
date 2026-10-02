@@ -28,7 +28,7 @@ The CI pipeline runs the following jobs:
 
 | Job     | Tool          | Notes                                                    |
 |---------|---------------|----------------------------------------------------------|
-| fmt     | `cargo +nightly fmt --check` | Formatting requires the nightly toolchain  |
+| fmt     | `cargo xtask ci fmt` | Runs the nightly pinned in xtask (`PINNED_FMT_NIGHTLY`) |
 | clippy  | `cargo clippy`                | All warnings must be clean                 |
 | test    | `cargo test`                  | Runs on macOS so GPU tests execute          |
 | docs    | `cargo doc`                   | Documentation must build without warnings  |

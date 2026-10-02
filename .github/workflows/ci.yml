@@ -16,18 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        # Pinned to the nightly main was last green with: this job needs
-        # nightly-only rustfmt options, and a floating nightly drifts (a
-        # September 2026 nightly changed comment wrapping, failing every
-        # open PR on files its PR never touched).
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-08-22
-          components: rustfmt
-
+      # The pinned nightly is defined once in xtask
+      # (PINNED_FMT_NIGHTLY in crates/xtask/src/ci.rs): rustfmt.toml needs
+      # nightly-only options, and a floating nightly drifts. rustup
+      # installs the pinned toolchain on demand.
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          PINNED=$(grep -oP 'PINNED_FMT_NIGHTLY: &str = "\K[^"]+' crates/xtask/src/ci.rs)
+          cargo "+$PINNED" fmt --all -- --check
 
   clippy:
     name: Clippy

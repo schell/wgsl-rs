@@ -1,0 +1,6 @@
+[toolchain]
+# Builds, tests, clippy, and docs run on stable, the same channel CI uses
+# for its build/test/clippy/docs jobs. Formatting is pinned separately to a
+# specific nightly (PINNED_FMT_NIGHTLY in crates/xtask/src/ci.rs) because
+# rustfmt.toml needs nightly-only options and a floating nightly drifts.
+channel = "stable"

@@ -5,8 +5,9 @@
 //!   * By writing Rust code in a module annotated by the `#[wgsl_rs]` macro.
 //!   * It looks like this <https://renderling.xyz/wgsl-rs/manual/examples/hello-triangle.html#rust-source>.
 //! 2. How do I package my shaders?
-//!   * They are already packaged in that same module, automatically.
-//!     No need to deal with shader source files. Instead, you access the module at runtime.
+//!   * They are already packaged in that same module, automatically. No need to
+//!     deal with shader source files. Instead, you access the module at
+//!     runtime.
 //! 3. How do I run my shaders?
 //!   * That's still up to you, but if your runtime is [`wgpu`](https://crates.io/crates/wgpu), then with the
 //!     `linkage-wgpu` feature provided by this crate you can avoid a lot of boiler plate by having your [linkage

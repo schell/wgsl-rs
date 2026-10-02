@@ -33,7 +33,7 @@ cargo build                                 # Build all crates
 cargo test                                  # Run all tests
 cargo test -p wgsl-rs-macros                # Test specific crate (wgsl-rs-macros in this case)
 cargo test -- test_name                     # Run a single test by name
-cargo fmt && cargo clippy                   # Format and lint (note: use `cargo +nightly fmt` — rustfmt.toml uses unstable features)
+cargo xtask ci fmt && cargo clippy          # Format (pinned nightly, see crates/xtask/src/ci.rs) and lint
 cargo run -p roundtrip-tests                # Run the round-trip tests to ensure the "two worlds" agree
 cargo run -p example                        # Run the example, showing help text about subcommands
 cargo run -p example -- show                # Show the names of available example modules
@@ -42,7 +42,7 @@ cargo expand -p example -- examples::{name} # Expand the example which uses the 
 cargo clippy --all-features                 # Show all clippy lints
 ```
 
-Always remember to run `cargo +nightly fmt` after making changes (the `rustfmt.toml` uses unstable features that require the nightly toolchain; stable `cargo fmt` silently skips them and may leave formatting diffs).
+Always remember to run `cargo xtask ci fmt` after making changes. The workspace toolchain is pinned to stable via `rust-toolchain.toml`, and formatting runs on the nightly pinned in `crates/xtask/src/ci.rs` (`PINNED_FMT_NIGHTLY`); bare `cargo fmt` on stable silently skips the unstable `rustfmt.toml` options and may leave formatting diffs.
 
 ### xtask - development tools for agents
 

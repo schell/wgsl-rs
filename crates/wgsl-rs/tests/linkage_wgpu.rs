@@ -208,6 +208,53 @@ fn analyze_dual_compute_groups_workgroup_sizes() {
 }
 
 #[test]
+fn display_summarizes_entries_groups_buffers_and_cache() {
+    let linkage = wg::analyze_wgsl_module(&triangle::WGSL_SOURCE).unwrap();
+    let text = linkage.to_string();
+    assert!(text.starts_with("linkage for 'triangle'"), "got:\n{text}");
+    assert!(text.contains("vertex: vtx_main"), "got:\n{text}");
+    assert!(text.contains("fragment: frag_main"), "got:\n{text}");
+    assert!(
+        text.contains("@group(0) triangle::bind_group_0"),
+        "got:\n{text}"
+    );
+    assert!(text.contains("@binding(0) FRAME (uniform)"), "got:\n{text}");
+    assert!(
+        text.contains("@binding(0): FRAME (uniform, 4 bytes)"),
+        "got:\n{text}"
+    );
+    assert!(text.contains("pipeline layout not built"), "got:\n{text}");
+    // Display should not add a trailing newline: callers print with
+    // `println!("{linkage}")`.
+    assert!(!text.ends_with('\n'), "got:\n{text}");
+
+    // Compute entries render their workgroup sizes, and storage buffer
+    // kinds and §14.4.1 sizes are labeled.
+    let linkage = wg::analyze_wgsl_module(&dual_compute::WGSL_SOURCE).unwrap();
+    let text = linkage.to_string();
+    assert!(
+        text.contains("compute: a @workgroup_size(8, 4, 1)"),
+        "got:\n{text}"
+    );
+    assert!(
+        text.contains("compute: b @workgroup_size(64, 1, 1)"),
+        "got:\n{text}"
+    );
+    assert!(
+        text.contains("@binding(0) INPUT (storage, read-only)"),
+        "got:\n{text}"
+    );
+    assert!(
+        text.contains("@binding(0): INPUT (storage, read-only, 256 bytes)"),
+        "got:\n{text}"
+    );
+    assert!(
+        text.contains("cache: 0 of 1 bind group layouts built"),
+        "got:\n{text}"
+    );
+}
+
+#[test]
 fn shader_module_descriptor_borrows_module_label() {
     let linkage = wg::analyze_wgsl_module(&triangle::WGSL_SOURCE).unwrap();
     let desc = linkage.shader_module_descriptor();

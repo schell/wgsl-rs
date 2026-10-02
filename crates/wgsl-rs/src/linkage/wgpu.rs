@@ -185,6 +185,122 @@ pub struct WgpuLinkage {
     pub buffers: Vec<BufferDescriptorInfo>,
 }
 
+impl core::fmt::Display for WgpuLinkage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let WgpuLinkage {
+            module_label,
+            ir,
+            bind_groups,
+            bind_group_layouts,
+            pipeline_layout,
+            vertex_entries,
+            fragment_entries,
+            compute_entries,
+            buffers,
+        } = self;
+
+        writeln!(
+            f,
+            "linkage for '{module_label}' ({} IR items)",
+            ir.items.len()
+        )?;
+
+        writeln!(f, "  entry points:")?;
+        if vertex_entries.is_empty() && fragment_entries.is_empty() && compute_entries.is_empty() {
+            writeln!(f, "    (none)")?;
+        }
+        for e in vertex_entries {
+            writeln!(f, "    vertex: {}", e.name)?;
+        }
+        for e in fragment_entries {
+            writeln!(f, "    fragment: {}", e.name)?;
+        }
+        for e in compute_entries {
+            let (x, y, z) = e.workgroup_size;
+            writeln!(f, "    compute: {} @workgroup_size({x}, {y}, {z})", e.name)?;
+        }
+
+        writeln!(f, "  bind groups:")?;
+        if bind_groups.is_empty() {
+            writeln!(f, "    (none)")?;
+        }
+        for (group, info) in bind_groups {
+            writeln!(f, "    @group({group}) {}", info.label)?;
+            for meta in &info.bindings {
+                writeln!(
+                    f,
+                    "      @binding({}) {} ({})",
+                    meta.binding,
+                    meta.name,
+                    binding_kind_label(&meta.kind)
+                )?;
+            }
+        }
+
+        writeln!(f, "  buffers:")?;
+        if buffers.is_empty() {
+            writeln!(f, "    (none)")?;
+        }
+        for b in buffers {
+            // `size` is 0 for runtime-sized storage buffers; the buffer's
+            // length is then whatever the caller chooses to allocate.
+            let size = if b.size == 0 {
+                "runtime-sized".to_string()
+            } else {
+                format!("{} bytes", b.size)
+            };
+            writeln!(
+                f,
+                "      @group({}) @binding({}): {} ({}, {size})",
+                b.group,
+                b.binding,
+                b.binding_name,
+                buffer_kind_label(&b.kind)
+            )?;
+        }
+
+        // The layouts are built lazily; show how much of the cache is
+        // populated. Calling `pipeline_layout` fills every group at once.
+        write!(
+            f,
+            "  cache: {} of {} bind group layouts built, pipeline layout {}",
+            bind_group_layouts.len(),
+            bind_groups.len(),
+            if pipeline_layout.is_some() {
+                "built"
+            } else {
+                "not built"
+            }
+        )?;
+
+        Ok(())
+    }
+}
+
+/// A human-readable label for a [`BindingKind`].
+fn binding_kind_label(kind: &BindingKind) -> &'static str {
+    match kind {
+        BindingKind::Uniform => "uniform",
+        BindingKind::Storage { read_only: true } => "storage, read-only",
+        BindingKind::Storage { read_only: false } => "storage, read-write",
+        BindingKind::Sampler { comparison: true } => "comparison sampler",
+        BindingKind::Sampler { comparison: false } => "sampler",
+        BindingKind::Texture => "texture",
+        BindingKind::DepthTexture => "depth texture",
+        BindingKind::StorageTexture { read_write: true } => "storage texture, read-write",
+        BindingKind::StorageTexture { read_write: false } => "storage texture",
+    }
+}
+
+/// A human-readable label for a [`BufferKind`].
+fn buffer_kind_label(kind: &BufferKind) -> &'static str {
+    match kind {
+        BufferKind::Uniform => "uniform",
+        BufferKind::Storage { read_only: true } => "storage, read-only",
+        BufferKind::Storage { read_only: false } => "storage, read-write",
+    }
+}
+
 impl WgpuLinkage {
     /// Returns the bind group for the given `@group(N)` index, if any.
     pub fn bind_group(&self, group: u32) -> Option<&BindGroupInfo> {

@@ -445,6 +445,20 @@ pub enum Type {
     AssocType { ty: Box<Type>, member: String },
 }
 
+impl core::fmt::Display for Type {
+    /// Formats the type as its WGSL spelling, e.g. `f32`, `vec4f`, or
+    /// `array<u32, 4>` — the same text the renderer emits.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            // PhantomData has no WGSL representation (it is filtered out
+            // of struct fields before rendering), so `render_type` would
+            // panic. Display the Rust spelling instead.
+            Type::Phantom { elem } => write!(f, "PhantomData<{elem}>"),
+            _ => f.write_str(&crate::render::render_type(self)),
+        }
+    }
+}
+
 // ===== Literals / operators =====
 
 /// A literal value.

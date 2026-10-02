@@ -16,6 +16,128 @@ fn lit_u(n: u32) -> Expr {
 }
 
 #[test]
+fn type_display_renders_wgsl_spelling() {
+    assert_eq!(Type::Scalar(ScalarType::F32).to_string(), "f32");
+    assert_eq!(
+        Type::Vector {
+            elements: 4,
+            scalar_ty: Some(ScalarType::F32)
+        }
+        .to_string(),
+        "vec4f"
+    );
+    // The spec predeclares no `vecNb` alias, so bool vectors stay generic
+    // (wgsl-rs#169).
+    assert_eq!(
+        Type::Vector {
+            elements: 2,
+            scalar_ty: Some(ScalarType::Bool)
+        }
+        .to_string(),
+        "vec2<bool>"
+    );
+    assert_eq!(
+        Type::Matrix {
+            columns: 4,
+            rows: 4,
+            scalar_ty: Some(ScalarType::F32)
+        }
+        .to_string(),
+        "mat4x4<f32>"
+    );
+    assert_eq!(
+        Type::Array {
+            elem: Box::new(Type::Scalar(ScalarType::U32)),
+            len: ident("4"),
+        }
+        .to_string(),
+        "array<u32, 4>"
+    );
+    assert_eq!(
+        Type::RuntimeArray {
+            elem: Box::new(Type::Scalar(ScalarType::F32))
+        }
+        .to_string(),
+        "array<f32>"
+    );
+    assert_eq!(
+        Type::Atomic {
+            elem: Box::new(Type::Scalar(ScalarType::U32))
+        }
+        .to_string(),
+        "atomic<u32>"
+    );
+    assert_eq!(
+        Type::Struct {
+            name: "Camera".to_string(),
+            type_args: vec![]
+        }
+        .to_string(),
+        "Camera"
+    );
+    assert_eq!(
+        Type::Ptr {
+            address_space: AddressSpace::Workgroup,
+            elem: Box::new(Type::Scalar(ScalarType::F32)),
+        }
+        .to_string(),
+        "ptr<workgroup, f32>"
+    );
+    assert_eq!(Type::Sampler.to_string(), "sampler");
+    assert_eq!(Type::SamplerComparison.to_string(), "sampler_comparison");
+    assert_eq!(
+        Type::Texture {
+            kind: TextureKind::Texture2D,
+            sampled_type: ScalarType::F32,
+        }
+        .to_string(),
+        "texture_2d<f32>"
+    );
+    assert_eq!(
+        Type::TextureDepth {
+            kind: TextureDepthKind::Depth2D
+        }
+        .to_string(),
+        "texture_depth_2d"
+    );
+    assert_eq!(
+        Type::TextureStorage {
+            kind: TextureStorageKind::Storage2D,
+            format: TexelFormat::Rgba8unorm,
+            access: StorageTextureAccess::Write,
+        }
+        .to_string(),
+        "texture_storage_2d<rgba8unorm, write>"
+    );
+    // Type parameters render as their substitution placeholders.
+    assert_eq!(
+        Type::TypeParam {
+            name: "T".to_string()
+        }
+        .to_string(),
+        "__TPT__"
+    );
+    // PhantomData has no WGSL representation; Display falls back to the
+    // Rust spelling rather than panicking.
+    assert_eq!(
+        Type::Phantom {
+            elem: Box::new(Type::Scalar(ScalarType::F32))
+        }
+        .to_string(),
+        "PhantomData<f32>"
+    );
+    // Associated types render by their mangled alias name.
+    assert_eq!(
+        Type::AssocType {
+            ty: Box::new(Type::Scalar(ScalarType::U32)),
+            member: "Array".to_string(),
+        }
+        .to_string(),
+        "u32_Array"
+    );
+}
+
+#[test]
 fn renders_simple_const() {
     let m = Module {
         name: "test",

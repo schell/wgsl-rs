@@ -16,3 +16,8 @@ doc-diagrams = ["dep:snafu"]
 wgsl-rs = { version = "0.1.0-beta.1", path = "../wgsl-rs" }
 wgsl-rs-layout-macros = { version = "0.1.0-beta.1", path = "../wgsl-rs-layout-macros" }
 snafu = { workspace = true, optional = true }
+
+[package.metadata.docs.rs]
+# The `doc-diagrams` helpers are public API but sit behind a non-default
+# feature. Document everything.
+all-features = true

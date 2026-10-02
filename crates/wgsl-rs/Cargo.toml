@@ -40,3 +40,9 @@ wgsl-rs-macros = { version = "0.1.0-beta.1", path = "../wgsl-rs-macros", default
 futures = { workspace = true }
 serde_json = { workspace = true }
 trybuild = "1"
+
+[package.metadata.docs.rs]
+# Docs.rs builds with default features only, which hides the public
+# `linkage::wgpu` module (behind `linkage-wgpu`) and the serde impls
+# (behind `serde`). Document everything.
+all-features = true

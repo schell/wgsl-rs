@@ -3,6 +3,27 @@
 Welcome to the **wgsl-rs** operator's manual. This book is the canonical,
 user-facing reference for writing GPU shaders with `wgsl-rs`.
 
+## FAQ
+
+1. How do I write shaders?
+   * By writing Rust code in a module annotated by the `#[wgsl_rs]` macro.
+   [It looks like this](./examples/hello-triangle.md#rust-source).
+2. How do I package my shaders?
+   * They are already packaged within that same Rust module, automatically.
+   No need to deal with shader source files. Instead, you access the module's WGSL or linkage at runtime.
+   Every `#[wgsl_rs]` annotated module contains a public [`WGSL_SOURCE`](https://docs.rs/wgsl-rs/latest/wgsl_rs/struct.Source.html)
+   item from which you can access an owned string of your raw WGSL source code,
+   using [`Source::wgsl_source`](https://docs.rs/wgsl-rs/latest/wgsl_rs/struct.Source.html#method.wgsl_source).
+3. How do I run my shaders?
+   * That's still up to you, but if your runtime is [`wgpu`](https://crates.io/crates/wgpu), then with the
+   [`linkage-wgpu`](./getting-started/cargo-features.md#linkage-wgpu) feature provided by this crate you can avoid a lot of boiler plate by having your [linkage
+   auto-generated](./linkage/overview.md#high-level-workflow).
+4. How do I test my shaders?
+   * Using the usual Rust test tools. All Rust code written in a `#[wgsl_rs]` module can run on the CPU
+   and therefore be tested - business as usual.
+5. How does `wgsl-rs` compare to other shader tools?
+   * See the [Comparisons](./comparisons.md) page.
+
 ## What is wgsl-rs?
 
 With **wgsl-rs** you write a subset of Rust code and it automatically
@@ -14,10 +35,6 @@ results on the GPU.
 In short, with `wgsl-rs`, you can unit test and run your code on the CPU in
 Rust, and use the generated WGSL on the GPU, while sharing the same type
 definitions between the two.
-
-Procedural macros are provided by the
-[`wgsl-rs-macros`](https://github.com/schell/wgsl-rs/tree/main/crates/wgsl-rs-macros)
-crate.
 
 ## The Two Worlds Problem
 
@@ -38,36 +55,6 @@ to be different for each world, but the results should match, within reason.
 This is why `wgsl-rs` provides CPU-side implementations of every WGSL builtin
 in `wgsl_rs::std`, and why the roundtrip test harness exists — to verify that
 the two worlds agree.
-
-## wgsl-rs vs Rust-GPU
-
-**Maybe — it depends on your needs.**
-
-### Pros of wgsl-rs
-
-- **Lower barrier to entry:** No custom Rust compiler backend required.
-- **Works with stable Rust:** No need for nightly or custom toolchains.
-- **Editor support:** The `#[wgsl]` macro makes supported syntax explicit, so
-  your editor (via rust-analyzer) can help you write valid code.
-- **Immediate WGSL output:** Use, inspect, and debug the generated WGSL anywhere
-  WGSL is supported, including browsers and non-Rust projects.
-- **Human readable WGSL output:** The WGSL that `wgsl-rs` produces is very close
-  in structure to the Rust code you write, including binding names and types.
-- **Easy interop:** Generated WGSL can be used in any WebGPU environment.
-
-### Cons of wgsl-rs
-
-- **WGSL only:** Only works on platforms that support WGSL.
-- **Limited to WebGPU features:** No support for features not present in WGSL
-  (e.g., bindless resources).
-- **Subset of Rust:** Only a strict subset of Rust is supported.
-  - No traits
-  - No borrowing
-  - Very restricted module support
-
-> **Note:** wgsl-rs and Rust-GPU are not mutually exclusive!
-> You can start with wgsl-rs and switch to Rust-GPU when you need more advanced
-> features.
 
 ## How to Read This Book
 

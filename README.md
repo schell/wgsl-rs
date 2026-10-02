@@ -151,7 +151,6 @@ The project is split into a few parts:
   agree.
 - **`gpu-tests`** — GPU-side test harness.
 
-There's also a [devlog](DEVLOG.md) that explains the decisions and tradeoffs
-made during development.
+There's also a [devlog](DEVLOG.md) that explains the decisions and tradeoffs made during development.
 
 Contributions, feedback, and questions are welcome!

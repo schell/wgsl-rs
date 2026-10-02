@@ -136,6 +136,10 @@
 
 - [Highlights from the Devlog](./design-decisions/highlights.md)
 
+# Comparisons
+
+- [wgsl-rs vs Other Shader Tools](./comparisons.md)
+
 # Contributing
 
 - [AI Disclosure Policy](./contributing/ai-disclosure.md)

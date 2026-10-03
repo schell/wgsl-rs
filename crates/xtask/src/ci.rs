@@ -83,10 +83,32 @@ impl CiAction {
                 "clippy --all-features --all-targets -- -D warnings",
             ),
 
-            CiAction::Fmt => cmd(
-                "cargo",
-                format!("+{PINNED_FMT_NIGHTLY} fmt --all -- --check"),
-            ),
+            CiAction::Fmt => {
+                // Auto-install of the pinned nightly uses the configured
+                // rustup profile, which can lack `rustfmt` (CI runner
+                // images default to the minimal profile). Add the
+                // component explicitly, or install the whole toolchain if
+                // this is its first use.
+                if does_binary_exist("rustup") {
+                    let added = cmd_capture(
+                        "rustup",
+                        format!("component add --toolchain {PINNED_FMT_NIGHTLY} rustfmt"),
+                    );
+                    if !added.status.success() {
+                        cmd(
+                            "rustup",
+                            format!(
+                                "toolchain install {PINNED_FMT_NIGHTLY} --profile minimal \
+                                 --component rustfmt"
+                            ),
+                        );
+                    }
+                }
+                cmd(
+                    "cargo",
+                    format!("+{PINNED_FMT_NIGHTLY} fmt --all -- --check"),
+                );
+            }
             CiAction::Docs => cmd_with_env(
                 "cargo",
                 "doc --all-features --no-deps",

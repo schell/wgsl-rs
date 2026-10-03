@@ -256,7 +256,7 @@ impl core::fmt::Display for WgpuLinkage {
                 b.binding,
                 b.binding_name,
                 buffer_kind_label(&b.kind),
-                ty = &b.ty
+                ty = b.ty
             )?;
         }
 
@@ -800,7 +800,8 @@ pub struct BufferDescriptorInfo {
     pub usage: wgpu::BufferUsages,
     /// The buffer's IR type.
     ///
-    /// Here because it's useful for users to see the type from the runtime/CPU side.
+    /// Here because it's useful for users to see the type from the runtime/CPU
+    /// side.
     pub ty: crate::ir::Type,
 }
 

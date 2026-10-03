@@ -220,7 +220,7 @@ fn display_summarizes_entries_groups_buffers_and_cache() {
     );
     assert!(text.contains("@binding(0) FRAME (uniform)"), "got:\n{text}");
     assert!(
-        text.contains("@binding(0): FRAME (uniform, 4 bytes)"),
+        text.contains("@binding(0): FRAME (uniform, 4 bytes, u32)"),
         "got:\n{text}"
     );
     assert!(text.contains("pipeline layout not built"), "got:\n{text}");
@@ -229,7 +229,7 @@ fn display_summarizes_entries_groups_buffers_and_cache() {
     assert!(!text.ends_with('\n'), "got:\n{text}");
 
     // Compute entries render their workgroup sizes, and storage buffer
-    // kinds and §14.4.1 sizes are labeled.
+    // kinds, §14.4.1 sizes, and IR types are labeled.
     let linkage = wg::analyze_wgsl_module(&dual_compute::WGSL_SOURCE).unwrap();
     let text = linkage.to_string();
     assert!(
@@ -245,7 +245,7 @@ fn display_summarizes_entries_groups_buffers_and_cache() {
         "got:\n{text}"
     );
     assert!(
-        text.contains("@binding(0): INPUT (storage, read-only, 256 bytes)"),
+        text.contains("@binding(0): INPUT (storage, read-only, 256 bytes, array<f32, 64>)"),
         "got:\n{text}"
     );
     assert!(

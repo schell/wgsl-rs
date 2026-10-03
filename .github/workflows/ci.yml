@@ -23,6 +23,7 @@ jobs:
       - name: Check formatting
         run: |
           PINNED=$(grep -oP 'PINNED_FMT_NIGHTLY: &str = "\K[^"]+' crates/xtask/src/ci.rs)
+          rustup component add --toolchain "$PINNED" rustfmt || rustup toolchain install "$PINNED" --profile minimal --component rustfmt
           cargo "+$PINNED" fmt --all -- --check
 
   clippy:

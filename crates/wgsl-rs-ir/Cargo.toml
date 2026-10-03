@@ -1,6 +1,6 @@
 [package]
 name = "wgsl-rs-ir"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2024"
 description = "The owned IR for the wgsl-rs transpiler: module, type, expression and statement items, WGSL rendering, and type substitution."
 license = "MIT"

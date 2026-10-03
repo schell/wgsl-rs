@@ -18,7 +18,7 @@ Procedural macros are provided by the
 ## Installation
 
 ```sh
-cargo add wgsl-rs@0.1.0-beta.1
+cargo add wgsl-rs@0.1.0-beta.3
 ```
 
 The beta publishes as a semver pre-release, so the explicit version pin is

@@ -1,6 +1,6 @@
 [package]
 name = "wgsl-rs-layout"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2024"
 description = "WGSL memory layout for wgsl-rs: WgslLayout and #[derive(Layout)] so CPU structs match GPU buffer layouts."
 license = "MIT"

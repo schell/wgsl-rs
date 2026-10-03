@@ -3786,11 +3786,11 @@ dependencies = [
 
 [[package]]
 name = "wgsl-rs-ir"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 
 [[package]]
 name = "wgsl-rs-layout"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "snafu",
  "wgsl-rs",
@@ -3808,7 +3808,7 @@ dependencies = [
 
 [[package]]
 name = "wgsl-rs-macros"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "itertools",
  "proc-macro2",

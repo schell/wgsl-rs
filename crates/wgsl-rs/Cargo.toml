@@ -26,7 +26,7 @@ rayon = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 snafu.workspace = true
 wgpu = { workspace = true, optional = true }
-wgsl-rs-ir = { version = "0.1.0-beta.1", path = "../wgsl-rs-ir" }
+wgsl-rs-ir = { version = "0.1.0-beta.2", path = "../wgsl-rs-ir" }
 # Default features are disabled so that the macros crate's `validation`
 # flag is enabled solely through this crate's `validation` feature (which
 # forwards `wgsl-rs-macros/validation`). The macro gates its generated
@@ -34,7 +34,7 @@ wgsl-rs-ir = { version = "0.1.0-beta.1", path = "../wgsl-rs-ir" }
 # `cfg!(feature = "validation")`; with defaults on, feature unification
 # kept that enabled under `--no-default-features`, emitting tests that
 # reference the missing `Source::validate`.
-wgsl-rs-macros = { version = "0.1.0-beta.1", path = "../wgsl-rs-macros", default-features = false }
+wgsl-rs-macros = { version = "0.1.0-beta.2", path = "../wgsl-rs-macros", default-features = false }
 
 [dev-dependencies]
 futures = { workspace = true }

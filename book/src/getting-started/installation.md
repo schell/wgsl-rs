@@ -11,14 +11,14 @@ Add `wgsl-rs` to your `Cargo.toml` with the explicit beta pin — cargo won't
 resolve a pre-release version from a bare version requirement:
 
 ```sh
-cargo add wgsl-rs@0.1.0-beta.1
+cargo add wgsl-rs@0.1.0-beta.3
 ```
 
 which adds:
 
 ```toml
 [dependencies]
-wgsl-rs = "0.1.0-beta.1"
+wgsl-rs = "0.1.0-beta.3"
 ```
 
 The crate re-exports its proc macros, so you only need the one dependency. If
@@ -26,8 +26,8 @@ you prefer to depend on the macro crate directly as well, the equivalent is:
 
 ```toml
 [dependencies]
-wgsl-rs = "0.1.0-beta.1"
-wgsl-rs-macros = "0.1.0-beta.1"
+wgsl-rs = "0.1.0-beta.3"
+wgsl-rs-macros = "0.1.0-beta.2"
 ```
 
 The `validation` feature is enabled by default and pulls in [naga](https://github.com/gfx-rs/naga) to validate generated WGSL at test time. No extra configuration is required to get it.

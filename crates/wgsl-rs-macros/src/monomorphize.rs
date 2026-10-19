@@ -2333,6 +2333,14 @@ fn type_name_for_assoc(ty: &Type) -> Option<String> {
         // fallback for concrete array self types. A miss is a safe no-op —
         // the reference keeps rendering as a WGSL alias name.
         Type::Array { .. } => mangle_type(ty).ok(),
+        // Std vector/matrix bases (e.g. `Self::Array` after the `Self`
+        // substitution inside a `Vec2f`/`Mat2x3f` impl) key the index by
+        // the same `mangle_type` spelling `build_assoc_type_index` uses
+        // for its self types (`vec2f`, `mat2x3f`). Without this arm the
+        // projection stays symbolic: the signature renders the alias
+        // name, and the suffix pass cannot anchor literals through it
+        // (wgsl-rs#230 follow-up).
+        Type::Vector { .. } | Type::Matrix { .. } => mangle_type(ty).ok(),
         Type::AssocType { ty, member, .. } => {
             let inner = type_name_for_assoc(ty)?;
             Some(mangle(&[&inner, &member.to_string()]))
@@ -3024,6 +3032,63 @@ mod test {
             wgsl.contains("fn _2array_u32_4_zero() -> array<u32, 4>"),
             "Expected the Self::Array return type to resolve to the concrete array type, \
              got:\n{wgsl}"
+        );
+    }
+
+    /// `Self::Array` in an impl on a std vector self type resolves through
+    /// the assoc-type index: the index keys impls by `mangle_type(self_ty)`
+    /// (`vec2f`), so the lookup must agree (wgsl-rs#230 follow-up).
+    /// Without resolution the signature renders the symbolic alias name
+    /// and the suffix pass cannot anchor literals through it.
+    #[test]
+    fn mono_vector_impl_assoc_type_resolves() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub trait Slab {
+                    type Array;
+                    fn to_array(data: Self) -> Self::Array;
+                }
+
+                impl Slab for Vec2f {
+                    type Array = [u32; 2];
+                    fn to_array(data: Self) -> Self::Array {
+                        [bitcast_u32(data.x), bitcast_u32(data.y)]
+                    }
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("fn vec2f__1to_array(data: vec2f) -> array<u32, 2>"),
+            "expected Self::Array to resolve to the concrete array type, got:\n{wgsl}"
+        );
+    }
+
+    /// `Self::Array` on a matrix self type resolves through the same
+    /// index — the Matrix arm of `type_name_for_assoc` keys by the
+    /// `mangle_type` spelling `build_assoc_type_index` uses (`mat2x3f`)
+    /// (wgsl-rs#230 follow-up).
+    #[test]
+    fn mono_matrix_impl_assoc_type_resolves() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub trait Slab {
+                    type Array;
+                    fn to_array(data: Self) -> Self::Array;
+                }
+
+                impl Slab for Mat2x3f {
+                    type Array = [u32; 6];
+                    fn to_array(data: Self) -> Self::Array {
+                        [0u32, 0u32, 0u32, 0u32, 0u32, 0u32]
+                    }
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("fn mat2x3f__1to_array(data: mat2x3f) -> array<u32, 6>"),
+            "expected the matrix Self::Array to resolve to array<u32, 6>, got:\n{wgsl}"
         );
     }
 

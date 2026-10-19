@@ -10,7 +10,10 @@
 
 #![allow(dead_code)]
 
-use wgsl_rs::{std::Vec2f, wgsl};
+use wgsl_rs::{
+    std::{Vec2b, Vec2f},
+    wgsl,
+};
 
 #[wgsl]
 mod trait_impl_std_types {
@@ -98,4 +101,47 @@ fn trait_impl_std_types_round_trips_on_cpu() {
     let direct = trait_impl_std_types::call_direct(v);
     assert_eq!(direct.x, 1.5);
     assert_eq!(direct.y, -2.5);
+}
+
+/// Assoc-type projections on std self types (`Self::Array` inside
+/// `impl ... for Vec2b`) resolve to the impl's concrete associated type,
+/// so the literal-suffix pass can anchor unsuffixed `select` literals
+/// through the return type — the crabslab `Vec4b::to_array` shape
+/// (wgsl-rs#230 follow-up). Validated by the auto-generated
+/// `__validate_wgsl` test.
+#[wgsl]
+mod bool_vec_assoc {
+    use wgsl_rs::std::*;
+
+    pub trait PackedBool {
+        type Array;
+        fn to_array(data: Self) -> Self::Array;
+    }
+
+    impl PackedBool for Vec2b {
+        type Array = [u32; 2];
+
+        fn to_array(data: Self) -> Self::Array {
+            [select(0, 1, data.x), select(0, 1, data.y)]
+        }
+    }
+}
+
+#[test]
+fn bool_vec_assoc_resolves_and_suffixes() {
+    let src = bool_vec_assoc::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        src.contains("fn vec2b__1to_array(data: vec2<bool>) -> array<u32, 2>"),
+        "expected the Self::Array return to resolve to array<u32, 2>, got:\n{src}"
+    );
+    assert!(
+        src.contains("select(0u, 1u, data.x)"),
+        "expected the suffix pass to anchor the select literals to u32, got:\n{src}"
+    );
+}
+
+#[test]
+fn bool_vec_assoc_runs_on_cpu() {
+    let out = bool_vec_assoc::PackedBool::to_array(Vec2b { x: false, y: true });
+    assert_eq!(out, [0u32, 1u32]);
 }

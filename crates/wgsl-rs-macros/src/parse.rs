@@ -6918,26 +6918,54 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
 
 impl ItemImpl {
     /// Replace all occurrences of `Self` in the impl block's items with the
-    /// actual struct name. WGSL has no `Self` keyword, so these must be
+    /// impl's self type. WGSL has no `Self` keyword, so these must be
     /// resolved during transpilation.
     ///
-    /// For impls whose self type is a simple struct (the common case), `Self`
-    /// is replaced with the struct ident. For complex self types like
-    /// `[u32; 4]` there is no single ident to substitute, so `Self` is left
-    /// as-is — callers should avoid `Self` in such impl bodies (use the
-    /// concrete type instead).
+    /// Type positions receive a clone of the full parsed self type, so
+    /// `Self` on `impl Foo for Vec2f` renders the WGSL predeclared spelling
+    /// `vec2f` — the written ident `Vec2f` is not a WGSL type name
+    /// (wgsl-rs#230). Expression ident positions (`Self::method()`,
+    /// `Self { .. }`) cannot hold a full type, so they receive the self
+    /// type's mangled ident ([`mangle_type`]) — the same resolution the
+    /// method-name mangler uses — keeping call sites in sync with the
+    /// emitted `Type_method` definitions.
+    ///
+    /// For self types with no single stable ident — complex types like
+    /// `[u32; 4]`, fully-applied structs (`Pair<f32>`), and generic self
+    /// types — `Self` is left as-is. Generic impls rely on
+    /// monomorphization's structural `Self` substitution; the concrete
+    /// complex cases are a documented limitation (avoid `Self` there and
+    /// spell the type out).
     fn resolve_self(&mut self) {
-        let Some(name) = self_ty_base_ident(&self.self_ty) else {
+        let Some(base) = self_ty_base_ident(&self.self_ty) else {
             return;
+        };
+        // Infallible for any self type that has a base ident (scalar,
+        // vector, matrix, plain struct): `mangle_type` only fails on
+        // compound types, none of which yield a base ident.
+        let mangled = mangle_type(&self.self_ty)
+            .expect("mangle_type cannot fail for a self type with a base ident");
+        let resolution = SelfResolution {
+            ident: Ident::new(&mangled, base.span()),
+            ty: self.self_ty.clone(),
         };
         for item in &mut self.items {
             match item {
-                ImplItem::Fn(f) => resolve_self_in_fn(&name, f),
-                ImplItem::Const(c) => resolve_self_in_const(&name, c),
-                ImplItem::Type(t) => resolve_self_in_type(&name, &mut t.ty),
+                ImplItem::Fn(f) => resolve_self_in_fn(&resolution, f),
+                ImplItem::Const(c) => resolve_self_in_const(&resolution, c),
+                ImplItem::Type(t) => resolve_self_in_type(&resolution, &mut t.ty),
             }
         }
     }
+}
+
+/// The two `Self` resolutions applied inside an impl block (see
+/// [`ItemImpl::resolve_self`]): the full parsed self type, substituted into
+/// type positions, and its mangled ident, substituted into expression
+/// ident positions.
+struct SelfResolution {
+    ident: Ident,
+    ty: Type,
 }
 
 /// Extract the base ident from a self type, if it has one.
@@ -6964,51 +6992,58 @@ fn self_ty_base_ident(ty: &Type) -> Option<Ident> {
     }
 }
 
-/// Replace an ident with the struct name if it is `Self`.
-fn maybe_replace_self(name: &Ident, ident: &mut Ident) {
+/// Replace an ident with the impl's mangled self ident if it is `Self`.
+fn maybe_replace_self(r: &SelfResolution, ident: &mut Ident) {
     if ident == "Self" {
-        *ident = Ident::new(&name.to_string(), ident.span());
+        *ident = Ident::new(&r.ident.to_string(), ident.span());
     }
 }
 
-fn resolve_self_in_fn(name: &Ident, f: &mut ItemFn) {
+fn resolve_self_in_fn(r: &SelfResolution, f: &mut ItemFn) {
     for arg in f.inputs.iter_mut() {
-        resolve_self_in_type(name, &mut arg.ty);
+        resolve_self_in_type(r, &mut arg.ty);
     }
-    resolve_self_in_return_type(name, &mut f.return_type);
-    resolve_self_in_block(name, &mut f.block);
+    resolve_self_in_return_type(r, &mut f.return_type);
+    resolve_self_in_block(r, &mut f.block);
 }
 
-fn resolve_self_in_const(name: &Ident, c: &mut ItemConst) {
-    resolve_self_in_type(name, &mut c.ty);
-    resolve_self_in_expr(name, &mut c.expr);
+fn resolve_self_in_const(r: &SelfResolution, c: &mut ItemConst) {
+    resolve_self_in_type(r, &mut c.ty);
+    resolve_self_in_expr(r, &mut c.expr);
 }
 
-fn resolve_self_in_return_type(name: &Ident, rt: &mut ReturnType) {
+fn resolve_self_in_return_type(r: &SelfResolution, rt: &mut ReturnType) {
     if let ReturnType::Type { ty, .. } = rt {
-        resolve_self_in_type(name, ty);
+        resolve_self_in_type(r, ty);
     }
 }
 
-fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
+fn resolve_self_in_type(r: &SelfResolution, ty: &mut Type) {
+    // Structural substitution: a `Self` used as a type is replaced by the
+    // full parsed self type (any written type arguments are dropped — a
+    // concrete impl cannot apply arguments to `Self` in valid Rust). This
+    // makes std self types render their WGSL predeclared spelling
+    // (`impl Foo for Vec2f` → `data: vec2f`) instead of the written Rust
+    // ident, which is not a WGSL type name (wgsl-rs#230).
+    if matches!(&*ty, Type::Struct { ident, .. } if ident == "Self") {
+        *ty = r.ty.clone();
+        return;
+    }
     match ty {
-        Type::Struct {
-            ident, type_args, ..
-        } => {
-            maybe_replace_self(name, ident);
+        Type::Struct { type_args, .. } => {
             for ta in type_args.iter_mut() {
-                resolve_self_in_type(name, ta);
+                resolve_self_in_type(r, ta);
             }
         }
         Type::Array { elem, len, .. } => {
-            resolve_self_in_type(name, elem);
-            resolve_self_in_expr(name, len);
+            resolve_self_in_type(r, elem);
+            resolve_self_in_expr(r, len);
         }
         Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } | Type::Ptr { elem, .. } => {
-            resolve_self_in_type(name, elem);
+            resolve_self_in_type(r, elem);
         }
-        Type::Phantom { elem, .. } => resolve_self_in_type(name, elem),
-        Type::AssocType { ty, .. } => resolve_self_in_type(name, ty),
+        Type::Phantom { elem, .. } => resolve_self_in_type(r, elem),
+        Type::AssocType { ty, .. } => resolve_self_in_type(r, ty),
         Type::Scalar { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }
@@ -7021,36 +7056,36 @@ fn resolve_self_in_type(name: &Ident, ty: &mut Type) {
     }
 }
 
-fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
+fn resolve_self_in_expr(r: &SelfResolution, expr: &mut Expr) {
     match expr {
         Expr::Lit(_) => {}
-        Expr::Ident(ident) => maybe_replace_self(name, ident),
+        Expr::Ident(ident) => maybe_replace_self(r, ident),
         Expr::Array { elems, .. } => {
             for elem in elems.iter_mut() {
-                resolve_self_in_expr(name, elem);
+                resolve_self_in_expr(r, elem);
             }
         }
-        Expr::Paren { inner, .. } => resolve_self_in_expr(name, inner),
+        Expr::Paren { inner, .. } => resolve_self_in_expr(r, inner),
         Expr::Binary { lhs, rhs, .. } => {
-            resolve_self_in_expr(name, lhs);
-            resolve_self_in_expr(name, rhs);
+            resolve_self_in_expr(r, lhs);
+            resolve_self_in_expr(r, rhs);
         }
-        Expr::Unary { expr, .. } => resolve_self_in_expr(name, expr),
+        Expr::Unary { expr, .. } => resolve_self_in_expr(r, expr),
         Expr::ArrayIndexing { lhs, index, .. } => {
-            resolve_self_in_expr(name, lhs);
-            resolve_self_in_expr(name, index);
+            resolve_self_in_expr(r, lhs);
+            resolve_self_in_expr(r, index);
         }
         Expr::Swizzle { lhs, params, .. } => {
-            resolve_self_in_expr(name, lhs);
+            resolve_self_in_expr(r, lhs);
             if let Some(params) = params {
                 for param in params.iter_mut() {
-                    resolve_self_in_expr(name, param);
+                    resolve_self_in_expr(r, param);
                 }
             }
         }
         Expr::Cast { lhs, ty } => {
-            resolve_self_in_expr(name, lhs);
-            resolve_self_in_type(name, ty);
+            resolve_self_in_expr(r, lhs);
+            resolve_self_in_type(r, ty);
         }
         Expr::FnCall {
             path,
@@ -7058,88 +7093,88 @@ fn resolve_self_in_expr(name: &Ident, expr: &mut Expr) {
             params,
             ..
         } => {
-            resolve_self_in_fn_path(name, path);
+            resolve_self_in_fn_path(r, path);
             for ta in type_args.iter_mut() {
-                resolve_self_in_type(name, ta);
+                resolve_self_in_type(r, ta);
             }
             for param in params.iter_mut() {
-                resolve_self_in_expr(name, param);
+                resolve_self_in_expr(r, param);
             }
         }
         Expr::Struct { ident, fields, .. } => {
-            maybe_replace_self(name, ident);
+            maybe_replace_self(r, ident);
             for field in fields.iter_mut() {
-                resolve_self_in_expr(name, &mut field.expr);
+                resolve_self_in_expr(r, &mut field.expr);
             }
         }
-        Expr::FieldAccess { base, .. } => resolve_self_in_expr(name, base),
-        Expr::TypePath { ty, .. } => maybe_replace_self(name, ty),
-        Expr::Reference { expr, .. } => resolve_self_in_expr(name, expr),
-        Expr::ZeroValueArray { len, .. } => resolve_self_in_expr(name, len),
+        Expr::FieldAccess { base, .. } => resolve_self_in_expr(r, base),
+        Expr::TypePath { ty, .. } => maybe_replace_self(r, ty),
+        Expr::Reference { expr, .. } => resolve_self_in_expr(r, expr),
+        Expr::ZeroValueArray { len, .. } => resolve_self_in_expr(r, len),
         Expr::LinkageAccess { ident, .. } => {
-            maybe_replace_self(name, ident);
+            maybe_replace_self(r, ident);
         }
     }
 }
 
-fn resolve_self_in_fn_path(name: &Ident, path: &mut FnPath) {
+fn resolve_self_in_fn_path(r: &SelfResolution, path: &mut FnPath) {
     match path {
-        FnPath::Ident(ident) => maybe_replace_self(name, ident),
-        FnPath::TypeMethod { ty, .. } => maybe_replace_self(name, ty),
+        FnPath::Ident(ident) => maybe_replace_self(r, ident),
+        FnPath::TypeMethod { ty, .. } => maybe_replace_self(r, ty),
     }
 }
 
-fn resolve_self_in_block(name: &Ident, block: &mut Block) {
+fn resolve_self_in_block(r: &SelfResolution, block: &mut Block) {
     for stmt in &mut block.stmt {
-        resolve_self_in_stmt(name, stmt);
+        resolve_self_in_stmt(r, stmt);
     }
 }
 
-fn resolve_self_in_stmt(name: &Ident, stmt: &mut Stmt) {
+fn resolve_self_in_stmt(r: &SelfResolution, stmt: &mut Stmt) {
     match stmt {
         Stmt::Local(local) => {
             if let Some((_, ty)) = &mut local.ty {
-                resolve_self_in_type(name, ty);
+                resolve_self_in_type(r, ty);
             }
             if let Some(init) = &mut local.init {
-                resolve_self_in_expr(name, &mut init.expr);
+                resolve_self_in_expr(r, &mut init.expr);
             }
         }
-        Stmt::Const(c) => resolve_self_in_const(name, c),
+        Stmt::Const(c) => resolve_self_in_const(r, c),
         Stmt::Assignment { lhs, rhs, .. } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
-            resolve_self_in_expr(name, lhs);
-            resolve_self_in_expr(name, rhs);
+            resolve_self_in_expr(r, lhs);
+            resolve_self_in_expr(r, rhs);
         }
         Stmt::While {
             condition, body, ..
         } => {
-            resolve_self_in_expr(name, condition);
-            resolve_self_in_block(name, body);
+            resolve_self_in_expr(r, condition);
+            resolve_self_in_block(r, body);
         }
-        Stmt::Loop { body, .. } => resolve_self_in_block(name, body),
-        Stmt::Block(block) => resolve_self_in_block(name, block),
-        Stmt::Expr { expr, .. } => resolve_self_in_expr(name, expr),
-        Stmt::If(stmt_if) => resolve_self_in_if(name, stmt_if),
+        Stmt::Loop { body, .. } => resolve_self_in_block(r, body),
+        Stmt::Block(block) => resolve_self_in_block(r, block),
+        Stmt::Expr { expr, .. } => resolve_self_in_expr(r, expr),
+        Stmt::If(stmt_if) => resolve_self_in_if(r, stmt_if),
         Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Discard { .. } => {}
         Stmt::Return { expr, .. } => {
             if let Some(expr) = expr {
-                resolve_self_in_expr(name, expr);
+                resolve_self_in_expr(r, expr);
             }
         }
         Stmt::For(for_loop) => {
-            resolve_self_in_expr(name, &mut for_loop.from);
-            resolve_self_in_expr(name, &mut for_loop.to);
-            resolve_self_in_block(name, &mut for_loop.body);
+            resolve_self_in_expr(r, &mut for_loop.from);
+            resolve_self_in_expr(r, &mut for_loop.to);
+            resolve_self_in_block(r, &mut for_loop.body);
         }
         Stmt::Switch(switch) => {
-            resolve_self_in_expr(name, &mut switch.selector);
+            resolve_self_in_expr(r, &mut switch.selector);
             for arm in &mut switch.arms {
                 for sel in &mut arm.selectors {
                     if let CaseSelector::Expr(expr) = sel {
-                        resolve_self_in_expr(name, expr);
+                        resolve_self_in_expr(r, expr);
                     }
                 }
-                resolve_self_in_block(name, &mut arm.body);
+                resolve_self_in_block(r, &mut arm.body);
             }
         }
         Stmt::SlabCopy {
@@ -7150,23 +7185,23 @@ fn resolve_self_in_stmt(name: &Ident, stmt: &mut Stmt) {
             size,
             ..
         } => {
-            resolve_self_in_expr(name, src);
-            resolve_self_in_expr(name, src_offset);
-            resolve_self_in_expr(name, dest);
-            resolve_self_in_expr(name, dest_offset);
-            resolve_self_in_expr(name, size);
+            resolve_self_in_expr(r, src);
+            resolve_self_in_expr(r, src_offset);
+            resolve_self_in_expr(r, dest);
+            resolve_self_in_expr(r, dest_offset);
+            resolve_self_in_expr(r, size);
         }
         Stmt::Macro { .. } => {}
     }
 }
 
-fn resolve_self_in_if(name: &Ident, stmt_if: &mut StmtIf) {
-    resolve_self_in_expr(name, &mut stmt_if.condition);
-    resolve_self_in_block(name, &mut stmt_if.then_block);
+fn resolve_self_in_if(r: &SelfResolution, stmt_if: &mut StmtIf) {
+    resolve_self_in_expr(r, &mut stmt_if.condition);
+    resolve_self_in_block(r, &mut stmt_if.then_block);
     if let Some(else_branch) = &mut stmt_if.else_branch {
         match &mut else_branch.body {
-            ElseBody::Block(block) => resolve_self_in_block(name, block),
-            ElseBody::If(stmt_if) => resolve_self_in_if(name, stmt_if),
+            ElseBody::Block(block) => resolve_self_in_block(r, block),
+            ElseBody::If(stmt_if) => resolve_self_in_if(r, stmt_if),
         }
     }
 }
@@ -8618,6 +8653,200 @@ mod test {
         assert!(
             wgsl.starts_with("Light__1get_intensity("),
             "Expected escaped method call, got: {wgsl}"
+        );
+    }
+
+    // ===== Regression tests for issue #230 (Self on std-type impls) =====
+
+    /// `Self` in a trait impl on a std vector type must render the WGSL
+    /// predeclared spelling: the method name mangles through `vec2f`
+    /// (`mangle_type`), so the signature must too. The written ident
+    /// `Vec2f` is not a WGSL type name.
+    #[test]
+    fn trait_impl_for_vector_renders_wgsl_self_spelling() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Foo for Vec2f {
+                fn wrap(data: Self) -> Self {
+                    data
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn vec2f_wrap("),
+            "Expected method name 'vec2f_wrap', got: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("data: vec2f") || wgsl.contains("data:vec2f"),
+            "Expected param type 'vec2f', got: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("-> vec2f"),
+            "Expected return type 'vec2f', got: {wgsl}"
+        );
+        assert!(
+            !wgsl.contains("Vec2f"),
+            "The written Rust spelling must not reach WGSL, got: {wgsl}"
+        );
+    }
+
+    /// Underscored method names keep the escape mangling on the resolved
+    /// spelling: `to_array` renders `vec2f__1to_array`.
+    #[test]
+    fn trait_impl_for_vector_underscored_method_matches_mangling() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Foo for Vec2f {
+                fn to_array(data: Self) -> [u32; 2] {
+                    [0u32, 0u32]
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn vec2f__1to_array("),
+            "Expected 'vec2f__1to_array', got: {wgsl}"
+        );
+        assert!(
+            wgsl.contains("-> array<u32, 2>"),
+            "Expected 'array<u32, 2>' return type, got: {wgsl}"
+        );
+        assert!(
+            !wgsl.contains("Vec2f"),
+            "The written Rust spelling must not reach WGSL, got: {wgsl}"
+        );
+    }
+
+    /// `Self::method()` inside an impl body must call the mangled
+    /// definition name (`vec2f__1wrap_inner`), not the written spelling.
+    #[test]
+    fn trait_impl_self_method_call_resolves_to_mangled_name() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Foo for Vec2f {
+                fn wrap(data: Self) -> Self {
+                    Self::wrap_inner(data)
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("vec2f__1wrap_inner(data"),
+            "Expected the Self:: call to resolve to 'vec2f__1wrap_inner', got: {wgsl}"
+        );
+        assert!(
+            !wgsl.contains("Vec2f__1"),
+            "The written spelling must not appear in call sites, got: {wgsl}"
+        );
+    }
+
+    /// Matrix self types resolve the same way (`Mat2x3f` → `mat2x3f`).
+    #[test]
+    fn trait_impl_for_matrix_renders_wgsl_self_spelling() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Foo for Mat2x3f {
+                fn identity(m: Self) -> Self {
+                    m
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn mat2x3f_identity("),
+            "Expected 'mat2x3f_identity', got: {wgsl}"
+        );
+        assert!(
+            (wgsl.contains("m: mat2x3f") || wgsl.contains("m:mat2x3f"))
+                && wgsl.contains("-> mat2x3f"),
+            "Expected 'mat2x3f' param and return spellings, got: {wgsl}"
+        );
+        assert!(
+            !wgsl.contains("Mat2x3f"),
+            "The written Rust spelling must not reach WGSL, got: {wgsl}"
+        );
+    }
+
+    /// A `Self { .. }` constructor on a std type renders the WGSL
+    /// constructor name (`vec2f(..)`), not the written ident.
+    #[test]
+    fn trait_impl_self_constructor_renders_wgsl_spelling() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Foo for Vec2f {
+                fn unit() -> Self {
+                    Self { x: 1.0, y: 1.0 }
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("vec2f(1.0"),
+            "Expected a 'vec2f(' constructor, got: {wgsl}"
+        );
+        assert!(
+            !wgsl.contains("Vec2f"),
+            "The written Rust spelling must not reach WGSL, got: {wgsl}"
+        );
+    }
+
+    /// Regression guards: scalar and plain-struct self types render exactly
+    /// as before the structural fix (written spelling == WGSL spelling
+    /// there, so the mangled ident equals the written ident).
+    #[test]
+    fn trait_impl_for_scalar_and_struct_self_unchanged() {
+        let item: syn::Item = syn::parse_quote! {
+            impl Doubler for f32 {
+                fn double(x: Self) -> Self {
+                    x
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn f32_double(") && (wgsl.contains("x: f32") || wgsl.contains("x:f32")),
+            "Expected scalar spellings, got: {wgsl}"
+        );
+
+        let item: syn::Item = syn::parse_quote! {
+            impl Light {
+                pub fn get(l: Self) -> Self {
+                    l
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let wgsl = item.to_wgsl();
+        assert!(
+            wgsl.contains("fn Light_get(")
+                && (wgsl.contains("l: Light") || wgsl.contains("l:Light")),
+            "Expected plain struct spellings, got: {wgsl}"
+        );
+    }
+
+    /// Generic impls must NOT resolve `Self` at parse time —
+    /// monomorphization substitutes it structurally per instantiation.
+    #[test]
+    fn generic_impl_defers_self_to_monomorphization() {
+        let item: syn::Item = syn::parse_quote! {
+            impl<T> Pair<T> {
+                pub fn first(p: Self) -> Self {
+                    p
+                }
+            }
+        };
+        let item = Item::try_from(&item).unwrap();
+        let Item::Impl(impl_item) = &item else {
+            panic!("expected Item::Impl");
+        };
+        let ImplItem::Fn(f) = &impl_item.items[0] else {
+            panic!("expected ImplItem::Fn");
+        };
+        assert!(
+            matches!(&f.inputs[0].ty, Type::Struct { ident, .. } if ident == "Self"),
+            "generic impl `Self` must survive to monomorphization"
         );
     }
 

@@ -1829,3 +1829,63 @@ interchangeable in assembly.
 **Tests:** determinism and identical-content-same-id; the wgsl-rs#165
 and PR #173 cross-crate/target/version cases kept; the id-collision
 workspace fixtures and both-mode roundtrips green.
+
+### 2026-10-19: `Self` substitution in impls is structural (wgsl-rs#230)
+
+**Problem:** `resolve_self` replaced every `Self` in an impl block with
+the *written base ident* of the self type. For `impl SlabItem for Vec2f`
+a `data: Self` parameter became `Type::Struct { ident: "Vec2f" }`, which
+rendered verbatim — while the method *name* prefix was mangled through
+`mangle_type`, which resolves `Type::Vector` to `vec2f`. The emitted
+signature named a type that does not exist in WGSL
+(`fn vec2f__1to_array(data: Vec2f)`), and naga rejected the module. The
+same class hit expression positions: `Self::from_array(..)` inside the
+impl rendered `Vec2f__1from_array(..)`, dangling against the
+`vec2f__1from_array` definition.
+
+**Decision:** substitution is structural, coverage is unchanged.
+Type positions replace the `Self` node with a clone of the full parsed
+self type, so std self types render their WGSL predeclared spelling
+(`vec2f`, `mat2x3f`); expression ident positions — which cannot hold a
+full type — receive the self type's mangled ident via `mangle_type`,
+the same resolution the method-name mangler uses, so `Self::method()`
+resolves to the name the impl emits. Scalars and plain structs are
+identical to the old behavior (written spelling == WGSL spelling,
+mangled ident == written ident); regression tests pin that.
+
+**Scope decision:** concrete arrays (`[u32; 4]`) and fully-applied
+structs (`Pair<f32>`) keep the documented "avoid `Self`" behavior —
+`self_ty_base_ident` still gates substitution. Neither has a confirmed
+use case, and the fully-applied-struct case needs its own verified pass
+through monomorphization's `Pair<f32>` → `Pair_f32` name rewrite before
+`Self` could safely appear there. Generic impls still skip resolution
+entirely: monomorphization's `SubstituteVisitor` substitutes `Self`
+structurally per instantiation.
+
+### 2026-10-19: The renderer resolves written std-type spellings in method/const paths (wgsl-rs#230)
+
+**Problem:** `write_fn_path` rendered `FnPath::TypeMethod { ty, method }`
+as `mangle(&[ty, method])` verbatim. Any call naming a std type by its
+written Rust spelling produced a dangling identifier — user-written
+`Vec2f::from_array(x)` rendered `Vec2f__1from_array(..)` against the
+emitted `vec2f__1from_array` definition. `Expr::TypePath` (associated
+consts) already resolved through `builtin_wgsl_type_name` in
+ir_convert, but only for paths that pass through the macro crate:
+extension-lowered IR (crabslab's `slab_read!(Vec2f, ...)`) builds
+`ir::FnPath::TypeMethod { ty: "Vec2f" }` directly and bypasses
+ir_convert entirely, so the renderer was the only place that could
+fix it.
+
+**Decision:** `wgsl-rs-ir` gained a builtin *type*-name table
+(`builtin_lookup::TYPE_TABLE`, `Vec2f` → `vec2f`, ... — the exact
+spelling set `builtin_wgsl_type_name` produces, bool shorthand
+included to match `mangle_type`'s definition-side prefixes), applied
+in `write_fn_path`'s TypeMethod arm and the `Expr::TypePath` arm
+before mangling, and to `Expr::Struct` constructor names (composed
+with the function table's `vecNb` → `vecN<bool>` entries for bool
+vectors, whose shorthand is not a predeclared WGSL constructor). Exact-match keys cannot misfire on user structs:
+`Vec2f` in type position already parses as `Type::Vector`, so no user
+struct can carry a builtin spelling as its name. The table follows
+the existing duplicated-table pattern — the macro crate pins it in
+sync via a test in `wgsl-rs-macros/src/builtins.rs`, same as the
+function-name table.

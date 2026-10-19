@@ -939,7 +939,17 @@ fn write_expr(w: &mut Writer, e: &Expr) {
             // Leftover type_args (from a pre-substitution generic
             // construction expression) are ignored at render time — the
             // name is already monomorphized.
-            w.write(name);
+            //
+            // Std type spellings resolve like TypeMethod above
+            // (wgsl-rs#230): `Vec2f { x, y }` renders the WGSL
+            // constructor `vec2f(..)`. Bool vectors additionally lower
+            // through the function table's `vecNb` → `vecN<bool>`
+            // entries — the shorthand is a valid identifier fragment but
+            // not a predeclared WGSL constructor (#169). Exact-match
+            // lookups leave user struct names untouched.
+            let resolved = builtin_lookup::lookup_type_name(name).unwrap_or(name);
+            let lowered = builtin_lookup::lookup(resolved).unwrap_or(resolved);
+            w.write(lowered);
             w.write("(");
             for (i, f) in fields.iter().enumerate() {
                 if i > 0 {
@@ -955,6 +965,11 @@ fn write_expr(w: &mut Writer, e: &Expr) {
             w.write(field);
         }
         Expr::TypePath { ty, member } => {
+            // Same written-spelling resolution as TypeMethod above:
+            // ir_convert already resolves user-written paths, but
+            // extension-built IR carries written spellings straight to
+            // the renderer (wgsl-rs#230).
+            let ty = builtin_lookup::lookup_type_name(ty).unwrap_or(ty);
             w.write(&mangle(&[ty, member]));
         }
         Expr::Reference(inner) => {
@@ -980,6 +995,14 @@ fn write_fn_path(w: &mut Writer, p: &FnPath) {
             w.write(translated);
         }
         FnPath::TypeMethod { ty, method } => {
+            // Resolve written Rust spellings (`Vec2f`) to the WGSL
+            // predeclared name (`vec2f`) before mangling, so call sites
+            // match the definition-side mangling (`mangle_type` prefixes
+            // method names with the resolved spelling). Extension-lowered
+            // IR names types by their written Rust spelling and never
+            // passes through the macro crate, so this resolution must
+            // live here (wgsl-rs#230).
+            let ty = builtin_lookup::lookup_type_name(ty).unwrap_or(ty);
             w.write(&mangle(&[ty, method]));
         }
     }
@@ -1412,6 +1435,121 @@ mod tests {
             scalar_ty: None,
         };
         assert_eq!(render_type(&m_short), "mat4x2f");
+    }
+
+    /// A `TypeMethod` call naming a std type by its written Rust spelling
+    /// resolves to the WGSL predeclared spelling before mangling, so the
+    /// call matches the definition (`vec2f__1from_array`); the written
+    /// spelling (`Vec2f__1from_array`) dangles (wgsl-rs#230).
+    #[test]
+    fn type_method_call_resolves_builtin_type_spelling() {
+        let e = Expr::FnCall {
+            path: FnPath::TypeMethod {
+                ty: "Vec2f".to_string(),
+                method: "from_array".to_string(),
+            },
+            type_args: vec![],
+            params: vec![],
+        };
+        assert_eq!(render_expr(&e), "vec2f__1from_array()");
+
+        let e = Expr::FnCall {
+            path: FnPath::TypeMethod {
+                ty: "Mat2x3f".to_string(),
+                method: "zero".to_string(),
+            },
+            type_args: vec![],
+            params: vec![],
+        };
+        assert_eq!(render_expr(&e), "mat2x3f_zero()");
+    }
+
+    /// User type names pass through untouched — only exact builtin
+    /// spellings resolve.
+    #[test]
+    fn type_method_call_keeps_user_type_spelling() {
+        let e = Expr::FnCall {
+            path: FnPath::TypeMethod {
+                ty: "MyStruct".to_string(),
+                method: "get".to_string(),
+            },
+            type_args: vec![],
+            params: vec![],
+        };
+        assert_eq!(render_expr(&e), "MyStruct_get()");
+
+        // Lookalikes must not resolve (anchored full-identifier match).
+        let e = Expr::FnCall {
+            path: FnPath::TypeMethod {
+                ty: "MyVec3f".to_string(),
+                method: "get".to_string(),
+            },
+            type_args: vec![],
+            params: vec![],
+        };
+        assert_eq!(render_expr(&e), "MyVec3f_get()");
+    }
+
+    /// `TypePath` const access resolves the same written spellings —
+    /// extension-lowered IR carries them straight to the renderer.
+    #[test]
+    fn type_path_resolves_builtin_type_spelling() {
+        let e = Expr::TypePath {
+            ty: "Vec2f".to_string(),
+            member: "ZERO".to_string(),
+        };
+        assert_eq!(render_expr(&e), "vec2f_ZERO");
+
+        let e = Expr::TypePath {
+            ty: "Light".to_string(),
+            member: "INTENSITY".to_string(),
+        };
+        assert_eq!(render_expr(&e), "Light_INTENSITY");
+    }
+
+    /// Struct-literal constructors naming a std type by its written Rust
+    /// spelling render the WGSL constructor (`Vec2f { x, y }` →
+    /// `vec2f(..)`); bool vectors lower to the generic form, whose
+    /// shorthand is not a predeclared WGSL constructor (#169). User
+    /// struct names pass through untouched.
+    #[test]
+    fn expr_struct_resolves_builtin_type_spelling() {
+        let e = Expr::Struct {
+            name: "Vec2f".to_string(),
+            type_args: vec![],
+            fields: vec![
+                FieldValue {
+                    member: "x".to_string(),
+                    expr: Expr::Lit(Lit::Float {
+                        text: "1.0".to_string(),
+                    }),
+                },
+                FieldValue {
+                    member: "y".to_string(),
+                    expr: Expr::Lit(Lit::Float {
+                        text: "2.0".to_string(),
+                    }),
+                },
+            ],
+        };
+        assert_eq!(render_expr(&e), "vec2f(1.0, 2.0)");
+
+        let e = Expr::Struct {
+            name: "Vec2b".to_string(),
+            type_args: vec![],
+            fields: vec![FieldValue {
+                member: "x".to_string(),
+                expr: Expr::Lit(Lit::Bool(true)),
+            }],
+        };
+        assert_eq!(render_expr(&e), "vec2<bool>(true)");
+
+        let e = Expr::Struct {
+            name: "Light".to_string(),
+            type_args: vec![],
+            fields: vec![],
+        };
+        assert_eq!(render_expr(&e), "Light()");
     }
 
     /// Storage texture types render as `texture_storage_Nd<format, access>`.

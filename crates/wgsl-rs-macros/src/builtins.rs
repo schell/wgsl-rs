@@ -280,6 +280,51 @@ mod tests {
         }
     }
 
+    /// The builtin *type*-alias table in `wgsl-rs-ir`
+    /// (`render::builtin_lookup::TYPE_TABLE`) duplicates this crate's
+    /// `parse::builtin_wgsl_type_name` resolution (duplicated so
+    /// `wgsl-rs-ir` stays standalone). This pins the copy against the
+    /// macro's resolution for the full input space, both directions
+    /// (wgsl-rs#230).
+    #[test]
+    fn ir_type_table_matches_builtin_wgsl_type_name() {
+        use crate::parse::builtin_wgsl_type_name;
+
+        // The full input space `builtin_wgsl_type_name` recognizes.
+        let mut inputs: Vec<String> = Vec::new();
+        for n in ["2", "3", "4"] {
+            for suffix in ["f", "i", "u", "b"] {
+                inputs.push(format!("Vec{n}{suffix}"));
+            }
+        }
+        for c in ["2", "3", "4"] {
+            inputs.push(format!("Mat{c}f"));
+            for r in ["2", "3", "4"] {
+                inputs.push(format!("Mat{c}x{r}f"));
+            }
+        }
+
+        for input in &inputs {
+            let expected = builtin_wgsl_type_name(input)
+                .unwrap_or_else(|| panic!("`{input}` should resolve via builtin_wgsl_type_name"));
+            assert_eq!(
+                ir_lookup::lookup_type_name(input),
+                Some(expected.as_str()),
+                "wgsl-rs-ir's TYPE_TABLE drifted from builtin_wgsl_type_name for `{input}`"
+            );
+        }
+
+        // No extra table entries outside the recognized space.
+        for (rust, wgsl) in ir_lookup::TYPE_TABLE {
+            assert_eq!(
+                builtin_wgsl_type_name(rust),
+                Some((*wgsl).to_string()),
+                "wgsl-rs-ir's TYPE_TABLE entry ({rust}, {wgsl}) has no matching \
+                 builtin_wgsl_type_name resolution"
+            );
+        }
+    }
+
     #[test]
     fn lookup_existing_builtin() {
         assert_eq!(

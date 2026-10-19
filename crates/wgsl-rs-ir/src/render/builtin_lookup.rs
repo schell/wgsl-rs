@@ -175,6 +175,66 @@ pub fn lookup(name: &str) -> Option<&'static str> {
         .map(|(_, wgsl)| *wgsl)
 }
 
+/// Rust builtin *type* alias spellings → WGSL predeclared type names
+/// (`Vec2f` → `vec2f`, `Mat2x3f` → `mat2x3f`).
+///
+/// Used by the renderer when composing mangled `Type_method` /
+/// `Type_member` identifiers from a type named by its written Rust
+/// spelling (wgsl-rs#230): definition-side mangling (`mangle_type` in
+/// the macro crate) resolves a `Type::Vector`/`Type::Matrix` self type
+/// to the WGSL spelling, so call sites and const paths naming the same
+/// type must resolve identically or they dangle (`Vec2f__1from_array`
+/// vs the emitted `vec2f__1from_array`).
+///
+/// Bool vectors map to the shorthand spelling (`Vec2b` → `vec2b`) to
+/// match the definition-side mangling, which uses the same shorthand for
+/// method-name prefixes — the *type* `vec2b` is invalid WGSL (types
+/// render `vec2<bool>`), but identifiers built from it are ordinary
+/// names.
+///
+/// Like [`TABLE`], this is duplicated from the macro crate
+/// (`parse::builtin_wgsl_type_name`) so `wgsl-rs-ir` stays standalone;
+/// the two are pinned in sync by tests in `wgsl-rs-macros/src/builtins.rs`.
+pub const TYPE_TABLE: &[(&str, &str)] = &[
+    // Vector aliases
+    ("Vec2f", "vec2f"),
+    ("Vec2i", "vec2i"),
+    ("Vec2u", "vec2u"),
+    ("Vec2b", "vec2b"),
+    ("Vec3f", "vec3f"),
+    ("Vec3i", "vec3i"),
+    ("Vec3u", "vec3u"),
+    ("Vec3b", "vec3b"),
+    ("Vec4f", "vec4f"),
+    ("Vec4i", "vec4i"),
+    ("Vec4u", "vec4u"),
+    ("Vec4b", "vec4b"),
+    // Square matrix shorthand
+    ("Mat2f", "mat2x2f"),
+    ("Mat3f", "mat3x3f"),
+    ("Mat4f", "mat4x4f"),
+    // Explicit matrices
+    ("Mat2x2f", "mat2x2f"),
+    ("Mat2x3f", "mat2x3f"),
+    ("Mat2x4f", "mat2x4f"),
+    ("Mat3x2f", "mat3x2f"),
+    ("Mat3x3f", "mat3x3f"),
+    ("Mat3x4f", "mat3x4f"),
+    ("Mat4x2f", "mat4x2f"),
+    ("Mat4x3f", "mat4x3f"),
+    ("Mat4x4f", "mat4x4f"),
+];
+
+/// Translate a written Rust builtin type-alias spelling to its WGSL
+/// predeclared name. Returns `None` if the name is not a builtin alias
+/// (user struct names pass through unchanged).
+pub fn lookup_type_name(name: &str) -> Option<&'static str> {
+    TYPE_TABLE
+        .iter()
+        .find(|(rust, _)| *rust == name)
+        .map(|(_, wgsl)| *wgsl)
+}
+
 /// Rust builtin function names that lower to binary operators instead of
 /// function calls (#164). A two-argument call to one of these renders as
 /// the infix operator applied to its arguments: `cmp_eq(a, b)` renders

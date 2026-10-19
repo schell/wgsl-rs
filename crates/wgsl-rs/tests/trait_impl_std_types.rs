@@ -11,7 +11,7 @@
 #![allow(dead_code)]
 
 use wgsl_rs::{
-    std::{Vec2b, Vec2f},
+    std::{Mat2x3f, Vec2b, Vec2f},
     wgsl,
 };
 
@@ -144,4 +144,42 @@ fn bool_vec_assoc_resolves_and_suffixes() {
 fn bool_vec_assoc_runs_on_cpu() {
     let out = bool_vec_assoc::PackedBool::to_array(Vec2b { x: false, y: true });
     assert_eq!(out, [0u32, 1u32]);
+}
+
+/// Matrix self types resolve their assoc-type projections the same way
+/// (`Mat2x3f` → `mat2x3f`); validated by the auto-generated
+/// `__validate_wgsl` test. The CPU matrix types expose no component
+/// access yet, so the body is trivial — the test pins the resolution and
+/// the rendered signature, not bit-packing.
+#[wgsl]
+mod matrix_assoc {
+    use wgsl_rs::std::*;
+
+    pub trait PackedMat {
+        type Array;
+        fn to_array(data: Self) -> Self::Array;
+    }
+
+    impl PackedMat for Mat2x3f {
+        type Array = [u32; 6];
+
+        fn to_array(_data: Self) -> Self::Array {
+            [0u32, 0u32, 0u32, 0u32, 0u32, 0u32]
+        }
+    }
+}
+
+#[test]
+fn matrix_assoc_renders_resolved_spelling() {
+    let src = matrix_assoc::WGSL_SOURCE.wgsl_source().unwrap();
+    assert!(
+        src.contains("fn mat2x3f__1to_array(_data: mat2x3f) -> array<u32, 6>"),
+        "expected the matrix Self::Array to resolve to array<u32, 6>, got:\n{src}"
+    );
+}
+
+#[test]
+fn matrix_assoc_runs_on_cpu() {
+    let out = matrix_assoc::PackedMat::to_array(Mat2x3f::default());
+    assert_eq!(out, [0u32; 6]);
 }

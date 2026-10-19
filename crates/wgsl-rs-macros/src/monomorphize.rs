@@ -3064,6 +3064,34 @@ mod test {
         );
     }
 
+    /// `Self::Array` on a matrix self type resolves through the same
+    /// index — the Matrix arm of `type_name_for_assoc` keys by the
+    /// `mangle_type` spelling `build_assoc_type_index` uses (`mat2x3f`)
+    /// (wgsl-rs#230 follow-up).
+    #[test]
+    fn mono_matrix_impl_assoc_type_resolves() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub trait Slab {
+                    type Array;
+                    fn to_array(data: Self) -> Self::Array;
+                }
+
+                impl Slab for Mat2x3f {
+                    type Array = [u32; 6];
+                    fn to_array(data: Self) -> Self::Array {
+                        [0u32, 0u32, 0u32, 0u32, 0u32, 0u32]
+                    }
+                }
+            }
+        };
+        let wgsl = mono_wgsl(input);
+        assert!(
+            wgsl.contains("fn mat2x3f__1to_array(data: mat2x3f) -> array<u32, 6>"),
+            "expected the matrix Self::Array to resolve to array<u32, 6>, got:\n{wgsl}"
+        );
+    }
+
     #[test]
     fn mono_with_trait_impl() {
         let input: syn::ItemMod = syn::parse_quote! {

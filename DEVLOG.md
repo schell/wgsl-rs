@@ -1889,3 +1889,24 @@ struct can carry a builtin spelling as its name. The table follows
 the existing duplicated-table pattern — the macro crate pins it in
 sync via a test in `wgsl-rs-macros/src/builtins.rs`, same as the
 function-name table.
+
+### 2026-10-19: Assoc-type projections resolve for std self types (wgsl-rs#230 follow-up)
+
+**Problem:** `Self::Array` inside `impl SlabItem for Vec4b` stayed a
+symbolic projection. The assoc-type index keys each impl's aliases by
+`mangle_type(self_ty)` (which handles vectors: `vec4b`), but the lookup
+`type_name_for_assoc` only handled scalars, type params, structs, and
+arrays — vector/matrix bases fell to `None`, so the projection never
+resolved to the concrete type. Pre-#230 this was masked: the
+projection rendered a dangling written-spelling name and naga failed at
+the signature. After #230 fixed the spelling, the alias name became
+valid and the failure moved into the body — the #145 suffix pass cannot
+anchor literals through a symbolic projection, so `select(0, 1, c)`
+elements concretized to i32 and mismatched the declared `array<u32, 4>`.
+
+**Decision:** `type_name_for_assoc` gained Vector/Matrix arms keyed by
+`mangle_type`, restoring symmetry with `build_assoc_type_index`.
+`Self::Array` on a std self type now resolves to the impl's concrete
+type at macro time; the signature renders `array<u32, 4>` and the
+suffix pass anchors literals through it, matching Rust's own
+inference (`select(0, 1, c)` is u32 on the CPU via the return type).

@@ -43,6 +43,24 @@ pub enum SourceError<'a> {
         matching_source_names: Vec<String>,
         available_templates: Vec<String>,
     },
+    /// A reference to a generic template that was never resolved to a
+    /// concrete instantiation, detected while assembling WGSL source
+    /// (wgsl-rs#237). The macro-time check catches same-module
+    /// mistakes; this catches cross-module ones, where the consuming
+    /// module's macro cannot know that the referenced name is generic.
+    UnresolvedTemplateRef {
+        /// Name of the source whose items contain the reference.
+        source_name: String,
+        /// The referenced template's name (e.g. `Id`).
+        template_name: String,
+        /// The referenced member, for method calls and associated
+        /// constants; `None` for bare calls to generic functions.
+        member: Option<String>,
+        /// Whether the reference carried explicit type arguments that
+        /// could not be resolved (e.g. `Id::<T>::new(...)` inside a
+        /// generic context).
+        has_type_args: bool,
+    },
 }
 
 impl<'a> std::fmt::Display for SourceError<'a> {
@@ -82,6 +100,34 @@ impl<'a> std::fmt::Display for SourceError<'a> {
                      {mangled_type_args:?}; matching sources: {matching_source_names:?}; \
                      available templates: {available_templates:?}",
                 )
+            }
+            SourceError::UnresolvedTemplateRef {
+                source_name,
+                template_name,
+                member,
+                has_type_args,
+            } => {
+                let what = match member {
+                    Some(member) => format!("'{template_name}::{member}'"),
+                    None => format!("'{template_name}'"),
+                };
+                if *has_type_args {
+                    write!(
+                        f,
+                        "source '{source_name}' references {what} of generic template \
+                         '{template_name}' with type arguments that could not be resolved; calls \
+                         to generic templates from generic contexts (template bodies, generic \
+                         entry points) are not yet supported — call it with concrete type \
+                         arguments from a concrete function instead",
+                    )
+                } else {
+                    write!(
+                        f,
+                        "source '{source_name}' calls generic template {what} without generic \
+                         arguments; supply them with turbofish, e.g. \
+                         '{template_name}::<ConcreteType>::…'",
+                    )
+                }
             }
         }
     }

@@ -37,8 +37,8 @@ pub use render::{
     render_module, render_stmt, render_type,
 };
 pub use substitute::{
-    rename_items, substitute_consts, substitute_consts_in_items, substitute_items,
-    substitute_types, type_to_ident,
+    UnresolvedTemplateRef, find_unresolved_template_refs, rename_items, substitute_consts,
+    substitute_consts_in_items, substitute_items, substitute_types, type_to_ident,
 };
 pub use suffix::{
     FnSig, TypeImports, fn_signatures, fn_signatures_in_items, suffix_items,

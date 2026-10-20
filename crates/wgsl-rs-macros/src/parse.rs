@@ -5414,6 +5414,7 @@ impl ItemConst {
     pub fn try_from_impl_const(
         value: &syn::ImplItemConst,
         is_trait_impl: bool,
+        ctx: &ParseContext,
     ) -> Result<Self, Error> {
         let syn::ImplItemConst {
             attrs,
@@ -5461,9 +5462,15 @@ impl ItemConst {
             const_token: *const_token,
             ident: ident.clone(),
             colon_token: *colon_token,
-            ty: Type::try_from(ty)?,
+            // Parse with the impl's type-param context: a generic impl's
+            // const can reference the impl's type params (`const NONE: Id<T>
+            // = Id::<T>::new(...)`), and without the context `T` parses as
+            // a `Type::Struct` instead of a `Type::TypeParam`, so
+            // monomorphization / runtime substitution never rewrites it
+            // and the literal `T` leaks into the rendered WGSL.
+            ty: Type::parse(ty, ctx)?,
             eq_token: *eq_token,
-            expr: Expr::try_from(expr)?,
+            expr: Expr::parse(expr, ctx)?,
             semi_token: *semi_token,
             attrs: ir_attrs,
         })
@@ -6881,7 +6888,8 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
                     parsed_items.push(ImplItem::Fn(Box::new(item_fn)));
                 }
                 syn::ImplItem::Const(impl_const) => {
-                    let item_const = ItemConst::try_from_impl_const(impl_const, is_trait_impl)?;
+                    let item_const =
+                        ItemConst::try_from_impl_const(impl_const, is_trait_impl, &ctx)?;
                     parsed_items.push(ImplItem::Const(Box::new(item_const)));
                 }
                 syn::ImplItem::Type(impl_type) => {
@@ -6948,6 +6956,46 @@ impl ItemImpl {
         let resolution = SelfResolution {
             ident: Ident::new(&mangled, base.span()),
             ty: self.self_ty.clone(),
+        };
+        for item in &mut self.items {
+            match item {
+                ImplItem::Fn(f) => resolve_self_in_fn(&resolution, f),
+                ImplItem::Const(c) => resolve_self_in_const(&resolution, c),
+                ImplItem::Type(t) => resolve_self_in_type(&resolution, &mut t.ty),
+            }
+        }
+    }
+
+    /// Resolve `Self` references in this impl block's items to the bare
+    /// base struct ident (e.g. `Id` for `impl<T> Id<T>`), for impl blocks
+    /// shipped inside struct templates (see
+    /// [`crate::monomorphize::generate_template_macros`]).
+    ///
+    /// [`ItemImpl::resolve_self`] deliberately skips generic self types:
+    /// it runs at parse time for impls that stay concrete, and rewriting
+    /// `Self` to the bare base ident there would break same-module
+    /// monomorphization, which resolves `Self` through the
+    /// instantiation's substitution map instead (wgsl-rs#236). Template
+    /// shipping is the other half: the shipped items are only ever
+    /// rendered after runtime instantiation, where
+    /// `wgsl_rs_ir::rename_items` rewrites the base ident to the mangled
+    /// instance name (`Id` → `Id_f32`) in lockstep with the struct
+    /// definition itself. Resolving `Self` to that same ident here lets
+    /// every `Self` position — signatures, const types, `Self::method()`
+    /// calls, `Self { .. }` constructors, `Self::CONST` paths — land on
+    /// the concrete instantiation for free.
+    ///
+    /// Only valid for impl blocks whose self type is a struct whose base
+    /// ident names the enclosing struct template; the caller (which owns
+    /// the struct template) guarantees that.
+    pub(crate) fn resolve_self_for_template(&mut self, base: &Ident) {
+        let resolution = SelfResolution {
+            ident: base.clone(),
+            ty: Type::Struct {
+                ident: base.clone(),
+                type_args: vec![],
+                const_args: vec![],
+            },
         };
         for item in &mut self.items {
             match item {

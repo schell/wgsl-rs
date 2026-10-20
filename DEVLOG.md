@@ -1910,3 +1910,64 @@ elements concretized to i32 and mismatched the declared `array<u32, 4>`.
 type at macro time; the signature renders `array<u32, 4>` and the
 suffix pass anchors literals through it, matching Rust's own
 inference (`select(0, 1, c)` is u32 on the CPU via the return type).
+
+### 2026-10-20: `Self` in generic impls resolves at template-shipping time (wgsl-rs#236)
+
+**Problem:** `impl<T> Id<T>` blocks work in the same-module compile-time
+path (the monomorphizer's substitution map carries `Self` → mangled
+struct per instantiation), but the runtime template path shipped the
+impl blocks verbatim with `Self` intact. Neither
+`ir::substitute_items` nor `ir::rename_items` knows about `Self`, so
+instantiated items rendered `Self` literally — method signatures
+(`-> Self`), const type annotations (`: Self`), and `Self::method()`
+call sites (`Self_new`). Naga rejected the source with a far-removed
+"unknown identifier `Self`" error.
+
+**Decision:** Resolve `Self` in the shipped clone at
+`generate_template_macros` time, to the struct template's *base ident*
+(`Id`), reusing the `resolve_self` walker family from parse.rs
+(`ItemImpl::resolve_self_for_template`). The runtime rename pass then
+rewrites that ident to the mangled instance name (`Id_f32`) in lockstep
+with the struct definition itself, so every `Self` position —
+signatures, const types, `Self::method()`, `Self { .. }` constructors,
+`Self::CONST` paths — lands on the concrete instantiation for free.
+Extending parse-time `resolve_self` to generic impls instead was
+considered and rejected: it would rewrite `Self::new` into a bare
+`Id::new` in the compile-time path too, where `Self` is resolved
+through the instantiation's substitution map — turning a working
+construct into the #237 silent-failure case. Two companion fixes fell
+out of the same investigation: impl-block *consts* now parse with the
+impl's type-param context (a `T` in a const used to parse as
+`Type::Struct`, never substitute, and leak into rendered names), and
+identity turbofish (`Id::<T>::new(..)`) inside shipped impl items is
+cleared so the call renders without a bogus `_f32` suffix after
+renaming.
+
+### 2026-10-20: Missing turbofish on generic struct members is a loud error (wgsl-rs#237)
+
+**Problem:** `Id::new(0u32)` — a call to a generic struct's method
+without turbofish — typechecks in Rust (the concrete type is inferrable)
+but transpiles the un-mangled name (`Id_new`), which fails WGSL
+validation as "unknown identifier", or silently corrupts
+`skip_validation` modules. The existing check only covered module-level
+generic *functions*.
+
+**Decision:** Three detection points, ordered by proximity to the
+mistake. (1) Macro time, same-module: the missing-turbofish visitor now
+also flags `Type::method(..)` calls and `Type::CONST` paths with no
+generic arguments when the type is a known generic struct — including
+inside generic fn template bodies and generic impl bodies, which were
+previously silent (the templates are removed from module content before
+the old check ran). `Self::…` inside the impl's own block is exempt.
+(2) Source-assembly time, cross-module: the consuming module's macro
+cannot know an imported name is generic, so `wgsl_source()` harvests
+every reachable template name and flags surviving references with an
+actionable message (supply turbofish). This also flags instances whose
+bodies reference *other* templates unresolvably (generic fn bodies
+calling `Id::<T>::new(..)` — the rename only resolves the template's
+own name). (3) Return-type-annotation inference (the "at best" from the
+issue) is explicitly deferred: the loud error covers the authoring
+mistake; inference is a separate feature with its own collision rules.
+Known follow-up gaps: resolving generic struct *types* referenced from
+generic fn template bodies, and turbofish on associated-const paths,
+remain unsupported and are tracked separately.

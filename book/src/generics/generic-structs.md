@@ -69,6 +69,61 @@ fn Pair_f32_sum(p: Pair_f32) -> f32 {
 }
 ```
 
+## Using `Self` in Generic Impls
+
+`Self` works everywhere inside a generic impl block — parameter and
+return types, associated const types, `Self::method(..)` calls,
+`Self { .. }` constructors, and `Self::CONST` paths — and resolves to
+the concrete instantiation, whether the struct is monomorphized in the
+same module or instantiated through a cross-module import:
+
+```rust
+impl<T: Copy> Pair<T> {
+    pub fn swap(p: Self) -> Self {
+        Self { a: p.b, b: p.a }
+    }
+}
+```
+
+For `Pair::<f32>` the constructor renders the positional form
+`Pair_f32(p.b, p.a)` and the signature renders `Pair_f32` in both
+positions.
+
+One caveat is a WGSL language rule, not a transpiler one: const
+initializers may only use const-expressions, so an associated const
+must build its value with a struct literal (or literal values), not a
+function call:
+
+```rust
+impl<T: Copy> Pair<T> {
+    // `Self::zero()` here would render fine but WGSL forbids calling
+    // user functions in const contexts — use the literal form.
+    pub const ZERO: Self = Self { a: 0.0, b: 0.0 };
+}
+```
+
+## Method Calls Require Turbofish
+
+Like generic functions, calls to a generic struct's methods must supply
+the concrete type with turbofish. A bare `Pair::sum(p)` renders an
+un-mangled name that fails WGSL validation far from the mistake, so the
+macro rejects it at compile time:
+
+```text
+error: calling generic struct method 'Pair::sum' requires generic
+arguments, e.g., Pair::<T>::sum(...)
+```
+
+This also applies inside generic function bodies (`Pair::<T>::sum(p)`)
+and to associated constants accessed by path: `Self::CONST` works
+inside the struct's own impl, but referencing an instantiated struct's
+associated const from elsewhere is not yet supported (bare paths are
+rejected, and turbofish on const paths does not parse). Cross-module
+calls without turbofish cannot be checked at compile time (the
+importing module's macro cannot know the imported name is generic);
+they are reported when the WGSL source is assembled, with the same
+guidance.
+
 ## Struct Construction
 
 Construct a generic struct by writing the literal form `Pair::<f32> { a, b }` or by relying on a type annotation. The macro emits a positional WGSL constructor call with the mangled name:
@@ -90,6 +145,11 @@ There is a known bug in which the bare struct-constructor form `Pair { a, b }` (
 - Always use the turbofish form `Pair::<T> { ... }` at construction sites, **or**
 - Annotate the binding: `let p: Pair<T> = Pair { ... }`.
 - For modules that exercise the bug and cannot be restructured, suppress auto-validation with `#[wgsl(skip_validation)]` (see [Disabling Validation](../validation/disabling.md)) so the failing constructor does not break `cargo test`.
+
+Note that this limitation is about *constructor expressions* only. Bare
+*method calls* (`Pair::sum(p)`) are rejected at compile time (see
+[Method Calls Require Turbofish](#method-calls-require-turbofish)), so
+they cannot fail silently.
 
 The `generic_structs` example currently uses `#[wgsl(skip_validation)]` for this reason:
 

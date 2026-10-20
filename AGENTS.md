@@ -130,3 +130,7 @@ Each design decision should have an entry with the heading "### YYYY-MM-DD: {des
 followed by an explanation of the problem, the decision and justification, etc.
 Multiple decisions made on the same day should be separate entries — the date is metadata;
 what matters is that each entry captures one distinct decision.
+
+## Beads
+
+`wgsl-rs` is the beads prefix for this project.

@@ -157,6 +157,9 @@ fn const_paths_render_mangled_instantiations() {
         "Cell_f32 must be defined exactly once, got:\n{cross}"
     );
     // The macro-generated `__validate_wgsl` tests cover naga validation
-    // for all modules; double-check the assembled source too.
+    // for all modules; this double-checks the assembled source. Gated
+    // so the rendering and dedup assertions still run on
+    // `--no-default-features` builds.
+    #[cfg(feature = "validation")]
     wgsl_rs::validate_wgsl_source(&cross).expect("assembled source must validate");
 }

@@ -124,7 +124,10 @@ fn inherent_impl_self_renders_mangled_instantiation() {
         "literal `Self` must not reach WGSL, got:\n{src}"
     );
     // The macro-generated `__validate_wgsl` tests cover naga validation
-    // for both modules; this double-checks the assembled source.
+    // for both modules; this double-checks the assembled source. Gated
+    // so the render assertions still run on `--no-default-features`
+    // builds.
+    #[cfg(feature = "validation")]
     wgsl_rs::validate_wgsl_source(&src).expect("assembled source must validate");
 }
 

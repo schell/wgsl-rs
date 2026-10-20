@@ -206,11 +206,23 @@ impl Source {
                 uninstantiated_source: self,
             });
         }
+        // Harvest every template name reachable through the import graph
+        // (including templates reachable only via instantiations) so the
+        // assembly pass can flag references that were never resolved to
+        // a concrete instantiation (wgsl-rs#237). Cross-module references
+        // cannot be checked at macro time — the consuming module cannot
+        // know that an imported name is generic.
+        let mut template_names: HashSet<String> = HashSet::new();
+        let mut visited: HashSet<u64> = HashSet::new();
+        collect_template_names(self, &mut template_names, &mut visited);
         let mut out = String::new();
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
         let mut imports = ir::TypeImports::default();
+        // Top-level struct and function names actually emitted by
+        // rendered source chunks (see `instantiate_template_into`).
+        let mut emitted_names: HashSet<String> = HashSet::new();
         self.collect(
             &mut out,
             &mut visited_sources,
@@ -218,6 +230,8 @@ impl Source {
             None,
             &mut needs_tier1,
             &mut imports,
+            &template_names,
+            &mut emitted_names,
         )?;
         // WGSL requires `enable` directives at the very start of the
         // translation unit, before any other declarations. Since `collect`
@@ -247,6 +261,7 @@ impl Source {
     /// struct constructors) via
     /// [`ir::suffix_module_with_type_imports`], with the caller's own
     /// declarations shadowing imported ones.
+    #[allow(clippy::too_many_arguments)]
     fn collect(
         &self,
         out: &mut String,
@@ -255,11 +270,22 @@ impl Source {
         subst: Option<&HashMap<String, ir::Type>>,
         needs_tier1: &mut bool,
         imports: &mut ir::TypeImports,
+        template_names: &HashSet<String>,
+        emitted_names: &mut HashSet<String>,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
             if visited_sources.insert(m.id) {
-                m.collect(out, visited_sources, seen, None, needs_tier1, imports)?;
+                m.collect(
+                    out,
+                    visited_sources,
+                    seen,
+                    None,
+                    needs_tier1,
+                    imports,
+                    template_names,
+                    emitted_names,
+                )?;
             }
         }
 
@@ -269,6 +295,33 @@ impl Source {
             ir::substitute_types(&mut ir_module, s);
         }
         ir::deshadow_module(&mut ir_module);
+        // Flag references to generic templates that were never resolved
+        // (wgsl-rs#237): a bare `Id::new(...)` or `Id::NONE` here would
+        // render an un-mangled name and fail WGSL validation far from
+        // the authoring mistake.
+        if let Some(offense) = ir::find_unresolved_template_refs(&ir_module.items, template_names) {
+            return Err(SourceError::UnresolvedTemplateRef {
+                source_name: self.name.to_string(),
+                template_name: offense.template,
+                member: offense.member,
+                has_type_args: offense.has_type_args,
+            });
+        }
+        // Record this chunk's top-level definitions so later instance
+        // chunks can deduplicate against them: a provider's own
+        // compile-time monomorphization may already contain the very
+        // instantiation a consumer requests.
+        for item in &ir_module.items {
+            match item {
+                ir::Item::Struct(s) => {
+                    emitted_names.insert(s.name.to_string());
+                }
+                ir::Item::Fn(f) => {
+                    emitted_names.insert(f.name.to_string());
+                }
+                _ => {}
+            }
+        }
         // Pre-seed with the types of cross-source template instances
         // this source calls: instance chunks are appended (and publish
         // their types) after this chunk is suffixed, so a call like
@@ -334,9 +387,36 @@ impl Source {
                 seen,
                 needs_tier1,
                 imports,
+                template_names,
+                emitted_names,
             )?;
         }
         Ok(())
+    }
+}
+
+/// Harvest every generic template name reachable from `source` through
+/// the import graph, including templates reachable only through recorded
+/// instantiations. Used by source assembly to detect references that were
+/// never resolved to a concrete instantiation (wgsl-rs#237).
+fn collect_template_names(
+    source: &Source,
+    names: &mut HashSet<String>,
+    visited: &mut HashSet<u64>,
+) {
+    if !visited.insert(source.id) {
+        return;
+    }
+    for template in source.templates {
+        names.insert(template.name.to_string());
+    }
+    for import in source.imports {
+        collect_template_names(import, names, visited);
+    }
+    for inst in source.instantiations {
+        for module in inst.modules {
+            collect_template_names(module, names, visited);
+        }
     }
 }
 
@@ -360,6 +440,8 @@ fn instantiate_template_into<'a>(
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
     imports: &mut ir::TypeImports,
+    template_names: &HashSet<String>,
+    emitted_names: &mut HashSet<String>,
 ) -> Result<(), SourceError<'a>> {
     let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
 
@@ -400,6 +482,8 @@ fn instantiate_template_into<'a>(
             seen,
             needs_tier1,
             imports,
+            template_names,
+            emitted_names,
         )?;
     }
 
@@ -411,7 +495,37 @@ fn instantiate_template_into<'a>(
         mangled_const_args,
     );
 
+    // Cross-chunk dedup: the provider's own source chunk may already
+    // contain this very instantiation — compile-time monomorphization
+    // emits concrete items into the provider's IR, and rendering the
+    // runtime instance again would double-define the struct (or fn).
+    // The content is identical, so the whole chunk is skipped. The
+    // check is against names *emitted by rendered chunks*
+    // (`emitted_names`), not against `imports`, which is deliberately
+    // pre-seeded with instance types before this chunk renders.
+    let already_emitted = items.iter().find_map(|item| match item {
+        ir::Item::Struct(s) => Some(emitted_names.contains(&s.name)),
+        ir::Item::Fn(f) => Some(emitted_names.contains(f.name.as_ref())),
+        _ => None,
+    });
+    if already_emitted == Some(true) {
+        return Ok(());
+    }
+
     ir::deshadow_items(&mut items);
+    // Flag references to *other* generic templates that this instance's
+    // body could not resolve (e.g. a generic fn body calling
+    // `Id::<T>::new(...)` — the instance rename only resolves the
+    // template's own name, wgsl-rs#237). Without this the broken name
+    // reaches WGSL validation as an un-mangled identifier.
+    if let Some(offense) = ir::find_unresolved_template_refs(&items, template_names) {
+        return Err(SourceError::UnresolvedTemplateRef {
+            source_name: source.name.to_string(),
+            template_name: offense.template,
+            member: offense.member,
+            has_type_args: offense.has_type_args,
+        });
+    }
     // Seed with every ancestor's types (imports and already-
     // instantiated dependency templates), then publish this instance's
     // own (renamed) types for any later chunk.

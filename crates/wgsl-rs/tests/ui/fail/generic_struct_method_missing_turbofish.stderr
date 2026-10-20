@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       calling generic struct method 'Id::new' requires generic arguments, e.g., Id::<T>::new(...).'
+  --> tests/ui/fail/generic_struct_method_missing_turbofish.rs:20:9
+   |
+20 |         Id::new(0u32)
+   |         ^^

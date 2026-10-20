@@ -112,7 +112,7 @@ mod generic_struct_trait_impl {
     }
 
     pub fn make_zero<T: Copy + Zeroable>() -> Wrapper<T> {
-        Wrapper::zero()
+        Wrapper::<T>::zero()
     }
 
     pub fn make_zero_u32() -> Wrapper<u32> {
@@ -138,6 +138,13 @@ fn generic_struct_trait_impl_transpiles() {
     assert!(
         src.contains("Wrapper_f32_zero"),
         "expected Wrapper_f32_zero in WGSL, got:\n{src}"
+    );
+    // The turbofish call site inside the generic body must render the
+    // mangled instance names, not the un-mangled `Wrapper_zero(`
+    // (wgsl-rs#237: bare calls are a compile error now).
+    assert!(
+        !src.contains("Wrapper_zero("),
+        "un-mangled call site leaked into WGSL:\n{src}"
     );
 }
 

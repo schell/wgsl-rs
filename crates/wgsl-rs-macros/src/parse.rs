@@ -2483,26 +2483,76 @@ impl Expr {
                         Self::Ident(ident.clone())
                     }
                 } else if path.segments.len() == 2 {
-                    // Type::member path: `Light::CONSTANT`
-                    let ty = path.segments[0].ident.clone();
+                    // Type::member path: `Light::CONSTANT`,
+                    // `Id::<T>::NONE`, `Grid::<4>::CONST`.
+                    let ty_seg = &path.segments[0];
                     let member = path.segments[1].ident.clone();
 
-                    // Check no generics on segments
-                    for seg in &path.segments {
-                        if !matches!(seg.arguments, syn::PathArguments::None) {
+                    // The member segment never takes generic arguments.
+                    if !matches!(path.segments[1].arguments, syn::PathArguments::None) {
+                        return UnsupportedSnafu {
+                            span: path.segments[1].arguments.span(),
+                            note: "generic arguments on the member of a type path are not \
+                                   supported",
+                        }
+                        .fail();
+                    }
+
+                    match &ty_seg.arguments {
+                        syn::PathArguments::None => Self::TypePath {
+                            ty: ty_seg.ident.clone(),
+                            colon2_token: Token![::](ty_seg.ident.span()),
+                            member,
+                            qself_ty: None,
+                        },
+                        syn::PathArguments::AngleBracketed(angle_args) => {
+                            // Turbofish const path: `Id::<T>::NONE`. Both
+                            // type and const arguments are collected into
+                            // the same struct-type form the type parser
+                            // produces, so this spelling normalizes to
+                            // exactly what the qualified-self form
+                            // (`<Id<T>>::NONE`) produces and the two are
+                            // interchangeable downstream (wgsl-rs#240).
+                            let mut type_args = Vec::new();
+                            let mut const_args = Vec::new();
+                            for arg in &angle_args.args {
+                                match arg {
+                                    syn::GenericArgument::Type(ty) => {
+                                        type_args.push(Type::parse(ty, ctx)?);
+                                    }
+                                    syn::GenericArgument::Const(expr) => {
+                                        const_args.push(eval_const_u32_arg(expr)?);
+                                    }
+                                    other => {
+                                        return UnsupportedSnafu {
+                                            span: other.span(),
+                                            note: "only type and const arguments are supported in \
+                                                   type paths",
+                                        }
+                                        .fail();
+                                    }
+                                }
+                            }
+                            let qself_ty = Type::Struct {
+                                ident: ty_seg.ident.clone(),
+                                type_args,
+                                const_args,
+                            };
+                            let mangled = mangle_type(&qself_ty)?;
+                            Self::TypePath {
+                                ty: Ident::new(&mangled, ty_seg.ident.span()),
+                                colon2_token: Token![::](ty_seg.ident.span()),
+                                member,
+                                qself_ty: Some(Box::new(qself_ty)),
+                            }
+                        }
+                        other => {
                             return UnsupportedSnafu {
-                                span: seg.arguments.span(),
-                                note: "generic arguments in type paths are not supported",
+                                span: other.span(),
+                                note: "unsupported path arguments in a type path",
                             }
                             .fail();
                         }
-                    }
-
-                    Self::TypePath {
-                        ty,
-                        colon2_token: Token![::](path.segments[0].ident.span()),
-                        member,
-                        qself_ty: None,
                     }
                 } else {
                     return UnsupportedSnafu {
@@ -5396,13 +5446,18 @@ impl ItemConst {
             semi_token,
         } = value;
         let ir_attrs = syn_attrs_to_ir(attrs);
+        let expr = Expr::parse(expr.as_ref(), ctx)?;
+        // WGSL const initializers must be const-expressions: reject
+        // user-function calls up front instead of rendering names that
+        // naga rejects far from the source (wgsl-rs#239).
+        validate_const_expression(ident, &expr)?;
         Ok(ItemConst {
             const_token: *const_token,
             ident: ident.clone(),
             colon_token: *colon_token,
             ty: Type::parse(ty.as_ref(), ctx)?,
             eq_token: *eq_token,
-            expr: Expr::parse(expr.as_ref(), ctx)?,
+            expr,
             semi_token: *semi_token,
             attrs: ir_attrs,
         })
@@ -5414,6 +5469,7 @@ impl ItemConst {
     pub fn try_from_impl_const(
         value: &syn::ImplItemConst,
         is_trait_impl: bool,
+        ctx: &ParseContext,
     ) -> Result<Self, Error> {
         let syn::ImplItemConst {
             attrs,
@@ -5461,9 +5517,22 @@ impl ItemConst {
             const_token: *const_token,
             ident: ident.clone(),
             colon_token: *colon_token,
-            ty: Type::try_from(ty)?,
+            // Parse with the impl's type-param context: a generic impl's
+            // const can reference the impl's type params (`const NONE: Id<T>
+            // = Id::<T>::new(...)`), and without the context `T` parses as
+            // a `Type::Struct` instead of a `Type::TypeParam`, so
+            // monomorphization / runtime substitution never rewrites it
+            // and the literal `T` leaks into the rendered WGSL.
+            ty: Type::parse(ty, ctx)?,
             eq_token: *eq_token,
-            expr: Expr::try_from(expr)?,
+            expr: {
+                let expr = Expr::parse(expr, ctx)?;
+                // Same const-expression rule as module-level consts
+                // (wgsl-rs#239): user-function calls are invalid WGSL in
+                // const initializers.
+                validate_const_expression(ident, &expr)?;
+                expr
+            },
             semi_token: *semi_token,
             attrs: ir_attrs,
         })
@@ -5494,6 +5563,241 @@ fn expr_contains_linkage_access(expr: &Expr) -> Option<proc_macro2::Span> {
         Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } => None,
     }
 }
+
+/// WGSL builtin functions marked `@const` in the spec's builtin tables
+/// (WGSL §17, snapshot bundled with `cargo xtask wgsl-spec`), and
+/// therefore callable inside const-expression initializers. Only these
+/// and the value constructors ([`is_value_constructor_name`]) may appear
+/// as calls in a const initializer: user-declared functions can never
+/// be const-functions (WGSL §11.3), so any other call renders invalid
+/// WGSL that naga rejects far from the authoring site (wgsl-rs#239).
+const CONST_CALLABLE_BUILTINS: &[&str] = &[
+    "abs",
+    "acos",
+    "acosh",
+    "all",
+    "any",
+    "asin",
+    "asinh",
+    "atan",
+    "atan2",
+    "atanh",
+    "bitcast",
+    "ceil",
+    "clamp",
+    "cos",
+    "cosh",
+    "countLeadingZeros",
+    "countOneBits",
+    "countTrailingZeros",
+    "cross",
+    "degrees",
+    "determinant",
+    "distance",
+    "dot",
+    "dot4I8Packed",
+    "dot4U8Packed",
+    "exp",
+    "exp2",
+    "extractBits",
+    "faceForward",
+    "firstLeadingBit",
+    "firstTrailingBit",
+    "floor",
+    "fma",
+    "fract",
+    "frexp",
+    "insertBits",
+    "inverseSqrt",
+    "ldexp",
+    "length",
+    "log",
+    "log2",
+    "max",
+    "min",
+    "mix",
+    "modf",
+    "normalize",
+    "pack2x16float",
+    "pack2x16snorm",
+    "pack2x16unorm",
+    "pack4x8snorm",
+    "pack4x8unorm",
+    "pack4xI8",
+    "pack4xI8Clamp",
+    "pack4xU8",
+    "pack4xU8Clamp",
+    "pow",
+    "quantizeToF16",
+    "radians",
+    "reflect",
+    "refract",
+    "reverseBits",
+    "round",
+    "saturate",
+    "select",
+    "sign",
+    "sin",
+    "sinh",
+    "smoothstep",
+    "sqrt",
+    "step",
+    "tan",
+    "tanh",
+    "transpose",
+    "trunc",
+    "unpack2x16float",
+    "unpack2x16snorm",
+    "unpack2x16unorm",
+    "unpack4x8snorm",
+    "unpack4x8unorm",
+    "unpack4xI8",
+    "unpack4xU8",
+];
+
+/// Whether `name` spells a WGSL value constructor (WGSL §17.1): the
+/// `vecN`/`vecN<s>` and `matNxM`/`matN` families with optional scalar
+/// suffixes, scalar constructors, and `array`.
+fn is_value_constructor_name(name: &str) -> bool {
+    if matches!(name, "array" | "bool" | "f16" | "f32" | "i32" | "u32") {
+        return true;
+    }
+    let Some(rest) = name
+        .strip_prefix("vec")
+        .or_else(|| name.strip_prefix("mat"))
+    else {
+        return false;
+    };
+    let mut chars = rest.chars();
+    // Leading dimension: `vec2`, `mat2`, and `mat2x4` all start with 2-4.
+    if !matches!(chars.next(), Some('2' | '3' | '4')) {
+        return false;
+    }
+    // Matrices may carry a second dimension (`mat2x4f`).
+    if let Some('x') = chars.clone().next() {
+        chars.next();
+        if !matches!(chars.next(), Some('2' | '3' | '4')) {
+            return false;
+        }
+    }
+    // Optional scalar suffix: vectors take f/i/u/b, matrices take f/h.
+    match chars.next() {
+        None => true,
+        Some(s) => {
+            let legal = if name.starts_with("vec") {
+                matches!(s, 'f' | 'i' | 'u' | 'b')
+            } else {
+                matches!(s, 'f' | 'h')
+            };
+            legal && chars.next().is_none()
+        }
+    }
+}
+
+/// Whether an `Expr::FnCall` callee spelled `name` is legal inside a
+/// const-expression: value constructors, `@const` builtins, and
+/// wgsl-rs aliases of `@const` builtins (the alias table also holds
+/// runtime-only builtins like atomics and barriers, so an alias is
+/// allowed only when its WGSL spelling is const-callable).
+fn is_const_legal_call(name: &str) -> bool {
+    if is_value_constructor_name(name) || CONST_CALLABLE_BUILTINS.contains(&name) {
+        return true;
+    }
+    crate::builtins::is_reserved_builtin(name).is_some_and(|(_, wgsl_name)| {
+        let base = wgsl_name.split('<').next().unwrap_or(wgsl_name);
+        CONST_CALLABLE_BUILTINS.contains(&base)
+    })
+}
+
+/// A function call that is illegal in a const-expression initializer
+/// (see [`validate_const_expression`]): the offending call's spelling
+/// and span.
+struct IllegalConstCall {
+    call: String,
+    span: proc_macro2::Span,
+}
+
+/// Find the first call in `expr` that cannot appear in a const
+/// initializer. Recurses through the whole expression tree, mirroring
+/// [`expr_contains_linkage_access`]'s coverage plus call arguments and
+/// struct-literal fields, because the WGSL const-expression rule applies
+/// at any nesting depth.
+fn illegal_const_call(expr: &Expr) -> Option<IllegalConstCall> {
+    match expr {
+        Expr::Lit(_) | Expr::Ident(_) | Expr::TypePath { .. } | Expr::LinkageAccess { .. } => None,
+        Expr::Array { elems, .. } => elems.iter().find_map(illegal_const_call),
+        Expr::Paren { inner, .. } => illegal_const_call(inner),
+        Expr::Reference { expr, .. } => illegal_const_call(expr),
+        Expr::Binary { lhs, rhs, .. } => {
+            illegal_const_call(lhs).or_else(|| illegal_const_call(rhs))
+        }
+        Expr::Unary { expr, .. } => illegal_const_call(expr),
+        Expr::ArrayIndexing { lhs, index, .. } => {
+            illegal_const_call(lhs).or_else(|| illegal_const_call(index))
+        }
+        Expr::Swizzle { lhs, params, .. } => illegal_const_call(lhs).or_else(|| {
+            params
+                .as_ref()
+                .and_then(|ps| ps.iter().find_map(illegal_const_call))
+        }),
+        Expr::Cast { lhs, .. } => illegal_const_call(lhs),
+        Expr::FnCall {
+            path,
+            params,
+            type_args: _,
+            const_args: _,
+            paren_token: _,
+        } => {
+            let direct = match path {
+                // `Type::method(...)` paths always mangle to a
+                // user-defined function name, which can never be a
+                // const-function.
+                FnPath::TypeMethod { ty, method, .. } => Some(IllegalConstCall {
+                    call: format!("{}::{}", ty, method),
+                    span: method.span(),
+                }),
+                FnPath::Ident(id) => {
+                    let name = id.to_string();
+                    if is_const_legal_call(&name) {
+                        None
+                    } else {
+                        Some(IllegalConstCall {
+                            call: name,
+                            span: id.span(),
+                        })
+                    }
+                }
+            };
+            direct.or_else(|| params.iter().find_map(illegal_const_call))
+        }
+        Expr::Struct { fields, .. } => fields.iter().find_map(|f| illegal_const_call(&f.expr)),
+        Expr::FieldAccess { base, .. } => illegal_const_call(base),
+        Expr::ZeroValueArray { len, .. } => illegal_const_call(len),
+    }
+}
+
+/// Reject const initializers that call user functions (wgsl-rs#239).
+///
+/// WGSL const declarations require const-expression initializers.
+/// Calls are limited to value constructors and `@const` builtins; a
+/// call to a user function renders a name that naga rejects with a
+/// far-removed "operation not supported in a const context" error, so
+/// the mistake is caught here, at the definition, instead.
+fn validate_const_expression(const_ident: &Ident, expr: &Expr) -> Result<(), Error> {
+    if let Some(IllegalConstCall { call, span }) = illegal_const_call(expr) {
+        return Err(Error::unsupported(
+            span,
+            format!(
+                "const '{const_ident}' initializer calls '{call}', but WGSL const initializers \
+                 are const-expressions: only value constructors and const builtins are callable, \
+                 never user functions; use the struct-literal form (e.g. `MyType {{ field: 0 }}`) \
+                 or literal values instead"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 
 /// A WGSL "module".
 #[derive(Clone)]
@@ -6881,7 +7185,8 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
                     parsed_items.push(ImplItem::Fn(Box::new(item_fn)));
                 }
                 syn::ImplItem::Const(impl_const) => {
-                    let item_const = ItemConst::try_from_impl_const(impl_const, is_trait_impl)?;
+                    let item_const =
+                        ItemConst::try_from_impl_const(impl_const, is_trait_impl, &ctx)?;
                     parsed_items.push(ImplItem::Const(Box::new(item_const)));
                 }
                 syn::ImplItem::Type(impl_type) => {
@@ -6948,6 +7253,46 @@ impl ItemImpl {
         let resolution = SelfResolution {
             ident: Ident::new(&mangled, base.span()),
             ty: self.self_ty.clone(),
+        };
+        for item in &mut self.items {
+            match item {
+                ImplItem::Fn(f) => resolve_self_in_fn(&resolution, f),
+                ImplItem::Const(c) => resolve_self_in_const(&resolution, c),
+                ImplItem::Type(t) => resolve_self_in_type(&resolution, &mut t.ty),
+            }
+        }
+    }
+
+    /// Resolve `Self` references in this impl block's items to the bare
+    /// base struct ident (e.g. `Id` for `impl<T> Id<T>`), for impl blocks
+    /// shipped inside struct templates (see
+    /// [`crate::monomorphize::generate_template_macros`]).
+    ///
+    /// [`ItemImpl::resolve_self`] deliberately skips generic self types:
+    /// it runs at parse time for impls that stay concrete, and rewriting
+    /// `Self` to the bare base ident there would break same-module
+    /// monomorphization, which resolves `Self` through the
+    /// instantiation's substitution map instead (wgsl-rs#236). Template
+    /// shipping is the other half: the shipped items are only ever
+    /// rendered after runtime instantiation, where
+    /// `wgsl_rs_ir::rename_items` rewrites the base ident to the mangled
+    /// instance name (`Id` → `Id_f32`) in lockstep with the struct
+    /// definition itself. Resolving `Self` to that same ident here lets
+    /// every `Self` position — signatures, const types, `Self::method()`
+    /// calls, `Self { .. }` constructors, `Self::CONST` paths — land on
+    /// the concrete instantiation for free.
+    ///
+    /// Only valid for impl blocks whose self type is a struct whose base
+    /// ident names the enclosing struct template; the caller (which owns
+    /// the struct template) guarantees that.
+    pub(crate) fn resolve_self_for_template(&mut self, base: &Ident) {
+        let resolution = SelfResolution {
+            ident: base.clone(),
+            ty: Type::Struct {
+                ident: base.clone(),
+                type_args: vec![],
+                const_args: vec![],
+            },
         };
         for item in &mut self.items {
             match item {
@@ -9329,6 +9674,138 @@ mod test {
             "Expected no builtin 'mat2x2f' in WGSL output, got: {}",
             wgsl
         );
+    }
+
+    /// WGSL const initializers must be const-expressions: calls to user
+    /// functions render a name naga rejects far from the mistake, so
+    /// they are parse errors pointing at the struct-literal alternative
+    /// (wgsl-rs#239).
+    #[test]
+    fn const_initializer_user_fn_call_is_rejected() {
+        // Module-level const calling a free user function.
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod test_module {
+                pub fn helper() -> u32 {
+                    1u32
+                }
+                pub const BAD: u32 = helper();
+            }
+        };
+        let err = match ItemMod::try_from(&item_mod) {
+            Ok(_) => panic!("expected a const-initializer call error, got Ok"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("const 'BAD' initializer calls 'helper'"),
+            "expected a const-initializer call error, got: {err}"
+        );
+
+        // Impl const calling an associated function (the wgsl-rs#239 repro).
+        let item: syn::Item = syn::parse_quote! {
+            impl MyThing {
+                pub const OTHER: MyThing = MyThing::thing();
+            }
+        };
+        let err = match Item::try_from(&item) {
+            Ok(_) => panic!("expected a const-initializer call error, got Ok"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("const 'OTHER' initializer calls 'MyThing::thing'"),
+            "expected a const-initializer call error, got: {err}"
+        );
+    }
+
+    /// The const-expression rule applies at any nesting depth: a call
+    /// buried in an array literal is still rejected.
+    #[test]
+    fn const_initializer_nested_fn_call_is_rejected() {
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod test_module {
+                pub fn helper(x: u32) -> u32 {
+                    x
+                }
+                pub const BAD: [u32; 2] = [0u32, helper(1u32)];
+            }
+        };
+        let err = match ItemMod::try_from(&item_mod) {
+            Ok(_) => panic!("expected a nested const-initializer call error, got Ok"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("const 'BAD' initializer calls 'helper'"),
+            "expected a nested const-initializer call error, got: {err}"
+        );
+    }
+
+    /// Value constructors and `@const` builtins are const-expressions
+    /// and must keep working in const initializers (the std library's
+    /// `builtin_vector_constants` relies on this).
+    #[test]
+    fn const_initializer_constructors_and_const_builtins_pass() {
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod test_module {
+                use crate::std::*;
+
+                pub struct MyThing {
+                    pub times: u32,
+                }
+
+                impl MyThing {
+                    pub const THING: MyThing = MyThing { times: 0u32 };
+                    pub const VEC: Vec2f = vec2f(0.0, 1.0);
+                    pub const MAT: Mat2x2f = mat2x2f(vec2f(1.0, 0.0), vec2f(0.0, 1.0));
+                    pub const SMALL: u32 = min(1u32, 2u32);
+                    pub const BITS: u32 = count_leading_zeros(1u32);
+                }
+            }
+        };
+        let item_mod = ItemMod::try_from(&item_mod).unwrap();
+        let wgsl = item_mod.to_wgsl();
+        assert!(
+            wgsl.contains("const MyThing_THING: MyThing = MyThing(0u);"),
+            "expected the struct-literal const, got: {wgsl}"
+        );
+    }
+
+    /// The turbofish spelling `Id::<T>::NONE` parses to exactly the
+    /// same representation as the qualified-self spelling
+    /// `<Id<T>>::NONE`, so the two are interchangeable downstream
+    /// (wgsl-rs#240).
+    #[test]
+    fn const_path_turbofish_matches_qself_representation() {
+        let parse_path = |src: syn::Expr| {
+            let expr = Expr::try_from(&src).unwrap();
+            let Expr::TypePath {
+                ty,
+                member,
+                qself_ty,
+                ..
+            } = expr
+            else {
+                panic!("expected a TypePath for {src:?}")
+            };
+            (ty.to_string(), member.to_string(), qself_ty.is_some())
+        };
+
+        // Param-supplied args, inside generic contexts.
+        let turbofish = parse_path(syn::parse_quote! { Id::<T>::NONE });
+        let qself = parse_path(syn::parse_quote! { <Id<T>>::NONE });
+        assert_eq!(turbofish, qself);
+
+        // Concrete args, at cross-module usage sites.
+        let turbofish = parse_path(syn::parse_quote! { Id::<f32>::NONE });
+        let qself = parse_path(syn::parse_quote! { <Id<f32>>::NONE });
+        assert_eq!(turbofish, qself);
+
+        // Const-generic args keep working on paths too.
+        let turbofish = parse_path(syn::parse_quote! { Grid::<4>::CONST });
+        let qself = parse_path(syn::parse_quote! { <Grid<4>>::CONST });
+        assert_eq!(turbofish, qself);
+
+        // The bare form is unchanged: no retained qself structure.
+        let bare = parse_path(syn::parse_quote! { Light::CONSTANT });
+        assert_eq!(bare, ("Light".to_string(), "CONSTANT".to_string(), false));
     }
 
     // Loop statement tests

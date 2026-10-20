@@ -1925,7 +1925,7 @@ pub mod generic_structs {
 
     pub fn generic_pair_sum<T: Copy + std::ops::Add<Output = T>>(a: T, b: T) -> T {
         let p = Pair { a, b };
-        Pair::sum(p)
+        Pair::<T>::sum(p)
     }
 
     /// Uses `Pair<f32>`.

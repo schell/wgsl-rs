@@ -41,3 +41,24 @@ Constants are commonly used for:
 - Fixed colors or directions
 
 Note: WGSL `const` values are compile-time constants. For values that may vary per dispatch, use a uniform binding (see [Binding Macros](./binding-macros.md)).
+
+## Initializers Must Be Const-Expressions
+
+WGSL requires a const initializer to be a const-expression. Value
+constructors (`vec3f(..)`, `mat2x2f(..)`, struct literals) and `@const`
+builtins (`min`, `count_leading_zeros`, ...) are fine; calling a user
+function is not, and user functions can never be WGSL const-functions
+(WGSL §11.3). Such a call is rejected at compile time:
+
+```rust
+pub const fn thing() -> MyThing { MyThing { times: 0 } }
+
+// error: const 'OTHER_THING' initializer calls 'MyThing::thing', but
+// WGSL const initializers are const-expressions: only value
+// constructors and const builtins are callable, never user functions;
+// use the struct-literal form ... or literal values instead
+pub const OTHER_THING: MyThing = MyThing::thing();
+
+// Use the struct-literal form instead:
+pub const OK_THING: MyThing = MyThing { times: 0 };
+```

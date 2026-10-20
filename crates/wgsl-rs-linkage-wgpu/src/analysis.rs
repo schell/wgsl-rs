@@ -40,6 +40,29 @@ pub enum Error {
     },
 
     #[snafu(display(
+        "{source_name}: reference to generic template '{template_name}'{} was never resolved to \
+         a concrete instantiation{}",
+        member
+            .as_ref()
+            .map(|m| format!("::{m}"))
+            .unwrap_or_default(),
+        if *has_type_args {
+            "; the reference already carries type arguments that could not be resolved: calls to \
+             generic templates from generic contexts (template bodies, generic entry points) \
+             are not yet supported; call it with concrete type arguments from a concrete \
+             function instead"
+        } else {
+            "; supply generic arguments with turbofish at the call site (wgsl-rs#237)"
+        }
+    ))]
+    UnresolvedTemplateRef {
+        source_name: String,
+        template_name: String,
+        member: Option<String>,
+        has_type_args: bool,
+    },
+
+    #[snafu(display(
         "{module}::bind_group_{group}: missing binding resource for declared name {name:?}"
     ))]
     MissingBinding {
@@ -110,6 +133,17 @@ impl From<wgsl_rs::SourceError<'_>> for Error {
                 template_name,
                 mangled_type_args,
                 available: matching_source_names,
+            },
+            wgsl_rs::SourceError::UnresolvedTemplateRef {
+                source_name,
+                template_name,
+                member,
+                has_type_args,
+            } => Error::UnresolvedTemplateRef {
+                source_name,
+                template_name,
+                member,
+                has_type_args,
             },
         }
     }

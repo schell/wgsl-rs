@@ -9,7 +9,10 @@
 //! parameters: it replaces every `Expr::Ident(name)` referencing a const
 //! param with a concrete `Expr::Lit` integer literal.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 use crate::*;
 
@@ -869,4 +872,294 @@ fn sub_if_const(i: &mut StmtIf, consts: &HashMap<String, u32>) {
             ElseBranch::If(inner) => sub_if_const(inner, consts),
         }
     }
+}
+
+// ===== Unresolved template reference detection =====
+//
+// Companion to the substitution and rename passes: scans IR that is about
+// to be rendered for references to generic template *names* that were
+// never resolved to a concrete instantiation (wgsl-rs#237). A bare call
+// `Id::new(...)` or an un-rewritten `Id::<T>::new(...)` in a generic
+// context renders the un-mangled name and fails WGSL validation far from
+// the authoring mistake; the runtime source-assembly path uses this scan
+// to report the offense with an actionable message instead.
+
+/// A reference to a generic template that was not resolved to a concrete
+/// instantiation before rendering (wgsl-rs#237).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnresolvedTemplateRef {
+    /// The referenced template's name (e.g. `Id` in `Id::new(...)`).
+    pub template: String,
+    /// The referenced member for method calls, associated constants, and
+    /// field types (e.g. `new`); `None` for a bare call to a generic
+    /// function template.
+    pub member: Option<String>,
+    /// Whether the reference carried explicit type arguments that could
+    /// not be resolved (e.g. `Id::<T>::new(...)` inside a generic
+    /// context). `false` for references with no type arguments at all.
+    pub has_type_args: bool,
+}
+
+/// Scan IR items for the first reference to any name in `template_names`
+/// that would render without a concrete instantiation. Returns `None`
+/// when every reference is resolved.
+///
+/// Covered positions: calls to generic function templates without
+/// turbofish, calls to generic struct methods (with or without leftover
+/// turbofish), associated-constant paths, and type references. Bare
+/// struct-constructor expressions are deliberately not flagged: they
+/// are a documented known limitation with let-annotation workarounds,
+/// not a call-site mistake.
+pub fn find_unresolved_template_refs(
+    items: &[Item],
+    template_names: &HashSet<String>,
+) -> Option<UnresolvedTemplateRef> {
+    for item in items {
+        if let Some(offense) = ref_item(item, template_names) {
+            return Some(offense);
+        }
+    }
+    None
+}
+
+fn ref_item(item: &Item, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    match item {
+        Item::Const(c) => ref_const(c, t),
+        Item::Uniform(u) => ref_type(&u.ty, t),
+        Item::Storage(s) => ref_type(&s.ty, t),
+        Item::Workgroup(w) => ref_type(&w.ty, t),
+        Item::Sampler(sa) => ref_type(&sa.ty, t),
+        Item::Texture(tx) => ref_type(&tx.ty, t),
+        Item::Fn(f) => ref_fn(f, t),
+        Item::Struct(s) => {
+            for f in &s.fields {
+                if let Some(o) = ref_type(&f.ty, t) {
+                    return Some(o);
+                }
+            }
+            None
+        }
+        Item::Impl(i) => {
+            if t.contains(i.self_ty.as_str()) {
+                return Some(UnresolvedTemplateRef {
+                    template: i.self_ty.to_string(),
+                    member: None,
+                    has_type_args: false,
+                });
+            }
+            for ii in &i.items {
+                let offense = match ii {
+                    ImplItem::Fn(f) => ref_fn(f, t),
+                    ImplItem::Const(c) => ref_const(c, t),
+                    ImplItem::Type(a) => ref_type(&a.ty, t),
+                };
+                if let Some(o) = offense {
+                    return Some(o);
+                }
+            }
+            None
+        }
+        Item::Enum(_) => None,
+    }
+}
+
+fn ref_fn(f: &ItemFn, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    for arg in &f.inputs {
+        if let Some(o) = ref_type(&arg.ty, t) {
+            return Some(o);
+        }
+    }
+    if let ReturnType::Type { ty, .. } = &f.return_type
+        && let Some(o) = ref_type(ty, t)
+    {
+        return Some(o);
+    }
+    ref_block(&f.block, t)
+}
+
+fn ref_const(c: &ItemConst, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    ref_type(&c.ty, t).or_else(|| ref_expr(&c.expr, t))
+}
+
+fn ref_type(ty: &Type, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    match ty {
+        Type::Struct { name, type_args } => {
+            if t.contains(name.as_str()) {
+                return Some(UnresolvedTemplateRef {
+                    template: name.to_string(),
+                    member: None,
+                    has_type_args: !type_args.is_empty(),
+                });
+            }
+            for ta in type_args {
+                if let Some(o) = ref_type(ta, t) {
+                    return Some(o);
+                }
+            }
+            None
+        }
+        Type::Array { elem, len } => ref_type(elem, t).or_else(|| ref_expr(len, t)),
+        Type::RuntimeArray { elem } | Type::Atomic { elem } => ref_type(elem, t),
+        Type::Ptr { elem, .. } => ref_type(elem, t),
+        Type::Phantom { elem } => ref_type(elem, t),
+        Type::AssocType { ty, .. } => ref_type(ty, t),
+        Type::Scalar(_)
+        | Type::Sampler
+        | Type::SamplerComparison
+        | Type::Texture { .. }
+        | Type::TextureDepth { .. }
+        | Type::TextureStorage { .. }
+        | Type::Vector { .. }
+        | Type::Matrix { .. }
+        | Type::TypeParam { .. } => None,
+    }
+}
+
+fn ref_expr(e: &Expr, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    match e {
+        Expr::Lit(_) | Expr::Ident(_) => None,
+        Expr::TypePath { ty, member } => {
+            if t.contains(ty.as_str()) {
+                return Some(UnresolvedTemplateRef {
+                    template: ty.to_string(),
+                    member: Some(member.to_string()),
+                    has_type_args: false,
+                });
+            }
+            None
+        }
+        Expr::Array { elems } => elems.iter().find_map(|x| ref_expr(x, t)),
+        Expr::Paren(inner) | Expr::Reference(inner) => ref_expr(inner, t),
+        Expr::Binary { lhs, rhs, .. } => ref_expr(lhs, t).or_else(|| ref_expr(rhs, t)),
+        Expr::Unary { expr, .. } => ref_expr(expr, t),
+        Expr::ArrayIndexing { lhs, index } => ref_expr(lhs, t).or_else(|| ref_expr(index, t)),
+        Expr::Swizzle { lhs, params, .. } => ref_expr(lhs, t).or_else(|| {
+            params
+                .as_ref()
+                .and_then(|args| args.iter().find_map(|a| ref_expr(a, t)))
+        }),
+        Expr::Cast { lhs, ty } => ref_expr(lhs, t).or_else(|| ref_type(ty, t)),
+        Expr::FnCall {
+            path,
+            type_args,
+            params,
+        } => {
+            let direct = match path {
+                FnPath::Ident(name) if type_args.is_empty() && t.contains(name.as_str()) => {
+                    Some(UnresolvedTemplateRef {
+                        template: name.to_string(),
+                        member: None,
+                        has_type_args: false,
+                    })
+                }
+                FnPath::TypeMethod { ty, method } if t.contains(ty.as_str()) => {
+                    Some(UnresolvedTemplateRef {
+                        template: ty.to_string(),
+                        member: Some(method.to_string()),
+                        has_type_args: !type_args.is_empty(),
+                    })
+                }
+                _ => None,
+            };
+            direct
+                .or_else(|| type_args.iter().find_map(|ta| ref_type(ta, t)))
+                .or_else(|| params.iter().find_map(|p| ref_expr(p, t)))
+        }
+        // Bare struct-constructor expressions (`Pair { a, b }`) are a
+        // documented known limitation with let-annotation workarounds;
+        // they are not flagged here. Their *field* expressions may still
+        // contain flagged references.
+        Expr::Struct { fields, .. } => fields.iter().find_map(|f| ref_expr(&f.expr, t)),
+        Expr::FieldAccess { base, .. } => ref_expr(base, t),
+        Expr::ZeroValueArray { elem_type, len } => {
+            ref_type(elem_type, t).or_else(|| ref_expr(len, t))
+        }
+    }
+}
+
+fn ref_block(b: &Block, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    for s in &b.stmts {
+        if let Some(o) = ref_stmt(s, t) {
+            return Some(o);
+        }
+    }
+    None
+}
+
+fn ref_stmt(s: &Stmt, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    match s {
+        Stmt::Local(l) => {
+            if let Some(ty) = &l.ty
+                && let Some(o) = ref_type(ty, t)
+            {
+                return Some(o);
+            }
+            if let Some(init) = &l.init {
+                return ref_expr(init, t);
+            }
+            None
+        }
+        Stmt::Const(c) => ref_const(c, t),
+        Stmt::Assignment { lhs, rhs } | Stmt::CompoundAssignment { lhs, rhs, .. } => {
+            ref_expr(lhs, t).or_else(|| ref_expr(rhs, t))
+        }
+        Stmt::While { condition, body } => ref_expr(condition, t).or_else(|| ref_block(body, t)),
+        Stmt::Loop { body } => ref_block(body, t),
+        Stmt::Expr { expr, .. } => ref_expr(expr, t),
+        Stmt::If(i) => ref_if(i, t),
+        Stmt::Break | Stmt::Continue | Stmt::Discard => None,
+        Stmt::Return(e) => e.as_ref().and_then(|e| ref_expr(e, t)),
+        Stmt::For(f) => {
+            if let Some(ty) = &f.var_ty
+                && let Some(o) = ref_type(ty, t)
+            {
+                return Some(o);
+            }
+            ref_expr(&f.from, t)
+                .or_else(|| ref_expr(&f.to, t))
+                .or_else(|| ref_block(&f.body, t))
+        }
+        Stmt::Switch(sw) => {
+            if let Some(o) = ref_expr(&sw.selector, t) {
+                return Some(o);
+            }
+            for arm in &sw.arms {
+                for sel in &arm.selectors {
+                    if let CaseSelector::Expr(e) = sel
+                        && let Some(o) = ref_expr(e, t)
+                    {
+                        return Some(o);
+                    }
+                }
+                if let Some(o) = ref_block(&arm.body, t) {
+                    return Some(o);
+                }
+            }
+            None
+        }
+        Stmt::Block(b) => ref_block(b, t),
+        Stmt::SlabCopy {
+            src,
+            src_offset,
+            dest,
+            dest_offset,
+            size,
+        } => ref_expr(src, t)
+            .or_else(|| ref_expr(src_offset, t))
+            .or_else(|| ref_expr(dest, t))
+            .or_else(|| ref_expr(dest_offset, t))
+            .or_else(|| ref_expr(size, t)),
+        Stmt::Macro { .. } => None,
+    }
+}
+
+fn ref_if(i: &StmtIf, t: &HashSet<String>) -> Option<UnresolvedTemplateRef> {
+    ref_expr(&i.condition, t)
+        .or_else(|| ref_block(&i.then_block, t))
+        .or_else(|| {
+            i.else_branch.as_ref().and_then(|eb| match eb {
+                ElseBranch::Block(b) => ref_block(b, t),
+                ElseBranch::If(inner) => ref_if(inner, t),
+            })
+        })
 }

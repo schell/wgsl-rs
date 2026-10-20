@@ -93,6 +93,56 @@ pub struct TemplateDep {
     pub type_param_mapping: Vec<usize>,
 }
 
+// ===== Template-shipping normalization =====
+//
+// Inside a shipped struct-template impl block, a call like
+// `Id::<T>::method(...)` (turbofish naming the template's own struct
+// with its own type params, the identity application) renders broken at
+// instantiation time: the runtime rename rewrites the path base
+// (`Id` → `Id_f32`) but the surviving turbofish `type_args` render as a
+// suffix (`_1Id_f32_new_f32`). Clearing the identity application turns
+// the call into the same form a `Self::method(...)` call resolves to —
+// the rename produces the correct mangled name with no suffix.
+// Non-identity applications (concrete args, reordered/partial params,
+// const args) are left untouched; resolving those from inside template
+// bodies is a known limitation.
+
+struct NormalizeOwnStructCallsVisitor<'a> {
+    base: &'a str,
+    params: &'a [Ident],
+}
+
+impl ParseVisitorMut for NormalizeOwnStructCallsVisitor<'_> {
+    fn visit_expr(&mut self, expr: &mut Expr) -> Result<(), crate::parse::Error> {
+        if let Expr::FnCall {
+            path: FnPath::TypeMethod { ty, qself_ty, .. },
+            type_args,
+            const_args,
+            ..
+        } = expr
+            && qself_ty.is_none()
+            && ty == self.base
+            && const_args.is_empty()
+            && type_args.len() == self.params.len()
+            && type_args
+                .iter()
+                .zip(self.params.iter())
+                .all(|(ta, p)| matches!(ta, Type::TypeParam { ident } if ident == p))
+        {
+            type_args.clear();
+        }
+        parse_visitor::walk_expr(self, expr)
+    }
+}
+
+/// Clear identity turbofish on calls to `base`'s own methods throughout
+/// an item (see [`NormalizeOwnStructCallsVisitor`]). The `params` are
+/// the struct template's type parameters, in declaration order.
+fn normalize_own_struct_calls(item: &mut Item, base: &str, params: &[Ident]) {
+    let mut v = NormalizeOwnStructCallsVisitor { base, params };
+    let _ = v.visit_item(item);
+}
+
 /// Run the monomorphization pass on a parsed module.
 ///
 /// Returns information about cross-module instantiations and template macros
@@ -129,7 +179,31 @@ pub fn run(module: &mut ItemMod) -> Result<MonoResult, crate::parse::Error> {
     // on calls to local generic functions). The visitor takes `&mut` for
     // uniformity but doesn't actually mutate anything.
     for item in &mut module.content {
-        check_unresolved_generic_calls(item, &ctx.templates)?;
+        check_unresolved_generic_calls(item, &ctx.templates, &ctx.struct_templates)?;
+    }
+
+    // Template bodies were removed from `module.content` by `apply`, so
+    // they escaped the check above — but a bare call inside a template
+    // body still renders un-mangled at instantiation time, so it must be
+    // just as loud (wgsl-rs#237). The originals are checked, where a
+    // `Self::method()` call inside a generic impl keeps its `Self` base
+    // and is exempt (it resolves through the struct template's own
+    // rename).
+    for template in ctx.templates.values() {
+        check_unresolved_generic_calls(
+            &mut Item::Fn(Box::new(template.clone())),
+            &ctx.templates,
+            &ctx.struct_templates,
+        )?;
+    }
+    for impl_blocks in ctx.impl_templates.values() {
+        for impl_block in impl_blocks {
+            check_unresolved_generic_calls(
+                &mut Item::Impl(impl_block.clone()),
+                &ctx.templates,
+                &ctx.struct_templates,
+            )?;
+        }
     }
 
     Ok(MonoResult {
@@ -421,7 +495,26 @@ impl MonoCtx {
                     let mut impl_clone = impl_block.clone();
                     impl_clone.type_params.clear();
                     impl_clone.const_params.clear();
-                    items.push(Item::Impl(impl_clone));
+                    // Resolve `Self` to the template's base ident so the
+                    // runtime rename pass (which mangles `Id` → `Id_f32`
+                    // in lockstep with the struct definition) also
+                    // resolves every `Self` position in the impl items
+                    // (wgsl-rs#236). Without this, `Self` renders
+                    // literally in instantiated method signatures, const
+                    // types, and `Self::method()` call sites.
+                    impl_clone.resolve_self_for_template(&template.ident);
+                    let mut impl_item = Item::Impl(impl_clone);
+                    // Clear identity turbofish (`Id::<T>::method(...)`)
+                    // on calls to the template's own struct: the runtime
+                    // rename resolves the base ident, and the leftover
+                    // turbofish args would otherwise render as a bogus
+                    // `_f32` suffix on the mangled name.
+                    normalize_own_struct_calls(
+                        &mut impl_item,
+                        &original_name,
+                        &template.type_params,
+                    );
+                    items.push(impl_item);
                 }
             }
 
@@ -1553,12 +1646,26 @@ fn rewrite_names_in_item(
 
 // ===== Missing turbofish detection =====
 //
-// Errors if any call to a known generic template function lacks turbofish
-// type arguments. Implemented as a [`ParseVisitorMut`] that doesn't actually
-// mutate anything.
+// Errors if any call to a known generic template function, generic struct
+// method, or access to a generic struct's associated constant lacks
+// turbofish type arguments. Implemented as a [`ParseVisitorMut`] that
+// doesn't actually mutate anything.
 
 struct CheckUnresolvedVisitor<'a> {
     templates: &'a BTreeMap<String, ItemFn>,
+    struct_templates: &'a BTreeMap<String, ItemStruct>,
+}
+
+impl CheckUnresolvedVisitor<'_> {
+    /// Build the expected turbofish args hint from a template's params.
+    /// Type params appear as their names; const params appear as their
+    /// names.
+    fn param_names_hint(template: &ItemStruct) -> String {
+        let mut param_names: Vec<String> =
+            template.type_params.iter().map(|p| p.to_string()).collect();
+        param_names.extend(template.const_params.iter().map(|p| p.to_string()));
+        param_names.join(", ")
+    }
 }
 
 impl ParseVisitorMut for CheckUnresolvedVisitor<'_> {
@@ -1571,40 +1678,102 @@ impl ParseVisitorMut for CheckUnresolvedVisitor<'_> {
         } = expr
             && type_args.is_empty()
             && const_args.is_empty()
-            && let FnPath::Ident(id) = path
         {
-            let name = id.to_string();
-            if let Some(template) = self.templates.get(&name) {
-                // Build the expected turbofish args hint from the
-                // template's params. Type params appear as their names;
-                // const params appear as `N` (their names).
-                let mut param_names: Vec<String> =
-                    template.type_params.iter().map(|p| p.to_string()).collect();
-                param_names.extend(template.const_params.iter().map(|p| p.to_string()));
-                return Err(crate::parse::Error::unsupported(
-                    id.span(),
-                    format!(
-                        "calling generic function '{name}' requires generic arguments, e.g., \
-                         {name}::<{}>(...)",
-                        param_names.join(", ")
-                    ),
-                ));
+            match path {
+                FnPath::Ident(id) => {
+                    let name = id.to_string();
+                    if let Some(template) = self.templates.get(&name) {
+                        // Build the expected turbofish args hint from the
+                        // template's params. Type params appear as their names;
+                        // const params appear as `N` (their names).
+                        let mut param_names: Vec<String> =
+                            template.type_params.iter().map(|p| p.to_string()).collect();
+                        param_names.extend(template.const_params.iter().map(|p| p.to_string()));
+                        return Err(crate::parse::Error::unsupported(
+                            id.span(),
+                            format!(
+                                "calling generic function '{name}' requires generic arguments, \
+                                 e.g., {name}::<{}>(...)",
+                                param_names.join(", ")
+                            ),
+                        ));
+                    }
+                }
+                // `Type::method(...)` calls on a generic struct without
+                // turbofish render the un-mangled name (`Id_new`), which
+                // fails WGSL validation far from the mistake. The call
+                // cannot be monomorphized because the concrete type
+                // arguments are unknowable at transpile time, so this is
+                // a hard error, not a warning (wgsl-rs#237). QSelf forms
+                // (`<Pair<u32>>::method()`) carry their concrete type in
+                // `qself_ty` and are exempt.
+                FnPath::TypeMethod {
+                    ty,
+                    method,
+                    qself_ty,
+                    ..
+                } if qself_ty.is_none() => {
+                    let ty_name = ty.to_string();
+                    if let Some(template) = self.struct_templates.get(&ty_name) {
+                        return Err(crate::parse::Error::unsupported(
+                            ty.span(),
+                            format!(
+                                "calling generic struct method '{ty_name}::{}' requires generic \
+                                 arguments, e.g., {ty_name}::<{}>::{}(...)",
+                                method,
+                                Self::param_names_hint(template),
+                                method
+                            ),
+                        ));
+                    }
+                }
+                FnPath::TypeMethod { .. } => {}
             }
+        }
+        // `Type::CONST` associated-constant paths on a generic struct have
+        // no turbofish slot, but without concrete type arguments the path
+        // renders the un-mangled `Id_NONE` (wgsl-rs#237). Inside the
+        // struct's own impl blocks these are written `Self::CONST` and
+        // resolve fine; `Self` never names a template.
+        if let Expr::TypePath {
+            ty,
+            member,
+            qself_ty,
+            ..
+        } = expr
+            && qself_ty.is_none()
+            && let Some(template) = self.struct_templates.get(&ty.to_string())
+        {
+            let ty_name = ty.to_string();
+            let member = member.to_string();
+            return Err(crate::parse::Error::unsupported(
+                ty.span(),
+                format!(
+                    "accessing the associated constant '{ty_name}::{member}' of a generic struct \
+                     requires generic arguments, e.g., {ty_name}::<{}>::{member}",
+                    Self::param_names_hint(template),
+                ),
+            ));
         }
         parse_visitor::walk_expr(self, expr)
     }
 }
 
-/// Check that no calls to generic template functions remain without turbofish.
+/// Check that no calls to generic templates remain without turbofish.
 ///
 /// After monomorphization, all generic templates are removed. Any remaining
-/// call to a template name with empty `type_args` means the user forgot
-/// the turbofish annotation.
+/// call to a template name (function, struct method, or associated-constant
+/// path) with empty `type_args` means the user forgot the turbofish
+/// annotation.
 fn check_unresolved_generic_calls(
     item: &mut Item,
     templates: &BTreeMap<String, ItemFn>,
+    struct_templates: &BTreeMap<String, ItemStruct>,
 ) -> Result<(), crate::parse::Error> {
-    let mut v = CheckUnresolvedVisitor { templates };
+    let mut v = CheckUnresolvedVisitor {
+        templates,
+        struct_templates,
+    };
     v.visit_item(item)
 }
 
@@ -1859,6 +2028,98 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                     self.visit_expr(&mut f.expr)?;
                 }
                 return Ok(());
+            }
+            // Cross-module generic struct *method* call through a
+            // qualified-self path: `<Id<f32>>::new(...)`. The turbofish
+            // arm above is gated on `type_args`, which QSelf calls never
+            // carry (their arguments live in the retained qself type),
+            // so without this arm the struct instantiation the call
+            // depends on was never recorded (wgsl-rs#240 family).
+            Expr::FnCall {
+                path:
+                    FnPath::TypeMethod {
+                        ty,
+                        qself_ty: Some(qty),
+                        ..
+                    },
+                type_args,
+                const_args,
+                ..
+            } if type_args.is_empty() && const_args.is_empty() => {
+                if let Type::Struct {
+                    ident,
+                    type_args,
+                    const_args,
+                    ..
+                } = qty.as_ref()
+                    && (!type_args.is_empty() || !const_args.is_empty())
+                    && !contains_type_param(qty)
+                    && !self.local_struct_templates.contains_key(&ident.to_string())
+                {
+                    let struct_name = ident.to_string();
+                    let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
+                    if self.seen.insert(mangled_name) {
+                        let mangled_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(mangle_type)
+                            .collect::<Result<_, _>>()?;
+                        let mangled_const_args: Vec<String> =
+                            const_args.iter().map(|n| n.to_string()).collect();
+                        self.out.push(CrossModuleInstantiation {
+                            import_paths: self.import_paths.to_vec(),
+                            fn_name: struct_name,
+                            mangled_type_args,
+                            type_args: type_args.clone(),
+                            mangled_const_args,
+                            const_args: const_args.clone(),
+                        });
+                    }
+                }
+                // `ty` already carries the mangled instance name
+                // (derived from the qself structure at parse time), so
+                // no rewrite is needed.
+                parse_visitor::walk_expr(self, expr)?
+            }
+            // Cross-module generic struct *associated constant* path:
+            // `Id::<f32>::NONE` or `<Id<f32>>::NONE` (the two spellings
+            // normalize to the same representation at parse time,
+            // wgsl-rs#240). The path's `ty` is already the mangled
+            // instance name; what is missing is the instantiation
+            // record for the referenced struct template.
+            Expr::TypePath {
+                qself_ty: Some(qty),
+                ..
+            } => {
+                if let Type::Struct {
+                    ident,
+                    type_args,
+                    const_args,
+                    ..
+                } = qty.as_ref()
+                    && (!type_args.is_empty() || !const_args.is_empty())
+                    && !contains_type_param(qty)
+                    && !self.local_struct_templates.contains_key(&ident.to_string())
+                {
+                    let struct_name = ident.to_string();
+                    let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
+                    if self.seen.insert(mangled_name) {
+                        let mangled_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(mangle_type)
+                            .collect::<Result<_, _>>()?;
+                        let mangled_const_args: Vec<String> =
+                            const_args.iter().map(|n| n.to_string()).collect();
+                        self.out.push(CrossModuleInstantiation {
+                            import_paths: self.import_paths.to_vec(),
+                            fn_name: struct_name,
+                            mangled_type_args,
+                            type_args: type_args.clone(),
+                            mangled_const_args,
+                            const_args: const_args.clone(),
+                        });
+                    }
+                }
+                parse_visitor::walk_expr(self, expr)?
             }
             _ => {}
         }
@@ -3221,6 +3482,202 @@ mod test {
             &arg.ty,
             crate::parse::Type::TypeParam { ident } if ident == "T"
         ));
+    }
+
+    /// Render a struct template's shipped items to WGSL (the raw template,
+    /// before runtime instantiation renames `Id` to `Id_f32`).
+    fn render_struct_template(result: &super::MonoResult, name: &str) -> String {
+        let tmpl = result
+            .template_macros
+            .iter()
+            .find(|t| t.fn_name == name)
+            .unwrap_or_else(|| panic!("expected a template named {name}"));
+        let ir_items =
+            ir_convert::items_from_parse(&tmpl.items).expect("template items must convert to IR");
+        wgsl_rs_ir::render_items(&ir_items)
+    }
+
+    /// A struct template's shipped impl items must have every `Self`
+    /// resolved to the template's base ident, and identity turbofish
+    /// (`Id::<T>::method(...)`) cleared, so the runtime rename pass
+    /// lands every reference on the concrete instantiation
+    /// (wgsl-rs#236, wgsl-rs#237).
+    #[test]
+    fn struct_template_impl_items_resolve_self() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Id<T> {
+                    pub index: u32,
+                }
+
+                impl<T> Id<T> {
+                    pub fn new(index: u32) -> Self {
+                        Id::<T> { index }
+                    }
+
+                    pub const NONE: Self = Id::<T> { index: 0u32 };
+
+                    pub fn zero(id: Self) -> Self {
+                        Self::new(id.index)
+                    }
+
+                    pub fn also_zero(id: Id<T>) -> Id<T> {
+                        Id::<T>::new(id.index)
+                    }
+                }
+
+                pub fn use_it() -> Id<f32> {
+                    Id::<f32>::new(1u32)
+                }
+            }
+        };
+        let mut wgsl_module = ItemMod::try_from(&input).unwrap();
+        let result = super::run(&mut wgsl_module).unwrap();
+        let rendered = render_struct_template(&result, "Id");
+
+        // `Self` must be resolved everywhere it can appear.
+        assert!(
+            !rendered.contains("Self"),
+            "`Self` leaked into the shipped template:\n{rendered}"
+        );
+        // Type positions resolve to the base ident.
+        assert!(
+            rendered.contains("fn Id_new(index: u32) -> Id"),
+            "expected the resolved return type, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("const Id_NONE: Id = Id(0u);"),
+            "expected the const type and initializer to resolve, got:\n{rendered}"
+        );
+        // `Self::method()` calls resolve to the base-ident path.
+        assert!(
+            rendered.contains("Id_new(id.index)"),
+            "expected the `Self::new` call to resolve, got:\n{rendered}"
+        );
+        // Identity turbofish is cleared: no `_T` suffix on the call.
+        assert!(
+            !rendered.contains("Id_new_T"),
+            "identity turbofish leaked into the call name:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Id_new(id.index)"),
+            "expected the identity-turbofish call to render bare, got:\n{rendered}"
+        );
+    }
+
+    /// Bare calls to a generic struct's methods are a compile error in
+    /// concrete module code: they cannot be monomorphized because the
+    /// concrete type arguments are unknowable (wgsl-rs#237).
+    #[test]
+    fn missing_turbofish_struct_method_call_is_error() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Id<T> {
+                    pub index: u32,
+                }
+
+                impl<T> Id<T> {
+                    pub fn new(index: u32) -> Self {
+                        Id::<T> { index }
+                    }
+                }
+
+                pub fn caller() -> Id<f32> {
+                    Id::new(0u32)
+                }
+            }
+        };
+        let err = mono_err(input);
+        assert!(
+            err.contains("calling generic struct method 'Id::new' requires generic arguments"),
+            "expected a missing-turbofish error, got: {err}"
+        );
+    }
+
+    /// The same error fires inside generic fn template bodies, where the
+    /// broken name previously rendered silently at instantiation time.
+    #[test]
+    fn missing_turbofish_in_template_body_is_error() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Id<T> {
+                    pub index: u32,
+                }
+
+                impl<T> Id<T> {
+                    pub fn new(index: u32) -> Self {
+                        Id::<T> { index }
+                    }
+                }
+
+                pub fn make<T>(index: u32) -> Id<T> {
+                    Id::new(index)
+                }
+            }
+        };
+        let err = mono_err(input);
+        assert!(
+            err.contains("calling generic struct method 'Id::new' requires generic arguments"),
+            "expected a missing-turbofish error from the template body, got: {err}"
+        );
+    }
+
+    /// Bare associated-constant paths on a generic struct render the
+    /// un-mangled name and are rejected the same way (wgsl-rs#237).
+    #[test]
+    fn missing_turbofish_associated_const_is_error() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Id<T> {
+                    pub index: u32,
+                }
+
+                impl<T> Id<T> {
+                    pub const NONE: Self = Id::<T> { index: 0u32 };
+                }
+
+                pub fn caller() -> Id<f32> {
+                    Id::NONE
+                }
+            }
+        };
+        let err = mono_err(input);
+        assert!(
+            err.contains("associated constant 'Id::NONE'"),
+            "expected an associated-constant missing-turbofish error, got: {err}"
+        );
+    }
+
+    /// Control: `Self::method(...)` inside a generic impl block is fine —
+    /// it resolves through the struct template's own rename and must not
+    /// trip the missing-turbofish check.
+    #[test]
+    fn self_method_call_in_generic_impl_is_not_error() {
+        let input: syn::ItemMod = syn::parse_quote! {
+            mod test_mod {
+                pub struct Id<T> {
+                    pub index: u32,
+                }
+
+                impl<T> Id<T> {
+                    pub fn new(index: u32) -> Self {
+                        Id::<T> { index }
+                    }
+
+                    pub fn zero() -> Self {
+                        Self::new(0u32)
+                    }
+
+                    pub fn magic() -> u32 {
+                        Self::MAGIC
+                    }
+                    pub const MAGIC: u32 = 7u32;
+                }
+            }
+        };
+        let mut wgsl_module = ItemMod::try_from(&input).unwrap();
+        super::run(&mut wgsl_module)
+            .expect("`Self::` references inside a generic impl must not error");
     }
 
     #[test]

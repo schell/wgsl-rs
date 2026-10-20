@@ -1910,3 +1910,125 @@ elements concretized to i32 and mismatched the declared `array<u32, 4>`.
 type at macro time; the signature renders `array<u32, 4>` and the
 suffix pass anchors literals through it, matching Rust's own
 inference (`select(0, 1, c)` is u32 on the CPU via the return type).
+
+### 2026-10-20: `Self` in generic impls resolves at template-shipping time (wgsl-rs#236)
+
+**Problem:** `impl<T> Id<T>` blocks work in the same-module compile-time
+path (the monomorphizer's substitution map carries `Self` → mangled
+struct per instantiation), but the runtime template path shipped the
+impl blocks verbatim with `Self` intact. Neither
+`ir::substitute_items` nor `ir::rename_items` knows about `Self`, so
+instantiated items rendered `Self` literally — method signatures
+(`-> Self`), const type annotations (`: Self`), and `Self::method()`
+call sites (`Self_new`). Naga rejected the source with a far-removed
+"unknown identifier `Self`" error.
+
+**Decision:** Resolve `Self` in the shipped clone at
+`generate_template_macros` time, to the struct template's *base ident*
+(`Id`), reusing the `resolve_self` walker family from parse.rs
+(`ItemImpl::resolve_self_for_template`). The runtime rename pass then
+rewrites that ident to the mangled instance name (`Id_f32`) in lockstep
+with the struct definition itself, so every `Self` position —
+signatures, const types, `Self::method()`, `Self { .. }` constructors,
+`Self::CONST` paths — lands on the concrete instantiation for free.
+Extending parse-time `resolve_self` to generic impls instead was
+considered and rejected: it would rewrite `Self::new` into a bare
+`Id::new` in the compile-time path too, where `Self` is resolved
+through the instantiation's substitution map — turning a working
+construct into the #237 silent-failure case. Two companion fixes fell
+out of the same investigation: impl-block *consts* now parse with the
+impl's type-param context (a `T` in a const used to parse as
+`Type::Struct`, never substitute, and leak into rendered names), and
+identity turbofish (`Id::<T>::new(..)`) inside shipped impl items is
+cleared so the call renders without a bogus `_f32` suffix after
+renaming.
+
+### 2026-10-20: Missing turbofish on generic struct members is a loud error (wgsl-rs#237)
+
+**Problem:** `Id::new(0u32)` — a call to a generic struct's method
+without turbofish — typechecks in Rust (the concrete type is inferrable)
+but transpiles the un-mangled name (`Id_new`), which fails WGSL
+validation as "unknown identifier", or silently corrupts
+`skip_validation` modules. The existing check only covered module-level
+generic *functions*.
+
+**Decision:** Three detection points, ordered by proximity to the
+mistake. (1) Macro time, same-module: the missing-turbofish visitor now
+also flags `Type::method(..)` calls and `Type::CONST` paths with no
+generic arguments when the type is a known generic struct — including
+inside generic fn template bodies and generic impl bodies, which were
+previously silent (the templates are removed from module content before
+the old check ran). `Self::…` inside the impl's own block is exempt.
+(2) Source-assembly time, cross-module: the consuming module's macro
+cannot know an imported name is generic, so `wgsl_source()` harvests
+every reachable template name and flags surviving references with an
+actionable message (supply turbofish). This also flags instances whose
+bodies reference *other* templates unresolvably (generic fn bodies
+calling `Id::<T>::new(..)` — the rename only resolves the template's
+own name). (3) Return-type-annotation inference (the "at best" from the
+issue) is explicitly deferred: the loud error covers the authoring
+mistake; inference is a separate feature with its own collision rules.
+Known follow-up gaps: resolving generic struct *types* referenced from
+generic fn template bodies, and turbofish on associated-const paths,
+remain unsupported and are tracked separately.
+
+### 2026-10-20: Fn calls in const initializers are a parse error (wgsl-rs#239)
+
+**Problem:** `pub const OTHER_THING: MyThing = MyThing::thing();` is valid
+Rust (a `const fn` call in a const initializer) but invalid WGSL: const
+initializers must be const-expressions, and per WGSL §11.3 user-declared
+functions can *never* be const-functions, so the rendered call is
+categorically wrong, not merely unsupported-yet. naga rejected it far
+from the source with "operation not supported in a const context", or
+worse, `skip_validation` modules carried the broken source silently.
+
+**Decision:** Reject user-function calls in const initializers at parse
+time, in all three const positions (module-level, impl-level, and
+`Stmt::Const` inside fn bodies), with an error that names the const and
+points at the struct-literal alternative. The legality test is
+spec-grounded rather than name-guessing: `FnPath::TypeMethod` calls
+always mangle to a user-defined name (reject unconditionally), while
+`FnPath::Ident` calls are allowed when the callee is a WGSL value
+constructor (§17.1: `vecN`/`matNxM` families, scalar constructors,
+`array`), a builtin marked `@const` in the spec (a checked-in list of 81
+names extracted from the `cargo xtask wgsl-spec` snapshot), or a wgsl-rs
+Rust alias whose *WGSL* spelling is `@const` (the alias table also holds
+runtime-only builtins like atomics and barriers, so the alias itself is
+not sufficient). Calls to runtime builtins that are not `@const` are
+left to naga validation rather than a parse-time list, because that list
+is large and moves with the spec.
+
+### 2026-10-20: Turbofish const paths normalize to the qualified-self form (wgsl-rs#240)
+
+**Problem:** `Id::<T>::NONE` and `<Id<T>>::NONE` are synonyms in Rust
+but produced different results: the qualified-self form parsed (routing
+through `parse_qself_ty`, which retains the path's full type structure
+for later substitution), while the turbofish form was rejected with
+"generic arguments in type paths are not supported". Downstream, the
+compile-time monomorphizer already substituted the retained structure
+correctly — the parse layer was the only divergence.
+
+**Decision:** The `Type::member` path parser now parses first-segment
+turbofish arguments (type and const) into the same struct-type form
+`Type::parse` produces, then routes it through the same
+mangle-and-retain treatment as the qualified-self form. The two
+spellings produce byte-identical `Expr::TypePath` output, so every
+downstream pass treats them uniformly by construction. Two adjacent
+gaps fell out of the same investigation and were fixed alongside:
+(1) cross-module const paths (`Id::<f32>::NONE` in a consuming module)
+never recorded the referenced struct template's instantiation, so the
+const rendered against a chunk that was never emitted — the
+cross-module visitor now records concrete (param-free) qualified
+references for both const paths and qualified-self method calls;
+(2) a provider module that instantiates its own generic struct at
+compile time plus a consumer requesting the same instantiation at
+runtime double-defined the struct ("redefinition of `Id_f32`") —
+instance chunks now deduplicate against a threaded set of top-level
+names emitted by already-rendered source chunks (not against
+`TypeImports`, which is deliberately pre-seeded with instance types
+before the chunks render, so a name's presence there proves nothing).
+Still open (tracked in the template-resolution follow-up): const paths
+*inside shipped template bodies* (`Array<T>`'s impl referencing
+`Id<T>::NONE` at runtime instantiation) — the IR drops the retained
+path structure, and generic-struct references from template bodies need
+struct-template dependency tracking first.

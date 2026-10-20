@@ -41,6 +41,18 @@ fn typed_literal_f64_suffix_is_rejected() {
 }
 
 #[test]
+fn generic_struct_method_missing_turbofish_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/generic_struct_method_missing_turbofish.rs");
+}
+
+#[test]
+fn const_fn_call_in_const_initializer_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/const_fn_call_in_const_initializer.rs");
+}
+
+#[test]
 fn texture_sample_level_int_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/texture_sample_level_int_is_rejected.rs");

@@ -90,13 +90,24 @@ For `Pair::<f32>` the constructor renders the positional form
 positions.
 
 One caveat is a WGSL language rule, not a transpiler one: const
-initializers may only use const-expressions, so an associated const
-must build its value with a struct literal (or literal values), not a
-function call:
+initializers may only use const-expressions, and user functions can
+never be WGSL const-functions (WGSL §11.3). Calling one is a compile
+error that points at the struct-literal alternative:
+
+```text
+error: const 'ZERO' initializer calls 'Pair::zero', but WGSL const
+initializers are const-expressions: only value constructors and const
+builtins are callable, never user functions; use the struct-literal
+form (e.g. `MyType { field: 0 }`) or literal values instead
+```
+
+So build the value with a struct literal (or literal values, value
+constructors like `vec2f(..)`, and `@const` builtins like `min` — those
+are all const-expressions):
 
 ```rust
 impl<T: Copy> Pair<T> {
-    // `Self::zero()` here would render fine but WGSL forbids calling
+    // `Self::zero()` here is a compile error; WGSL forbids calling
     // user functions in const contexts — use the literal form.
     pub const ZERO: Self = Self { a: 0.0, b: 0.0 };
 }

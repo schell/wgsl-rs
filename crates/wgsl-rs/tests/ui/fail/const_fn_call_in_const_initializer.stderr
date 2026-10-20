@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       const 'OTHER_THING' initializer calls 'MyThing::thing', but WGSL const initializers are const-expressions: only value constructors and const builtins are callable, never user functions; use the struct-literal form (e.g. `MyType { field: 0 }`) or literal values instead.'
+  --> tests/ui/fail/const_fn_call_in_const_initializer.rs:19:51
+   |
+19 |         pub const OTHER_THING: MyThing = MyThing::thing();
+   |                                                   ^^^^^

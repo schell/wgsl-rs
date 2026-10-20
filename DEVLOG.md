@@ -1971,3 +1971,29 @@ mistake; inference is a separate feature with its own collision rules.
 Known follow-up gaps: resolving generic struct *types* referenced from
 generic fn template bodies, and turbofish on associated-const paths,
 remain unsupported and are tracked separately.
+
+### 2026-10-20: Fn calls in const initializers are a parse error (wgsl-rs#239)
+
+**Problem:** `pub const OTHER_THING: MyThing = MyThing::thing();` is valid
+Rust (a `const fn` call in a const initializer) but invalid WGSL: const
+initializers must be const-expressions, and per WGSL §11.3 user-declared
+functions can *never* be const-functions, so the rendered call is
+categorically wrong, not merely unsupported-yet. naga rejected it far
+from the source with "operation not supported in a const context", or
+worse, `skip_validation` modules carried the broken source silently.
+
+**Decision:** Reject user-function calls in const initializers at parse
+time, in all three const positions (module-level, impl-level, and
+`Stmt::Const` inside fn bodies), with an error that names the const and
+points at the struct-literal alternative. The legality test is
+spec-grounded rather than name-guessing: `FnPath::TypeMethod` calls
+always mangle to a user-defined name (reject unconditionally), while
+`FnPath::Ident` calls are allowed when the callee is a WGSL value
+constructor (§17.1: `vecN`/`matNxM` families, scalar constructors,
+`array`), a builtin marked `@const` in the spec (a checked-in list of 81
+names extracted from the `cargo xtask wgsl-spec` snapshot), or a wgsl-rs
+Rust alias whose *WGSL* spelling is `@const` (the alias table also holds
+runtime-only builtins like atomics and barriers, so the alias itself is
+not sufficient). Calls to runtime builtins that are not `@const` are
+left to naga validation rather than a parse-time list, because that list
+is large and moves with the spec.

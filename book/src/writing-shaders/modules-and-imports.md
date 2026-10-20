@@ -57,6 +57,46 @@ pub mod surface {
 
 When a module is imported by multiple sibling modules, wgsl-rs deduplicates the generated functions so each WGSL function appears only once in the final output. You do not need to manage inclusion guards.
 
+## Re-exports and Prelude Modules
+
+A wgsl module can re-export another wgsl module with a glob, giving downstream shaders a single import surface:
+
+```rust
+#[wgsl]
+pub mod defs {
+    use wgsl_rs::std::*;
+
+    pub struct Id<T> {
+        pub index: u32,
+        pub phantom: PhantomData<T>,
+    }
+
+    impl<T> Id<T> {
+        pub fn new(i: u32) -> Id<T> {
+            Id { index: i, phantom: PhantomData }
+        }
+    }
+}
+
+#[wgsl]
+pub mod prelude {
+    pub use super::defs::*;
+}
+
+#[wgsl]
+pub mod shader {
+    use super::prelude::*;
+
+    pub fn my_id() -> Id<f32> {
+        Id::<f32>::new(0)
+    }
+}
+```
+
+Everything a glob import brings into scope also travels through re-export chains: concrete items and generic templates alike. Instantiating `Id<f32>` through `prelude` assembles the same WGSL as importing `defs` directly. Chains of any depth work, and a defining module reached through several paths is imported only once.
+
+If two different defining modules are both reachable through your imports and both define a template with the same name, instantiation fails with an ambiguity error. Import the defining module directly to pick one.
+
 ## Doc Comments
 
 Inner doc comments (`//!`) at the top of a module are preserved in the generated WGSL as comments:

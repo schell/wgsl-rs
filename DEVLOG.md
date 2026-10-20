@@ -2032,3 +2032,30 @@ Still open (tracked in the template-resolution follow-up): const paths
 `Id<T>::NONE` at runtime instantiation) — the IR drops the retained
 path structure, and generic-struct references from template bodies need
 struct-template dependency tracking first.
+
+### 2026-10-21: Generic templates resolve through the import graph at runtime (wgsl-rs#238)
+
+**Problem:** Instantiating a cross-module generic searched only the
+candidate modules recorded for that instantiation — the literal `use`
+paths of the importing module. Importing through a re-export chain
+(`use crate::prelude::*` where `prelude` is a wgsl module doing
+`pub use defs::*`) failed with `TemplateNotFound { available_templates: [] }`
+even though the defining module was in the source graph: the
+re-exporting module's `Source.imports` includes the defining module,
+but nothing walked that hop. Name harvesting already recursed through
+`imports` (that is why `available_templates` was empty rather than
+merely wrong), which pinned the failure to resolution, not
+reachability.
+
+**Decision:** The macro cannot fix this. Proc macros expand one item at
+a time and cannot introspect what a sibling module re-exports, so only
+the literal `use` paths can be recorded as candidates. The fix is in
+the runtime: `resolve_template` now searches every `Source` reachable
+through the candidates' import graph (`reachable_sources`, depth-first
+with an id-keyed visited set, cycle-safe). Because module ids are
+content hashes, the same defining module reached through two re-export
+paths is a single candidate — diamond imports cannot manufacture an
+`AmbiguousTemplate`; two distinct defining modules with the same
+template name remain a genuine ambiguity. `TemplateNotFound` now lists
+every template name reachable through the import graph, so the error
+context describes the graph the resolver actually searched.

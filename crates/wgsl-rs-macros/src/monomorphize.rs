@@ -2029,6 +2029,98 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                 }
                 return Ok(());
             }
+            // Cross-module generic struct *method* call through a
+            // qualified-self path: `<Id<f32>>::new(...)`. The turbofish
+            // arm above is gated on `type_args`, which QSelf calls never
+            // carry (their arguments live in the retained qself type),
+            // so without this arm the struct instantiation the call
+            // depends on was never recorded (wgsl-rs#240 family).
+            Expr::FnCall {
+                path:
+                    FnPath::TypeMethod {
+                        ty,
+                        qself_ty: Some(qty),
+                        ..
+                    },
+                type_args,
+                const_args,
+                ..
+            } if type_args.is_empty() && const_args.is_empty() => {
+                if let Type::Struct {
+                    ident,
+                    type_args,
+                    const_args,
+                    ..
+                } = qty.as_ref()
+                    && (!type_args.is_empty() || !const_args.is_empty())
+                    && !contains_type_param(qty)
+                    && !self.local_struct_templates.contains_key(&ident.to_string())
+                {
+                    let struct_name = ident.to_string();
+                    let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
+                    if self.seen.insert(mangled_name) {
+                        let mangled_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(mangle_type)
+                            .collect::<Result<_, _>>()?;
+                        let mangled_const_args: Vec<String> =
+                            const_args.iter().map(|n| n.to_string()).collect();
+                        self.out.push(CrossModuleInstantiation {
+                            import_paths: self.import_paths.to_vec(),
+                            fn_name: struct_name,
+                            mangled_type_args,
+                            type_args: type_args.clone(),
+                            mangled_const_args,
+                            const_args: const_args.clone(),
+                        });
+                    }
+                }
+                // `ty` already carries the mangled instance name
+                // (derived from the qself structure at parse time), so
+                // no rewrite is needed.
+                parse_visitor::walk_expr(self, expr)?
+            }
+            // Cross-module generic struct *associated constant* path:
+            // `Id::<f32>::NONE` or `<Id<f32>>::NONE` (the two spellings
+            // normalize to the same representation at parse time,
+            // wgsl-rs#240). The path's `ty` is already the mangled
+            // instance name; what is missing is the instantiation
+            // record for the referenced struct template.
+            Expr::TypePath {
+                qself_ty: Some(qty),
+                ..
+            } => {
+                if let Type::Struct {
+                    ident,
+                    type_args,
+                    const_args,
+                    ..
+                } = qty.as_ref()
+                    && (!type_args.is_empty() || !const_args.is_empty())
+                    && !contains_type_param(qty)
+                    && !self.local_struct_templates.contains_key(&ident.to_string())
+                {
+                    let struct_name = ident.to_string();
+                    let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
+                    if self.seen.insert(mangled_name) {
+                        let mangled_type_args: Vec<String> = type_args
+                            .iter()
+                            .map(mangle_type)
+                            .collect::<Result<_, _>>()?;
+                        let mangled_const_args: Vec<String> =
+                            const_args.iter().map(|n| n.to_string()).collect();
+                        self.out.push(CrossModuleInstantiation {
+                            import_paths: self.import_paths.to_vec(),
+                            fn_name: struct_name,
+                            mangled_type_args,
+                            type_args: type_args.clone(),
+                            mangled_const_args,
+                            const_args: const_args.clone(),
+                        });
+                    }
+                }
+                parse_visitor::walk_expr(self, expr)?
+            }
             _ => {}
         }
         parse_visitor::walk_expr(self, expr)

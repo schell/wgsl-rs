@@ -126,14 +126,14 @@ arguments, e.g., Pair::<T>::sum(...)
 ```
 
 This also applies inside generic function bodies (`Pair::<T>::sum(p)`)
-and to associated constants accessed by path: `Self::CONST` works
-inside the struct's own impl, but referencing an instantiated struct's
-associated const from elsewhere is not yet supported (bare paths are
-rejected, and turbofish on const paths does not parse). Cross-module
-calls without turbofish cannot be checked at compile time (the
-importing module's macro cannot know the imported name is generic);
-they are reported when the WGSL source is assembled, with the same
-guidance.
+and to associated-constant paths: `Self::CONST` works inside the
+struct's own impl, and from elsewhere supply the arguments with
+turbofish (`Id::<f32>::NONE`) or the equivalent qualified-self form
+(`<Id<f32>>::NONE`) — the two spellings are interchangeable. Bare
+`Id::NONE` paths are rejected. Cross-module calls without turbofish
+cannot be checked at compile time (the importing module's macro cannot
+know the imported name is generic); they are reported when the WGSL
+source is assembled, with the same guidance.
 
 ## Struct Construction
 

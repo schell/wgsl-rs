@@ -1997,3 +1997,38 @@ runtime-only builtins like atomics and barriers, so the alias itself is
 not sufficient). Calls to runtime builtins that are not `@const` are
 left to naga validation rather than a parse-time list, because that list
 is large and moves with the spec.
+
+### 2026-10-20: Turbofish const paths normalize to the qualified-self form (wgsl-rs#240)
+
+**Problem:** `Id::<T>::NONE` and `<Id<T>>::NONE` are synonyms in Rust
+but produced different results: the qualified-self form parsed (routing
+through `parse_qself_ty`, which retains the path's full type structure
+for later substitution), while the turbofish form was rejected with
+"generic arguments in type paths are not supported". Downstream, the
+compile-time monomorphizer already substituted the retained structure
+correctly — the parse layer was the only divergence.
+
+**Decision:** The `Type::member` path parser now parses first-segment
+turbofish arguments (type and const) into the same struct-type form
+`Type::parse` produces, then routes it through the same
+mangle-and-retain treatment as the qualified-self form. The two
+spellings produce byte-identical `Expr::TypePath` output, so every
+downstream pass treats them uniformly by construction. Two adjacent
+gaps fell out of the same investigation and were fixed alongside:
+(1) cross-module const paths (`Id::<f32>::NONE` in a consuming module)
+never recorded the referenced struct template's instantiation, so the
+const rendered against a chunk that was never emitted — the
+cross-module visitor now records concrete (param-free) qualified
+references for both const paths and qualified-self method calls;
+(2) a provider module that instantiates its own generic struct at
+compile time plus a consumer requesting the same instantiation at
+runtime double-defined the struct ("redefinition of `Id_f32`") —
+instance chunks now deduplicate against a threaded set of top-level
+names emitted by already-rendered source chunks (not against
+`TypeImports`, which is deliberately pre-seeded with instance types
+before the chunks render, so a name's presence there proves nothing).
+Still open (tracked in the template-resolution follow-up): const paths
+*inside shipped template bodies* (`Array<T>`'s impl referencing
+`Id<T>::NONE` at runtime instantiation) — the IR drops the retained
+path structure, and generic-struct references from template bodies need
+struct-template dependency tracking first.

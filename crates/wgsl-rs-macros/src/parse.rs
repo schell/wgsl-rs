@@ -2483,26 +2483,76 @@ impl Expr {
                         Self::Ident(ident.clone())
                     }
                 } else if path.segments.len() == 2 {
-                    // Type::member path: `Light::CONSTANT`
-                    let ty = path.segments[0].ident.clone();
+                    // Type::member path: `Light::CONSTANT`,
+                    // `Id::<T>::NONE`, `Grid::<4>::CONST`.
+                    let ty_seg = &path.segments[0];
                     let member = path.segments[1].ident.clone();
 
-                    // Check no generics on segments
-                    for seg in &path.segments {
-                        if !matches!(seg.arguments, syn::PathArguments::None) {
+                    // The member segment never takes generic arguments.
+                    if !matches!(path.segments[1].arguments, syn::PathArguments::None) {
+                        return UnsupportedSnafu {
+                            span: path.segments[1].arguments.span(),
+                            note: "generic arguments on the member of a type path are not \
+                                   supported",
+                        }
+                        .fail();
+                    }
+
+                    match &ty_seg.arguments {
+                        syn::PathArguments::None => Self::TypePath {
+                            ty: ty_seg.ident.clone(),
+                            colon2_token: Token![::](ty_seg.ident.span()),
+                            member,
+                            qself_ty: None,
+                        },
+                        syn::PathArguments::AngleBracketed(angle_args) => {
+                            // Turbofish const path: `Id::<T>::NONE`. Both
+                            // type and const arguments are collected into
+                            // the same struct-type form the type parser
+                            // produces, so this spelling normalizes to
+                            // exactly what the qualified-self form
+                            // (`<Id<T>>::NONE`) produces and the two are
+                            // interchangeable downstream (wgsl-rs#240).
+                            let mut type_args = Vec::new();
+                            let mut const_args = Vec::new();
+                            for arg in &angle_args.args {
+                                match arg {
+                                    syn::GenericArgument::Type(ty) => {
+                                        type_args.push(Type::parse(ty, ctx)?);
+                                    }
+                                    syn::GenericArgument::Const(expr) => {
+                                        const_args.push(eval_const_u32_arg(expr)?);
+                                    }
+                                    other => {
+                                        return UnsupportedSnafu {
+                                            span: other.span(),
+                                            note: "only type and const arguments are supported in \
+                                                   type paths",
+                                        }
+                                        .fail();
+                                    }
+                                }
+                            }
+                            let qself_ty = Type::Struct {
+                                ident: ty_seg.ident.clone(),
+                                type_args,
+                                const_args,
+                            };
+                            let mangled = mangle_type(&qself_ty)?;
+                            Self::TypePath {
+                                ty: Ident::new(&mangled, ty_seg.ident.span()),
+                                colon2_token: Token![::](ty_seg.ident.span()),
+                                member,
+                                qself_ty: Some(Box::new(qself_ty)),
+                            }
+                        }
+                        other => {
                             return UnsupportedSnafu {
-                                span: seg.arguments.span(),
-                                note: "generic arguments in type paths are not supported",
+                                span: other.span(),
+                                note: "unsupported path arguments in a type path",
                             }
                             .fail();
                         }
-                    }
-
-                    Self::TypePath {
-                        ty,
-                        colon2_token: Token![::](path.segments[0].ident.span()),
-                        member,
-                        qself_ty: None,
                     }
                 } else {
                     return UnsupportedSnafu {
@@ -9716,6 +9766,46 @@ mod test {
             wgsl.contains("const MyThing_THING: MyThing = MyThing(0u);"),
             "expected the struct-literal const, got: {wgsl}"
         );
+    }
+
+    /// The turbofish spelling `Id::<T>::NONE` parses to exactly the
+    /// same representation as the qualified-self spelling
+    /// `<Id<T>>::NONE`, so the two are interchangeable downstream
+    /// (wgsl-rs#240).
+    #[test]
+    fn const_path_turbofish_matches_qself_representation() {
+        let parse_path = |src: syn::Expr| {
+            let expr = Expr::try_from(&src).unwrap();
+            let Expr::TypePath {
+                ty,
+                member,
+                qself_ty,
+                ..
+            } = expr
+            else {
+                panic!("expected a TypePath for {src:?}")
+            };
+            (ty.to_string(), member.to_string(), qself_ty.is_some())
+        };
+
+        // Param-supplied args, inside generic contexts.
+        let turbofish = parse_path(syn::parse_quote! { Id::<T>::NONE });
+        let qself = parse_path(syn::parse_quote! { <Id<T>>::NONE });
+        assert_eq!(turbofish, qself);
+
+        // Concrete args, at cross-module usage sites.
+        let turbofish = parse_path(syn::parse_quote! { Id::<f32>::NONE });
+        let qself = parse_path(syn::parse_quote! { <Id<f32>>::NONE });
+        assert_eq!(turbofish, qself);
+
+        // Const-generic args keep working on paths too.
+        let turbofish = parse_path(syn::parse_quote! { Grid::<4>::CONST });
+        let qself = parse_path(syn::parse_quote! { <Grid<4>>::CONST });
+        assert_eq!(turbofish, qself);
+
+        // The bare form is unchanged: no retained qself structure.
+        let bare = parse_path(syn::parse_quote! { Light::CONSTANT });
+        assert_eq!(bare, ("Light".to_string(), "CONSTANT".to_string(), false));
     }
 
     // Loop statement tests

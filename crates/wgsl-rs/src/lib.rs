@@ -220,6 +220,9 @@ impl Source {
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
         let mut imports = ir::TypeImports::default();
+        // Top-level struct and function names actually emitted by
+        // rendered source chunks (see `instantiate_template_into`).
+        let mut emitted_names: HashSet<String> = HashSet::new();
         self.collect(
             &mut out,
             &mut visited_sources,
@@ -228,6 +231,7 @@ impl Source {
             &mut needs_tier1,
             &mut imports,
             &template_names,
+            &mut emitted_names,
         )?;
         // WGSL requires `enable` directives at the very start of the
         // translation unit, before any other declarations. Since `collect`
@@ -267,6 +271,7 @@ impl Source {
         needs_tier1: &mut bool,
         imports: &mut ir::TypeImports,
         template_names: &HashSet<String>,
+        emitted_names: &mut HashSet<String>,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
         for m in self.imports {
@@ -279,6 +284,7 @@ impl Source {
                     needs_tier1,
                     imports,
                     template_names,
+                    emitted_names,
                 )?;
             }
         }
@@ -300,6 +306,21 @@ impl Source {
                 member: offense.member,
                 has_type_args: offense.has_type_args,
             });
+        }
+        // Record this chunk's top-level definitions so later instance
+        // chunks can deduplicate against them: a provider's own
+        // compile-time monomorphization may already contain the very
+        // instantiation a consumer requests.
+        for item in &ir_module.items {
+            match item {
+                ir::Item::Struct(s) => {
+                    emitted_names.insert(s.name.to_string());
+                }
+                ir::Item::Fn(f) => {
+                    emitted_names.insert(f.name.to_string());
+                }
+                _ => {}
+            }
         }
         // Pre-seed with the types of cross-source template instances
         // this source calls: instance chunks are appended (and publish
@@ -367,6 +388,7 @@ impl Source {
                 needs_tier1,
                 imports,
                 template_names,
+                emitted_names,
             )?;
         }
         Ok(())
@@ -419,6 +441,7 @@ fn instantiate_template_into<'a>(
     needs_tier1: &mut bool,
     imports: &mut ir::TypeImports,
     template_names: &HashSet<String>,
+    emitted_names: &mut HashSet<String>,
 ) -> Result<(), SourceError<'a>> {
     let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
 
@@ -460,6 +483,7 @@ fn instantiate_template_into<'a>(
             needs_tier1,
             imports,
             template_names,
+            emitted_names,
         )?;
     }
 
@@ -470,6 +494,23 @@ fn instantiate_template_into<'a>(
         mangled_type_args,
         mangled_const_args,
     );
+
+    // Cross-chunk dedup: the provider's own source chunk may already
+    // contain this very instantiation — compile-time monomorphization
+    // emits concrete items into the provider's IR, and rendering the
+    // runtime instance again would double-define the struct (or fn).
+    // The content is identical, so the whole chunk is skipped. The
+    // check is against names *emitted by rendered chunks*
+    // (`emitted_names`), not against `imports`, which is deliberately
+    // pre-seeded with instance types before this chunk renders.
+    let already_emitted = items.iter().find_map(|item| match item {
+        ir::Item::Struct(s) => Some(emitted_names.contains(&s.name)),
+        ir::Item::Fn(f) => Some(emitted_names.contains(f.name.as_ref())),
+        _ => None,
+    });
+    if already_emitted == Some(true) {
+        return Ok(());
+    }
 
     ir::deshadow_items(&mut items);
     // Flag references to *other* generic templates that this instance's

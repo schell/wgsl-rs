@@ -538,22 +538,64 @@ fn instantiate_template_into<'a>(
     Ok(())
 }
 
-/// Resolve `template_name` to exactly one template among `sources`,
-/// producing the structured errors `instantiate_template_into` reports.
+/// Collect `sources` plus every `Source` reachable from them through
+/// the import graph, deduplicated by [`Source::id`] and safe against
+/// import cycles.
+///
+/// Module ids are content hashes (see [`Source::id`]), so a defining
+/// module reached through two different re-export paths appears once
+/// here — diamond imports cannot manufacture a template ambiguity.
+/// Only `Source::imports` is walked: the macro records an
+/// instantiation's candidate modules as the importing module's `use`
+/// paths, and those same paths also feed `imports`, so the import
+/// graph reaches every module a source could have imported from
+/// (wgsl-rs#238).
+fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
+    /// Depth-first visit with an id-based cycle/dedup guard.
+    fn visit<'a>(source: &'a Source, out: &mut Vec<&'a Source>, visited: &mut HashSet<u64>) {
+        if !visited.insert(source.id) {
+            return;
+        }
+        out.push(source);
+        for import in source.imports {
+            visit(import, out, visited);
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    for &source in sources {
+        visit(source, &mut out, &mut visited);
+    }
+    out
+}
+
+/// Resolve `template_name` to exactly one template among `sources` or
+/// any module reachable from them through the import graph, producing
+/// the structured errors `instantiate_template_into` reports.
+///
+/// Searching transitively makes generic templates available through
+/// `pub use` re-export chains: a re-exporting module's own template
+/// registry is empty, but the defining module is reachable via the
+/// re-exporter's `imports` (wgsl-rs#238). A macro-side fix is not
+/// possible: proc macros cannot introspect what a sibling module
+/// re-exports, so only the literal `use` paths can be recorded as
+/// candidates.
 fn resolve_template<'a>(
     sources: &[&'a Source],
     template_name: &str,
     mangled_type_args: &[String],
 ) -> Result<(&'a Source, &'a GenericTemplate), SourceError<'a>> {
-    let available_templates: Vec<String> = sources
+    let reachable = reachable_sources(sources);
+
+    let available_templates: Vec<String> = reachable
         .iter()
         .copied()
         .flat_map(|m| m.templates.iter().map(|t| t.name.to_string()))
         .collect();
 
-    let mut matching_sources: Vec<&Source> = sources
-        .iter()
-        .copied()
+    let mut matching_sources: Vec<&Source> = reachable
+        .into_iter()
         .filter(|m| m.templates.iter().any(|t| t.name == template_name))
         .collect();
 
@@ -1031,6 +1073,314 @@ mod test {
         let msg = err.to_string();
         assert!(msg.contains("ambiguous"), "got: {msg}");
         assert!(msg.contains("shared"), "got: {msg}");
+    }
+
+    // --- Template resolution through `pub use` re-export chains (#238) ---
+
+    mod reexport_resolution {
+        //! Hand-crafted source graphs for wgsl-rs#238: generic templates
+        //! must resolve through `pub use` re-export chains, multi-hop
+        //! chains, diamonds, and import cycles.
+
+        use crate::{GenericTemplate, Source, TemplateDependency, TemplateInstantiation, ir};
+
+        fn empty_source_ir() -> ir::Module {
+            ir::Module {
+                name: "stub",
+                items: vec![],
+                attrs: vec![],
+            }
+        }
+
+        /// The generic fn template `id<T>(x: T) -> T`.
+        fn id_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                const_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "id".to_string().into(),
+                inputs: vec![ir::FnArg {
+                    inter_stage_io: vec![],
+                    name: "x".to_string(),
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                    attrs: vec![],
+                }],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::Ident("x".to_string())))],
+                },
+                attrs: vec![],
+            })]
+        }
+
+        fn f32_args() -> Vec<ir::Type> {
+            vec![ir::Type::Scalar(ir::ScalarType::F32)]
+        }
+
+        fn no_const_args() -> Vec<u32> {
+            vec![]
+        }
+
+        static DEP: [TemplateDependency; 0] = [];
+        static ID_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
+            name: "id",
+            type_params: &["T"],
+            const_params: &[],
+            ir_constructor: id_template_items,
+            dependencies: &DEP,
+        }];
+        static NO_SOURCES: [&Source; 0] = [];
+        static NO_INSTS: [TemplateInstantiation; 0] = [];
+        static NO_TYPE_PARAMS: [&str; 0] = [];
+
+        // The defining module.
+        static DEFS: Source = Source {
+            id: 100,
+            name: "defs",
+            imports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &ID_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        // Identical content to DEFS (same id): the same defining module
+        // reached through a second re-export path.
+        static DEFS_DUPLICATE: Source = Source {
+            id: 100,
+            name: "defs",
+            imports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &ID_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        // A distinct defining module that happens to define a template
+        // with the same name.
+        static OTHER_DEFS: Source = Source {
+            id: 106,
+            name: "other_defs",
+            imports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &ID_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// The single re-export hop: an empty registry, one import.
+        static PRELUDE: Source = Source {
+            id: 101,
+            name: "prelude",
+            imports: &[&DEFS],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// A second hop re-exporting the prelude.
+        static MID: Source = Source {
+            id: 102,
+            name: "mid",
+            imports: &[&PRELUDE],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// Two re-exporters of the *same* defining module (diamond).
+        static HOP_A: Source = Source {
+            id: 103,
+            name: "hop_a",
+            imports: &[&DEFS],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static HOP_B: Source = Source {
+            id: 104,
+            name: "hop_b",
+            imports: &[&DEFS_DUPLICATE],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// Two re-exporters of *distinct* defining modules.
+        static PATH_A: Source = Source {
+            id: 107,
+            name: "path_a",
+            imports: &[&DEFS],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static PATH_B: Source = Source {
+            id: 108,
+            name: "path_b",
+            imports: &[&OTHER_DEFS],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// Mutual re-exports: the template lives behind the cycle.
+        static CYC_A: Source = Source {
+            id: 109,
+            name: "cyc_a",
+            imports: &[&CYC_B],
+            ir_constructor: empty_source_ir,
+            templates: &ID_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static CYC_B: Source = Source {
+            id: 110,
+            name: "cyc_b",
+            imports: &[&CYC_A],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// Build a concrete root whose only content is one instantiation
+        /// of `id` against the given candidate modules. Declared per-test
+        /// so each graph gets its own statics.
+        macro_rules! id_root {
+            ($root_id:literal, $candidates:expr) => {{
+                static INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                    modules: $candidates,
+                    template_name: "id",
+                    type_args_constructor: f32_args,
+                    mangled_type_args: &["f32"],
+                    const_args_constructor: no_const_args,
+                    mangled_const_args: &[],
+                }];
+                static ROOT: Source = Source {
+                    id: $root_id,
+                    name: "root",
+                    imports: $candidates,
+                    ir_constructor: empty_source_ir,
+                    templates: &[],
+                    instantiations: &INSTS,
+                    module_type_params: &NO_TYPE_PARAMS,
+                };
+                &ROOT
+            }};
+        }
+
+        #[test]
+        fn template_resolves_through_single_reexport_hop() {
+            let root = id_root!(200, &[&PRELUDE]);
+            let src = root
+                .wgsl_source()
+                .expect("id must resolve through the re-export hop");
+            assert!(src.contains("id_f32"), "expected id_f32 in:\n{src}");
+        }
+
+        #[test]
+        fn template_resolves_through_multi_hop_chain() {
+            let root = id_root!(201, &[&MID]);
+            let src = root
+                .wgsl_source()
+                .expect("id must resolve through the two-hop chain");
+            assert!(src.contains("id_f32"), "expected id_f32 in:\n{src}");
+        }
+
+        #[test]
+        fn diamond_reexport_of_same_source_is_not_ambiguous() {
+            let root = id_root!(202, &[&HOP_A, &HOP_B]);
+            let src = root
+                .wgsl_source()
+                .expect("same defining module through two paths must resolve");
+            assert_eq!(
+                src.matches("id_f32").count(),
+                1,
+                "instance must be emitted exactly once, got:\n{src}"
+            );
+        }
+
+        #[test]
+        fn reexport_cycle_terminates_and_resolves() {
+            let root = id_root!(203, &[&CYC_B]);
+            let src = root
+                .wgsl_source()
+                .expect("template behind a mutual re-export cycle must resolve");
+            assert!(src.contains("id_f32"), "expected id_f32 in:\n{src}");
+        }
+
+        #[test]
+        fn distinct_definers_behind_hops_are_ambiguous() {
+            let root = id_root!(204, &[&PATH_A, &PATH_B]);
+            let err = root.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::AmbiguousTemplate {
+                    template_name,
+                    matching_source_names,
+                    ..
+                } => {
+                    assert_eq!(template_name, "id");
+                    assert!(
+                        matching_source_names.contains(&"defs".to_string())
+                            && matching_source_names.contains(&"other_defs".to_string()),
+                        "expected matching sources [defs, other_defs], got \
+                         {matching_source_names:?}"
+                    );
+                }
+                other => panic!("expected AmbiguousTemplate, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn not_found_lists_reachable_templates_through_hop() {
+            static MISSING_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&PRELUDE],
+                template_name: "no_such_template",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static MISSING_ROOT: Source = Source {
+                id: 206,
+                name: "missing_root",
+                imports: &[&PRELUDE],
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &MISSING_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = MISSING_ROOT.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::TemplateNotFound {
+                    template_name,
+                    available_templates,
+                    ..
+                } => {
+                    assert_eq!(template_name, "no_such_template");
+                    assert!(
+                        available_templates.contains(&"id".to_string()),
+                        "reachable templates through the hop must be listed, got \
+                         {available_templates:?}"
+                    );
+                }
+                other => panic!("expected TemplateNotFound, got {other:?}"),
+            }
+        }
     }
 
     // --- Cross-module generic struct tests ---

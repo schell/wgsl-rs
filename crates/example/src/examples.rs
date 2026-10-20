@@ -45,6 +45,10 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &swizzles::WGSL_SOURCE,
     &builtin_constants::WGSL_SOURCE,
     &literal_suffix_example::WGSL_SOURCE,
+    &reexport_defs::WGSL_SOURCE,
+    &reexport_prelude::WGSL_SOURCE,
+    &reexport_use_id::WGSL_SOURCE,
+    &reexport_direct::WGSL_SOURCE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
@@ -2105,5 +2109,65 @@ pub mod literal_suffix_example {
     pub fn counting() -> u32 {
         let count: u32 = 0;
         count + 1
+    }
+}
+
+/// Fixture for [wgsl-rs#238](https://github.com/schell/wgsl-rs/issues/238):
+/// generic templates must propagate through `pub use` re-export chains.
+///
+/// `reexport_defs` defines the generic `Id<T>` template (mirroring
+/// crabslab's slab `Id`), `reexport_prelude` re-exports it with a glob,
+/// and `reexport_use_id` imports through the hop. `reexport_direct` is
+/// the control: the identical instantiation against a direct import,
+/// which must keep working.
+#[wgsl]
+pub mod reexport_defs {
+    use wgsl_rs::std::*;
+
+    /// A typed identifier into a slab.
+    pub struct Id<T> {
+        pub index: u32,
+        pub phantom: PhantomData<T>,
+    }
+
+    impl<T> Id<T> {
+        /// Construct an `Id` pointing at slot `i`.
+        pub fn new(i: u32) -> Id<T> {
+            Id {
+                index: i,
+                phantom: PhantomData,
+            }
+        }
+    }
+}
+
+/// The re-export hop: a wgsl module whose only content is a glob
+/// re-export of another wgsl module.
+#[wgsl]
+pub mod reexport_prelude {
+    pub use super::reexport_defs::*;
+}
+
+/// Instantiates the generic through the re-export hop. Before the fix
+/// for wgsl-rs#238 this failed at source-assembly time with
+/// `TemplateNotFound { template_name: "Id" }` because the template
+/// registry did not travel past the hop.
+#[wgsl]
+pub mod reexport_use_id {
+    use super::reexport_prelude::*;
+
+    pub fn my_id() -> Id<f32> {
+        Id::<f32>::new(0)
+    }
+}
+
+/// Control for the fixture above: the identical instantiation, but
+/// importing the defining module directly. This path must keep working.
+#[wgsl]
+pub mod reexport_direct {
+    use super::reexport_defs::*;
+
+    pub fn my_id() -> Id<f32> {
+        Id::<f32>::new(0)
     }
 }

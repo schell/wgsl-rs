@@ -29,12 +29,29 @@
 //! See the WGSL spec's `arithmetic-expr` section for the linear-algebra
 //! definitions. On the GPU these all lower to the WGSL `*` operator; the
 //! impls here exist so the CPU ("two worlds") path agrees.
+//!
+//! # Printing
+//!
+//! `Debug` prints the WGSL constructor form and `Display` the bare value
+//! form. Both list components in **column-major order**, the same order
+//! the `matCxR(...)` constructor takes its arguments:
+//!
+//! ```
+//! use wgsl_rs::std::{mat2x2f, vec2f};
+//!
+//! // Two columns: (1.0, 2.0) and (3.0, 4.0).
+//! let m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+//! assert_eq!(format!("{m:?}"), "mat2x2f(1.0, 2.0, 3.0, 4.0)");
+//! assert_eq!(format!("{m}"), "(1, 2, 3, 4)");
+//! ```
+
+use std::fmt;
 
 use super::*;
 
 /// A 2x2 column-major matrix of `f32` components (2 columns of `Vec2f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat2x2f {
     columns: [Vec2f; 2],
@@ -42,7 +59,7 @@ pub struct Mat2x2f {
 
 /// A 2x3 column-major matrix of `f32` components (2 columns of `Vec3f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat2x3f {
     columns: [Vec3f; 2],
@@ -50,7 +67,7 @@ pub struct Mat2x3f {
 
 /// A 2x4 column-major matrix of `f32` components (2 columns of `Vec4f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat2x4f {
     columns: [Vec4f; 2],
@@ -58,7 +75,7 @@ pub struct Mat2x4f {
 
 /// A 3x2 column-major matrix of `f32` components (3 columns of `Vec2f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat3x2f {
     columns: [Vec2f; 3],
@@ -66,7 +83,7 @@ pub struct Mat3x2f {
 
 /// A 3x3 column-major matrix of `f32` components (3 columns of `Vec3f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat3x3f {
     columns: [Vec3f; 3],
@@ -74,7 +91,7 @@ pub struct Mat3x3f {
 
 /// A 3x4 column-major matrix of `f32` components (3 columns of `Vec4f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat3x4f {
     columns: [Vec4f; 3],
@@ -82,7 +99,7 @@ pub struct Mat3x4f {
 
 /// A 4x2 column-major matrix of `f32` components (4 columns of `Vec2f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat4x2f {
     columns: [Vec2f; 4],
@@ -90,7 +107,7 @@ pub struct Mat4x2f {
 
 /// A 4x3 column-major matrix of `f32` components (4 columns of `Vec3f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat4x3f {
     columns: [Vec3f; 4],
@@ -98,7 +115,7 @@ pub struct Mat4x3f {
 
 /// A 4x4 column-major matrix of `f32` components (4 columns of `Vec4f`).
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mat4x4f {
     columns: [Vec4f; 4],
@@ -199,6 +216,65 @@ pub const fn mat4x4f(x_axis: Vec4f, y_axis: Vec4f, z_axis: Vec4f, w_axis: Vec4f)
         columns: [x_axis, y_axis, z_axis, w_axis],
     }
 }
+
+// ===== Formatting =====
+
+/// Implements `Debug` (WGSL constructor form) and `Display` (bare value
+/// form) for one matrix type.
+macro_rules! impl_mat_fmt {
+    ($t:ty, $ctor:literal) => {
+        impl fmt::Debug for $t {
+            /// Prints the WGSL constructor form, e.g.
+            /// `mat2x2f(1.0, 2.0, 3.0, 4.0)`. Components are in
+            /// column-major order, matching the `matCxR(...)`
+            /// constructor argument order.
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str($ctor)?;
+                f.write_str("(")?;
+                let mut first = true;
+                for col in &self.columns {
+                    for comp in col.to_array() {
+                        if !first {
+                            f.write_str(", ")?;
+                        }
+                        first = false;
+                        write!(f, "{comp:?}")?;
+                    }
+                }
+                f.write_str(")")
+            }
+        }
+
+        impl fmt::Display for $t {
+            /// Prints the bare value form: the same column-major
+            /// component list as `Debug`, without the constructor name.
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("(")?;
+                let mut first = true;
+                for col in &self.columns {
+                    for comp in col.to_array() {
+                        if !first {
+                            f.write_str(", ")?;
+                        }
+                        first = false;
+                        write!(f, "{comp}")?;
+                    }
+                }
+                f.write_str(")")
+            }
+        }
+    };
+}
+
+impl_mat_fmt!(Mat2x2f, "mat2x2f");
+impl_mat_fmt!(Mat2x3f, "mat2x3f");
+impl_mat_fmt!(Mat2x4f, "mat2x4f");
+impl_mat_fmt!(Mat3x2f, "mat3x2f");
+impl_mat_fmt!(Mat3x3f, "mat3x3f");
+impl_mat_fmt!(Mat3x4f, "mat3x4f");
+impl_mat_fmt!(Mat4x2f, "mat4x2f");
+impl_mat_fmt!(Mat4x3f, "mat4x3f");
+impl_mat_fmt!(Mat4x4f, "mat4x4f");
 
 // Index impls for all matrix types, for both `usize` and `u32`.
 
@@ -928,6 +1004,31 @@ pub mod builtin_matrix_constants {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn debug_and_display_print_column_major_forms() {
+        let m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+        assert_eq!(format!("{m:?}"), "mat2x2f(1.0, 2.0, 3.0, 4.0)");
+        assert_eq!(format!("{m}"), "(1, 2, 3, 4)");
+        // Column-major: the second column's components come third.
+        let m = mat2x3f(vec3f(1.0, 2.0, 3.0), vec3f(4.0, 5.0, 6.0));
+        assert_eq!(format!("{m:?}"), "mat2x3f(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)");
+    }
+
+    #[test]
+    fn assert_eq_compiles_for_every_matrix_shape() {
+        // `assert_eq!` needs `PartialEq` plus `Debug`; this exercises both
+        // for all nine shapes (including the square aliases via `Mat4f`).
+        assert_eq!(Mat2x2f::default(), Mat2x2f::default());
+        assert_eq!(Mat2x3f::default(), Mat2x3f::default());
+        assert_eq!(Mat2x4f::default(), Mat2x4f::default());
+        assert_eq!(Mat3x2f::default(), Mat3x2f::default());
+        assert_eq!(Mat3x3f::default(), Mat3x3f::default());
+        assert_eq!(Mat3x4f::default(), Mat3x4f::default());
+        assert_eq!(Mat4x2f::default(), Mat4x2f::default());
+        assert_eq!(Mat4x3f::default(), Mat4x3f::default());
+        assert_eq!(Mat4f::default(), Mat4f::default());
+    }
 
     #[test]
     fn mul_assign_scales_all_columns() {

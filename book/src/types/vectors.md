@@ -62,3 +62,15 @@ Any combination of the `xyzw`, `rgba`, or `stpq` component sets, length 1-4, sin
 | 4      | `.xyzw()`, `.rgba()`, `.stpq()`  | `Vec4*`   |
 
 The result type matches the source vector's scalar kind: a `Vec3u` swizzle returns `u32` or `Vec2u`/`Vec3u`/`Vec4u`.
+
+## Printing
+
+The vector types implement `Debug` and `Display`. `Debug` prints the WGSL constructor form, which is valid WGSL you can paste straight into shader source; `Display` prints the bare value form:
+
+```rust
+let v = vec2f(1.0, 2.0);
+assert_eq!(format!("{v:?}"), "vec2f(1.0, 2.0)");  // Debug: WGSL constructor
+assert_eq!(format!("{v}"), "(1, 2)");             // Display: bare value
+```
+
+Printed `f32` components are shortest-round-trip, so a printed value re-parses to the identical bits. Bool vectors use the generic spelling, since the spec predeclares no `vecNb` alias: `vec2<bool>(true, false)`.

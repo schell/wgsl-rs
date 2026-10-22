@@ -6,14 +6,39 @@
 //!
 //! Vectors support swizzling by method-calling. For example, [`Vec3::xxx`]
 //! and [`Vec4::bgra`].
+//!
+//! # Printing
+//!
+//! `Debug` prints the WGSL constructor form, which is valid WGSL and can
+//! be pasted straight into shader source, while `Display` prints the
+//! bare value form:
+//!
+//! ```
+//! use wgsl_rs::std::{vec2b, vec2f};
+//!
+//! let v = vec2f(1.0, 2.0);
+//! assert_eq!(format!("{v:?}"), "vec2f(1.0, 2.0)");
+//! assert_eq!(format!("{v}"), "(1, 2)");
+//!
+//! // Bool vectors use the generic spelling; the spec predeclares no
+//! // `vecNb` alias.
+//! assert_eq!(
+//!     format!("{:?}", vec2b(true, false)),
+//!     "vec2<bool>(true, false)"
+//! );
+//! ```
 #![expect(
     clippy::self_named_constructors,
     reason = "WGSL uses self named constructors"
 )]
 
+use std::fmt;
+
+use wgsl_rs_ir as ir;
+
 /// A 2-dimensional vector.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec2<T> {
     pub x: T,
@@ -22,7 +47,7 @@ pub struct Vec2<T> {
 
 /// A 3-dimensional vector.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec3<T> {
     pub x: T,
@@ -32,7 +57,7 @@ pub struct Vec3<T> {
 
 /// A 4-dimensional vector.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec4<T> {
     pub x: T,
@@ -94,6 +119,68 @@ impl<T: super::WgslScalar> super::Wgsl for Vec4<T> {
         }
     }
 }
+
+// ===== Formatting =====
+
+/// Implements `Debug` (WGSL constructor form) and `Display` (bare value
+/// form) for one vector type.
+///
+/// The `Debug` constructor name is rendered through the IR, so it uses the
+/// same spelling as generated WGSL: the spec's shorthand aliases for
+/// numeric components (`vec2f`, `vec2i`, `vec2u`) and the generic
+/// `vecN<bool>` form for bool components, which has no predeclared alias.
+macro_rules! impl_vec_fmt {
+    ($t:ident, $elements:literal, ($($field:ident),+ $(,)?)) => {
+        impl<T: fmt::Debug + super::WgslScalar> fmt::Debug for $t<T> {
+            /// Prints the WGSL constructor form, e.g. `vec2f(1.0, 2.0)`.
+            /// The output is valid WGSL: `f32`'s `Debug` is
+            /// shortest-round-trip, so printed values reparse to the
+            /// identical bits.
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(
+                    f,
+                    "{}",
+                    ir::Type::Vector {
+                        elements: $elements,
+                        scalar_ty: Some(T::to_scalar_ir()),
+                    }
+                )?;
+                f.write_str("(")?;
+                let mut first = true;
+                $(
+                    if !first {
+                        f.write_str(", ")?;
+                    }
+                    first = false;
+                    write!(f, "{:?}", self.$field)?;
+                )+
+                f.write_str(")")
+            }
+        }
+
+        impl<T: fmt::Display> fmt::Display for $t<T> {
+            /// Prints the bare value form, e.g. `(1, 2)`, following the
+            /// Rust convention that `Debug` carries the type name and
+            /// `Display` is the value.
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("(")?;
+                let mut first = true;
+                $(
+                    if !first {
+                        f.write_str(", ")?;
+                    }
+                    first = false;
+                    write!(f, "{}", self.$field)?;
+                )+
+                f.write_str(")")
+            }
+        }
+    };
+}
+
+impl_vec_fmt!(Vec2, 2, (x, y));
+impl_vec_fmt!(Vec3, 3, (x, y, z));
+impl_vec_fmt!(Vec4, 4, (x, y, z, w));
 
 impl<T> Vec2<T> {
     /// Construct a 2-dimensional vector from components.
@@ -2141,6 +2228,56 @@ pub mod builtin_vector_constants {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn debug_prints_wgsl_constructor_form() {
+        assert_eq!(format!("{:?}", vec2f(1.0, 2.0)), "vec2f(1.0, 2.0)");
+        assert_eq!(format!("{:?}", vec3i(1, -2, 3)), "vec3i(1, -2, 3)");
+        assert_eq!(format!("{:?}", vec4u(1, 2, 3, 4)), "vec4u(1, 2, 3, 4)");
+        assert_eq!(
+            format!("{:?}", vec2b(true, false)),
+            "vec2<bool>(true, false)"
+        );
+    }
+
+    #[test]
+    fn display_prints_bare_value_form() {
+        assert_eq!(format!("{}", vec2f(1.0, 2.0)), "(1, 2)");
+        assert_eq!(format!("{}", vec3f(0.5, 0.25, -1.5)), "(0.5, 0.25, -1.5)");
+        assert_eq!(
+            format!("{}", vec4b(true, false, true, false)),
+            "(true, false, true, false)"
+        );
+    }
+
+    #[test]
+    fn debug_printed_float_components_roundtrip_bit_exactly() {
+        let values = [
+            0.0,
+            -0.0,
+            1.0,
+            0.1,
+            0.5,
+            123.456,
+            f32::MIN_POSITIVE,
+            f32::MIN,
+            f32::MAX,
+            1e-7,
+            1e30,
+        ];
+        for &v in &values {
+            let printed = format!("{:?}", vec2f(v, -v));
+            let inner = &printed["vec2f(".len()..printed.len() - 1];
+            for (text, expected) in inner.split(", ").zip([v, -v]) {
+                let parsed: f32 = text.parse().expect("printed component reparses");
+                assert_eq!(
+                    parsed.to_bits(),
+                    expected.to_bits(),
+                    "printed {text} for {expected}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn vec_n_can_be_used_as_hashmap_and_hashset_keys() {

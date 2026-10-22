@@ -119,18 +119,15 @@ fn half_f16_vectors_roundtrip() {
     assert_eq!(back.y.to_f32(), -2.5);
 }
 
-/// All nine matrix shapes round-trip. Matrices don't derive `PartialEq`,
-/// so their JSON trees are compared instead.
+/// All nine matrix shapes round-trip. `PartialEq` (added alongside the
+/// `Debug`/`Display` impls) lets the values be compared directly.
 #[test]
 fn matrices_roundtrip() {
     macro_rules! roundtrip_matrix {
         ($value:expr, $ty:ty) => {{
             let m: $ty = $value;
             let back: $ty = roundtrip(&m);
-            assert_eq!(
-                to_value(&m).expect("serialize"),
-                to_value(&back).expect("serialize")
-            );
+            assert_eq!(m, back);
         }};
     }
 

@@ -131,6 +131,16 @@ followed by an explanation of the problem, the decision and justification, etc.
 Multiple decisions made on the same day should be separate entries — the date is metadata;
 what matters is that each entry captures one distinct decision.
 
+### When to include a DEVLOG entry
+
+When deciding whether to include something in the DEVLOG, first ask yourself these questions:
+
+1. Are we making an important decision?
+2. Are there significant engineering or user facing tradeoffs connected with making that decision?
+3. Is the decision non-obvious?
+
+If you can answer "YES" to all three then it might be worth including in the DEVLOG.
+
 ## Beads
 
 `wgsl-rs` is the beads prefix for this project.

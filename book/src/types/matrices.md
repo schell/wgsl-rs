@@ -63,3 +63,13 @@ let composed: Mat4f = a * b;             // -> a * b
 ```
 
 The result type is inferred by Rust and verified by the transpiler against the WGSL rules: `matCxR * vecC` yields `vecR`; `matCxR * matRxC2` yields `matCx2`.
+
+## Printing
+
+Matrices implement `Debug` and `Display`, and `PartialEq`, so `assert_eq!` works directly on matrix values. Both output forms list components in **column-major order**, the same order the `matCxR(...)` constructor takes its arguments:
+
+```rust
+let m = mat2x2f(vec2f(1.0, 2.0), vec2f(3.0, 4.0));
+assert_eq!(format!("{m:?}"), "mat2x2f(1.0, 2.0, 3.0, 4.0)");  // Debug: WGSL constructor
+assert_eq!(format!("{m}"), "(1, 2, 3, 4)");                   // Display: bare value
+```

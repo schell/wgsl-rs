@@ -781,6 +781,120 @@ pub fn validate_wgsl_source(source: &str) -> Result<(), String> {
 
 pub mod std;
 
+#[cfg(feature = "extras")]
+#[crate::wgsl(crate_path = crate)]
+pub mod extras {
+    //! Helpers like splats, extend functions, etc.
+    //!
+    //! This module is only included with the **`extras`** cargo feature
+    //! enabled.
+    use crate::std::*;
+
+    // -- Extend functions
+
+    /// Extend a [`Vec2f`] into a [`Vec3f`].
+    pub fn vec3f_from_2(v: Vec2f, z: f32) -> Vec3f {
+        vec3f(v.x, v.y, z)
+    }
+
+    /// Extend a [`Vec3f`] into a [`Vec4f`].
+    pub fn vec4f_from_3(v: Vec3f, w: f32) -> Vec4f {
+        vec4f(v.x, v.y, v.z, w)
+    }
+
+    /// Extend a [`Vec2i`] into a [`Vec3i`].
+    pub fn vec3i_from_2(v: Vec2i, z: i32) -> Vec3i {
+        vec3i(v.x, v.y, z)
+    }
+
+    /// Extend a [`Vec3i`] into a [`Vec4i`].
+    pub fn vec4i_from_3(v: Vec3i, w: i32) -> Vec4i {
+        vec4i(v.x, v.y, v.z, w)
+    }
+
+    /// Extend a [`Vec2u`] into a [`Vec3u`].
+    pub fn vec3u_from_2(v: Vec2u, z: u32) -> Vec3u {
+        vec3u(v.x, v.y, z)
+    }
+
+    /// Extend a [`Vec3u`] into a [`Vec4u`].
+    pub fn vec4u_from_3(v: Vec3u, w: u32) -> Vec4u {
+        vec4u(v.x, v.y, v.z, w)
+    }
+
+    /// Extend a [`Vec2b`] into a [`Vec3b`].
+    pub fn vec3b_from_2(v: Vec2b, z: bool) -> Vec3b {
+        vec3b(v.x, v.y, z)
+    }
+
+    /// Extend a [`Vec3b`] into a [`Vec4b`].
+    pub fn vec4b_from_3(v: Vec3b, w: bool) -> Vec4b {
+        vec4b(v.x, v.y, v.z, w)
+    }
+
+    // -- Splats
+
+    /// Create a [`Vec2f`] with all components set to the given value.
+    pub fn vec2f_splat(t: f32) -> Vec2f {
+        vec2f(t, t)
+    }
+
+    /// Create a [`Vec3f`] with all components set to the given value.
+    pub fn vec3f_splat(t: f32) -> Vec3f {
+        vec3f(t, t, t)
+    }
+
+    /// Create a [`Vec4f`] with all components set to the given value.
+    pub fn vec4f_splat(t: f32) -> Vec4f {
+        vec4f(t, t, t, t)
+    }
+
+    /// Create a [`Vec2i`] with all components set to the given value.
+    pub fn vec2i_splat(t: i32) -> Vec2i {
+        vec2i(t, t)
+    }
+
+    /// Create a [`Vec3i`] with all components set to the given value.
+    pub fn vec3i_splat(t: i32) -> Vec3i {
+        vec3i(t, t, t)
+    }
+
+    /// Create a [`Vec4i`] with all components set to the given value.
+    pub fn vec4i_splat(t: i32) -> Vec4i {
+        vec4i(t, t, t, t)
+    }
+
+    /// Create a [`Vec2u`] with all components set to the given value.
+    pub fn vec2u_splat(t: u32) -> Vec2u {
+        vec2u(t, t)
+    }
+
+    /// Create a [`Vec3u`] with all components set to the given value.
+    pub fn vec3u_splat(t: u32) -> Vec3u {
+        vec3u(t, t, t)
+    }
+
+    /// Create a [`Vec4u`] with all components set to the given value.
+    pub fn vec4u_splat(t: u32) -> Vec4u {
+        vec4u(t, t, t, t)
+    }
+
+    /// Create a [`Vec2b`] with all components set to the given value.
+    pub fn vec2b_splat(t: bool) -> Vec2b {
+        vec2b(t, t)
+    }
+
+    /// Create a [`Vec3b`] with all components set to the given value.
+    pub fn vec3b_splat(t: bool) -> Vec3b {
+        vec3b(t, t, t)
+    }
+
+    /// Create a [`Vec4b`] with all components set to the given value.
+    pub fn vec4b_splat(t: bool) -> Vec4b {
+        vec4b(t, t, t, t)
+    }
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 mod test {

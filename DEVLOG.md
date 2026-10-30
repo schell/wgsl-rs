@@ -2059,3 +2059,31 @@ paths is a single candidate — diamond imports cannot manufacture an
 template name remain a genuine ambiguity. `TemplateNotFound` now lists
 every template name reachable through the import graph, so the error
 context describes the graph the resolver actually searched.
+
+### 2026-10-22: std vector/matrix `Debug`/`Display` output shapes
+
+**Problem.** CPU-side parity-test failures printed wgsl-rs's vector
+types through the derived `Debug` (`Vec2 { x: 1.0, y: 2.0 }`), which
+is noise to read and cannot be pasted into shader code. The nine
+matrix types had no `Debug` or `Display` at all, and no `PartialEq`,
+so `assert_eq!` on a matrix did not compile — the serde tests
+compared JSON trees instead of values.
+
+**Decision.** `Debug` prints the WGSL constructor form
+(`vec2f(1.0, 2.0)`, `mat2x2f(...)`) and `Display` prints the bare
+value form (`(1, 2)`), following the Rust convention that `Debug`
+carries the type name and `Display` is the value. Matrices list
+components in column-major order, matching the `matCxR(...)`
+constructor argument order. Vector `Debug` is bounded on
+`WgslScalar`: spelling the WGSL type name goes through the IR type
+renderer, so printed names are byte-identical with rendered WGSL
+(`vec2f`, `vec3i`, `vec4u`, and `vec2<bool>` for bool components,
+which have no predeclared alias); vector `Display` keeps the plain
+`T: fmt::Display` bound, like a derived impl. Matrices gained a
+derived `PartialEq` alongside the fmt impls so `assert_eq!` works
+on them at all.
+
+**Why.** `f32`'s `Debug` is already shortest-round-trip, so printed
+constructor literals reparse to the identical bits: a failed parity
+assertion hands you a value you can paste straight into WGSL source
+and trust. These are CPU-world impls only.

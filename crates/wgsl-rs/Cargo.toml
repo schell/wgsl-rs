@@ -11,7 +11,7 @@ keywords = ["wgsl", "wgpu", "shader", "gpu"]
 categories = ["graphics", "game-development"]
 
 [features]
-default = ["validation", "dispatch-runtime", "fast-compile"]
+default = ["validation", "dispatch-runtime", "fast-compile", "extras"]
 serde = ["dep:serde", "half/serde"]
 validation = ["dep:naga", "wgsl-rs-macros/validation"]
 dispatch-runtime = ["dep:rayon"]
@@ -22,6 +22,8 @@ dispatch-runtime = ["dep:rayon"]
 # cargo unifies features: one crate keeping the defaults turns this on
 # for everyone in that graph.
 fast-compile = ["wgsl-rs-macros/fast-compile"]
+# Include the `wgsl_rs::extras` module, which contains extra QoL additions.
+extras = []
 
 [dependencies]
 glam.workspace = true

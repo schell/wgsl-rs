@@ -23,7 +23,7 @@ use wgsl_rs_ir::mangle;
 use crate::{
     parse::{
         Block, Expr, FnPath, Item, ItemFn, ItemImpl, ItemMod, ItemStruct, Lit, ReturnType,
-        ScalarType, Stmt, Type,
+        ScalarType, Stmt, Type, UnOp,
     },
     parse_visitor::{self, ParseVisitorMut},
 };
@@ -48,9 +48,9 @@ pub struct CrossModuleInstantiation {
     /// Identifier-safe mangled const argument names (e.g. `["4"]`).
     pub mangled_const_args: Vec<String>,
     /// The original parse-side const arguments. These are shipped as a
-    /// `fn() -> Vec<u32>` constructor on the [`crate::Source`] for
+    /// `fn() -> Vec<i64>` constructor on the [`crate::Source`] for
     /// runtime const substitution.
-    pub const_args: Vec<u32>,
+    pub const_args: Vec<i64>,
 }
 
 /// Result of the monomorphization pass.
@@ -223,7 +223,7 @@ struct InstKey {
     type_args: Vec<TypeKey>,
     /// Concrete const generic arguments (e.g. `[4]` for `foo::<4>`).
     /// Included in the key so `foo::<4>` and `foo::<8>` dedup separately.
-    const_args: Vec<u32>,
+    const_args: Vec<i64>,
 }
 
 /// A hashable/orderable representation of a concrete type, for use in dedup
@@ -254,9 +254,9 @@ struct InstRequest {
     span: Span,
     /// The actual `Type` values to substitute (parallel to key.type_args).
     concrete_types: Vec<Type>,
-    /// The actual `u32` const values to substitute (parallel to
+    /// The actual `i64` const values to substitute (parallel to
     /// key.const_args).
-    concrete_consts: Vec<u32>,
+    concrete_consts: Vec<i64>,
 }
 
 struct MonoCtx {
@@ -299,9 +299,9 @@ struct StructInstRequest {
     span: Span,
     /// The actual `Type` values to substitute (parallel to key.type_args).
     concrete_types: Vec<Type>,
-    /// The actual `u32` const values to substitute (parallel to
+    /// The actual `i64` const values to substitute (parallel to
     /// key.const_args).
-    concrete_consts: Vec<u32>,
+    concrete_consts: Vec<i64>,
 }
 
 impl MonoCtx {
@@ -675,14 +675,14 @@ impl MonoCtx {
         self.reserved_names.insert(mangled_name.clone());
 
         // Build substitution maps: type_param_name -> concrete Type,
-        // const_param_name -> concrete u32.
+        // const_param_name -> concrete i64.
         let subst: BTreeMap<String, Type> = template
             .type_params
             .iter()
             .zip(request.concrete_types.iter())
             .map(|(param, ty)| (param.to_string(), ty.clone()))
             .collect();
-        let consts: BTreeMap<String, u32> = template
+        let consts: BTreeMap<String, i64> = template
             .const_params
             .iter()
             .zip(request.concrete_consts.iter())
@@ -741,14 +741,14 @@ impl MonoCtx {
         self.reserved_names.insert(mangled_name.clone());
 
         // Build substitution maps: type_param_name -> concrete Type,
-        // const_param_name -> concrete u32.
+        // const_param_name -> concrete i64.
         let subst: BTreeMap<String, Type> = template
             .type_params
             .iter()
             .zip(request.concrete_types.iter())
             .map(|(param, ty)| (param.to_string(), ty.clone()))
             .collect();
-        let consts: BTreeMap<String, u32> = template
+        let consts: BTreeMap<String, i64> = template
             .const_params
             .iter()
             .zip(request.concrete_consts.iter())
@@ -793,7 +793,7 @@ impl MonoCtx {
                         const_args: vec![],
                     },
                 );
-                let impl_consts: BTreeMap<String, u32> = impl_template
+                let impl_consts: BTreeMap<String, i64> = impl_template
                     .const_params
                     .iter()
                     .zip(request.concrete_consts.iter())
@@ -961,7 +961,7 @@ impl MonoCtx {
         // For now the consts map is empty; the
         // `generic_impl_const_generic_array` trybuild test covers this
         // gap (still compile_fail, see #133).
-        let consts: BTreeMap<String, u32> = BTreeMap::new();
+        let consts: BTreeMap<String, i64> = BTreeMap::new();
 
         // Monomorphize each method and constant.
         for ii in &impl_template.items {
@@ -1399,7 +1399,7 @@ impl ParseVisitorMut for MonoCtx {
 
 struct SubstituteVisitor<'a> {
     subst: &'a BTreeMap<String, Type>,
-    consts: &'a BTreeMap<String, u32>,
+    consts: &'a BTreeMap<String, i64>,
 }
 
 impl ParseVisitorMut for SubstituteVisitor<'_> {
@@ -1438,7 +1438,7 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
         if let Expr::Ident(ident) = expr
             && let Some(&n) = self.consts.get(&ident.to_string())
         {
-            *expr = Expr::Lit(Lit::Int(syn::LitInt::new(&n.to_string(), ident.span())));
+            *expr = parse_const_value_expr(n, ident.span());
             return Ok(());
         }
         // Two extra rewrites that the default walker doesn't perform:
@@ -1510,7 +1510,37 @@ impl ParseVisitorMut for SubstituteVisitor<'_> {
     }
 }
 
-fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>, consts: &BTreeMap<String, u32>) {
+/// Build the parse-side expression for a concrete const-generic value.
+///
+/// Non-negative values render as a bare integer literal. Negative
+/// values become a parenthesized unary minus (`(-4)`), which stays
+/// unambiguous in every expression context once rendered, and matches
+/// the IR-side rendering in `wgsl_rs_ir::substitute`.
+fn parse_const_value_expr(n: i64, span: Span) -> Expr {
+    let lit = Expr::Lit(Lit::Int(syn::LitInt::new(
+        &n.unsigned_abs().to_string(),
+        span,
+    )));
+    if n < 0 {
+        Expr::Paren {
+            // syn 2's delimiter tokens carry a `DelimSpan`, which has no
+            // public constructor from a single `Span` (its fields are
+            // private and there is no `from_single` / `From<Span>`), so
+            // the synthesized paren gets the call-site span. The literal
+            // and the `-` token carry the caller's span; those are the
+            // ones that matter for diagnostics.
+            paren_token: syn::token::Paren::default(),
+            inner: Box::new(Expr::Unary {
+                op: UnOp::Neg(syn::Token![-](span)),
+                expr: Box::new(lit),
+            }),
+        }
+    } else {
+        lit
+    }
+}
+
+fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>, consts: &BTreeMap<String, i64>) {
     let mut v = SubstituteVisitor { subst, consts };
     let _ = v.visit_type(ty);
 }
@@ -1518,7 +1548,7 @@ fn substitute_type(ty: &mut Type, subst: &BTreeMap<String, Type>, consts: &BTree
 fn substitute_block(
     block: &mut Block,
     subst: &BTreeMap<String, Type>,
-    consts: &BTreeMap<String, u32>,
+    consts: &BTreeMap<String, i64>,
 ) {
     let mut v = SubstituteVisitor { subst, consts };
     let _ = v.visit_block(block);
@@ -1527,7 +1557,7 @@ fn substitute_block(
 fn substitute_expr(
     expr: &mut Expr,
     subst: &BTreeMap<String, Type>,
-    consts: &BTreeMap<String, u32>,
+    consts: &BTreeMap<String, i64>,
 ) {
     let mut v = SubstituteVisitor { subst, consts };
     let _ = v.visit_expr(expr);
@@ -1855,10 +1885,10 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
                 let mangled_const_args: Vec<String> =
-                    const_args.iter().map(|n| n.to_string()).collect();
+                    const_args.iter().map(|&n| mangle_const_value(n)).collect();
                 let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
                 let parse_type_args: Vec<Type> = type_args.clone();
-                let parse_const_args: Vec<u32> = const_args.clone();
+                let parse_const_args: Vec<i64> = const_args.clone();
 
                 *ident = Ident::new(&mangled_name, ident.span());
                 type_args.clear();
@@ -1903,9 +1933,9 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .map(mangle_type)
                             .collect::<Result<_, _>>()?;
                         let mangled_const_args: Vec<String> =
-                            const_args.iter().map(|n| n.to_string()).collect();
+                            const_args.iter().map(|&n| mangle_const_value(n)).collect();
                         let parse_type_args: Vec<Type> = type_args.clone();
-                        let parse_const_args: Vec<u32> = const_args.clone();
+                        let parse_const_args: Vec<i64> = const_args.clone();
                         let mangled_struct = mangle_name(&ty_name, type_args, const_args)?;
                         let mangled_fn = mangle(&[&mangled_struct, &method.to_string()]);
                         let span = ty.span();
@@ -1958,9 +1988,9 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .map(mangle_type)
                             .collect::<Result<Vec<_>, _>>()?;
                         let mangled_const_args: Vec<String> =
-                            const_args.iter().map(|n| n.to_string()).collect();
+                            const_args.iter().map(|&n| mangle_const_value(n)).collect();
                         let parse_type_args: Vec<Type> = type_args.clone();
-                        let parse_const_args: Vec<u32> = const_args.clone();
+                        let parse_const_args: Vec<i64> = const_args.clone();
                         let mangled_name = mangle_name(&fn_name, type_args, const_args)?;
 
                         let span = match &*path {
@@ -2004,9 +2034,9 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                         .map(mangle_type)
                         .collect::<Result<_, _>>()?;
                     let mangled_const_args: Vec<String> =
-                        const_args.iter().map(|n| n.to_string()).collect();
+                        const_args.iter().map(|&n| mangle_const_value(n)).collect();
                     let parse_type_args: Vec<Type> = type_args.clone();
-                    let parse_const_args: Vec<u32> = const_args.clone();
+                    let parse_const_args: Vec<i64> = const_args.clone();
                     let mangled_name = mangle_name(&struct_name, type_args, const_args)?;
 
                     *ident = Ident::new(&mangled_name, ident.span());
@@ -2064,7 +2094,7 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .map(mangle_type)
                             .collect::<Result<_, _>>()?;
                         let mangled_const_args: Vec<String> =
-                            const_args.iter().map(|n| n.to_string()).collect();
+                            const_args.iter().map(|&n| mangle_const_value(n)).collect();
                         self.out.push(CrossModuleInstantiation {
                             import_paths: self.import_paths.to_vec(),
                             fn_name: struct_name,
@@ -2108,7 +2138,7 @@ impl ParseVisitorMut for CrossModuleVisitor<'_> {
                             .map(mangle_type)
                             .collect::<Result<_, _>>()?;
                         let mangled_const_args: Vec<String> =
-                            const_args.iter().map(|n| n.to_string()).collect();
+                            const_args.iter().map(|&n| mangle_const_value(n)).collect();
                         self.out.push(CrossModuleInstantiation {
                             import_paths: self.import_paths.to_vec(),
                             fn_name: struct_name,
@@ -2289,6 +2319,20 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
 // contains underscores is escaped as `_N{comp}` so that mangled names are
 // unambiguous. See issue #112 for motivation.
 
+/// Mangle a single const generic value into an identifier-safe
+/// component. Non-negative values render as plain decimal digits
+/// (unchanged from before signed const support). Negative values are
+/// encoded with an `n` prefix (e.g. `-4` → `n4`), following rustc's own
+/// symbol-mangling convention for negative const values — `-` cannot
+/// appear in a WGSL identifier.
+fn mangle_const_value(n: i64) -> String {
+    if n < 0 {
+        format!("n{}", n.unsigned_abs())
+    } else {
+        n.to_string()
+    }
+}
+
 /// Mangle a generic instantiation name. The result is
 /// `mangle(&[base, &arg1_mangled, &arg2_mangled, ...])`. Each
 /// `argN_mangled` is itself the output of [`mangle_type`] and is treated
@@ -2297,13 +2341,13 @@ fn type_to_ident(ty: &Type, span: Span) -> Ident {
 fn mangle_name(
     base: &str,
     type_args: &[Type],
-    const_args: &[u32],
+    const_args: &[i64],
 ) -> Result<String, crate::parse::Error> {
     let mangled_args: Vec<String> = type_args
         .iter()
         .map(mangle_type)
         .collect::<Result<_, _>>()?;
-    let mangled_consts: Vec<String> = const_args.iter().map(|n| n.to_string()).collect();
+    let mangled_consts: Vec<String> = const_args.iter().map(|&n| mangle_const_value(n)).collect();
     let mut components: Vec<String> =
         Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
     components.push(base.to_string());
@@ -2344,7 +2388,7 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
                 let mangled_consts: Vec<String> =
-                    const_args.iter().map(|n| n.to_string()).collect();
+                    const_args.iter().map(|&n| mangle_const_value(n)).collect();
                 let ident_str = ident.to_string();
                 let mut components: Vec<String> =
                     Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());
@@ -2460,7 +2504,7 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
                     .map(mangle_type)
                     .collect::<Result<_, _>>()?;
                 let mangled_consts: Vec<String> =
-                    const_args.iter().map(|n| n.to_string()).collect();
+                    const_args.iter().map(|&n| mangle_const_value(n)).collect();
                 let ident_str = ident.to_string();
                 let mut components: Vec<String> =
                     Vec::with_capacity(1 + mangled_args.len() + mangled_consts.len());

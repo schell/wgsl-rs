@@ -194,7 +194,7 @@ pub struct Cell<K: Copy, V: Copy> {
 
 ## Const Generic Parameters
 
-Structs can also take `const N: usize` or `const N: u32` parameters, which are substituted with concrete integer literals at monomorphization time. This is the natural way to express arrays whose length varies per instantiation:
+Structs can also take `const N: usize`, `const N: u32`, or `const N: i32` parameters, which are substituted with concrete integer literals at monomorphization time. `usize`/`u32` const params are the natural way to express arrays whose length varies per instantiation:
 
 ```rust
 pub struct Grid<const N: usize> {

@@ -1,0 +1,15 @@
+error: the constant `N` is not of type `usize`
+  --> tests/ui/fail/const_param_i32_in_array_length.rs:14:35
+   |
+14 |     pub fn sum<const N: i32>(arr: [f32; N]) -> f32 {
+   |                                   ^^^^^^^^ expected `usize`, found `i32`
+   |
+   = note: the length of array `[f32; N]` must be type `usize`
+
+error: the constant `N` is not of type `usize`
+  --> tests/ui/fail/const_param_i32_in_array_length.rs:15:9
+   |
+15 |         arr[0]
+   |         ^^^ expected `usize`, found `i32`
+   |
+   = note: the length of array `[f32; N]` must be type `usize`

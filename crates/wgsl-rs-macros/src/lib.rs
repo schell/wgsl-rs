@@ -711,9 +711,10 @@ fn gen_wgsl_module(
                 .collect();
 
             // Build the const-args constructor. Const values are known
-            // at macro time (parsed from integer literals in turbofish),
-            // so the constructor is a simple `vec![4, 8, ...]` literal.
-            let const_vals: Vec<u32> = inst.const_args.clone();
+            // at macro time (parsed from integer literals in turbofish,
+            // possibly negative), so the constructor is a simple
+            // `vec![4, 8, ...]` literal.
+            let const_vals: Vec<i64> = inst.const_args.clone();
 
             let ctor_ident = quote::format_ident!("__wgsl_inst_{}_ctor", idx);
             inst_constructors.push(quote! {
@@ -724,7 +725,7 @@ fn gen_wgsl_module(
 
             let const_ctor_ident = quote::format_ident!("__wgsl_inst_const_{}_ctor", idx);
             inst_constructors.push(quote! {
-                fn #const_ctor_ident() -> ::std::vec::Vec<u32> {
+                fn #const_ctor_ident() -> ::std::vec::Vec<i64> {
                     ::std::vec![#(#const_vals),*]
                 }
             });

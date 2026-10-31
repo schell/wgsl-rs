@@ -74,7 +74,7 @@ A call `mix::<f32, u32>(x, y)` produces `mix_f32_u32`.
 
 ## Const Generic Parameters
 
-Functions can also take `const` generic parameters of type `u32` or `usize` — the only const param types that make sense in WGSL (they're used as array lengths). The const param is substituted with a concrete integer literal at monomorphization time:
+Functions can also take `const` generic parameters of type `u32`, `usize`, or `i32`. `u32`/`usize` const params are used as array lengths; `i32` const params are for value-position constants like internal min/max clamps (see [Signed const parameters](#signed-i32-const-parameters) below). The const param is substituted with a concrete integer literal at monomorphization time:
 
 ```rust
 pub fn sum_n<const N: usize>(arr: [u32; N]) -> u32 {
@@ -93,6 +93,28 @@ pub fn run() -> u32 {
 The call `sum_n::<4>` produces a WGSL function `sum_n_4` with `N` replaced by the literal `4` throughout (including the array type and loop bound). Const and type params can coexist on the same function; they're monomorphized over the full tuple of arguments.
 
 > Const param references are always bare identifiers (e.g. `N`), per stable Rust's const generics syntax. They're substituted to `Expr::Lit` at monomorphization time — no new IR variant is needed.
+
+## Signed (`i32`) const parameters
+
+`i32` const params carry value-position constants — internal clamp bounds, sentinels, biases — including negative ones:
+
+```rust
+pub fn clamp_to<const MIN: i32, const MAX: i32>(x: i32) -> i32 {
+    max(min(x, MAX), MIN)
+}
+
+pub fn run(x: i32) -> i32 {
+    clamp_to::<-8, 8>(x)
+}
+```
+
+Three things to know about negative values:
+
+1. **Names.** The const value is baked into the mangled WGSL function name, which cannot contain `-`. Negative values mangle with an `n` prefix, so `clamp_to::<-8, 8>` produces `clamp_to_n8_8`.
+2. **Literals.** A substituted negative renders parenthesized — `max(min(x, 8), (-8))` — so it stays unambiguous in every expression context.
+3. **Value positions only.** An `i32` const param can never appear in an array length or index: Rust requires array sizes to evaluate to `usize`, so rustc rejects that code before wgsl-rs is involved at all. The same applies to switch case selectors (`NEG => ...`), which rustc refuses (E0158). So an `i32` const param is confined to ordinary value expressions by construction — no extra rules to remember.
+
+See the `clamp_bounds` example module (`cargo run -p example -- source clamp_bounds`).
 
 ## Trait Bounds are Rust-Only
 

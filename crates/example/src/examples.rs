@@ -34,6 +34,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &derivative_example::WGSL_SOURCE,
     &discard_example::WGSL_SOURCE,
     &generic_functions::WGSL_SOURCE,
+    &clamp_bounds::WGSL_SOURCE,
     &trait_impl_example::WGSL_SOURCE,
     &qself_call_example::WGSL_SOURCE,
     &renderer_specialization::WGSL_SOURCE,
@@ -1628,6 +1629,51 @@ pub mod generic_functions {
     /// Concrete function that calls the generic helpers with `i32`.
     pub fn apply_i32(value: i32) -> i32 {
         double_or_keep::<i32>(value, false)
+    }
+}
+
+/// Signed (`i32`) const generic parameters: value-position constants like
+/// min/max clamps, substituted with concrete literals at monomorphization
+/// time. Negative const arguments mangle with an `n` prefix (following
+/// rustc's symbol-mangling convention for negative const values), so
+/// `clamp_to::<-8, 8>` becomes `clamp_to_n8_8` in WGSL.
+///
+/// `i32` const params are value-position-only by construction: Rust
+/// requires array sizes to evaluate to `usize`, so an `i32` const param
+/// can never legally appear in an array length or index.
+#[wgsl]
+pub mod clamp_bounds {
+    use wgsl_rs::std::*;
+
+    /// Clamp `x` to `[MIN, MAX]` via `i32` const generic parameters.
+    pub fn clamp_to<const MIN: i32, const MAX: i32>(x: i32) -> i32 {
+        max(min(x, MAX), MIN)
+    }
+
+    /// Instantiation with a negative lower bound: `clamp_to::<-8, 8>`
+    /// monomorphizes to `clamp_to_n8_8`.
+    pub fn clamped_neg(value: i32) -> i32 {
+        clamp_to::<-8, 8>(value)
+    }
+
+    /// Instantiation with a positive-only range: `clamp_to::<0, 100>`
+    /// monomorphizes to `clamp_to_0_100`.
+    pub fn clamped_pos(value: i32) -> i32 {
+        clamp_to::<0, 100>(value)
+    }
+
+    /// A negative loop bound: `0..END` with `END = -4` is an empty range
+    /// in both worlds, so `run_sum` returns its input untouched.
+    pub fn sum_to<const END: i32>(x: i32) -> i32 {
+        let mut total: i32 = x;
+        for i in 0..END {
+            total += i;
+        }
+        total
+    }
+
+    pub fn run_sum(value: i32) -> i32 {
+        sum_to::<-4>(value)
     }
 }
 

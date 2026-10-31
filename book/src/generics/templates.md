@@ -9,7 +9,7 @@ Use a template module when the type of an entry point, a linkage binding, or a s
 A module becomes a template when **any** of the following appear:
 
 - An entry-point function with type parameters.
-- An entry-point function with const parameters (`const N: usize` or `const N: u32`).
+- An entry-point function with const parameters (`const N: usize`, `const N: u32`, or `const N: i32`).
 - A linkage macro (`uniform!`, `storage!`, ...) whose declared type uses `impl Trait`.
 - A `get!(VAR, T)` accessor that introduces a fresh type variable bound to a linkage variable.
 
@@ -101,7 +101,7 @@ Templates support multiple type parameters and transitive generic calls just lik
 
 ## Const Parameters on Entry Points
 
-Entry points can also take `const N: usize` (or `const N: u32`) parameters. The module becomes a template and is instantiated with a concrete integer:
+Entry points can also take `const N: usize`, `const N: u32`, or `const N: i32` parameters. The module becomes a template and is instantiated with a concrete integer:
 
 ```rust
 #[wgsl(skip_validation)]

@@ -1523,6 +1523,12 @@ fn parse_const_value_expr(n: i64, span: Span) -> Expr {
     )));
     if n < 0 {
         Expr::Paren {
+            // syn 2's delimiter tokens carry a `DelimSpan`, which has no
+            // public constructor from a single `Span` (its fields are
+            // private and there is no `from_single` / `From<Span>`), so
+            // the synthesized paren gets the call-site span. The literal
+            // and the `-` token carry the caller's span; those are the
+            // ones that matter for diagnostics.
             paren_token: syn::token::Paren::default(),
             inner: Box::new(Expr::Unary {
                 op: UnOp::Neg(syn::Token![-](span)),

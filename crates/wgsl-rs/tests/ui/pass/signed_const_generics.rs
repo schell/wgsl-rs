@@ -17,7 +17,7 @@
 use wgsl_rs::wgsl;
 
 // 1. Generic function with a signed const param, called locally.
-#[wgsl(crate_path = wgsl_rs)]
+#[wgsl]
 mod signed_fn {
     use wgsl_rs::std::*;
 
@@ -39,7 +39,7 @@ mod signed_fn {
 }
 
 // 2. Generic struct with signed const params, used in impl method bodies.
-#[wgsl(crate_path = wgsl_rs)]
+#[wgsl]
 mod signed_struct {
     use wgsl_rs::std::*;
 
@@ -61,14 +61,14 @@ mod signed_struct {
 // 3. Cross-module template instantiation: a signed const-generic function
 //    exported from one `#[wgsl]` mod and invoked with a negative argument
 //    from another.
-#[wgsl(crate_path = wgsl_rs)]
+#[wgsl]
 mod provider {
     pub fn bias_add<const BIAS: i32>(x: i32) -> i32 {
         x + BIAS
     }
 }
 
-#[wgsl(crate_path = wgsl_rs)]
+#[wgsl]
 mod consumer {
     use super::provider::*;
 
@@ -79,7 +79,7 @@ mod consumer {
 
 // 4. Entry point with a signed const param, driving the
 //    `instantiate::<…>()` codegen path with a negative value.
-#[wgsl(crate_path = wgsl_rs, skip_validation)]
+#[wgsl(skip_validation)]
 mod signed_entry_point {
     use wgsl_rs::std::*;
 

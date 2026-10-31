@@ -169,7 +169,10 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             let name = format_ident!("{}_C{}_{}", upper_cp, i, upper_fn);
             // Replay the declared const-param type (`u32`, `usize`, or
             // `i32`) verbatim; see the `ty` field on
-            // `EntryPointConstSlot`.
+            // `EntryPointConstSlot`. The lookup can only fail if
+            // `const_params` and `syn_generics` disagree, which would be
+            // a parser bug — not something to paper over with a
+            // fallback type.
             let ty = f
                 .syn_generics
                 .as_ref()
@@ -179,7 +182,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
                         _ => None,
                     })
                 })
-                .unwrap_or_else(|| syn::parse_quote!(u32));
+                .expect("const param ident must appear in the entry point's syn generics");
             ep_const_slots.push(EntryPointConstSlot {
                 name,
                 encoded_name: encoded,

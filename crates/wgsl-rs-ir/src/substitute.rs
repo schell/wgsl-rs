@@ -728,22 +728,24 @@ fn const_value_expr(n: i64) -> Expr {
     }
 }
 
-/// Guard an array-length position against a negative const value. WGSL
-/// requires positive element counts, so a negative must never render
-/// there. This is unreachable through wgsl-rs macros — rustc rejects
-/// non-`usize` array lengths, so an `i32` const param can't occupy this
-/// position in valid Rust — but hand-rolled IR (extensions) could
-/// produce it, and the failure would otherwise surface as an opaque
-/// WGSL validation error far from the cause.
+/// Guard an array-length position against a negative const value: a
+/// negative length is never valid in WGSL. This is unreachable through
+/// wgsl-rs macros — rustc rejects non-`usize` array lengths, so an
+/// `i32` const param can't occupy this position in valid Rust — but
+/// hand-rolled IR (extensions) could produce it, and the failure would
+/// otherwise surface as an opaque WGSL validation error far from the
+/// cause. Zero-length arrays are deliberately not guarded here: they
+/// are legal Rust (`[f32; 0]`) and reachable through the macro, so
+/// WGSL validation reports them like any other invalid length.
 fn expect_nonneg_const(len: &Expr, consts: &HashMap<String, i64>) {
     if let Expr::Ident(name) = len
         && let Some(&n) = consts.get(name)
         && n < 0
     {
         panic!(
-            "negative const generic value {n} substituted into an array length; WGSL element \
-             counts must be positive (unreachable through wgsl-rs macros, which only allow \
-             `usize` array lengths; this indicates hand-rolled IR)"
+            "negative const generic value {n} substituted into an array length; negative lengths \
+             are never valid (unreachable through wgsl-rs macros, which only allow `usize` array \
+             lengths; this indicates hand-rolled IR)"
         );
     }
 }

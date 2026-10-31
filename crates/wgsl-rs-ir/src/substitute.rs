@@ -40,7 +40,7 @@ pub fn substitute_items(items: &mut [Item], subst: &HashMap<String, Type>) {
 /// the same IR tree but rewrites array length expressions (and any other
 /// `Expr::Ident` naming a const param) to integer literals. The two passes
 /// are independent and can be run in either order.
-pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, u32>) {
+pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, i64>) {
     for item in &mut module.items {
         sub_item_const(item, consts);
     }
@@ -48,7 +48,7 @@ pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, u32>) {
 
 /// Like [`substitute_consts`] but over a slice of items (e.g. a generic
 /// template's body, as used by the cross-module template machinery).
-pub fn substitute_consts_in_items(items: &mut [Item], consts: &HashMap<String, u32>) {
+pub fn substitute_consts_in_items(items: &mut [Item], consts: &HashMap<String, i64>) {
     for item in items {
         sub_item_const(item, consts);
     }
@@ -635,7 +635,7 @@ fn sub_if(i: &mut StmtIf, s: &HashMap<String, Type>) {
 // bare ident because stable Rust only allows bare idents (or literals)
 // as const generic arguments in type position.
 
-fn sub_item_const(item: &mut Item, consts: &HashMap<String, u32>) {
+fn sub_item_const(item: &mut Item, consts: &HashMap<String, i64>) {
     match item {
         Item::Const(c) => {
             sub_type_const(&mut c.ty, consts);
@@ -668,7 +668,7 @@ fn sub_item_const(item: &mut Item, consts: &HashMap<String, u32>) {
     }
 }
 
-fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, u32>) {
+fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, i64>) {
     for arg in &mut f.inputs {
         sub_type_const(&mut arg.ty, consts);
     }
@@ -678,7 +678,7 @@ fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, u32>) {
     sub_block_const(&mut f.block, consts);
 }
 
-fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
+fn sub_type_const(ty: &mut Type, consts: &HashMap<String, i64>) {
     match ty {
         Type::Scalar(_)
         | Type::Sampler
@@ -690,6 +690,7 @@ fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
         | Type::Matrix { .. }
         | Type::TypeParam { .. } => {}
         Type::Array { elem, len } => {
+            expect_nonneg_const(len, consts);
             sub_type_const(elem, consts);
             sub_expr_const(len, consts);
         }
@@ -705,14 +706,53 @@ fn sub_type_const(ty: &mut Type, consts: &HashMap<String, u32>) {
     }
 }
 
-fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, u32>) {
+/// Build the IR expression for a concrete const-generic value.
+///
+/// Non-negative values render as a bare abstract-int literal —
+/// byte-identical to the output before signed const support. Negative
+/// values are wrapped in parentheses so they stay unambiguous in every
+/// expression context (e.g. `2 - (-4)` rather than `2 - -4`, and
+/// `-(-4)` rather than `--4`).
+fn const_value_expr(n: i64) -> Expr {
+    let lit = Expr::Lit(Lit::Int {
+        digits: n.unsigned_abs().to_string(),
+        suffix: String::new(),
+    });
+    if n < 0 {
+        Expr::Paren(Box::new(Expr::Unary {
+            op: UnOp::Neg,
+            expr: Box::new(lit),
+        }))
+    } else {
+        lit
+    }
+}
+
+/// Guard an array-length position against a negative const value. WGSL
+/// requires positive element counts, so a negative must never render
+/// there. This is unreachable through wgsl-rs macros — rustc rejects
+/// non-`usize` array lengths, so an `i32` const param can't occupy this
+/// position in valid Rust — but hand-rolled IR (extensions) could
+/// produce it, and the failure would otherwise surface as an opaque
+/// WGSL validation error far from the cause.
+fn expect_nonneg_const(len: &Expr, consts: &HashMap<String, i64>) {
+    if let Expr::Ident(name) = len
+        && let Some(&n) = consts.get(name)
+        && n < 0
+    {
+        panic!(
+            "negative const generic value {n} substituted into an array length; WGSL element \
+             counts must be positive (unreachable through wgsl-rs macros, which only allow \
+             `usize` array lengths; this indicates hand-rolled IR)"
+        );
+    }
+}
+
+fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, i64>) {
     match e {
         Expr::Ident(name) => {
             if let Some(&n) = consts.get(name) {
-                *e = Expr::Lit(Lit::Int {
-                    digits: n.to_string(),
-                    suffix: String::new(),
-                });
+                *e = const_value_expr(n);
             }
         }
         Expr::Lit(_) | Expr::TypePath { .. } => {}
@@ -779,19 +819,20 @@ fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, u32>) {
         }
         Expr::FieldAccess { base, .. } => sub_expr_const(base, consts),
         Expr::ZeroValueArray { elem_type, len } => {
+            expect_nonneg_const(len, consts);
             sub_type_const(elem_type, consts);
             sub_expr_const(len, consts);
         }
     }
 }
 
-fn sub_block_const(b: &mut Block, consts: &HashMap<String, u32>) {
+fn sub_block_const(b: &mut Block, consts: &HashMap<String, i64>) {
     for stmt in &mut b.stmts {
         sub_stmt_const(stmt, consts);
     }
 }
 
-fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, u32>) {
+fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, i64>) {
     match st {
         Stmt::Local(l) => {
             if let Some(t) = &mut l.ty {
@@ -863,7 +904,7 @@ fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, u32>) {
     }
 }
 
-fn sub_if_const(i: &mut StmtIf, consts: &HashMap<String, u32>) {
+fn sub_if_const(i: &mut StmtIf, consts: &HashMap<String, i64>) {
     sub_expr_const(&mut i.condition, consts);
     sub_block_const(&mut i.then_block, consts);
     if let Some(eb) = &mut i.else_branch {

@@ -89,6 +89,7 @@ pub mod modf_frexp_ldexp;
 pub mod packing;
 pub mod rounding;
 pub mod select_operations;
+pub mod signed_const_generics;
 pub mod storage_texture_operations;
 pub mod synchronization;
 pub mod texture_operations;
@@ -121,6 +122,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(literal_suffixes::LoopVarTypeTest),
         Box::new(load_macro::LoadMacroTest),
         Box::new(select_operations::SelectOperationsTest),
+        Box::new(signed_const_generics::SignedConstGenericsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),
         Box::new(atomic_operations::AtomicOperationsTest),

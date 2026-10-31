@@ -80,10 +80,11 @@ struct EntryPointSlot {
     fn_name: String,
 }
 
-/// An entry-point const-parameter slot. Each `const N: u32` parameter of
-/// each entry point function becomes a generic const parameter on
-/// `instantiate`. Const params use a separate positional namespace
-/// (`{fn}_c{i}`) from type params (`{fn}_{i}`) so they don't collide.
+/// An entry-point const-parameter slot. Each supported const parameter
+/// (`const N: u32`, `usize`, or `i32`) of each entry point function
+/// becomes a generic const parameter on `instantiate`. Const params use a
+/// separate positional namespace (`{fn}_c{i}`) from type params
+/// (`{fn}_{i}`) so they don't collide.
 #[allow(dead_code)]
 struct EntryPointConstSlot {
     /// The const parameter ident used on the `instantiate` function.
@@ -93,6 +94,10 @@ struct EntryPointConstSlot {
     /// The parent function's name (for diagnostics).
     #[allow(dead_code)]
     fn_name: String,
+    /// The declared const-param type (`u32`, `usize`, or `i32`),
+    /// replayed verbatim on `instantiate` so rustc type-checks
+    /// instantiation values at the call site.
+    ty: syn::Type,
 }
 
 /// Generate an `instantiate` function for the given module. Returns an empty
@@ -162,10 +167,24 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             let upper_cp = cp.to_string().to_uppercase();
             let upper_fn = fn_name_str.to_uppercase();
             let name = format_ident!("{}_C{}_{}", upper_cp, i, upper_fn);
+            // Replay the declared const-param type (`u32`, `usize`, or
+            // `i32`) verbatim; see the `ty` field on
+            // `EntryPointConstSlot`.
+            let ty = f
+                .syn_generics
+                .as_ref()
+                .and_then(|g| {
+                    g.params.iter().find_map(|p| match p {
+                        syn::GenericParam::Const(ccp) if ccp.ident == *cp => Some(ccp.ty.clone()),
+                        _ => None,
+                    })
+                })
+                .unwrap_or_else(|| syn::parse_quote!(u32));
             ep_const_slots.push(EntryPointConstSlot {
                 name,
                 encoded_name: encoded,
                 fn_name: fn_name_str.clone(),
+                ty,
             });
         }
     }
@@ -213,19 +232,18 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     }
 
     // Add entry-point const parameter generic params (e.g.
-    // `<const N_FRAG_MAIN_C0: u32>`). Const params cannot have trait
-    // bounds, so no Wgsl bound is added. The parse layer accepts both
-    // `u32` and `usize` const params; here they're represented as `u32`
-    // on the `instantiate` function (a `usize` value is a valid `u32`
-    // for all realistic array lengths, and the IR substitution map uses
-    // `u32`).
+    // `<const N_FRAG_MAIN_C0: usize>`). Const params cannot have trait
+    // bounds, so no Wgsl bound is added. The declared const-param type
+    // (`u32`, `usize`, or `i32`) is replayed verbatim so rustc
+    // type-checks instantiation values at the call site; the values are
+    // widened to `i64` when building the substitution map below.
     for slot in &ep_const_slots {
         let cp = syn::ConstParam {
             attrs: Vec::new(),
             const_token: syn::Token![const](proc_macro2::Span::call_site()),
             ident: slot.name.clone(),
             colon_token: syn::Token![:](proc_macro2::Span::call_site()),
-            ty: syn::Type::Path(syn::parse_quote!(u32)),
+            ty: slot.ty.clone(),
             eq_token: None,
             default: None,
         };
@@ -298,15 +316,15 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     }
 
     // Build the const substitution-map entries (parallel to the type
-    // subst above). Const params are `u32` values passed directly; no
-    // trait dispatch is needed (unlike the type-param case which uses
-    // `<T as Wgsl>::to_ir()`).
+    // subst above). Const params are passed directly and widened to
+    // `i64` for the substitution map; no trait dispatch is needed
+    // (unlike the type-param case which uses `<T as Wgsl>::to_ir()`).
     let mut const_subst_entries: Vec<TokenStream> = Vec::new();
     for slot in &ep_const_slots {
         let name = &slot.name;
         let encoded_name_str = &slot.encoded_name;
         const_subst_entries.push(quote! {
-            (::std::string::String::from(#encoded_name_str), #name)
+            (::std::string::String::from(#encoded_name_str), #name as i64)
         });
     }
 
@@ -343,7 +361,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
                 #(#subst_entries),*
             ].into_iter().collect();
             #ir_p::substitute_types(&mut __ir_module, &__subst);
-            let __const_subst: ::std::collections::HashMap<::std::string::String, u32> = [
+            let __const_subst: ::std::collections::HashMap<::std::string::String, i64> = [
                 #(#const_subst_entries),*
             ].into_iter().collect();
             #ir_p::substitute_consts(&mut __ir_module, &__const_subst);

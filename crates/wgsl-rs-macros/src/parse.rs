@@ -141,7 +141,7 @@ pub struct ParseContext {
     /// Names of `const` parameters currently in scope (e.g., `"N"` from
     /// `const N: u32`). These are recognized in array length position and
     /// other const-expression contexts, where they emit `Expr::Ident(name)`
-    /// and are later substituted with concrete `u32` values during
+    /// and are later substituted with concrete `i64` values during
     /// monomorphization.
     pub const_params: HashSet<String>,
     /// Optional name map applied when emitting `Type::TypeParam`. When a
@@ -1079,13 +1079,13 @@ pub enum Type {
     ///
     /// `type_args` is empty for non-generic struct types. For generic struct
     /// types, it contains the concrete type arguments (e.g., `[f32]` for
-    /// `Pair<f32>`). `const_args` carries concrete `u32` values for any
+    /// `Pair<f32>`). `const_args` carries concrete `i64` values for any
     /// const generic arguments (e.g., `[4]` for `Grid::<4>`); it is empty
     /// for type-only generics or non-generic structs.
     Struct {
         ident: Ident,
         type_args: Vec<Type>,
-        const_args: Vec<u32>,
+        const_args: Vec<i64>,
     },
 
     /// Pointer type: ptr<address_space, T>
@@ -1759,7 +1759,7 @@ impl Type {
                                     type_args.push(Type::parse(ty, ctx)?);
                                 }
                                 syn::GenericArgument::Const(expr) => {
-                                    let n = eval_const_u32_arg(expr)?;
+                                    let n = eval_const_arg(expr)?;
                                     const_args.push(n);
                                 }
                                 other => {
@@ -2316,9 +2316,9 @@ pub enum Expr {
         type_args: Vec<Type>,
         /// Concrete const arguments from turbofish syntax (e.g.,
         /// `foo::<4>` for a `const N: u32` parameter). Empty for
-        /// non-const-generic calls. Values are `u32` literal integers
-        /// parsed at macro time.
-        const_args: Vec<u32>,
+        /// non-const-generic calls. Values are `i64` literal integers
+        /// (possibly negative) parsed at macro time.
+        const_args: Vec<i64>,
         paren_token: syn::token::Paren,
         params: syn::punctuated::Punctuated<Expr, syn::Token![,]>,
     },
@@ -2326,14 +2326,14 @@ pub enum Expr {
     ///
     /// `type_args` carries concrete type arguments for generic struct
     /// construction (e.g., `Pair::<f32> { ... }`). `const_args` carries
-    /// concrete `u32` values for any const generic arguments (e.g.,
+    /// concrete `i64` values for any const generic arguments (e.g.,
     /// `Grid::<4> { ... }`). Both are empty for non-generic structs.
     /// After monomorphization, the ident is rewritten to the mangled
     /// name and both args vecs are cleared.
     Struct {
         ident: Ident,
         type_args: Vec<Type>,
-        const_args: Vec<u32>,
+        const_args: Vec<i64>,
         brace_token: syn::token::Brace,
         fields: syn::punctuated::Punctuated<FieldValue, syn::Token![,]>,
     },
@@ -2521,7 +2521,7 @@ impl Expr {
                                         type_args.push(Type::parse(ty, ctx)?);
                                     }
                                     syn::GenericArgument::Const(expr) => {
-                                        const_args.push(eval_const_u32_arg(expr)?);
+                                        const_args.push(eval_const_arg(expr)?);
                                     }
                                     other => {
                                         return UnsupportedSnafu {
@@ -2802,7 +2802,7 @@ impl Expr {
                                             ta.push(Type::parse(ty, ctx)?);
                                         }
                                         syn::GenericArgument::Const(expr) => {
-                                            ca.push(eval_const_u32_arg(expr)?);
+                                            ca.push(eval_const_arg(expr)?);
                                         }
                                         other => {
                                             return UnsupportedSnafu {
@@ -2844,7 +2844,7 @@ impl Expr {
                                         type_args.push(Type::parse(ty, ctx)?);
                                     }
                                     syn::GenericArgument::Const(expr) => {
-                                        const_args.push(eval_const_u32_arg(expr)?);
+                                        const_args.push(eval_const_arg(expr)?);
                                     }
                                     other => {
                                         return UnsupportedSnafu {
@@ -2971,7 +2971,7 @@ impl Expr {
                                 type_args.push(Type::parse(ty, ctx)?);
                             }
                             syn::GenericArgument::Const(expr) => {
-                                const_args.push(eval_const_u32_arg(expr)?);
+                                const_args.push(eval_const_arg(expr)?);
                             }
                             other => {
                                 return UnsupportedSnafu {
@@ -5110,13 +5110,12 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
                     .fail();
                 }
                 syn::GenericParam::Const(cp) => {
-                    // Only `u32` and `usize` const params are supported.
                     // Other types have no WGSL analog.
-                    if !is_u32_or_usize_const_param(&cp.ty) {
+                    if !is_supported_const_param(&cp.ty) {
                         return UnsupportedSnafu {
                             span: cp.ty.span(),
-                            note: "only `u32` and `usize` const generic parameters are supported \
-                                   in WGSL",
+                            note: "only `u32`, `usize`, and `i32` const generic parameters are \
+                                   supported in WGSL",
                         }
                         .fail();
                     }
@@ -5354,33 +5353,40 @@ fn ensure_ident_is_not_shadowing_builtin(ident: &Ident) -> Result<(), Error> {
     }
 }
 
-/// Check whether a const generic parameter's type is `u32` or `usize` —
-/// the only const-param types supported in WGSL (they're the only types
-/// that make sense as array lengths, the sole legitimate use case).
-fn is_u32_or_usize_const_param(ty: &syn::Type) -> bool {
+/// Check whether a const generic parameter's type is one of the supported
+/// const-param types: `u32`, `usize`, or `i32`.
+///
+/// `u32`/`usize` const params are for array lengths. `i32` const params
+/// are for value-position constants (min/max clamps, sentinels) — i32 is
+/// the only signed integer type WGSL has. No macro-time sign enforcement
+/// is needed for type positions: Rust requires array sizes to evaluate to
+/// `usize`, so an `i32` const param can never legally appear in an array
+/// length or index in valid Rust. Since a `#[wgsl]` module must compile
+/// as valid Rust, rustc is the type checker for those positions.
+fn is_supported_const_param(ty: &syn::Type) -> bool {
     if let syn::Type::Path(type_path) = ty
         && type_path.qself.is_none()
         && type_path.path.segments.len() == 1
     {
         let ident = type_path.path.segments[0].ident.to_string();
-        return matches!(ident.as_str(), "u32" | "usize");
+        return matches!(ident.as_str(), "u32" | "usize" | "i32");
     }
     false
 }
 
-/// Evaluate a const generic argument expression to a `u32`. Only integer
-/// literals (and parenthesized integer literals) are supported — on
-/// stable Rust a const generic argument in type position must be a bare
-/// literal or a path, never an arbitrary expression. We support literals
-/// here and reject everything else with a clear error.
-fn eval_const_u32_arg(expr: &syn::Expr) -> Result<u32, Error> {
+/// Evaluate a const generic argument expression to an `i64`. Only integer
+/// literals (with an optional leading `-`, and parenthesized) are
+/// supported — on stable Rust a const generic argument in type position
+/// must be a bare literal or a path, never an arbitrary expression. We
+/// support literals here and reject everything else with a clear error.
+fn eval_const_arg(expr: &syn::Expr) -> Result<i64, Error> {
     match expr {
         syn::Expr::Lit(syn::ExprLit { lit, .. }) => {
             if let syn::Lit::Int(int_lit) = lit {
-                int_lit.base10_parse::<u32>().map_err(|_| {
+                int_lit.base10_parse::<i64>().map_err(|_| {
                     UnsupportedSnafu {
                         span: int_lit.span(),
-                        note: "const generic argument out of range for u32",
+                        note: "const generic argument out of range",
                     }
                     .build()
                 })
@@ -5392,7 +5398,15 @@ fn eval_const_u32_arg(expr: &syn::Expr) -> Result<u32, Error> {
                 .fail()
             }
         }
-        syn::Expr::Paren(syn::ExprParen { expr, .. }) => eval_const_u32_arg(expr),
+        // A negative const argument arrives as unary minus applied to an
+        // integer literal (e.g. `clamp::<-4>`); the Rust Reference allows
+        // "a literal (with a possibly leading `-` token)".
+        syn::Expr::Unary(syn::ExprUnary {
+            op: syn::UnOp::Neg(_),
+            expr,
+            ..
+        }) => Ok(-eval_const_arg(expr)?),
+        syn::Expr::Paren(syn::ExprParen { expr, .. }) => eval_const_arg(expr),
         other => UnsupportedSnafu {
             span: other.span(),
             note: "only integer literals are supported as const generic arguments",
@@ -6822,11 +6836,11 @@ impl TryFrom<&syn::ItemStruct> for ItemStruct {
                     .fail();
                 }
                 syn::GenericParam::Const(cp) => {
-                    if !is_u32_or_usize_const_param(&cp.ty) {
+                    if !is_supported_const_param(&cp.ty) {
                         return UnsupportedSnafu {
                             span: cp.ty.span(),
-                            note: "only `u32` and `usize` const generic parameters are supported \
-                                   on WGSL structs",
+                            note: "only `u32`, `usize`, and `i32` const generic parameters are \
+                                   supported on WGSL structs",
                         }
                         .fail();
                     }
@@ -7139,11 +7153,11 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
                     .fail();
                 }
                 syn::GenericParam::Const(cp) => {
-                    if !is_u32_or_usize_const_param(&cp.ty) {
+                    if !is_supported_const_param(&cp.ty) {
                         return UnsupportedSnafu {
                             span: cp.ty.span(),
-                            note: "only `u32` and `usize` const generic parameters are supported \
-                                   on WGSL impl blocks",
+                            note: "only `u32`, `usize`, and `i32` const generic parameters are \
+                                   supported on WGSL impl blocks",
                         }
                         .fail();
                     }

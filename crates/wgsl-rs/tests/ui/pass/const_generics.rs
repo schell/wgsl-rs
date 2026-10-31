@@ -7,10 +7,12 @@
 //! 5. Entry-point function with a const param (drives `instantiate::<…>()`)
 //!
 //! We use `usize` for const params (rather than `u32`) because Rust
-//! requires `usize` for array lengths (`[u32; N]`), which is the sole
-//! legitimate use case for const generics in WGSL. The proc-macro accepts
-//! both `u32` and `usize`; we exercise `usize` here because it's the
-//! natural Rust idiom and produces valid Rust that type-checks.
+//! requires `usize` for array lengths (`[u32; N]`). The proc-macro
+//! accepts `u32`, `usize`, and `i32`; we exercise `usize` here because
+//! it's the natural Rust idiom and produces valid Rust that
+//! type-checks. (Signed `i32` const params are covered by
+//! `signed_const_generics.rs`; they're value-position-only by
+//! construction.)
 use wgsl_rs::wgsl;
 
 // 1. Generic function with a const param, called locally.

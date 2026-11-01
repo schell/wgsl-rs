@@ -55,6 +55,12 @@ impl Source {
     /// The returned IR is owned and freshly constructed on each call.
     pub fn assemble_ir(&self) -> Result<ir::Module, SourceError<'_>> {
         let mut visited: HashSet<u64> = HashSet::new();
+        // Seed the assembly root's own id: when the root sits inside an
+        // import cycle (A -> B -> A), the recursive descent through the
+        // imports would otherwise re-enter and emit the root's items a
+        // second time before the outer frame appends them (the loop
+        // below only marks nodes it descends *into*).
+        visited.insert(self.id);
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         // Top-level struct and function names actually emitted by
         // assembled source chunks, for the instance cross-chunk dedup.

@@ -231,3 +231,9 @@ fn const_param_i32_in_array_length_is_rejected_by_rustc() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/const_param_i32_in_array_length.rs");
 }
+
+#[test]
+fn reserved_generated_names_are_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/reserved_generated_names.rs");
+}

@@ -27,6 +27,8 @@ The correct flow is:
 2. Pass the concrete IR to `analyze_ir_module`.
 
 ```rust
+use wgsl_rs::ir;
+use wgsl_rs::std::Vec4f;
 use wgsl_rs_linkage_wgpu::analyze_ir_module;
 
 let concrete_ir: ir::Module = renderer::instantiate::<f32, Vec4f>();
@@ -37,6 +39,9 @@ let linkage = analyze_ir_module(concrete_ir);
 both steps in one call:
 
 ```rust
+use wgsl_rs::std::Vec4f;
+use wgsl_rs_linkage_wgpu::IrModuleExt;
+
 let linkage = renderer::instantiate::<f32, Vec4f>().generate_linkage();
 ```
 
@@ -74,6 +79,7 @@ pub mod generic_blit {
 }
 
 // In application code:
+use wgsl_rs::std::Vec4f;
 use wgsl_rs_linkage_wgpu::IrModuleExt;
 
 let mut linkage = generic_blit::instantiate::<Vec4f>().generate_linkage();

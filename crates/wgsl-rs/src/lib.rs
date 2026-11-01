@@ -235,6 +235,12 @@ impl Source {
         }
         let mut out = String::new();
         let mut visited_sources: HashSet<u64> = HashSet::new();
+        // Seed the assembly root's own id: when the root sits inside an
+        // import cycle (A -> B -> A), the recursive descent through the
+        // imports would otherwise re-enter and emit the root's chunk a
+        // second time before the outer frame renders it (`collect`
+        // only marks nodes it descends *into*).
+        visited_sources.insert(self.id);
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
         let mut imports = ir::TypeImports::default();
@@ -3518,6 +3524,96 @@ mod test {
             assert!(
                 names.contains(&"ASSEMBLED_CONST".to_string()),
                 "imported items must be flattened too, got: {names:?}"
+            );
+        }
+
+        /// A cycle whose members carry real items, so duplicate
+        /// emission is observable: the assembly root itself sits inside
+        /// the cycle (A -> B -> A).
+        fn cyc_left_ir() -> ir::Module {
+            ir::Module {
+                name: "cyc_left",
+                items: vec![ir::Item::Const(ir::ItemConst {
+                    name: "CYCLE_LEFT_MARK".to_string(),
+                    ty: ir::Type::Scalar(ir::ScalarType::U32),
+                    expr: ir::Expr::Lit(ir::Lit::Int {
+                        digits: "1".to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        fn cyc_right_ir() -> ir::Module {
+            ir::Module {
+                name: "cyc_right",
+                items: vec![ir::Item::Const(ir::ItemConst {
+                    name: "CYCLE_RIGHT_MARK".to_string(),
+                    ty: ir::Type::Scalar(ir::ScalarType::U32),
+                    expr: ir::Expr::Lit(ir::Lit::Int {
+                        digits: "2".to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        static CYC_LEFT: Source = Source {
+            id: 260,
+            name: "cyc_left",
+            imports: &[&CYC_RIGHT],
+            reexports: &NO_SOURCES,
+            ir_constructor: cyc_left_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static CYC_RIGHT: Source = Source {
+            id: 261,
+            name: "cyc_right",
+            imports: &[&CYC_LEFT],
+            reexports: &NO_SOURCES,
+            ir_constructor: cyc_right_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn assemble_ir_emits_cycle_members_once() {
+            // Assembling a module that sits inside an import cycle must
+            // emit each member exactly once: without seeding the root's
+            // id, the descent through `cyc_right` re-enters `cyc_left`
+            // and appends its items before the outer frame does.
+            let assembled = CYC_LEFT.assemble_ir().expect("assembly must terminate");
+            let names = item_names(&assembled);
+            let left_count = names
+                .iter()
+                .filter(|n| n.as_str() == "CYCLE_LEFT_MARK")
+                .count();
+            assert_eq!(
+                left_count, 1,
+                "the cycle member assembling the graph must not be emitted twice, got: {names:?}"
+            );
+            assert!(
+                names.contains(&"CYCLE_RIGHT_MARK".to_string()),
+                "the other cycle member must be flattened in, got: {names:?}"
+            );
+        }
+
+        #[test]
+        fn text_assembly_emits_cycle_members_once() {
+            let src = CYC_LEFT.wgsl_source().expect("assembly must terminate");
+            assert_eq!(
+                src.matches("CYCLE_LEFT_MARK").count(),
+                1,
+                "the cycle member assembling the graph must not be rendered twice, got:\n{src}"
+            );
+            assert!(
+                src.contains("CYCLE_RIGHT_MARK"),
+                "the other cycle member must be flattened in, got:\n{src}"
             );
         }
     }

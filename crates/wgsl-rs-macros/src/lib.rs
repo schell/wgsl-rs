@@ -922,6 +922,22 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let crate_path = attrs.crate_path();
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    // `WGSL_SOURCE` and `instantiate` are the macro-emitted items; a
+    // user item with either name collides with them and would fail
+    // with a duplicate-definition error deep in the consumer crate.
+    // Fail here with a targeted diagnostic instead.
+    if let Some((span, kind)) = wgsl_module.reserved_name_conflict() {
+        return Err(WgslGenError::WgslParse {
+            source: parse::Error::unsupported(
+                span,
+                format!(
+                    "a {kind} named `instantiate` or `WGSL_SOURCE` collides with the items the \
+                     `#[wgsl]` macro emits into this module: the `WGSL_SOURCE` static and the \
+                     `instantiate` IR constructor. Rename the item"
+                ),
+            ),
+        });
+    }
     let mut mono_result = monomorphize::run(&mut wgsl_module)?;
     // Resolve associated type projections (e.g. `Self::Array`, `T::Array`)
     // to concrete types using the impl-block index.

@@ -2178,7 +2178,15 @@ args, matching the text path. The two paths previously disagreed —
 the old IR-path resolver looked at direct candidate modules only — so
 a consumer instantiating through a prelude hop worked as text and
 failed as IR. Sharing `resolve_template` and `build_instance_items`
-pins the two worlds together.
+pins the two worlds together, as does mirroring the text path's other
+two safeguards after review: the `emitted_names` cross-chunk dedup
+(a provider's own compile-time monomorphization already contains the
+instantiation a consumer requests, and the runtime instance is
+skipped instead of double-defining it) and the per-chunk plus
+per-instance wgsl-rs#237 unresolved-reference checks, so
+`instantiate()` fails with the structured
+`UnresolvedTemplateRef` error rather than leaking an un-mangled
+identifier into WGSL validation.
 
 **Why.** Every consumer that built a pipeline from a module had to
 know which constructor flattens imports; now there is one documented

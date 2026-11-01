@@ -434,7 +434,7 @@ impl Source {
 /// module's references are checked against the names that module
 /// itself can name, so a middle module's private imports are
 /// harvested even though they are invisible to the root.
-fn collect_template_names(source: &Source, names: &mut HashSet<String>) {
+pub(crate) fn collect_template_names(source: &Source, names: &mut HashSet<String>) {
     for template in source.templates {
         names.insert(template.name.to_string());
     }
@@ -2475,6 +2475,62 @@ mod test {
         );
     }
 
+    #[wgsl(crate_path = crate)]
+    mod mono_provider {
+        pub fn id<T: Copy>(v: T) -> T {
+            v
+        }
+
+        // The provider's own code monomorphizes `id::<u32>` at macro
+        // time, so `id_u32` lands in the provider's own chunk.
+        pub fn concrete_user() -> u32 {
+            id::<u32>(7u32)
+        }
+    }
+
+    #[expect(dead_code)]
+    #[wgsl(crate_path = crate)]
+    mod mono_consumer {
+        use super::mono_provider::*;
+
+        // Cross-module, so it is recorded as a runtime instantiation
+        // against the provider — duplicating the provider's own
+        // compile-time monomorphization unless assembly dedups against
+        // names already emitted by source chunks.
+        pub fn also_user() -> u32 {
+            id::<u32>(9u32)
+        }
+    }
+
+    #[test]
+    fn assemble_ir_dedups_provider_monomorphized_instances() {
+        let ir_module = mono_consumer::WGSL_SOURCE
+            .assemble_ir()
+            .expect("concrete assembly");
+        let id_u32_count = ir_module
+            .items
+            .iter()
+            .filter(|item| matches!(item, ir::Item::Fn(f) if f.name.as_ref() == "id_u32"))
+            .count();
+        assert_eq!(
+            id_u32_count, 1,
+            "the consumer's instantiation must dedup against the provider's own monomorphized \
+             chunk, items:\n{ir_module:#?}"
+        );
+        crate::validate_wgsl_source(&ir_module.wgsl_source())
+            .expect("the deduped assembly must render valid WGSL");
+    }
+
+    #[test]
+    fn text_assembly_dedups_provider_monomorphized_instances() {
+        let full_src = mono_consumer::WGSL_SOURCE.wgsl_source().unwrap();
+        assert_eq!(
+            full_src.matches("fn id_u32(").count(),
+            1,
+            "expected id_u32 to appear once, got:\n{full_src}"
+        );
+    }
+
     #[test]
     fn ambiguous_template_provider_errors() {
         // Build hand-crafted sources where two distinct provider sources
@@ -3085,6 +3141,81 @@ mod test {
             }
         }
 
+        /// Defines `Hidden<T>`; reachable only through `middle`'s
+        /// private import.
+        fn hidden_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Struct(ir::ItemStruct {
+                type_params: vec!["T".to_string()],
+                const_params: vec![],
+                name: "Hidden".to_string(),
+                fields: vec![],
+                attrs: vec![],
+            })]
+        }
+        static HIDDEN_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
+            name: "Hidden",
+            type_params: &["T"],
+            const_params: &[],
+            ir_constructor: hidden_template_items,
+            dependencies: &DEP,
+        }];
+        static HIDDEN_DEFS: Source = Source {
+            id: 116,
+            name: "hidden_defs",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &HIDDEN_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// References `Hidden` without instantiating it (a `Type::Struct`
+        /// ref in a fn return type).
+        fn middle_ir() -> ir::Module {
+            ir::Module {
+                name: "middle",
+                items: vec![ir::Item::Fn(ir::ItemFn {
+                    type_params: vec![],
+                    const_params: vec![],
+                    fn_attrs: ir::FnAttrs::None,
+                    name: "uses_hidden".to_string().into(),
+                    inputs: vec![],
+                    return_type: ir::ReturnType::Type {
+                        annotation: ir::ReturnTypeAnnotation::None,
+                        ty: ir::Type::Struct {
+                            name: "Hidden".to_string(),
+                            type_args: vec![],
+                        },
+                    },
+                    block: ir::Block { stmts: vec![] },
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        static MIDDLE: Source = Source {
+            id: 117,
+            name: "middle",
+            // `use super::hidden_defs::*;` — a private import.
+            imports: &[&HIDDEN_DEFS],
+            reexports: &NO_SOURCES,
+            ir_constructor: middle_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static UNRESOLVED_ROOT: Source = Source {
+            id: 227,
+            name: "root",
+            imports: &[&MIDDLE],
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
         #[test]
         fn middle_module_private_imports_are_checked() {
             // wgsl-rs#237's unresolved-reference check runs per chunk
@@ -3094,76 +3225,7 @@ mod test {
             // (so a root-level harvest would miss it), but `middle`
             // can — the check inside `middle`'s chunk must fire instead
             // of letting the un-mangled name leak to WGSL validation.
-            fn hidden_template_items() -> Vec<ir::Item> {
-                vec![ir::Item::Struct(ir::ItemStruct {
-                    type_params: vec!["T".to_string()],
-                    const_params: vec![],
-                    name: "Hidden".to_string(),
-                    fields: vec![],
-                    attrs: vec![],
-                })]
-            }
-            static HIDDEN_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
-                name: "Hidden",
-                type_params: &["T"],
-                const_params: &[],
-                ir_constructor: hidden_template_items,
-                dependencies: &DEP,
-            }];
-            static HIDDEN_DEFS: Source = Source {
-                id: 116,
-                name: "hidden_defs",
-                imports: &NO_SOURCES,
-                reexports: &NO_SOURCES,
-                ir_constructor: empty_source_ir,
-                templates: &HIDDEN_TEMPLATES,
-                instantiations: &NO_INSTS,
-                module_type_params: &NO_TYPE_PARAMS,
-            };
-            fn middle_ir() -> ir::Module {
-                ir::Module {
-                    name: "middle",
-                    items: vec![ir::Item::Fn(ir::ItemFn {
-                        type_params: vec![],
-                        const_params: vec![],
-                        fn_attrs: ir::FnAttrs::None,
-                        name: "uses_hidden".to_string().into(),
-                        inputs: vec![],
-                        return_type: ir::ReturnType::Type {
-                            annotation: ir::ReturnTypeAnnotation::None,
-                            ty: ir::Type::Struct {
-                                name: "Hidden".to_string(),
-                                type_args: vec![],
-                            },
-                        },
-                        block: ir::Block { stmts: vec![] },
-                        attrs: vec![],
-                    })],
-                    attrs: vec![],
-                }
-            }
-            static MIDDLE: Source = Source {
-                id: 117,
-                name: "middle",
-                // `use super::hidden_defs::*;` — a private import.
-                imports: &[&HIDDEN_DEFS],
-                reexports: &NO_SOURCES,
-                ir_constructor: middle_ir,
-                templates: &[],
-                instantiations: &NO_INSTS,
-                module_type_params: &NO_TYPE_PARAMS,
-            };
-            static ROOT: Source = Source {
-                id: 227,
-                name: "root",
-                imports: &[&MIDDLE],
-                reexports: &NO_SOURCES,
-                ir_constructor: empty_source_ir,
-                templates: &[],
-                instantiations: &NO_INSTS,
-                module_type_params: &NO_TYPE_PARAMS,
-            };
-            let err = ROOT.wgsl_source().unwrap_err();
+            let err = UNRESOLVED_ROOT.wgsl_source().unwrap_err();
             match &err {
                 crate::SourceError::UnresolvedTemplateRef {
                     source_name,
@@ -3172,6 +3234,137 @@ mod test {
                 } => {
                     assert_eq!(source_name, "middle");
                     assert_eq!(template_name, "Hidden");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn assemble_ir_flags_unresolved_template_refs() {
+            // The IR path runs the same per-chunk #237 check
+            // (wgsl-rs#195 review): `instantiate()` must fail with the
+            // structured error, not leak an un-mangled identifier into
+            // WGSL validation.
+            let err = UNRESOLVED_ROOT.assemble_ir().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef {
+                    source_name,
+                    template_name,
+                    ..
+                } => {
+                    assert_eq!(source_name, "middle");
+                    assert_eq!(template_name, "Hidden");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
+            }
+        }
+
+        /// A template whose body references another template
+        /// (`helper`) without a recorded dependency or instantiation.
+        fn outer_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                const_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "outer".to_string().into(),
+                inputs: vec![],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::TypePath {
+                        ty: "helper".to_string(),
+                        member: "NONE".to_string(),
+                    }))],
+                },
+                attrs: vec![],
+            })]
+        }
+        fn helper_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                const_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "helper".to_string().into(),
+                inputs: vec![],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::Ident("x".to_string())))],
+                },
+                attrs: vec![],
+            })]
+        }
+        static OUTER_DEFS_TEMPLATES: [GenericTemplate; 2] = [
+            GenericTemplate {
+                name: "outer",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: outer_template_items,
+                dependencies: &DEP,
+            },
+            GenericTemplate {
+                name: "helper",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: helper_template_items,
+                dependencies: &DEP,
+            },
+        ];
+        static OUTER_DEFS: Source = Source {
+            id: 250,
+            name: "outer_defs",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &OUTER_DEFS_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn assemble_ir_flags_unresolved_refs_in_instance_bodies() {
+            // Instance-level #237 check (wgsl-rs#195 review): the
+            // instance's body was written in the defining module, so
+            // its un-resolved reference to `helper` must fail the
+            // assembly with the structured error, mirroring the text
+            // path.
+            static OUTER_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&OUTER_DEFS],
+                template_name: "outer",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static OUTER_ROOT: Source = Source {
+                id: 251,
+                name: "outer_root",
+                imports: &[&OUTER_DEFS],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &OUTER_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = OUTER_ROOT.assemble_ir().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef {
+                    source_name,
+                    template_name,
+                    member,
+                    ..
+                } => {
+                    assert_eq!(source_name, "outer_defs");
+                    assert_eq!(template_name, "helper");
+                    assert_eq!(member.as_deref(), Some("NONE"));
                 }
                 other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
             }

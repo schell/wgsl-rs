@@ -1067,12 +1067,15 @@ pub enum Item {
 impl Module {
     /// Renders this IR module to its WGSL source text.
     ///
-    /// Rendering first applies the type-directed literal suffix pass
-    /// ([`crate::suffix_module`]) to a clone of this module, so unsuffixed
-    /// integer literals are normalized; [`crate::render_module`] itself
-    /// stays a pure emitter. If any item uses a tier-1 storage texture
-    /// format ([`crate::items_need_tier1_extension`]), the required
-    /// `enable texture_formats_tier1;` directive is prepended, since WGSL
+    /// Rendering first applies the deshadow pass
+    /// ([`crate::deshadow_module`]) to a clone of this module — same-
+    /// scope shadowing is legal Rust but invalid WGSL — then the
+    /// type-directed literal suffix pass ([`crate::suffix_module`]), so
+    /// unsuffixed integer literals are normalized;
+    /// [`crate::render_module`] itself stays a pure emitter. If any
+    /// item uses a tier-1 storage texture format
+    /// ([`crate::items_need_tier1_extension`]), the required `enable
+    /// texture_formats_tier1;` directive is prepended, since WGSL
     /// demands `enable` directives at the very start of the translation
     /// unit.
     ///
@@ -1090,6 +1093,7 @@ impl Module {
     /// when pinned to an older major).
     pub fn wgsl_source(&self) -> String {
         let mut module = self.clone();
+        crate::deshadow_module(&mut module);
         crate::suffix_module(&mut module);
         let mut source = crate::render_module(&module);
         if crate::items_need_tier1_extension(&module.items) {

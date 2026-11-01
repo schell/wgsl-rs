@@ -2190,7 +2190,12 @@ identifier into WGSL validation. The IR render routes
 (`ir::Module::wgsl_source` and `WgpuLinkage::wgsl_source`) likewise
 derive the tier-1 `enable texture_formats_tier1;` directive from the
 items themselves at render time, so no assembly bookkeeping can drop
-it — matching the text path's per-chunk accumulation.
+it — matching the text path's per-chunk accumulation — and
+`ir::Module::wgsl_source` deshadows its clone before rendering, so
+the direct `instantiate().wgsl_source()` route renders the same valid
+WGSL as the text path for same-scope shadowing. Assembly still
+defers deshadowing; the linkage analyzer's own deshadow becomes an
+idempotent no-op.
 
 **Why.** Every consumer that built a pipeline from a module had to
 know which constructor flattens imports; now there is one documented

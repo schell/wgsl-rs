@@ -262,6 +262,17 @@ pub mod tier1_consumer {
     }
 }
 
+/// Same-scope shadowing: legal Rust, invalid WGSL until the deshadow
+/// pass renames the redeclaration.
+#[wgsl]
+pub mod shadowing_consumer {
+    pub fn shadowed() -> u32 {
+        let x: u32 = 1u32;
+        let x: u32 = x + 1u32;
+        x
+    }
+}
+
 // ===== Basic shape tests =====
 
 #[test]
@@ -1450,6 +1461,28 @@ fn instantiate_based_linkage_enables_tier1() {
     assert!(
         source.contains("SCRATCH"),
         "the imported tier-1 texture must be assembled in, got:\n{source}"
+    );
+}
+
+/// The `instantiate().wgsl_source()` route must deshadow like the text
+/// path: same-scope shadowing is legal Rust but invalid WGSL, and
+/// `Module::wgsl_source` (the canonical render entry) deshadows its
+/// clone before rendering.
+#[test]
+fn instantiate_wgsl_source_deshadows() {
+    let via_instantiate = shadowing_consumer::instantiate().wgsl_source();
+    assert!(
+        via_instantiate.contains("x_1"),
+        "the shadowed redeclaration must be renamed, got:\n{via_instantiate}"
+    );
+    wgsl_rs::validate_wgsl_source(&via_instantiate)
+        .expect("the deshadowed module source must validate in naga");
+
+    // And the two render routes must agree.
+    let via_source = shadowing_consumer::WGSL_SOURCE.wgsl_source().unwrap();
+    assert_eq!(
+        via_instantiate, via_source,
+        "the instantiate route and the text route must render identically"
     );
 }
 

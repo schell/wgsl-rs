@@ -5906,20 +5906,22 @@ impl ItemMod {
     }
 
     /// Collect the emitted `Source` import and re-export edges from the
-    /// module's `use` statements.
+    /// module's `use` statements (glob and named alike).
     ///
-    /// `imports` records every `use` statement's module, any visibility:
-    /// chunk assembly concatenates all of them, because a module's own
-    /// code can name anything it imports, privately or not.
+    /// `imports` records every use statement's module path, any
+    /// visibility: chunk assembly concatenates all of them, and glob
+    /// and named imports fold the same whole sources, so their edges
+    /// are identical (the documented whole-source assembly
+    /// granularity, wgsl-rs#114).
     ///
-    /// `reexports` records only `pub use` statements: the edges that
-    /// downstream modules may resolve names through. Every other
-    /// visibility (`pub(crate)`, `pub(super)`, `pub(in path)` and plain
-    /// `use`) is a private import and stays out (wgsl-rs#245).
-    pub fn imports_and_reexports(
-        &mut self,
-        wgsl_rs_crate_path: &syn::Path,
-    ) -> (Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>) {
+    /// `reexports` records `pub use path::*;` statements (whole-source
+    /// pub edges) and `named_exports` records `pub use path::item;`
+    /// statements (the alias table entry naming the one item the edge
+    /// exposes) — the pub edges downstream modules may resolve names
+    /// through. Every other visibility (`pub(crate)`, `pub(super)`,
+    /// `pub(in path)` and plain `use`) is a private import and
+    /// contributes nothing downstream (wgsl-rs#245).
+    pub fn imports_and_reexports(&mut self, wgsl_rs_crate_path: &syn::Path) -> ImportEdges {
         // Only import `builtin_constants` when the module actually uses a
         // builtin associated constant (`Vec3f::X` style). Importing
         // unconditionally injects ~58 const declarations into every
@@ -5927,39 +5929,67 @@ impl ItemMod {
         // consts (e.g. a user `const vec2f_ZERO` would be a redefinition).
         let uses_builtin_consts = scan_for_builtin_const_usage(self);
 
-        let mut imports = vec![];
-        let mut reexports = vec![];
+        let mut edges = ImportEdges::default();
         for item in self.content.iter() {
-            if let Item::Use(use_item) = item {
-                let is_pub = matches!(use_item.vis, syn::Visibility::Public(_));
-                for path in use_item.modules.iter() {
-                    // If this import is `use wgsl_rs::std::*;`, import the
-                    // built-in constants (e.g. Vec3f::ZERO) only when one is
-                    // actually used by the module.
-                    if is_wgsl_std_import(wgsl_rs_crate_path, path) {
-                        if uses_builtin_consts {
-                            let builtin = quote! {
-                                #wgsl_rs_crate_path::std::builtin_constants::WGSL_SOURCE
-                            };
-                            imports.push(builtin.clone());
-                            if is_pub {
-                                reexports.push(builtin);
-                            }
-                        }
-                        continue;
-                    }
+            let Item::Use(use_item) = item else {
+                continue;
+            };
+            let is_pub = matches!(use_item.vis, syn::Visibility::Public(_));
 
-                    let source = quote! {
-                        #path::WGSL_SOURCE
-                    };
-                    imports.push(source.clone());
-                    if is_pub {
-                        reexports.push(source);
+            // Glob edges: `use path::*;`
+            for path in use_item.modules.iter() {
+                // If this import is `use wgsl_rs::std::*;`, import the
+                // built-in constants (e.g. Vec3f::ZERO) only when one is
+                // actually used by the module.
+                if is_wgsl_std_import(wgsl_rs_crate_path, path) {
+                    if uses_builtin_consts {
+                        let builtin = quote! {
+                            #wgsl_rs_crate_path::std::builtin_constants::WGSL_SOURCE
+                        };
+                        edges.imports.push(builtin.clone());
+                        if is_pub {
+                            edges.reexports.push(builtin);
+                        }
                     }
+                    continue;
+                }
+
+                let source = quote! {
+                    #path::WGSL_SOURCE
+                };
+                edges.imports.push(source.clone());
+                if is_pub {
+                    edges.reexports.push(source);
+                }
+            }
+
+            // Named edges: `use path::item;` — the module path folds in
+            // like a glob (whole-source assembly), and a `pub` spelling
+            // additionally records the alias-table entry.
+            for (path, ident) in use_item.named.iter() {
+                if is_wgsl_std_import(wgsl_rs_crate_path, path) {
+                    if uses_builtin_consts {
+                        let builtin = quote! {
+                            #wgsl_rs_crate_path::std::builtin_constants::WGSL_SOURCE
+                        };
+                        edges.imports.push(builtin.clone());
+                        if is_pub {
+                            edges.named_exports.push((ident.to_string(), builtin));
+                        }
+                    }
+                    continue;
+                }
+
+                let source = quote! {
+                    #path::WGSL_SOURCE
+                };
+                edges.imports.push(source.clone());
+                if is_pub {
+                    edges.named_exports.push((ident.to_string(), source));
                 }
             }
         }
-        (imports, reexports)
+        edges
     }
 
     /// The `#[wgsl]` macro emits a `WGSL_SOURCE` static and an
@@ -5990,8 +6020,34 @@ impl ItemMod {
     }
 }
 
+/// The emitted `Source` import and re-export edges from a module's
+/// `use` statements.
+#[derive(Default)]
+pub struct ImportEdges {
+    /// Every use statement's module path, any visibility: chunk
+    /// assembly concatenates all of them (glob and named imports fold
+    /// the same whole sources).
+    pub imports: Vec<proc_macro2::TokenStream>,
+    /// `pub use path::*;` module paths: whole-source pub re-export
+    /// edges, exposing every name of each source.
+    pub reexports: Vec<proc_macro2::TokenStream>,
+    /// `pub use path::item;` entries: `(item name, source)` — the
+    /// named re-export alias table, exposing exactly one name per
+    /// entry (wgsl-rs#114).
+    pub named_exports: Vec<(String, proc_macro2::TokenStream)>,
+}
+
 /// A WGSL use/import statement.
-/// Only supports glob imports of an entire module, e.g. `use foo::bar::*;`
+///
+/// Two shapes are supported (both may appear in the same module):
+/// * glob imports of an entire module, e.g. `use foo::bar::*;`
+/// * named imports of a single item, e.g. `use foo::bar::Item;`
+///
+/// Both record the *module path* as an import edge: assembly folds
+/// whole sources either way, so a named import and a glob of the same
+/// module produce identical assemblies. The item name matters only for
+/// `pub use` re-exports, which record a named edge downstream
+/// resolution can follow (wgsl-rs#114).
 #[derive(Clone)]
 pub struct ItemUse {
     /// Visibility of the statement. Only `pub use` statements are
@@ -5999,7 +6055,12 @@ pub struct ItemUse {
     /// every other visibility (`pub(crate)`, `pub(super)`, `pub(in path)`
     /// and plain `use`) records a private import (wgsl-rs#245).
     pub vis: syn::Visibility,
+    /// Glob-imported module paths (`use path::*;`).
     pub modules: Vec<syn::Path>,
+    /// Named imports: `(module path, item name)` from `use path::Item;`.
+    /// The path is the module part only; the WGSL name of the item is
+    /// unchanged (renames are rejected).
+    pub named: Vec<(syn::Path, syn::Ident)>,
 }
 
 impl TryFrom<&syn::UseTree> for ItemUse {
@@ -6017,12 +6078,15 @@ impl TryFrom<&syn::UseTree> for ItemUse {
                     arguments: syn::PathArguments::None,
                 };
                 let mut item_use = Self::try_from(tree.as_ref())?;
-                // Prefix this module on the remaining paths
+                // Prefix this module on the remaining paths.
                 for module in item_use.modules.iter_mut() {
                     module.segments.insert(0, segment.clone());
                 }
+                for (path, _ident) in item_use.named.iter_mut() {
+                    path.segments.insert(0, segment.clone());
+                }
 
-                if item_use.modules.is_empty() {
+                if item_use.modules.is_empty() && item_use.named.is_empty() {
                     item_use.modules.push(syn::Path {
                         leading_colon: None,
                         segments: syn::punctuated::Punctuated::from_iter(Some(syn::PathSegment {
@@ -6034,23 +6098,32 @@ impl TryFrom<&syn::UseTree> for ItemUse {
 
                 item_use
             }
-            syn::UseTree::Name(use_name) => UnsupportedSnafu {
-                span: use_name.span(),
-                note: "Only glob imports of modules are supported (e.g. use foo::*;).",
-            }
-            .fail()?,
+            syn::UseTree::Name(use_name) => Self {
+                vis: syn::Visibility::Inherited,
+                modules: vec![],
+                named: vec![(
+                    syn::Path {
+                        leading_colon: None,
+                        segments: syn::punctuated::Punctuated::new(),
+                    },
+                    use_name.ident.clone(),
+                )],
+            },
             syn::UseTree::Rename(use_rename) => UnsupportedSnafu {
                 span: use_rename.span(),
-                note: "Renaming in use statements is not supported.",
+                note: "Renaming in use statements is not supported; the WGSL name of an imported \
+                       item is always its own name.",
             }
             .fail()?,
             syn::UseTree::Glob(_use_glob) => Self {
                 vis: syn::Visibility::Inherited,
                 modules: vec![],
+                named: vec![],
             },
             syn::UseTree::Group(use_group) => UnsupportedSnafu {
                 span: use_group.span(),
-                note: "Grouped use statements are not supported.",
+                note: "Grouped use statements are not supported; split the group into one use \
+                       statement per path.",
             }
             .fail()?,
         })
@@ -7704,6 +7777,22 @@ impl TryFrom<&syn::Item> for Item {
                 // downstream template resolution.
                 let mut item_use = ItemUse::try_from(tree)?;
                 item_use.vis = vis.clone();
+                // A named import with no module path (`use name;`) would
+                // import a module without its items, which does not
+                // transpile — the transpiler only ever folds items, not
+                // namespaces.
+                if let Some((_path, ident)) = item_use
+                    .named
+                    .iter()
+                    .find(|(path, _ident)| path.segments.is_empty())
+                {
+                    return Err(Error::unsupported(
+                        ident.span(),
+                        "a bare `use name;` imports a module without its items, which does not \
+                         transpile; import the module's items by name (`use path::item;`) or with \
+                         a glob (`use path::*;`)",
+                    ));
+                }
                 Ok(Item::Use(item_use))
             }
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
@@ -8872,7 +8961,7 @@ mod test {
         };
         let imports: Vec<String> = m
             .imports_and_reexports(&crate_path)
-            .0
+            .imports
             .iter()
             .map(|ts| ts.to_string())
             .collect();
@@ -8899,7 +8988,7 @@ mod test {
         };
         let imports: Vec<String> = m
             .imports_and_reexports(&crate_path)
-            .0
+            .imports
             .iter()
             .map(|ts| ts.to_string())
             .collect();
@@ -8937,7 +9026,9 @@ mod test {
         let Item::Mod(mut m) = Item::try_from(&item).unwrap() else {
             panic!("expected module");
         };
-        let (imports, reexports) = m.imports_and_reexports(&crate_path);
+        let ImportEdges {
+            imports, reexports, ..
+        } = m.imports_and_reexports(&crate_path);
         assert!(
             contains_builtin(&imports),
             "a forced builtin-constants import must be recorded, got {imports:?}"
@@ -8960,7 +9051,9 @@ mod test {
         let Item::Mod(mut m) = Item::try_from(&item).unwrap() else {
             panic!("expected module");
         };
-        let (imports, reexports) = m.imports_and_reexports(&crate_path);
+        let ImportEdges {
+            imports, reexports, ..
+        } = m.imports_and_reexports(&crate_path);
         assert!(
             contains_builtin(&imports),
             "a forced builtin-constants import must be recorded, got {imports:?}"
@@ -12078,7 +12171,9 @@ mod test {
         };
         let mut module = ItemMod::try_from(&item_mod).unwrap();
         let crate_path: syn::Path = syn::parse_quote! { wgsl_rs };
-        let (imports, reexports) = module.imports_and_reexports(&crate_path);
+        let ImportEdges {
+            imports, reexports, ..
+        } = module.imports_and_reexports(&crate_path);
 
         let names = |list: Vec<proc_macro2::TokenStream>| {
             list.iter().map(|ts| ts.to_string()).collect::<Vec<_>>()
@@ -12135,5 +12230,123 @@ mod test {
             module.reserved_name_conflict().is_none(),
             "ordinary names must not be flagged"
         );
+    }
+
+    /// Named imports (`use path::item;`) parse into `named` with the
+    /// module path and item name; the glob list stays empty
+    /// (wgsl-rs#114).
+    #[test]
+    fn named_imports_parse() {
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod m {
+                use super::defs::Id;
+                use crate::deep::path::Thing;
+                use super::helpers::*;
+            }
+        };
+        let module = ItemMod::try_from(&item_mod).unwrap();
+        let uses: Vec<&ItemUse> = module
+            .content
+            .iter()
+            .filter_map(|item| match item {
+                Item::Use(u) => Some(u),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(uses.len(), 3);
+
+        assert_eq!(uses[0].modules.len(), 0, "a named import is not a glob");
+        assert_eq!(uses[0].named.len(), 1);
+        let (path, ident) = &uses[0].named[0];
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>(),
+            vec!["super", "defs",]
+        );
+        assert_eq!(ident, "Id");
+
+        // Deeply nested paths accumulate the full module prefix.
+        let (path, ident) = &uses[1].named[0];
+        assert_eq!(
+            path.segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>(),
+            vec!["crate", "deep", "path",]
+        );
+        assert_eq!(ident, "Thing");
+
+        // Globs are unchanged.
+        assert_eq!(uses[2].named.len(), 0);
+        assert_eq!(uses[2].modules.len(), 1);
+    }
+
+    /// Bare module imports (`use name;`) and renames
+    /// (`use path::item as other;`) stay rejected, with messages that
+    /// name the supported spellings.
+    #[test]
+    fn bare_imports_and_renames_are_rejected() {
+        for (src, expected) in [
+            ("mod m { use defs; }", "bare `use name;`"),
+            (
+                "mod m { use defs::Id as Alias; }",
+                "Renaming in use statements",
+            ),
+        ] {
+            let item: syn::Item = syn::parse_str(src).unwrap();
+            let err = match Item::try_from(&item) {
+                Ok(_) => panic!("expected an error for: {src}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                err.contains(expected),
+                "expected the {expected:?} diagnostic in: {err}"
+            );
+        }
+    }
+
+    /// The emitted edges split three ways (wgsl-rs#114, #245): every
+    /// use path folds into `imports`; only `pub use path::*;` becomes
+    /// a glob `reexports` edge; only `pub use path::item;` becomes a
+    /// named alias-table entry.
+    #[test]
+    fn named_and_glob_edges_split_by_visibility() {
+        let crate_path: syn::Path = syn::parse_quote! { wgsl_rs };
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod m {
+                use super::private_glob::*;
+                pub use super::pub_glob::*;
+                use super::defs::Id;
+                pub use super::defs::Helper;
+            }
+        };
+        let mut module = ItemMod::try_from(&item_mod).unwrap();
+        let edges = module.imports_and_reexports(&crate_path);
+
+        let to_strings = |list: Vec<proc_macro2::TokenStream>| {
+            list.iter().map(|ts| ts.to_string()).collect::<Vec<_>>()
+        };
+
+        // All four module paths fold in — named imports fold whole
+        // sources, exactly like globs.
+        let imports = to_strings(edges.imports);
+        assert_eq!(imports.len(), 4, "glob and named alike: {imports:?}");
+
+        // Glob re-exports: only the pub one.
+        let reexports = to_strings(edges.reexports);
+        assert_eq!(
+            reexports.len(),
+            1,
+            "only pub glob re-exports: {reexports:?}"
+        );
+        assert!(reexports[0].contains("pub_glob"));
+
+        // Named re-exports: only the pub one, carrying the item name.
+        assert_eq!(edges.named_exports.len(), 1, "only pub named re-exports");
+        let (name, source) = &edges.named_exports[0];
+        assert_eq!(name, "Helper");
+        assert!(source.to_string().contains("defs"), "got: {source}");
     }
 }

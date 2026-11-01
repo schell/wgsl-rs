@@ -2146,6 +2146,68 @@ collide at WGSL redefinition time when both chunks concatenate;
 cross-module collision rules (loud assembly-time errors,
 qualification) are future work.
 
+### 2026-11-01: Named imports fold whole sources; named re-exports are a name-keyed alias table
+
+**Problem.** `#[wgsl]` modules only registered glob imports, so
+`use path::item;` parsed as Rust but never resolved for the
+transpiler, and named `pub use path::item;` re-exports were
+unsupported. Both block the prelude shape (a prelude that re-exports
+one name at a time) and pipeline composition (a fragment module
+re-exporting a vertex entry to become a complete pipeline module).
+
+**Decision.** Four calls.
+
+1. **Whole-source folding for named imports** (the granularity
+   question): a named import records its *module path* as an import
+   edge, exactly like a glob of the same module. Assembly folds whole
+   sources either way, so importing `Id` folds the defining module's
+   entire chunk — the other items ride along. This is deliberately
+   coarse; item-level reachability is tree-shaking territory
+   (wgsl-rs#113), not an import question. Consequence worth noting:
+   a named import and a glob of the same module produce *identical*
+   assemblies and *identical* module-id descriptors, which is
+   correct — the id hashes what assembles, and both assemble the
+   same thing.
+
+2. **Named re-exports are a name-keyed alias table**: `Source` gains
+   `named_exports: &[NamedExport { name, source }]`, populated from
+   `pub use path::item;` statements (building on the #245
+   visibility-carrying edges: only `pub` spellings enter). Resolution
+   and the #237 harvest walk it name-matched — a named edge exposes
+   exactly one name, where a glob edge (`reexports`) exposes every
+   name of its source. Two hops exporting the same name from distinct
+   sources is a genuine `AmbiguousTemplate`, mirroring rustc.
+
+3. **Assembly follows pub edges**: chunk folding walks `imports` (all
+   edges, any visibility) *plus* the pub edges (`reexports` and
+   `named_exports`) at every hop. For macro-emitted sources this is
+   redundant with the imports walk (every `pub use` also records its
+   path in `imports`), but it makes the runtime contract
+   self-consistent — a minimal hand-built hop whose only record is
+   the pub edge still assembles the chunks it re-exports.
+
+4. **Rejected spellings**: renaming (`use path::item as other;`) —
+   the WGSL name of an imported item is always its own, and a rename
+   would silently split the two worlds; grouped use
+   (`use path::{a, b};`) — separately tracked work; bare module
+   imports (`use path;`) — namespaces do not transpile, only items
+   do, and the diagnostic says which spellings to use instead.
+
+Binding-name collisions across imported sources keep today's
+behavior: WGSL redefinition at validation is the loud error
+(within one assembled module that is the correct rule), and
+assembly-time `(group, binding)` duplicate detection is separately
+tracked work.
+
+**Why.** The alias table is the exact shape the prelude needs (a
+prelude IS a named re-export list), and name-keyed edges keep
+resolution as precise as rustc's own visibility rules — the #245
+lesson. Pipeline composition then falls out of existing machinery
+with zero new merge rules: both entries in one module, the shared
+binding OR'd to `VERTEX | FRAGMENT` by the existing per-entry
+reachability analysis, one linkage, one pipeline layout —
+`pub use super::vertex::vs_main;` is now a complete pipeline module.
+
 ### 2026-11-01: Module construction unifies on `instantiate`; `ir_constructor` is a primitive
 
 **Problem.** Building a `WgpuLinkage` (or any shader module) from

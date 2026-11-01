@@ -273,6 +273,63 @@ pub mod shadowing_consumer {
     }
 }
 
+/// The vertex half of a composed pipeline (wgsl-rs#114): one entry
+/// plus a binding shared with the fragment stage.
+#[wgsl]
+pub mod pipeline_vertex {
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), SHARED: u32);
+
+    #[vertex]
+    pub fn vs_main(#[builtin(vertex_index)] _vi: u32) -> Vec4f {
+        vec4f(f32(get!(SHARED)) * 0.0, 0.0, 0.0, 1.0)
+    }
+}
+
+/// A complete pipeline module in ONE `#[wgsl]` module (wgsl-rs#114):
+/// the vertex entry is re-exported by name, the fragment entry is
+/// local, and the shared binding lives in the vertex module — one
+/// assembled source, one linkage, one pipeline layout, with no
+/// runtime merge.
+#[wgsl]
+pub mod pipeline_compose {
+    use super::pipeline_vertex::SHARED;
+    pub use super::pipeline_vertex::vs_main;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(1), TINT: f32);
+
+    #[fragment]
+    pub fn fs_main() -> Vec4f {
+        let t: f32 = f32(get!(SHARED)) * f32(get!(TINT));
+        vec4f(t, 0.0, 0.0, 1.0)
+    }
+}
+
+/// Named imports (wgsl-rs#114): each imported name brings its module
+/// path into the assembly — whole-source folding, exactly like a glob.
+#[wgsl]
+pub mod named_import_consumer {
+    // rustfmt would merge these into a grouped use, which the parser
+    // does not support (wgsl-rs#250).
+    #[rustfmt::skip]
+    use super::linkage_provider::QUAD_CCW;
+    #[rustfmt::skip]
+    use super::linkage_provider::Quad;
+    use wgsl_rs::std::*;
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        let q: Quad = Quad {
+            uv: vec2f(0.0, 0.0),
+        };
+        let ul = Quad::upper_left(q, 1.0);
+        let uv = QUAD_CCW[0];
+        vec4f(ul.x + uv.x * 0.0, ul.y, 0.0, 1.0)
+    }
+}
+
 // ===== Basic shape tests =====
 
 #[test]
@@ -1484,6 +1541,110 @@ fn instantiate_wgsl_source_deshadows() {
         via_instantiate, via_source,
         "the instantiate route and the text route must render identically"
     );
+}
+
+/// wgsl-rs#114 named imports: the imported names' definitions must be
+/// present in the assembled output (whole-source folding — a named
+/// import and a glob of the same module fold identically), and the
+/// result must validate.
+#[test]
+fn named_imports_assemble_and_validate() {
+    let source = named_import_consumer::instantiate().wgsl_source();
+    assert!(
+        source.contains("QUAD_CCW"),
+        "the named-imported const must be folded in, got:\n{source}"
+    );
+    assert!(
+        source.contains("upper_left"),
+        "the named-imported struct's impl method must be folded in, got:\n{source}"
+    );
+    wgsl_rs::validate_wgsl_source(&source).expect("the named-import module must validate in naga");
+}
+
+/// wgsl-rs#114 pipeline composition: a fragment module that re-exports
+/// a vertex entry by name is a COMPLETE pipeline module — both entries
+/// in one assembled source, one linkage, one pipeline layout, and the
+/// binding shared by both stages carries OR'd visibility.
+#[test]
+fn named_reexport_composes_one_pipeline() {
+    let linkage = pipeline_compose::instantiate().generate_linkage();
+
+    assert_eq!(
+        linkage.vertex_entries.len(),
+        1,
+        "the re-exported vertex entry must be present"
+    );
+    assert_eq!(linkage.vertex_entries[0].name, "vs_main");
+    assert_eq!(
+        linkage.fragment_entries.len(),
+        1,
+        "the local fragment entry must be present"
+    );
+    assert_eq!(linkage.fragment_entries[0].name, "fs_main");
+
+    // The binding shared by the imported vertex entry and the local
+    // fragment entry carries OR'd stage visibility; the fragment-only
+    // binding stays fragment-only.
+    let bg = linkage.bind_group(0).expect("bind group 0");
+    let shared = bg
+        .entries
+        .iter()
+        .find(|e| e.binding == 0)
+        .expect("SHARED entry");
+    assert_eq!(
+        shared.visibility,
+        wg::wgpu::ShaderStages::VERTEX | wg::wgpu::ShaderStages::FRAGMENT,
+        "a binding used by the imported vertex entry and the local fragment entry must carry OR'd \
+         visibility"
+    );
+    let tint = bg
+        .entries
+        .iter()
+        .find(|e| e.binding == 1)
+        .expect("TINT entry");
+    assert_eq!(tint.visibility, wg::wgpu::ShaderStages::FRAGMENT);
+
+    wgsl_rs::validate_wgsl_source(&linkage.wgsl_source())
+        .expect("the composed pipeline source must validate in naga");
+}
+
+/// The composed pipeline linkage builds ONE render pipeline end to end
+/// (device-gated: early-returns when no GPU is available).
+#[test]
+fn named_reexport_pipeline_builds_on_device() {
+    let Some(device) = test_device() else {
+        return;
+    };
+    let mut linkage = pipeline_compose::instantiate().generate_linkage();
+    let shader = linkage.shader_module(&device);
+    let layout = linkage.pipeline_layout(&device, Some("composed_layout"));
+    let pipeline = device.create_render_pipeline(&wg::wgpu::RenderPipelineDescriptor {
+        label: Some("composed_pipeline"),
+        layout: Some(&layout),
+        vertex: linkage
+            .vertex_entry("vs_main")
+            .expect("vs_main entry")
+            .vertex_state(&shader),
+        fragment: Some(
+            linkage
+                .fragment_entry("fs_main")
+                .expect("fs_main entry")
+                .fragment_state(
+                    &shader,
+                    &[Some(wg::wgpu::ColorTargetState {
+                        format: wg::wgpu::TextureFormat::Bgra8Unorm,
+                        blend: None,
+                        write_mask: wg::wgpu::ColorWrites::all(),
+                    })],
+                ),
+        ),
+        primitive: wg::wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wg::wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    let _ = pipeline;
 }
 
 /// The direct module render route (`instantiate().wgsl_source()`)

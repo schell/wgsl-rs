@@ -441,6 +441,7 @@ fn gen_wgsl_module(
     crate_path: &syn::Path,
     imports: &[proc_macro2::TokenStream],
     reexports: &[proc_macro2::TokenStream],
+    named_exports: &[(String, proc_macro2::TokenStream)],
     wgsl_module: &parse::ItemMod,
     mono_result: &monomorphize::MonoResult,
     module_type_params: &[String],
@@ -775,7 +776,17 @@ fn gen_wgsl_module(
     // may resolve through this one, not this module's own assembled
     // content (assembly concatenates every import either way), so the
     // id — and with it assembly dedup — must stay byte-stable
-    // (wgsl-rs#245).
+    // (wgsl-rs#245). The same holds for named re-export entries: a
+    // named import and a glob of the same module fold identically, so
+    // their descriptors are identical too (wgsl-rs#114).
+    //
+    // The named re-export alias-table entries, interpolated below.
+    let named_export_names: Vec<&str> = named_exports
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let named_export_sources: Vec<&proc_macro2::TokenStream> =
+        named_exports.iter().map(|(_, source)| source).collect();
     for type_param in module_type_params {
         source_descriptor.push('\0');
         source_descriptor.push_str(type_param);
@@ -837,6 +848,9 @@ fn gen_wgsl_module(
             ],
             reexports: &[
                 #(&#reexports),*
+            ],
+            named_exports: &[
+                #(#crate_path::NamedExport { name: #named_export_names, source: &#named_export_sources }),*
             ],
             ir_constructor: #module_ctor_ident,
             templates: &[
@@ -963,7 +977,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     for tmpl in mono_result.template_macros.iter_mut() {
         deref_validation::validate_items(&mut tmpl.items)?;
     }
-    let (imports, reexports) = wgsl_module.imports_and_reexports(&crate_path);
+    let parse::ImportEdges {
+        imports,
+        reexports,
+        named_exports,
+    } = wgsl_module.imports_and_reexports(&crate_path);
 
     // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
     // input Rust module that have a generic type (e.g.
@@ -983,6 +1001,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         &crate_path,
         &imports,
         &reexports,
+        &named_exports,
         &wgsl_module,
         &mono_result,
         &module_type_params,
@@ -2160,6 +2179,7 @@ mod tests {
                 &syn::parse_quote! { wgsl_rs },
                 &imports,
                 reexports,
+                &[],
                 &wgsl_module,
                 &mono_result,
                 &[],

@@ -95,7 +95,9 @@ pub mod shader {
 
 Everything a glob import brings into scope also travels through re-export chains: concrete items and generic templates alike. Instantiating `Id<f32>` through `prelude` assembles the same WGSL as importing `defs` directly. Chains of any depth work, and a defining module reached through several paths is imported only once.
 
-If two different defining modules are both reachable through your imports and both define a template with the same name, instantiation fails with an ambiguity error. Import the defining module directly to pick one.
+Re-export chains follow `pub`: a downstream module can only resolve names along `pub use` edges. A plain `use` inside a prelude is a private import — its items still assemble, because the prelude's own code needs them, but downstream modules cannot reach through it, exactly as in Rust. `pub(crate)`, `pub(super)` and `pub(in path)` count as private here: a consumer in another crate cannot traverse them in Rust, so the transpiler does not either. Spell `pub use` when a prelude is meant to forward names.
+
+If two different defining modules are both reachable through your imports and both define a template with the same name, instantiation fails with an ambiguity error. Import the defining module directly to pick one. Privately imported colliding definitions do not trigger this — they are not reachable through the hop.
 
 ## Doc Comments
 

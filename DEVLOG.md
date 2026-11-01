@@ -2087,3 +2087,61 @@ on them at all.
 constructor literals reparse to the identical bits: a failed parity
 assertion hands you a value you can paste straight into WGSL source
 and trust. These are CPU-world impls only.
+
+### 2026-10-31: Only `pub use` edges are re-export edges for template resolution
+
+**Problem.** The parser discarded `vis` when converting
+`syn::ItemUse`, so `Source.imports` mixed private `use` statements
+with `pub use` re-exports. Template resolution walks the import graph
+transitively (2026-10-20, wgsl-rs#238), so private helper imports
+acted as re-export edges: a prelude that privately imports one
+definition of a name and publicly re-exports another made downstream
+instantiation fail with `AmbiguousTemplate`, even though Rust
+resolves the name to the public definition alone, violating "Rust
+compiles, shader works" (2025-12-27). Worse, a downstream importing
+the defining module directly alongside such a prelude worked before
+the #238 fix and regressed after.
+
+**Decision.** Visibility is now real. The parser keeps `vis` on the
+parsed use item, and `Source` carries a second slice, `reexports`,
+holding the `pub use` subset of `imports`. The two lists have
+distinct jobs:
+
+- `imports` (all edges, any visibility) still drives chunk assembly
+  (`Source::collect`, `assemble_ir`): a module's own code can name
+  anything it imports, privately or not, so every imported source is
+  concatenated.
+- `reexports` (public edges only) is what cross-module resolution
+  traverses: `resolve_template`'s reachable-set walk and the #237
+  template-name harvest cross a hop only along `pub use` edges. A
+  module's own imports and its recorded instantiation candidates are
+  starting points, reachable regardless of visibility. The #237
+  harvest runs per chunk during assembly, so each module's
+  unresolved-reference check uses the names *that module* can name
+  (a middle module's private imports included), not the root's — a
+  single root-level set would go blind to names the root cannot see.
+
+Only `pub` counts. `pub(crate)`, `pub(super)`, `pub(in path)` and
+plain `use` all record private edges. The runtime walk has no crate
+identity to enforce `pub(crate)` boundaries with, and cross-crate
+consumers (crabslab-style shader crates) cannot traverse them in
+Rust, so treating them as public would reintroduce the same false
+ambiguities one crate over. The honest spelling for a chain meant to
+resolve is `pub use`.
+
+Re-export edges are deliberately excluded from the module-id content
+descriptor: flipping `use` to `pub use` changes only what downstream
+modules may resolve through this module, not this module's own
+assembled content (assembly concatenates every import either way),
+so ids, and with them assembly dedup, stay byte-stable. A unit test
+pins this.
+
+**Why.** The alternative (flag-carrying import entries) changes the
+type of `imports` everywhere: every hand-built `Source` static, the
+linkage assembly, the macro emission, for no behavioral gain, and
+keeps a single list whose edges mean two different things depending
+on the consumer. Two slices name the two jobs. The known follow-on:
+two colliding same-name definitions from different modules still
+collide at WGSL redefinition time when both chunks concatenate;
+cross-module collision rules (loud assembly-time errors,
+qualification) are future work.

@@ -435,10 +435,12 @@ fn ir_path(crate_path: &syn::Path) -> proc_macro2::TokenStream {
     quote! { #crate_path::ir }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gen_wgsl_module(
     name: &syn::Ident,
     crate_path: &syn::Path,
     imports: &[proc_macro2::TokenStream],
+    reexports: &[proc_macro2::TokenStream],
     wgsl_module: &parse::ItemMod,
     mono_result: &monomorphize::MonoResult,
     module_type_params: &[String],
@@ -768,6 +770,12 @@ fn gen_wgsl_module(
         source_descriptor.push('\0');
         source_descriptor.push_str(&import.to_string());
     }
+    // Re-export edges are deliberately NOT part of the descriptor: a
+    // `use` flipping to `pub use` changes only what downstream modules
+    // may resolve through this one, not this module's own assembled
+    // content (assembly concatenates every import either way), so the
+    // id — and with it assembly dedup — must stay byte-stable
+    // (wgsl-rs#245).
     for type_param in module_type_params {
         source_descriptor.push('\0');
         source_descriptor.push_str(type_param);
@@ -801,6 +809,9 @@ fn gen_wgsl_module(
             name: stringify!(#name),
             imports: &[
                 #(&#imports),*
+            ],
+            reexports: &[
+                #(&#reexports),*
             ],
             ir_constructor: #module_ctor_ident,
             templates: &[
@@ -909,7 +920,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     for tmpl in mono_result.template_macros.iter_mut() {
         deref_validation::validate_items(&mut tmpl.items)?;
     }
-    let imports = wgsl_module.imports(&crate_path);
+    let (imports, reexports) = wgsl_module.imports_and_reexports(&crate_path);
 
     // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
     // input Rust module that have a generic type (e.g.
@@ -928,6 +939,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         &wgsl_module.ident,
         &crate_path,
         &imports,
+        &reexports,
         &wgsl_module,
         &mono_result,
         &module_type_params,
@@ -2069,5 +2081,64 @@ pub fn derive_wgsl(input: TokenStream) -> TokenStream {
             compile_error!("derive Wgsl doesn't support Unions")
         }
         .into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `use` flipping to `pub use` must not shift the emitted module
+    /// id (wgsl-rs#245): visibility changes only what downstream
+    /// modules may resolve through this one, not this module's own
+    /// assembled content (assembly concatenates every import either
+    /// way), so assembly dedup must keep treating the two as
+    /// interchangeable.
+    #[test]
+    fn module_id_ignores_reexport_edges() {
+        fn gen_module_id(reexports: &[proc_macro2::TokenStream]) -> u64 {
+            let item_mod: syn::ItemMod = syn::parse_quote! {
+                mod m {
+                    use super::defs::*;
+
+                    pub fn f() -> u32 {
+                        1u32
+                    }
+                }
+            };
+            let mut wgsl_module = parse::ItemMod::try_from(&item_mod).unwrap();
+            let mono_result = monomorphize::run(&mut wgsl_module).unwrap();
+            monomorphize::resolve_assoc_types(&mut wgsl_module).unwrap();
+            let imports = vec![quote! { super::defs::WGSL_SOURCE }];
+            let tokens = gen_wgsl_module(
+                &wgsl_module.ident,
+                &syn::parse_quote! { wgsl_rs },
+                &imports,
+                reexports,
+                &wgsl_module,
+                &mono_result,
+                &[],
+                &[],
+            )
+            .unwrap();
+            let src = tokens.to_string();
+            let marker = src
+                .find("id :")
+                .or_else(|| src.find("id:"))
+                .expect("emitted Source must contain an id field");
+            let digits: String = src[marker..]
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            digits.parse().expect("the id field is a u64 literal")
+        }
+
+        let private = gen_module_id(&[]);
+        let reexported = gen_module_id(&[quote! { super::defs::WGSL_SOURCE }]);
+        assert_eq!(
+            private, reexported,
+            "re-export edges must not be part of the module id descriptor"
+        );
     }
 }

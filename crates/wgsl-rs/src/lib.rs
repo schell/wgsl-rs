@@ -77,7 +77,26 @@ pub struct Source {
     pub name: &'static str,
 
     /// Imports of other WGSL sources.
+    ///
+    /// Every `use` statement is recorded here, private or public:
+    /// assembly concatenates all imported sources so a module's own
+    /// code keeps resolving.
     pub imports: &'static [&'static Source],
+
+    /// The publicly re-exported subset of [`Self::imports`] (`pub use
+    /// …::*;` statements).
+    ///
+    /// Re-export edges are the only edges cross-module resolution
+    /// traverses: a template name resolves through a chain of modules
+    /// only along `pub` edges, mirroring Rust re-export semantics. A
+    /// module's private imports stay in [`Self::imports`] for assembly,
+    /// but they are invisible to downstream modules, exactly as they
+    /// are in Rust (wgsl-rs#245).
+    ///
+    /// Only `pub` is public: `pub(crate)`, `pub(super)`, `pub(in path)`
+    /// and plain `use` all record private edges. See the DEVLOG entry
+    /// for 2026-10-31 for the reasoning.
+    pub reexports: &'static [&'static Source],
 
     /// Constructor function that builds this module's IR. Called lazily by
     /// `wgsl_source()` / `instantiate()`.
@@ -206,15 +225,6 @@ impl Source {
                 uninstantiated_source: self,
             });
         }
-        // Harvest every template name reachable through the import graph
-        // (including templates reachable only via instantiations) so the
-        // assembly pass can flag references that were never resolved to
-        // a concrete instantiation (wgsl-rs#237). Cross-module references
-        // cannot be checked at macro time — the consuming module cannot
-        // know that an imported name is generic.
-        let mut template_names: HashSet<String> = HashSet::new();
-        let mut visited: HashSet<u64> = HashSet::new();
-        collect_template_names(self, &mut template_names, &mut visited);
         let mut out = String::new();
         let mut visited_sources: HashSet<u64> = HashSet::new();
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
@@ -230,7 +240,6 @@ impl Source {
             None,
             &mut needs_tier1,
             &mut imports,
-            &template_names,
             &mut emitted_names,
         )?;
         // WGSL requires `enable` directives at the very start of the
@@ -270,7 +279,6 @@ impl Source {
         subst: Option<&HashMap<String, ir::Type>>,
         needs_tier1: &mut bool,
         imports: &mut ir::TypeImports,
-        template_names: &HashSet<String>,
         emitted_names: &mut HashSet<String>,
     ) -> Result<(), SourceError<'_>> {
         // 1. Imports first (depth-first, deduplicated by source ID).
@@ -283,7 +291,6 @@ impl Source {
                     None,
                     needs_tier1,
                     imports,
-                    template_names,
                     emitted_names,
                 )?;
             }
@@ -298,8 +305,16 @@ impl Source {
         // Flag references to generic templates that were never resolved
         // (wgsl-rs#237): a bare `Id::new(...)` or `Id::NONE` here would
         // render an un-mangled name and fail WGSL validation far from
-        // the authoring mistake.
-        if let Some(offense) = ir::find_unresolved_template_refs(&ir_module.items, template_names) {
+        // the authoring mistake. Cross-module references cannot be
+        // checked at macro time — the consuming module cannot know that
+        // an imported name is generic. The name set is harvested per
+        // chunk: each module is checked against the names *that module*
+        // can name, so a middle module's private imports are still
+        // harvested even though they are invisible to the root.
+        let mut template_names: HashSet<String> = HashSet::new();
+        collect_template_names(self, &mut template_names);
+        if let Some(offense) = ir::find_unresolved_template_refs(&ir_module.items, &template_names)
+        {
             return Err(SourceError::UnresolvedTemplateRef {
                 source_name: self.name.to_string(),
                 template_name: offense.template,
@@ -387,7 +402,6 @@ impl Source {
                 seen,
                 needs_tier1,
                 imports,
-                template_names,
                 emitted_names,
             )?;
         }
@@ -395,11 +409,43 @@ impl Source {
     }
 }
 
-/// Harvest every generic template name reachable from `source` through
-/// the import graph, including templates reachable only through recorded
-/// instantiations. Used by source assembly to detect references that were
-/// never resolved to a concrete instantiation (wgsl-rs#237).
-fn collect_template_names(
+/// Harvest every generic template name the given module can name:
+/// its own templates, its own imports (any visibility), and — across
+/// re-export hops past the first — the public re-export closure of
+/// each of those plus its recorded instantiation candidates. Used by
+/// source assembly to detect references that were never resolved to a
+/// concrete instantiation (wgsl-rs#237) — cross-module references
+/// cannot be checked at macro time, because the consuming module
+/// cannot know that an imported name is generic.
+///
+/// The first hop uses [`Source::imports`] (a module can name anything
+/// it imports, privately or not); every hop past the first crosses a
+/// re-export and follows [`Source::reexports`] only (wgsl-rs#245).
+///
+/// Called per chunk during assembly (see [`Source::collect`]): each
+/// module's references are checked against the names that module
+/// itself can name, so a middle module's private imports are
+/// harvested even though they are invisible to the root.
+fn collect_template_names(source: &Source, names: &mut HashSet<String>) {
+    for template in source.templates {
+        names.insert(template.name.to_string());
+    }
+    let mut visited = HashSet::new();
+    // Own imports and instantiation candidates are starting points:
+    // reachable in full, regardless of visibility.
+    for import in source.imports {
+        collect_public_template_names(import, names, &mut visited);
+    }
+    for inst in source.instantiations {
+        for module in inst.modules {
+            collect_public_template_names(module, names, &mut visited);
+        }
+    }
+}
+
+/// Harvest a starting module's template names and, transitively, those
+/// of every module it publicly re-exports (wgsl-rs#245).
+fn collect_public_template_names(
     source: &Source,
     names: &mut HashSet<String>,
     visited: &mut HashSet<u64>,
@@ -410,13 +456,8 @@ fn collect_template_names(
     for template in source.templates {
         names.insert(template.name.to_string());
     }
-    for import in source.imports {
-        collect_template_names(import, names, visited);
-    }
-    for inst in source.instantiations {
-        for module in inst.modules {
-            collect_template_names(module, names, visited);
-        }
+    for reexport in source.reexports {
+        collect_public_template_names(reexport, names, visited);
     }
 }
 
@@ -440,7 +481,6 @@ fn instantiate_template_into<'a>(
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
     imports: &mut ir::TypeImports,
-    template_names: &HashSet<String>,
     emitted_names: &mut HashSet<String>,
 ) -> Result<(), SourceError<'a>> {
     let (source, template) = resolve_template(sources, template_name, mangled_type_args)?;
@@ -482,7 +522,6 @@ fn instantiate_template_into<'a>(
             seen,
             needs_tier1,
             imports,
-            template_names,
             emitted_names,
         )?;
     }
@@ -517,8 +556,12 @@ fn instantiate_template_into<'a>(
     // body could not resolve (e.g. a generic fn body calling
     // `Id::<T>::new(...)` — the instance rename only resolves the
     // template's own name, wgsl-rs#237). Without this the broken name
-    // reaches WGSL validation as an un-mangled identifier.
-    if let Some(offense) = ir::find_unresolved_template_refs(&items, template_names) {
+    // reaches WGSL validation as an un-mangled identifier. The body was
+    // written in the defining module, so it is checked against the
+    // names *that module* can name.
+    let mut template_names: HashSet<String> = HashSet::new();
+    collect_template_names(source, &mut template_names);
+    if let Some(offense) = ir::find_unresolved_template_refs(&items, &template_names) {
         return Err(SourceError::UnresolvedTemplateRef {
             source_name: source.name.to_string(),
             template_name: offense.template,
@@ -539,17 +582,25 @@ fn instantiate_template_into<'a>(
 }
 
 /// Collect `sources` plus every `Source` reachable from them through
-/// the import graph, deduplicated by [`Source::id`] and safe against
-/// import cycles.
+/// **public re-export edges** only, deduplicated by [`Source::id`] and
+/// safe against import cycles.
+///
+/// The starting sources are a module's own `use` paths, reachable in
+/// full regardless of visibility (a module can always name what it
+/// imports directly). Everything past the first hop crosses a
+/// re-export, so only [`Source::reexports`] is walked: a module's
+/// private imports are not re-export edges and must not be traversed
+/// (wgsl-rs#245) — mirroring Rust, where a downstream module cannot
+/// reach through another module's private import. Traversing them
+/// anyway made privately imported colliding definitions look like
+/// template ambiguities that Rust would never compile.
 ///
 /// Module ids are content hashes (see [`Source::id`]), so a defining
 /// module reached through two different re-export paths appears once
 /// here — diamond imports cannot manufacture a template ambiguity.
-/// Only `Source::imports` is walked: the macro records an
-/// instantiation's candidate modules as the importing module's `use`
-/// paths, and those same paths also feed `imports`, so the import
-/// graph reaches every module a source could have imported from
-/// (wgsl-rs#238).
+/// The macro records an instantiation's candidate modules as the
+/// importing module's `use` paths, so the starting points reach every
+/// module a source could have imported from (wgsl-rs#238).
 fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
     /// Depth-first visit with an id-based cycle/dedup guard.
     fn visit<'a>(source: &'a Source, out: &mut Vec<&'a Source>, visited: &mut HashSet<u64>) {
@@ -557,8 +608,8 @@ fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
             return;
         }
         out.push(source);
-        for import in source.imports {
-            visit(import, out, visited);
+        for reexport in source.reexports {
+            visit(reexport, out, visited);
         }
     }
 
@@ -577,7 +628,7 @@ fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
 /// Searching transitively makes generic templates available through
 /// `pub use` re-export chains: a re-exporting module's own template
 /// registry is empty, but the defining module is reachable via the
-/// re-exporter's `imports` (wgsl-rs#238). A macro-side fix is not
+/// re-exporter's `reexports` (wgsl-rs#238). A macro-side fix is not
 /// possible: proc macros cannot introspect what a sibling module
 /// re-exports, so only the literal `use` paths can be recorded as
 /// candidates.
@@ -1136,6 +1187,7 @@ mod test {
             id: 0,
             name: "a",
             imports: &EMPTY_SOURCES,
+            reexports: &EMPTY_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &A_TEMPLATES,
             instantiations: &EMPTY_INSTS,
@@ -1145,6 +1197,7 @@ mod test {
             id: 1,
             name: "b",
             imports: &EMPTY_SOURCES,
+            reexports: &EMPTY_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &B_TEMPLATES,
             instantiations: &EMPTY_INSTS,
@@ -1162,6 +1215,7 @@ mod test {
             id: 2,
             name: "root",
             imports: &EMPTY_SOURCES,
+            reexports: &EMPTY_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &ROOT_INSTS,
@@ -1259,6 +1313,7 @@ mod test {
             id: 100,
             name: "defs",
             imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -1271,6 +1326,7 @@ mod test {
             id: 100,
             name: "defs",
             imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -1283,17 +1339,19 @@ mod test {
             id: 106,
             name: "other_defs",
             imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
             module_type_params: &NO_TYPE_PARAMS,
         };
 
-        /// The single re-export hop: an empty registry, one import.
+        /// The single re-export hop: an empty registry, one pub re-export.
         static PRELUDE: Source = Source {
             id: 101,
             name: "prelude",
             imports: &[&DEFS],
+            reexports: &[&DEFS],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -1305,6 +1363,7 @@ mod test {
             id: 102,
             name: "mid",
             imports: &[&PRELUDE],
+            reexports: &[&PRELUDE],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -1316,6 +1375,7 @@ mod test {
             id: 103,
             name: "hop_a",
             imports: &[&DEFS],
+            reexports: &[&DEFS],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -1325,6 +1385,7 @@ mod test {
             id: 104,
             name: "hop_b",
             imports: &[&DEFS_DUPLICATE],
+            reexports: &[&DEFS_DUPLICATE],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -1336,6 +1397,7 @@ mod test {
             id: 107,
             name: "path_a",
             imports: &[&DEFS],
+            reexports: &[&DEFS],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -1345,17 +1407,22 @@ mod test {
             id: 108,
             name: "path_b",
             imports: &[&OTHER_DEFS],
+            reexports: &[&OTHER_DEFS],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
             module_type_params: &NO_TYPE_PARAMS,
         };
 
-        /// Mutual re-exports: the template lives behind the cycle.
+        /// A mixed-visibility cycle: `cyc_b` publicly re-exports `cyc_a`
+        /// (which defines the template), while `cyc_a`'s import of `cyc_b`
+        /// is private. The walk must terminate through the cycle and the
+        /// template must resolve along the public edge.
         static CYC_A: Source = Source {
             id: 109,
             name: "cyc_a",
             imports: &[&CYC_B],
+            reexports: &NO_SOURCES,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -1365,6 +1432,7 @@ mod test {
             id: 110,
             name: "cyc_b",
             imports: &[&CYC_A],
+            reexports: &[&CYC_A],
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -1388,6 +1456,7 @@ mod test {
                     id: $root_id,
                     name: "root",
                     imports: $candidates,
+                    reexports: &NO_SOURCES,
                     ir_constructor: empty_source_ir,
                     templates: &[],
                     instantiations: &INSTS,
@@ -1473,6 +1542,7 @@ mod test {
                 id: 206,
                 name: "missing_root",
                 imports: &[&PRELUDE],
+                reexports: &NO_SOURCES,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &MISSING_INSTS,
@@ -1494,6 +1564,313 @@ mod test {
                 }
                 other => panic!("expected TemplateNotFound, got {other:?}"),
             }
+        }
+
+        // --- Re-export visibility (wgsl-rs#245) ---
+
+        /// The colliding-name shape from the issue: a prelude privately
+        /// pulls in one definition of `id` and publicly re-exports
+        /// another. Only the public definition is nameable downstream.
+        static MIXED_PRELUDE: Source = Source {
+            id: 111,
+            name: "mixed_prelude",
+            imports: &[&OTHER_DEFS, &DEFS],
+            reexports: &[&DEFS],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// A prelude whose import of a colliding definition is private:
+        /// models both plain `use` and `pub(crate)` (any non-`pub`
+        /// visibility records a private edge).
+        static PRIVATE_PRELUDE: Source = Source {
+            id: 112,
+            name: "private_prelude",
+            imports: &[&OTHER_DEFS],
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn mixed_visibility_resolves_public_definition() {
+            // Before the fix this was `AmbiguousTemplate`: the privately
+            // imported `other_defs::id` leaked through the hop and
+            // collided with the re-exported `defs::id`, even though in
+            // Rust only the public definition is in scope downstream.
+            let root = id_root!(220, &[&MIXED_PRELUDE]);
+            let src = root
+                .wgsl_source()
+                .expect("only the publicly re-exported definition is nameable");
+            assert!(
+                src.matches("id_f32").count() == 1,
+                "expected id_f32 exactly once, got:\n{src}"
+            );
+        }
+
+        /// A cross-crate prelude shape (crabslab-style): the prelude
+        /// publicly re-exports the real definition while its
+        /// `pub(crate)` internal import collides. `pub(crate)` collapses
+        /// to a private edge at parse time — the runtime has no crate
+        /// identity to enforce it with, and a consumer in another crate
+        /// cannot traverse it in Rust either.
+        static CRAB_INTERNAL: Source = Source {
+            id: 130,
+            name: "crab_internal",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &ID_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static CRAB_PRELUDE: Source = Source {
+            id: 131,
+            name: "crab_prelude",
+            // `pub(crate) use super::crab_internal::*;` — a private edge.
+            imports: &[&CRAB_INTERNAL],
+            // `pub use super::defs::*;` — the only traversable edge.
+            reexports: &[&DEFS],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn cross_crate_pub_crated_internal_imports_stay_private() {
+            // The downstream lives in another crate and can only reach
+            // what the prelude's `pub use` provides. Before the fix the
+            // `pub(crate)`-spelled import acted as a re-export edge and
+            // this failed with `AmbiguousTemplate` between
+            // `crab_internal` and `defs`.
+            let root = id_root!(228, &[&CRAB_PRELUDE]);
+            let src = root
+                .wgsl_source()
+                .expect("the pub(crate) internal definition is not nameable across crates");
+            assert!(
+                src.matches("id_f32").count() == 1,
+                "expected id_f32 exactly once, resolved from the pub re-export, got:\n{src}"
+            );
+        }
+
+        #[test]
+        fn private_hop_is_not_traversed() {
+            let root = id_root!(221, &[&PRIVATE_PRELUDE]);
+            let err = root.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::TemplateNotFound {
+                    template_name,
+                    available_templates,
+                    ..
+                } => {
+                    assert_eq!(template_name, "id");
+                    assert!(
+                        !available_templates.contains(&"id".to_string()),
+                        "a private import is not a re-export edge; its templates must not be \
+                         reachable, got: {available_templates:?}"
+                    );
+                }
+                other => panic!("expected TemplateNotFound, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn direct_import_alongside_colliding_prelude_resolves() {
+            // The graph that worked before #244 and regressed after: the
+            // downstream imports the defining module directly AND a
+            // prelude that privately imports a colliding definition.
+            let root = id_root!(222, &[&PRIVATE_PRELUDE, &DEFS]);
+            let src = root
+                .wgsl_source()
+                .expect("the privately imported colliding definition is not nameable");
+            assert!(
+                src.matches("id_f32").count() == 1,
+                "expected id_f32 exactly once, got:\n{src}"
+            );
+        }
+
+        #[test]
+        fn own_imports_harvest_templates_any_visibility() {
+            // #237's unresolved-reference detection must keep seeing
+            // templates from the module's own imports even when the
+            // import is private: own imports are starting points, only
+            // hops past the first follow re-export edges.
+            static NO_SUCH_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&DEFS],
+                template_name: "no_such_template",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static OWN_ROOT: Source = Source {
+                id: 223,
+                name: "own_root",
+                imports: &[&DEFS],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &NO_SUCH_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = OWN_ROOT.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::TemplateNotFound {
+                    available_templates,
+                    ..
+                } => {
+                    assert!(
+                        available_templates.contains(&"id".to_string()),
+                        "own imports (any visibility) must be harvested, got: \
+                         {available_templates:?}"
+                    );
+                }
+                other => panic!("expected TemplateNotFound, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn middle_module_private_imports_are_checked() {
+            // wgsl-rs#237's unresolved-reference check runs per chunk
+            // against that chunk's own nameable set. Here `middle`
+            // privately imports `hidden_defs` and references `Hidden`
+            // without instantiating it. The root cannot name `Hidden`
+            // (so a root-level harvest would miss it), but `middle`
+            // can — the check inside `middle`'s chunk must fire instead
+            // of letting the un-mangled name leak to WGSL validation.
+            fn hidden_template_items() -> Vec<ir::Item> {
+                vec![ir::Item::Struct(ir::ItemStruct {
+                    type_params: vec!["T".to_string()],
+                    const_params: vec![],
+                    name: "Hidden".to_string(),
+                    fields: vec![],
+                    attrs: vec![],
+                })]
+            }
+            static HIDDEN_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
+                name: "Hidden",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: hidden_template_items,
+                dependencies: &DEP,
+            }];
+            static HIDDEN_DEFS: Source = Source {
+                id: 116,
+                name: "hidden_defs",
+                imports: &NO_SOURCES,
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &HIDDEN_TEMPLATES,
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            fn middle_ir() -> ir::Module {
+                ir::Module {
+                    name: "middle",
+                    items: vec![ir::Item::Fn(ir::ItemFn {
+                        type_params: vec![],
+                        const_params: vec![],
+                        fn_attrs: ir::FnAttrs::None,
+                        name: "uses_hidden".to_string().into(),
+                        inputs: vec![],
+                        return_type: ir::ReturnType::Type {
+                            annotation: ir::ReturnTypeAnnotation::None,
+                            ty: ir::Type::Struct {
+                                name: "Hidden".to_string(),
+                                type_args: vec![],
+                            },
+                        },
+                        block: ir::Block { stmts: vec![] },
+                        attrs: vec![],
+                    })],
+                    attrs: vec![],
+                }
+            }
+            static MIDDLE: Source = Source {
+                id: 117,
+                name: "middle",
+                // `use super::hidden_defs::*;` — a private import.
+                imports: &[&HIDDEN_DEFS],
+                reexports: &NO_SOURCES,
+                ir_constructor: middle_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            static ROOT: Source = Source {
+                id: 227,
+                name: "root",
+                imports: &[&MIDDLE],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = ROOT.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef {
+                    source_name,
+                    template_name,
+                    ..
+                } => {
+                    assert_eq!(source_name, "middle");
+                    assert_eq!(template_name, "Hidden");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn chunk_assembly_concatenates_private_imports() {
+            // Assembly keeps using every import edge: a privately
+            // imported helper's items must still land in the output,
+            // because the module's own code names them.
+            fn helper_const_ir() -> ir::Module {
+                ir::Module {
+                    name: "helper",
+                    items: vec![ir::Item::Const(ir::ItemConst {
+                        name: "HELPER_ANSWER".to_string(),
+                        ty: ir::Type::Scalar(ir::ScalarType::U32),
+                        expr: ir::Expr::Lit(ir::Lit::Int {
+                            digits: "42".to_string(),
+                            suffix: "u32".to_string(),
+                        }),
+                        attrs: vec![],
+                    })],
+                    attrs: vec![],
+                }
+            }
+            static HELPER: Source = Source {
+                id: 224,
+                name: "helper",
+                imports: &NO_SOURCES,
+                reexports: &NO_SOURCES,
+                ir_constructor: helper_const_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            static USER: Source = Source {
+                id: 225,
+                name: "user",
+                imports: &[&HELPER],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let src = USER.wgsl_source().expect("concrete source");
+            assert!(
+                src.contains("HELPER_ANSWER"),
+                "private import chunks must be concatenated, got:\n{src}"
+            );
         }
     }
 

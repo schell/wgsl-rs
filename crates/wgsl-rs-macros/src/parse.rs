@@ -5905,7 +5905,21 @@ impl ItemMod {
         attrs_contain_wgsl_ignore(attrs)
     }
 
-    pub fn imports(&mut self, wgsl_rs_crate_path: &syn::Path) -> Vec<proc_macro2::TokenStream> {
+    /// Collect the emitted `Source` import and re-export edges from the
+    /// module's `use` statements.
+    ///
+    /// `imports` records every `use` statement's module, any visibility:
+    /// chunk assembly concatenates all of them, because a module's own
+    /// code can name anything it imports, privately or not.
+    ///
+    /// `reexports` records only `pub use` statements: the edges that
+    /// downstream modules may resolve names through. Every other
+    /// visibility (`pub(crate)`, `pub(super)`, `pub(in path)` and plain
+    /// `use`) is a private import and stays out (wgsl-rs#245).
+    pub fn imports_and_reexports(
+        &mut self,
+        wgsl_rs_crate_path: &syn::Path,
+    ) -> (Vec<proc_macro2::TokenStream>, Vec<proc_macro2::TokenStream>) {
         // Only import `builtin_constants` when the module actually uses a
         // builtin associated constant (`Vec3f::X` style). Importing
         // unconditionally injects ~58 const declarations into every
@@ -5914,28 +5928,38 @@ impl ItemMod {
         let uses_builtin_consts = scan_for_builtin_const_usage(self);
 
         let mut imports = vec![];
+        let mut reexports = vec![];
         for item in self.content.iter() {
             if let Item::Use(use_item) = item {
+                let is_pub = matches!(use_item.vis, syn::Visibility::Public(_));
                 for path in use_item.modules.iter() {
                     // If this import is `use wgsl_rs::std::*;`, import the
                     // built-in constants (e.g. Vec3f::ZERO) only when one is
                     // actually used by the module.
                     if is_wgsl_std_import(wgsl_rs_crate_path, path) {
                         if uses_builtin_consts {
-                            imports.push(quote! {
+                            let builtin = quote! {
                                 #wgsl_rs_crate_path::std::builtin_constants::WGSL_SOURCE
-                            });
+                            };
+                            imports.push(builtin.clone());
+                            if is_pub {
+                                reexports.push(builtin);
+                            }
                         }
                         continue;
                     }
 
-                    imports.push(quote! {
+                    let source = quote! {
                         #path::WGSL_SOURCE
-                    });
+                    };
+                    imports.push(source.clone());
+                    if is_pub {
+                        reexports.push(source);
+                    }
                 }
             }
         }
-        imports
+        (imports, reexports)
     }
 }
 
@@ -5943,6 +5967,11 @@ impl ItemMod {
 /// Only supports glob imports of an entire module, e.g. `use foo::bar::*;`
 #[derive(Clone)]
 pub struct ItemUse {
+    /// Visibility of the statement. Only `pub use` statements are
+    /// re-export edges that downstream modules may resolve names through;
+    /// every other visibility (`pub(crate)`, `pub(super)`, `pub(in path)`
+    /// and plain `use`) records a private import (wgsl-rs#245).
+    pub vis: syn::Visibility,
     pub modules: Vec<syn::Path>,
 }
 
@@ -5988,7 +6017,10 @@ impl TryFrom<&syn::UseTree> for ItemUse {
                 note: "Renaming in use statements is not supported.",
             }
             .fail()?,
-            syn::UseTree::Glob(_use_glob) => Self { modules: vec![] },
+            syn::UseTree::Glob(_use_glob) => Self {
+                vis: syn::Visibility::Inherited,
+                modules: vec![],
+            },
             syn::UseTree::Group(use_group) => UnsupportedSnafu {
                 span: use_group.span(),
                 note: "Grouped use statements are not supported.",
@@ -7634,12 +7666,19 @@ impl TryFrom<&syn::Item> for Item {
             syn::Item::Fn(item_fn) => Ok(Item::Fn(Box::new(item_fn.try_into()?))),
             syn::Item::Use(syn::ItemUse {
                 attrs: _,
-                vis: _,
+                vis,
                 use_token: _,
                 leading_colon: _,
                 tree,
                 semi_token: _,
-            }) => Ok(Item::Use(ItemUse::try_from(tree)?)),
+            }) => {
+                // Keep the statement's visibility (wgsl-rs#245): only
+                // `pub use` statements may act as re-export edges for
+                // downstream template resolution.
+                let mut item_use = ItemUse::try_from(tree)?;
+                item_use.vis = vis.clone();
+                Ok(Item::Use(item_use))
+            }
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
             syn::Item::Impl(item_impl) => {
                 // Both inherent impl blocks and trait impl blocks are parsed.
@@ -8805,7 +8844,8 @@ mod test {
             panic!("expected module");
         };
         let imports: Vec<String> = m
-            .imports(&crate_path)
+            .imports_and_reexports(&crate_path)
+            .0
             .iter()
             .map(|ts| ts.to_string())
             .collect();
@@ -8831,7 +8871,8 @@ mod test {
             panic!("expected module");
         };
         let imports: Vec<String> = m
-            .imports(&crate_path)
+            .imports_and_reexports(&crate_path)
+            .0
             .iter()
             .map(|ts| ts.to_string())
             .collect();
@@ -8840,6 +8881,66 @@ mod test {
                 .iter()
                 .any(|i| i.contains("builtin_constants") && i.contains("WGSL_SOURCE")),
             "unused builtin constants must not be imported, got {imports:?}"
+        );
+    }
+
+    /// A `pub use wgsl_rs::std::*;` that forces the builtin constants
+    /// import records it as a re-export edge too: `reexports` is the
+    /// pub-use subset of `imports` (wgsl-rs#245). The private spelling
+    /// imports but never re-exports.
+    #[test]
+    fn pub_std_reexport_mirrors_builtin_constants_edge() {
+        let crate_path: syn::Path = syn::parse_quote!(wgsl_rs);
+        let contains_builtin = |list: &[proc_macro2::TokenStream]| {
+            list.iter().any(|ts| {
+                let s = ts.to_string();
+                s.contains("builtin_constants") && s.contains("WGSL_SOURCE")
+            })
+        };
+
+        let item: syn::Item = syn::parse_quote! {
+            mod pub_with_macro {
+                pub use wgsl_rs::std::*;
+
+                pub fn f() {
+                    unknown_macro!(a, b, c);
+                }
+            }
+        };
+        let Item::Mod(mut m) = Item::try_from(&item).unwrap() else {
+            panic!("expected module");
+        };
+        let (imports, reexports) = m.imports_and_reexports(&crate_path);
+        assert!(
+            contains_builtin(&imports),
+            "a forced builtin-constants import must be recorded, got {imports:?}"
+        );
+        assert!(
+            contains_builtin(&reexports),
+            "a pub std import must mirror the builtin-constants edge into reexports, got \
+             {reexports:?}"
+        );
+
+        let item: syn::Item = syn::parse_quote! {
+            mod private_with_macro {
+                use wgsl_rs::std::*;
+
+                pub fn f() {
+                    unknown_macro!(a, b, c);
+                }
+            }
+        };
+        let Item::Mod(mut m) = Item::try_from(&item).unwrap() else {
+            panic!("expected module");
+        };
+        let (imports, reexports) = m.imports_and_reexports(&crate_path);
+        assert!(
+            contains_builtin(&imports),
+            "a forced builtin-constants import must be recorded, got {imports:?}"
+        );
+        assert!(
+            !contains_builtin(&reexports),
+            "a private std import must not re-export anything, got {reexports:?}"
         );
     }
 
@@ -11902,5 +12003,77 @@ mod test {
             }
             _ => panic!("Expected Item::Fn"),
         }
+    }
+
+    /// Use-statement visibility is parsed and kept on the item
+    /// (wgsl-rs#245): only `pub use` statements may act as re-export
+    /// edges for downstream template resolution.
+    #[test]
+    fn use_visibility_is_parsed() {
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod mixed {
+                use super::private_helper::*;
+                pub use super::pub_helper::*;
+                pub(crate) use super::crate_helper::*;
+            }
+        };
+        let module = ItemMod::try_from(&item_mod).unwrap();
+        let mut vis_by_path: HashMap<String, bool> = HashMap::new();
+        for item in &module.content {
+            let Item::Use(use_item) = item else {
+                continue;
+            };
+            let is_pub = matches!(use_item.vis, syn::Visibility::Public(_));
+            for path in &use_item.modules {
+                vis_by_path.insert(path.segments.last().unwrap().ident.to_string(), is_pub);
+            }
+        }
+        assert_eq!(vis_by_path.get("private_helper"), Some(&false));
+        assert_eq!(vis_by_path.get("pub_helper"), Some(&true));
+        // `pub(crate)` is not a re-export edge: cross-crate consumers
+        // (crabslab-style shader crates) cannot traverse it in Rust, so
+        // the transpiler must not either.
+        assert_eq!(vis_by_path.get("crate_helper"), Some(&false));
+    }
+
+    /// `imports_and_reexports` splits edges by visibility (wgsl-rs#245):
+    /// every `use` feeds `imports` (assembly concatenates all of them so
+    /// a module's own code keeps resolving), while only `pub use` feeds
+    /// `reexports` (the edges downstream resolution may traverse).
+    #[test]
+    fn imports_and_reexports_split_by_visibility() {
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod mixed {
+                use super::private_helper::*;
+                pub use super::pub_helper::*;
+                pub(crate) use super::crate_helper::*;
+            }
+        };
+        let mut module = ItemMod::try_from(&item_mod).unwrap();
+        let crate_path: syn::Path = syn::parse_quote! { wgsl_rs };
+        let (imports, reexports) = module.imports_and_reexports(&crate_path);
+
+        let names = |list: Vec<proc_macro2::TokenStream>| {
+            list.iter().map(|ts| ts.to_string()).collect::<Vec<_>>()
+        };
+        let imports = names(imports);
+        let reexports = names(reexports);
+
+        assert_eq!(
+            imports.len(),
+            3,
+            "all imports must be recorded: {imports:?}"
+        );
+        assert!(
+            imports.iter().any(|i| i.contains("private_helper"))
+                && imports.iter().any(|i| i.contains("pub_helper"))
+                && imports.iter().any(|i| i.contains("crate_helper")),
+            "imports must include every use statement, got: {imports:?}"
+        );
+        assert_eq!(reexports.len(), 1, "only pub use re-exports: {reexports:?}");
+        assert!(
+            reexports[0].contains("pub_helper"),
+            "the pub use module must be the re-export edge, got: {reexports:?}"
+        );
     }
 }

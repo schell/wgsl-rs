@@ -50,6 +50,10 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &reexport_prelude::WGSL_SOURCE,
     &reexport_use_id::WGSL_SOURCE,
     &reexport_direct::WGSL_SOURCE,
+    &visibility_internal::WGSL_SOURCE,
+    &visibility_defs::WGSL_SOURCE,
+    &visibility_prelude::WGSL_SOURCE,
+    &visibility_shader::WGSL_SOURCE,
 ];
 
 pub fn get_module_by_name(name: &str) -> Option<&'static wgsl_rs::Source> {
@@ -2212,6 +2216,81 @@ pub mod reexport_use_id {
 #[wgsl]
 pub mod reexport_direct {
     use super::reexport_defs::*;
+
+    pub fn my_id() -> Id<f32> {
+        Id::<f32>::new(0)
+    }
+}
+
+/// Fixture for [wgsl-rs#245](https://github.com/schell/wgsl-rs/issues/245):
+/// re-export visibility. `visibility_prelude` privately imports
+/// `visibility_internal` and publicly re-exports `visibility_defs`.
+/// Downstream shaders can only name what the public re-export brings
+/// into scope, while the private helper's machinery still assembles
+/// for the prelude's own code.
+///
+/// The issue's literal graph (two colliding `Id<T>` definitions, one
+/// behind a private hop) still trips WGSL's redefinition rule once
+/// resolution is fixed: cross-module name collisions during chunk
+/// assembly are a separate, known limitation. This fixture exercises
+/// the resolution fix in a graph that validates.
+#[wgsl]
+pub mod visibility_internal {
+    use wgsl_rs::std::*;
+
+    /// A counter, nameable only by the prelude's own code.
+    pub struct Counter<T> {
+        pub count: u32,
+        pub phantom: PhantomData<T>,
+    }
+
+    impl<T> Counter<T> {
+        pub fn zero() -> Counter<T> {
+            Counter {
+                count: 0u32,
+                phantom: PhantomData,
+            }
+        }
+    }
+}
+
+/// The publicly re-exported definition.
+#[wgsl]
+pub mod visibility_defs {
+    use wgsl_rs::std::*;
+
+    pub struct Id<T> {
+        pub index: u32,
+        pub phantom: PhantomData<T>,
+    }
+
+    impl<T> Id<T> {
+        pub fn new(i: u32) -> Id<T> {
+            Id {
+                index: i,
+                phantom: PhantomData,
+            }
+        }
+    }
+}
+
+/// The mixed-visibility prelude: one private helper import, one public
+/// re-export. Its own code uses both; downstream code can only reach
+/// what `pub use` provides.
+#[wgsl]
+pub mod visibility_prelude {
+    pub use super::visibility_defs::*;
+    use super::visibility_internal::*;
+
+    pub fn zero_counter() -> Counter<u32> {
+        Counter::<u32>::zero()
+    }
+}
+
+/// Downstream shader: only `Id` is nameable through the prelude.
+#[wgsl]
+pub mod visibility_shader {
+    use super::visibility_prelude::*;
 
     pub fn my_id() -> Id<f32> {
         Id::<f32>::new(0)

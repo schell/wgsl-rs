@@ -224,9 +224,17 @@ impl WgpuLinkage {
     /// The linkage's IR is concrete (no `Type::TypeParam`s), so the
     /// rendered text is free of `__TP{name}__` placeholders. For a
     /// linkage built from a template `Source` via
-    /// [`analyze_ir_module`], this is the instantiated source.
+    /// [`analyze_ir_module`], this is the instantiated source. If any
+    /// item uses a tier-1 storage texture format, the required `enable
+    /// texture_formats_tier1;` directive is prepended — derived from
+    /// the items at render time, so no assembly bookkeeping can drop
+    /// it.
     pub fn wgsl_source(&self) -> String {
-        ir::render_module(&self.ir)
+        let mut source = ir::render_module(&self.ir);
+        if ir::items_need_tier1_extension(&self.ir.items) {
+            source.insert_str(0, "enable texture_formats_tier1;\n\n");
+        }
+        source
     }
 
     /// Builds a `wgpu::ShaderModuleDescriptor` for this module using

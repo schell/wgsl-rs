@@ -2186,7 +2186,11 @@ skipped instead of double-defining it) and the per-chunk plus
 per-instance wgsl-rs#237 unresolved-reference checks, so
 `instantiate()` fails with the structured
 `UnresolvedTemplateRef` error rather than leaking an un-mangled
-identifier into WGSL validation.
+identifier into WGSL validation. The IR render routes
+(`ir::Module::wgsl_source` and `WgpuLinkage::wgsl_source`) likewise
+derive the tier-1 `enable texture_formats_tier1;` directive from the
+items themselves at render time, so no assembly bookkeeping can drop
+it — matching the text path's per-chunk accumulation.
 
 **Why.** Every consumer that built a pipeline from a module had to
 know which constructor flattens imports; now there is one documented

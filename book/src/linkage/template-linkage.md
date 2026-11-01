@@ -59,32 +59,27 @@ owns it the same way.
 
 ```rust
 #[wgsl]
-pub mod generic_blit {
+pub mod tinted_output {
     use wgsl_rs::std::*;
 
-    pub struct Params<T> { pub scale: T, pub bias: T }
-
-    uniform!(PARAMS, Params<Vec4f>);     // concrete after instantiation
-    texture!(SRC, Texture2d);
-    sampler!(SMP, Sampler);
-
-    #[vertex]
-    pub fn vs(...) -> VertexOutput { /* ... */ }
+    // The uniform's concrete type is chosen at instantiation time.
+    uniform!(group(0), binding(0), TINT: impl Convert<f32>);
 
     #[fragment]
-    pub fn fs(in: VertexOutput) -> Vec4f {
-        let c = textureSample(SRC, SMP, in.uv);
-        c * PARAMS.scale + PARAMS.bias
+    pub fn fs<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
+        let tint = get!(TINT, T);
+        vec4f(f32(tint), f32(tint) * 0.5, 0.0, 1.0)
     }
 }
 
-// In application code:
-use wgsl_rs::std::Vec4f;
+// In application code: one type argument per module parameter, in
+// `module_type_params` order — linkage variables first, then entry
+// point parameters. Here: TINT, then fs's `T`, both f32.
 use wgsl_rs_linkage_wgpu::IrModuleExt;
 
-let mut linkage = generic_blit::instantiate::<Vec4f>().generate_linkage();
+let mut linkage = tinted_output::instantiate::<f32, f32>().generate_linkage();
 let shader = linkage.shader_module(&device);
-let layout = linkage.pipeline_layout(&device, Some("blit"));
+let layout = linkage.pipeline_layout(&device, Some("tint"));
 // ... build pipeline as usual
 ```
 

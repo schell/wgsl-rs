@@ -1070,7 +1070,11 @@ impl Module {
     /// Rendering first applies the type-directed literal suffix pass
     /// ([`crate::suffix_module`]) to a clone of this module, so unsuffixed
     /// integer literals are normalized; [`crate::render_module`] itself
-    /// stays a pure emitter.
+    /// stays a pure emitter. If any item uses a tier-1 storage texture
+    /// format ([`crate::items_need_tier1_extension`]), the required
+    /// `enable texture_formats_tier1;` directive is prepended, since WGSL
+    /// demands `enable` directives at the very start of the translation
+    /// unit.
     ///
     /// This is the canonical (and only) WGSL emitter in the project. The
     /// IR may contain `Type::TypeParam`s (e.g. a template module that has
@@ -1087,6 +1091,10 @@ impl Module {
     pub fn wgsl_source(&self) -> String {
         let mut module = self.clone();
         crate::suffix_module(&mut module);
-        crate::render_module(&module)
+        let mut source = crate::render_module(&module);
+        if crate::items_need_tier1_extension(&module.items) {
+            source.insert_str(0, "enable texture_formats_tier1;\n\n");
+        }
+        source
     }
 }

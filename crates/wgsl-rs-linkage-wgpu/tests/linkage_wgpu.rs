@@ -229,6 +229,39 @@ pub mod generic_importer {
     }
 }
 
+/// A tier-1 storage texture format: `Rgba16unorm` requires the
+/// `texture_formats_tier1` language extension. Declared in an imported
+/// module so the assembled IR contains the texture item across the
+/// import boundary. `skip_validation` because the in-tree naga
+/// predates the `texture_formats_tier1` extension.
+#[wgsl(skip_validation)]
+pub mod tier1_provider {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), SCRATCH: TextureStorage2D<Rgba16unorm, Write>);
+
+    #[compute]
+    #[workgroup_size(1)]
+    pub fn clear() {}
+}
+
+#[wgsl(skip_validation)]
+pub mod tier1_consumer {
+    // WGSL-only import: the edge pulls `tier1_provider` (and its
+    // tier-1 texture) into the assembly; nothing is named on the Rust
+    // side.
+    #[allow(unused_imports)]
+    use super::tier1_provider::*;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(1), FRAME: u32);
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        vec4f(f32(get!(FRAME)) * 0.0, 0.0, 0.0, 1.0)
+    }
+}
+
 // ===== Basic shape tests =====
 
 #[test]
@@ -1396,4 +1429,41 @@ fn template_instantiate_flattens_imports() {
 
     wgsl_rs::validate_wgsl_source(&source)
         .expect("the instantiated template's linkage source must validate in naga");
+}
+
+/// The IR render paths must derive the tier-1 `enable` directive from
+/// the assembled items themselves: a tier-1 storage texture format
+/// (`Rgba16unorm`, here imported from another module) requires the
+/// `texture_formats_tier1` extension, and WGSL demands the directive at
+/// the very start of the translation unit. Not asserted through naga:
+/// the in-tree naga predates the extension (the text path has emitted
+/// the same directive since the tier-1 feature landed), so the
+/// directive itself is the contract under test.
+#[test]
+fn instantiate_based_linkage_enables_tier1() {
+    let linkage = tier1_consumer::instantiate().generate_linkage();
+    let source = linkage.wgsl_source();
+    assert!(
+        source.starts_with("enable texture_formats_tier1;"),
+        "the tier-1 enable directive must lead the assembled source, got:\n{source}"
+    );
+    assert!(
+        source.contains("SCRATCH"),
+        "the imported tier-1 texture must be assembled in, got:\n{source}"
+    );
+}
+
+/// The direct module render route (`instantiate().wgsl_source()`)
+/// must derive the same tier-1 directive.
+#[test]
+fn instantiate_wgsl_source_enables_tier1() {
+    let source = tier1_consumer::instantiate().wgsl_source();
+    assert!(
+        source.starts_with("enable texture_formats_tier1;"),
+        "the tier-1 enable directive must lead the assembled source, got:\n{source}"
+    );
+    assert!(
+        source.contains("SCRATCH"),
+        "the imported tier-1 texture must be assembled in, got:\n{source}"
+    );
 }

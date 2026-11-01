@@ -14,7 +14,7 @@ wgpu.workspace = true
 # legacy path with `--no-default-features`. A whole-workspace build
 # unifies features, so legacy runs must use an isolated
 # `-p roundtrip-tests` invocation.
-wgsl-rs = { path = "../wgsl-rs", default-features = false, features = ["validation", "dispatch-runtime"] }
+wgsl-rs = { path = "../wgsl-rs", default-features = false, features = ["validation", "dispatch-runtime", "glm"] }
 wgsl-rs-linkage-wgpu = { path = "../wgsl-rs-linkage-wgpu" }
 
 [features]

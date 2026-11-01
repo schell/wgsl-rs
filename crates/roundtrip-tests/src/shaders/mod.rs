@@ -18,6 +18,8 @@
 //! - [`geometric`] — Geometric and conversion functions: `dot`, `cross`,
 //!   `normalize`, `length`, `distance`, `reflect`, `refract`, `face_forward`,
 //!   `degrees`, `radians`, `sign`, `abs`, `fma`
+//! - [`glm_vector_helpers`] — glm module helpers: `length_squared2/3/4`,
+//!   `normalize_or_zero2/3/4`, `angle_between2/3` constant paths
 //! - [`bit_manipulation`] — Bit manipulation: `count_leading_zeros`,
 //!   `count_one_bits`, `count_trailing_zeros`, `reverse_bits`,
 //!   `first_leading_bit`, `first_trailing_bit`, `extract_bits`, `insert_bits`
@@ -81,6 +83,9 @@ pub mod clamping;
 pub mod derivative_operations;
 pub mod exponential;
 pub mod geometric;
+pub mod glm_matrix_helpers;
+pub mod glm_quat_helpers;
+pub mod glm_vector_helpers;
 pub mod literal_suffixes;
 pub mod load_macro;
 pub mod logical_operations;
@@ -108,6 +113,9 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(rounding::RoundingTest),
         Box::new(clamping::ClampingTest),
         Box::new(geometric::GeometricTest),
+        Box::new(glm_vector_helpers::GlmVectorHelpersTest),
+        Box::new(glm_matrix_helpers::GlmMatrixHelpersTest),
+        Box::new(glm_quat_helpers::GlmQuatHelpersTest),
         Box::new(bit_manipulation::BitManipulationTest),
         Box::new(bitcast::BitcastTest),
         Box::new(packing::PackingTest),

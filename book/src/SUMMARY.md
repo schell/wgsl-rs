@@ -73,6 +73,10 @@
 - [Template Linkage](./linkage/template-linkage.md)
 - [Per-binding Shader Stages](./linkage/shader-stages.md)
 
+# glm
+
+- [The glm Module](./glm.md)
+
 # Extensions
 
 - [The `WgslExtension` Trait](./extensions/trait.md)

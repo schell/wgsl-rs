@@ -832,117 +832,1460 @@ pub fn validate_wgsl_source(source: &str) -> Result<(), String> {
 
 pub mod std;
 
-#[cfg(feature = "extras")]
+#[cfg(test)]
+mod std_splats_test {
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_std_splats {
+        // The std glob import alone is sufficient in both worlds: the
+        // splat and extend calls lower to WGSL constructors through the
+        // function mapping table, so no helper functions are assembled.
+        use crate::std::*;
+
+        pub fn splat_and_extend() -> Vec4f {
+            let v = vec4f(1.0, 2.0, 3.0, 4.0);
+            let w = vec4f_splat(2.0);
+            let e = vec4f_from_3(vec3f_from_2(vec2f(5.0, 6.0), 7.0), 8.0);
+            v + w + e
+        }
+    }
+
+    #[test]
+    fn splats_and_extends_work_in_both_worlds() {
+        // CPU world: plain std functions, reached through the std glob.
+        assert_eq!(
+            uses_std_splats::splat_and_extend().to_array(),
+            [8.0, 10.0, 12.0, 14.0]
+        );
+
+        // WGSL world: the calls lower to WGSL's splat and mixed
+        // constructors; no helper functions are rendered.
+        let src = uses_std_splats::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("vec4f(2.0)"), "splat lowered: {src}");
+        assert!(
+            src.contains("vec3f(vec2f(5.0, 6.0), 7.0)"),
+            "extend lowered to the mixed constructor: {src}"
+        );
+        assert!(
+            !src.contains("_splat") && !src.contains("_from_"),
+            "no helper functions rendered: {src}"
+        );
+        #[cfg(feature = "validation")]
+        uses_std_splats::WGSL_SOURCE.validate().unwrap();
+    }
+}
+
+#[cfg(feature = "glm")]
 #[crate::wgsl(crate_path = crate)]
-pub mod extras {
-    //! Helpers like splats, extend functions, etc.
+pub mod glm {
+    //! GLM-lineage helpers over the WGSL vector and matrix types.
     //!
-    //! This module is only included with the **`extras`** cargo feature
-    //! enabled.
+    //! Lineage: GLSL → GLM (C++) → glam (Rust) → this module.
+    //! [`crate::std`] already provides the WGSL builtin surface as free
+    //! functions (`length`, `normalize`, `mix`, `dot`, `cross`, ...), so
+    //! this module only adds what GLM added on top of GLSL, as free
+    //! functions over the concrete vector types (`Vec3f` etc.).
+    //!
+    //! In `#[wgsl]` modules, import this module directly; it re-exports
+    //! [`crate::std`], so this one glob brings the whole surface:
+    //!
+    //! ```ignore
+    //! use wgsl_rs::glm::*;
+    //! ```
     use crate::std::*;
 
-    // -- Extend functions
+    // Re-export std so a single glob import brings the helpers and the
+    // WGSL builtin surface together.
+    pub use crate::std::*;
 
-    /// Extend a [`Vec2f`] into a [`Vec3f`].
-    pub fn vec3f_from_2(v: Vec2f, z: f32) -> Vec3f {
-        vec3f(v.x, v.y, z)
+    // -- Length
+
+    /// Returns the squared length of a 2D vector.
+    ///
+    /// No square root: exact under CPU/GPU roundtrip, unlike
+    /// `length(v) * length(v)`.
+    pub fn length_squared2(v: Vec2f) -> f32 {
+        dot(v, v)
     }
 
-    /// Extend a [`Vec3f`] into a [`Vec4f`].
-    pub fn vec4f_from_3(v: Vec3f, w: f32) -> Vec4f {
-        vec4f(v.x, v.y, v.z, w)
+    /// Returns the squared length of a 3D vector.
+    ///
+    /// No square root: exact under CPU/GPU roundtrip, unlike
+    /// `length(v) * length(v)`.
+    pub fn length_squared3(v: Vec3f) -> f32 {
+        dot(v, v)
     }
 
-    /// Extend a [`Vec2i`] into a [`Vec3i`].
-    pub fn vec3i_from_2(v: Vec2i, z: i32) -> Vec3i {
-        vec3i(v.x, v.y, z)
+    /// Returns the squared length of a 4D vector.
+    ///
+    /// No square root: exact under CPU/GPU roundtrip, unlike
+    /// `length(v) * length(v)`.
+    pub fn length_squared4(v: Vec4f) -> f32 {
+        dot(v, v)
     }
 
-    /// Extend a [`Vec3i`] into a [`Vec4i`].
-    pub fn vec4i_from_3(v: Vec3i, w: i32) -> Vec4i {
-        vec4i(v.x, v.y, v.z, w)
+    // -- Normalization
+
+    /// Returns `v` normalized, or the zero vector if `v` has zero length.
+    ///
+    /// Unlike WGSL's `normalize`, never produces NaN for zero input.
+    pub fn normalize_or_zero2(v: Vec2f) -> Vec2f {
+        select(Vec2f::ZERO, normalize(v), length(v) > 0.0)
     }
 
-    /// Extend a [`Vec2u`] into a [`Vec3u`].
-    pub fn vec3u_from_2(v: Vec2u, z: u32) -> Vec3u {
-        vec3u(v.x, v.y, z)
+    /// Returns `v` normalized, or the zero vector if `v` has zero length.
+    ///
+    /// Unlike WGSL's `normalize`, never produces NaN for zero input.
+    pub fn normalize_or_zero3(v: Vec3f) -> Vec3f {
+        select(Vec3f::ZERO, normalize(v), length(v) > 0.0)
     }
 
-    /// Extend a [`Vec3u`] into a [`Vec4u`].
-    pub fn vec4u_from_3(v: Vec3u, w: u32) -> Vec4u {
-        vec4u(v.x, v.y, v.z, w)
+    /// Returns `v` normalized, or the zero vector if `v` has zero length.
+    ///
+    /// Unlike WGSL's `normalize`, never produces NaN for zero input.
+    pub fn normalize_or_zero4(v: Vec4f) -> Vec4f {
+        select(Vec4f::ZERO, normalize(v), length(v) > 0.0)
     }
 
-    /// Extend a [`Vec2b`] into a [`Vec3b`].
-    pub fn vec3b_from_2(v: Vec2b, z: bool) -> Vec3b {
-        vec3b(v.x, v.y, z)
+    // -- Angles
+
+    /// Returns the angle in radians between two 2D vectors.
+    ///
+    /// Uses the `atan2` form so near-parallel vectors never hit `acos`
+    /// domain errors. Returns 0.0 if either vector is zero: the angle is
+    /// undefined there, and the raw `atan2(0, 0)` differs between the
+    /// worlds (0 on CPU, NaN on Metal), so it is selected away.
+    pub fn angle_between2(a: Vec2f, b: Vec2f) -> f32 {
+        let defined = length_squared2(a) * length_squared2(b) > 0.0;
+        select(0.0, atan2(a.x * b.y - a.y * b.x, dot(a, b)), defined)
     }
 
-    /// Extend a [`Vec3b`] into a [`Vec4b`].
-    pub fn vec4b_from_3(v: Vec3b, w: bool) -> Vec4b {
-        vec4b(v.x, v.y, v.z, w)
+    /// Returns the angle in radians between two 3D vectors.
+    ///
+    /// Uses the `atan2` form so near-parallel vectors never hit `acos`
+    /// domain errors. Returns 0.0 if either vector is zero: the angle is
+    /// undefined there, and the raw `atan2(0, 0)` differs between the
+    /// worlds (0 on CPU, NaN on Metal), so it is selected away.
+    pub fn angle_between3(a: Vec3f, b: Vec3f) -> f32 {
+        let defined = length_squared3(a) * length_squared3(b) > 0.0;
+        select(0.0, atan2(length(cross(a, b)), dot(a, b)), defined)
     }
 
-    // -- Splats
+    // -- Matrix transforms
+    //
+    // Column-major, matching glam. Handedness and depth range are
+    // explicit per function: `_rh`/`_lh` handedness suffixes, `_gl` for
+    // the OpenGL-style -1..1 depth range; the non-`_gl` projections use
+    // the wgpu-native 0..1 depth range.
 
-    /// Create a [`Vec2f`] with all components set to the given value.
-    pub fn vec2f_splat(t: f32) -> Vec2f {
-        vec2f(t, t)
+    /// Builds a translation matrix that translates by `v`.
+    pub fn translation(v: Vec3f) -> Mat4x4f {
+        mat4x4f(
+            vec4f(1.0, 0.0, 0.0, 0.0),
+            vec4f(0.0, 1.0, 0.0, 0.0),
+            vec4f(0.0, 0.0, 1.0, 0.0),
+            vec4f(v.x, v.y, v.z, 1.0),
+        )
     }
 
-    /// Create a [`Vec3f`] with all components set to the given value.
-    pub fn vec3f_splat(t: f32) -> Vec3f {
-        vec3f(t, t, t)
+    /// Builds a scaling matrix that scales by `v`.
+    pub fn scaling(v: Vec3f) -> Mat4x4f {
+        mat4x4f(
+            vec4f(v.x, 0.0, 0.0, 0.0),
+            vec4f(0.0, v.y, 0.0, 0.0),
+            vec4f(0.0, 0.0, v.z, 0.0),
+            vec4f(0.0, 0.0, 0.0, 1.0),
+        )
     }
 
-    /// Create a [`Vec4f`] with all components set to the given value.
-    pub fn vec4f_splat(t: f32) -> Vec4f {
-        vec4f(t, t, t, t)
+    /// Builds a rotation matrix around `axis` by `angle` radians
+    /// (Rodrigues' formula), matching glam's `from_axis_angle`.
+    ///
+    /// `axis` must be normalized.
+    pub fn rotation_axis_angle(axis: Vec3f, angle: f32) -> Mat4x4f {
+        let s = sin(angle);
+        let c = cos(angle);
+        let dc = 1.0 - c;
+        let x = axis.x;
+        let y = axis.y;
+        let z = axis.z;
+        mat4x4f(
+            vec4f(x * x * dc + c, y * x * dc + z * s, z * x * dc - y * s, 0.0),
+            vec4f(x * y * dc - z * s, y * y * dc + c, z * y * dc + x * s, 0.0),
+            vec4f(x * z * dc + y * s, y * z * dc - x * s, z * z * dc + c, 0.0),
+            vec4f(0.0, 0.0, 0.0, 1.0),
+        )
     }
 
-    /// Create a [`Vec2i`] with all components set to the given value.
-    pub fn vec2i_splat(t: i32) -> Vec2i {
-        vec2i(t, t)
+    /// Post-multiplies a translation onto `m` (`m * translation(v)`),
+    /// GLM's `translate`.
+    pub fn translate(m: Mat4x4f, v: Vec3f) -> Mat4x4f {
+        m * translation(v)
     }
 
-    /// Create a [`Vec3i`] with all components set to the given value.
-    pub fn vec3i_splat(t: i32) -> Vec3i {
-        vec3i(t, t, t)
+    /// Post-multiplies a rotation onto `m`
+    /// (`m * rotation_axis_angle(axis, angle)`), GLM's `rotate`.
+    pub fn rotate(m: Mat4x4f, angle: f32, axis: Vec3f) -> Mat4x4f {
+        m * rotation_axis_angle(axis, angle)
     }
 
-    /// Create a [`Vec4i`] with all components set to the given value.
-    pub fn vec4i_splat(t: i32) -> Vec4i {
-        vec4i(t, t, t, t)
+    /// Post-multiplies a scale onto `m` (`m * scaling(v)`), GLM's
+    /// `scale`.
+    pub fn scale(m: Mat4x4f, v: Vec3f) -> Mat4x4f {
+        m * scaling(v)
     }
 
-    /// Create a [`Vec2u`] with all components set to the given value.
-    pub fn vec2u_splat(t: u32) -> Vec2u {
-        vec2u(t, t)
+    /// Transforms a 2D point by a `Mat3x3f`, matching glam's
+    /// `Mat3::transform_point2`.
+    pub fn transform_point2(m: Mat3x3f, v: Vec2f) -> Vec2f {
+        (m * vec3f(v.x, v.y, 1.0)).xy()
     }
 
-    /// Create a [`Vec3u`] with all components set to the given value.
-    pub fn vec3u_splat(t: u32) -> Vec3u {
-        vec3u(t, t, t)
+    /// Transforms a 2D direction vector by a `Mat3x3f` (no translation),
+    /// matching glam's `Mat3::transform_vector2`.
+    pub fn transform_vector2(m: Mat3x3f, v: Vec2f) -> Vec2f {
+        (m * vec3f(v.x, v.y, 0.0)).xy()
     }
 
-    /// Create a [`Vec4u`] with all components set to the given value.
-    pub fn vec4u_splat(t: u32) -> Vec4u {
-        vec4u(t, t, t, t)
+    /// Transforms a 3D point by a `Mat4x4f`, matching glam's
+    /// `Mat4::transform_point3`.
+    ///
+    /// Affine: no perspective divide. For the projected form multiply
+    /// by a `vec4f` directly.
+    pub fn transform_point3(m: Mat4x4f, v: Vec3f) -> Vec3f {
+        (m * vec4f(v.x, v.y, v.z, 1.0)).xyz()
     }
 
-    /// Create a [`Vec2b`] with all components set to the given value.
-    pub fn vec2b_splat(t: bool) -> Vec2b {
-        vec2b(t, t)
+    /// Transforms a 3D direction vector by a `Mat4x4f` (no translation),
+    /// matching glam's `Mat4::transform_vector3`.
+    pub fn transform_vector3(m: Mat4x4f, v: Vec3f) -> Vec3f {
+        (m * vec4f(v.x, v.y, v.z, 0.0)).xyz()
     }
 
-    /// Create a [`Vec3b`] with all components set to the given value.
-    pub fn vec3b_splat(t: bool) -> Vec3b {
-        vec3b(t, t, t)
+    /// Builds a right-handed view matrix looking from `eye` at `center`
+    /// with `up`, matching glam's `look_at_rh`: the camera looks down
+    /// its negative Z axis.
+    pub fn look_at_rh(eye: Vec3f, center: Vec3f, up: Vec3f) -> Mat4x4f {
+        let z_axis = normalize(eye - center);
+        let x_axis = normalize(cross(up, z_axis));
+        let y_axis = cross(z_axis, x_axis);
+        mat4x4f(
+            vec4f(x_axis.x, y_axis.x, z_axis.x, 0.0),
+            vec4f(x_axis.y, y_axis.y, z_axis.y, 0.0),
+            vec4f(x_axis.z, y_axis.z, z_axis.z, 0.0),
+            vec4f(-dot(x_axis, eye), -dot(y_axis, eye), -dot(z_axis, eye), 1.0),
+        )
     }
 
-    /// Create a [`Vec4b`] with all components set to the given value.
-    pub fn vec4b_splat(t: bool) -> Vec4b {
-        vec4b(t, t, t, t)
+    /// Builds a left-handed view matrix looking from `eye` at `center`
+    /// with `up`, matching glam's `look_at_lh`: the camera looks down
+    /// its positive Z axis.
+    pub fn look_at_lh(eye: Vec3f, center: Vec3f, up: Vec3f) -> Mat4x4f {
+        let z_axis = normalize(center - eye);
+        let x_axis = normalize(cross(up, z_axis));
+        let y_axis = cross(z_axis, x_axis);
+        mat4x4f(
+            vec4f(x_axis.x, y_axis.x, z_axis.x, 0.0),
+            vec4f(x_axis.y, y_axis.y, z_axis.y, 0.0),
+            vec4f(x_axis.z, y_axis.z, z_axis.z, 0.0),
+            vec4f(-dot(x_axis, eye), -dot(y_axis, eye), -dot(z_axis, eye), 1.0),
+        )
+    }
+
+    // -- Projections
+    //
+    // `fov_y_radians` is the vertical field of view; `near` and `far`
+    // are positive clip distances. The non-`_gl` variants use the
+    // 0..1 depth range (Vulkan/D3D/wgpu); `_gl` variants use -1..1.
+    // The set mirrors glam 0.30, which has no `_lh_gl` variants.
+
+    /// Builds a right-handed perspective projection with a 0..1 depth
+    /// range, matching glam's `perspective_rh`.
+    pub fn perspective_rh(fov_y_radians: f32, aspect_ratio: f32, near: f32, far: f32) -> Mat4x4f {
+        let f = 1.0 / tan(fov_y_radians * 0.5);
+        mat4x4f(
+            vec4f(f / aspect_ratio, 0.0, 0.0, 0.0),
+            vec4f(0.0, f, 0.0, 0.0),
+            vec4f(0.0, 0.0, far / (near - far), -1.0),
+            vec4f(0.0, 0.0, (far * near) / (near - far), 0.0),
+        )
+    }
+
+    /// Builds a left-handed perspective projection with a 0..1 depth
+    /// range, matching glam's `perspective_lh`.
+    pub fn perspective_lh(fov_y_radians: f32, aspect_ratio: f32, near: f32, far: f32) -> Mat4x4f {
+        let f = 1.0 / tan(fov_y_radians * 0.5);
+        mat4x4f(
+            vec4f(f / aspect_ratio, 0.0, 0.0, 0.0),
+            vec4f(0.0, f, 0.0, 0.0),
+            vec4f(0.0, 0.0, far / (far - near), 1.0),
+            vec4f(0.0, 0.0, (far * near) / (near - far), 0.0),
+        )
+    }
+
+    /// Builds a right-handed perspective projection with a -1..1 depth
+    /// range, matching glam's `perspective_rh_gl`.
+    pub fn perspective_rh_gl(
+        fov_y_radians: f32,
+        aspect_ratio: f32,
+        near: f32,
+        far: f32,
+    ) -> Mat4x4f {
+        let f = 1.0 / tan(fov_y_radians * 0.5);
+        mat4x4f(
+            vec4f(f / aspect_ratio, 0.0, 0.0, 0.0),
+            vec4f(0.0, f, 0.0, 0.0),
+            vec4f(0.0, 0.0, (far + near) / (near - far), -1.0),
+            vec4f(0.0, 0.0, (2.0 * far * near) / (near - far), 0.0),
+        )
+    }
+
+    /// Builds a right-handed orthographic projection with a 0..1 depth
+    /// range, matching glam's `orthographic_rh`.
+    pub fn orthographic_rh(
+        left: f32,
+        right: f32,
+        bottom: f32,
+        top: f32,
+        near: f32,
+        far: f32,
+    ) -> Mat4x4f {
+        let rcp_rx = 1.0 / (right - left);
+        let rcp_ry = 1.0 / (top - bottom);
+        let rcp_rz = 1.0 / (far - near);
+        mat4x4f(
+            vec4f(2.0 * rcp_rx, 0.0, 0.0, 0.0),
+            vec4f(0.0, 2.0 * rcp_ry, 0.0, 0.0),
+            vec4f(0.0, 0.0, -rcp_rz, 0.0),
+            vec4f(
+                -(right + left) * rcp_rx,
+                -(top + bottom) * rcp_ry,
+                -near * rcp_rz,
+                1.0,
+            ),
+        )
+    }
+
+    /// Builds a left-handed orthographic projection with a 0..1 depth
+    /// range, matching glam's `orthographic_lh`.
+    pub fn orthographic_lh(
+        left: f32,
+        right: f32,
+        bottom: f32,
+        top: f32,
+        near: f32,
+        far: f32,
+    ) -> Mat4x4f {
+        let rcp_rx = 1.0 / (right - left);
+        let rcp_ry = 1.0 / (top - bottom);
+        let rcp_rz = 1.0 / (far - near);
+        mat4x4f(
+            vec4f(2.0 * rcp_rx, 0.0, 0.0, 0.0),
+            vec4f(0.0, 2.0 * rcp_ry, 0.0, 0.0),
+            vec4f(0.0, 0.0, rcp_rz, 0.0),
+            vec4f(
+                -(right + left) * rcp_rx,
+                -(top + bottom) * rcp_ry,
+                -near * rcp_rz,
+                1.0,
+            ),
+        )
+    }
+
+    /// Builds a right-handed orthographic projection with a -1..1 depth
+    /// range, matching glam's `orthographic_rh_gl`.
+    pub fn orthographic_rh_gl(
+        left: f32,
+        right: f32,
+        bottom: f32,
+        top: f32,
+        near: f32,
+        far: f32,
+    ) -> Mat4x4f {
+        let rcp_rx = 1.0 / (right - left);
+        let rcp_ry = 1.0 / (top - bottom);
+        let rcp_rz = 1.0 / (far - near);
+        mat4x4f(
+            vec4f(2.0 * rcp_rx, 0.0, 0.0, 0.0),
+            vec4f(0.0, 2.0 * rcp_ry, 0.0, 0.0),
+            vec4f(0.0, 0.0, -2.0 * rcp_rz, 0.0),
+            vec4f(
+                -(right + left) * rcp_rx,
+                -(top + bottom) * rcp_ry,
+                -(far + near) * rcp_rz,
+                1.0,
+            ),
+        )
+    }
+
+    // -- Matrix inverses
+    //
+    // Hand-written once, shared by both worlds. Singular matrices
+    // produce inf/NaN components (IEEE division), matching glam's
+    // documented behavior for `inverse`.
+
+    /// Returns the inverse of a `Mat2x2f`.
+    pub fn inverse2x2(m: Mat2x2f) -> Mat2x2f {
+        let inv_det = 1.0 / determinant(m);
+        let c0 = m[0u32];
+        let c1 = m[1u32];
+        mat2x2f(vec2f(c1.y, -c0.y) * inv_det, vec2f(-c1.x, c0.x) * inv_det)
+    }
+
+    /// Returns the inverse of a `Mat3x3f`.
+    pub fn inverse3x3(m: Mat3x3f) -> Mat3x3f {
+        let inv_det = 1.0 / determinant(m);
+        let c0 = m[0u32];
+        let c1 = m[1u32];
+        let c2 = m[2u32];
+        mat3x3f(
+            vec3f(
+                c1.y * c2.z - c1.z * c2.y,
+                c0.z * c2.y - c0.y * c2.z,
+                c0.y * c1.z - c0.z * c1.y,
+            ) * inv_det,
+            vec3f(
+                c1.z * c2.x - c1.x * c2.z,
+                c0.x * c2.z - c0.z * c2.x,
+                c0.z * c1.x - c0.x * c1.z,
+            ) * inv_det,
+            vec3f(
+                c1.x * c2.y - c1.y * c2.x,
+                c0.y * c2.x - c0.x * c2.y,
+                c0.x * c1.y - c0.y * c1.x,
+            ) * inv_det,
+        )
+    }
+
+    /// Returns the inverse of a `Mat4x4f`.
+    ///
+    /// Written as an explicit cofactor expansion: `a_rc` names the
+    /// element at row `r`, column `c` (`m[c]` component `r`); `cf_rc`
+    /// names the cofactor of that element. The inverse is the adjugate
+    /// (the transposed cofactor matrix) divided by the determinant.
+    pub fn inverse4x4(m: Mat4x4f) -> Mat4x4f {
+        let c0 = m[0u32];
+        let c1 = m[1u32];
+        let c2 = m[2u32];
+        let c3 = m[3u32];
+        let a00 = c0.x;
+        let a01 = c1.x;
+        let a02 = c2.x;
+        let a03 = c3.x;
+        let a10 = c0.y;
+        let a11 = c1.y;
+        let a12 = c2.y;
+        let a13 = c3.y;
+        let a20 = c0.z;
+        let a21 = c1.z;
+        let a22 = c2.z;
+        let a23 = c3.z;
+        let a30 = c0.w;
+        let a31 = c1.w;
+        let a32 = c2.w;
+        let a33 = c3.w;
+
+        // Minors M_{0,j} (row 0 and column j deleted), for the Laplace
+        // determinant expansion along row 0.
+        let m00 = a11 * (a22 * a33 - a23 * a32) - a12 * (a21 * a33 - a23 * a31)
+            + a13 * (a21 * a32 - a22 * a31);
+        let m01 = a10 * (a22 * a33 - a23 * a32) - a12 * (a20 * a33 - a23 * a30)
+            + a13 * (a20 * a32 - a22 * a30);
+        let m02 = a10 * (a21 * a33 - a23 * a31) - a11 * (a20 * a33 - a23 * a30)
+            + a13 * (a20 * a31 - a21 * a30);
+        let m03 = a10 * (a21 * a32 - a22 * a31) - a11 * (a20 * a32 - a22 * a30)
+            + a12 * (a20 * a31 - a21 * a30);
+
+        let det = a00 * m00 - a01 * m01 + a02 * m02 - a03 * m03;
+        let inv_det = 1.0 / det;
+
+        // Cofactors cf_rc = (-1)^(r+c) * M_{r,c}; column `c` of the
+        // inverse is (cf_c0, cf_c1, cf_c2, cf_c3) * inv_det.
+        let cf10 = -(a01 * (a22 * a33 - a23 * a32) - a02 * (a21 * a33 - a23 * a31)
+            + a03 * (a21 * a32 - a22 * a31));
+        let cf11 = a00 * (a22 * a33 - a23 * a32) - a02 * (a20 * a33 - a23 * a30)
+            + a03 * (a20 * a32 - a22 * a30);
+        let cf12 = -(a00 * (a21 * a33 - a23 * a31) - a01 * (a20 * a33 - a23 * a30)
+            + a03 * (a20 * a31 - a21 * a30));
+        let cf13 = a00 * (a21 * a32 - a22 * a31) - a01 * (a20 * a32 - a22 * a30)
+            + a02 * (a20 * a31 - a21 * a30);
+        let cf20 = a01 * (a12 * a33 - a13 * a32) - a02 * (a11 * a33 - a13 * a31)
+            + a03 * (a11 * a32 - a12 * a31);
+        let cf21 = -(a00 * (a12 * a33 - a13 * a32) - a02 * (a10 * a33 - a13 * a30)
+            + a03 * (a10 * a32 - a12 * a30));
+        let cf22 = a00 * (a11 * a33 - a13 * a31) - a01 * (a10 * a33 - a13 * a30)
+            + a03 * (a10 * a31 - a11 * a30);
+        let cf23 = -(a00 * (a11 * a32 - a12 * a31) - a01 * (a10 * a32 - a12 * a30)
+            + a02 * (a10 * a31 - a11 * a30));
+        let cf30 = -(a01 * (a12 * a23 - a13 * a22) - a02 * (a11 * a23 - a13 * a21)
+            + a03 * (a11 * a22 - a12 * a21));
+        let cf31 = a00 * (a12 * a23 - a13 * a22) - a02 * (a10 * a23 - a13 * a20)
+            + a03 * (a10 * a22 - a12 * a20);
+        let cf32 = -(a00 * (a11 * a23 - a13 * a21) - a01 * (a10 * a23 - a13 * a20)
+            + a03 * (a10 * a21 - a11 * a20));
+        let cf33 = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20)
+            + a02 * (a10 * a21 - a11 * a20);
+
+        mat4x4f(
+            vec4f(m00, -m01, m02, -m03) * inv_det,
+            vec4f(cf10, cf11, cf12, cf13) * inv_det,
+            vec4f(cf20, cf21, cf22, cf23) * inv_det,
+            vec4f(cf30, cf31, cf32, cf33) * inv_det,
+        )
+    }
+
+    // -- Quaternions
+    //
+    // WGSL has no quaternion type, so `Quat` is a wgsl-rs struct that
+    // transpiles to a WGSL struct with four `f32` fields. All the math
+    // is hand-written once, shared by both worlds, and checked against
+    // glam's conventions: Hamilton product, w-last, unit quats rotate.
+
+    /// A quaternion: `x`, `y`, `z` vector part, `w` scalar part.
+    ///
+    /// The wire layout matches `glam::Quat` (`[x, y, z, w]`).
+    #[derive(Copy, Clone, Default, PartialEq)]
+    pub struct Quat {
+        pub x: f32,
+        pub y: f32,
+        pub z: f32,
+        pub w: f32,
+    }
+
+    impl Quat {
+        /// The identity rotation: no rotation at all.
+        pub const IDENTITY: Quat = Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        };
+    }
+
+    /// Builds a quaternion rotating `angle` radians around `axis`.
+    ///
+    /// `axis` must be normalized, matching glam's `from_axis_angle`.
+    pub fn from_axis_angle(axis: Vec3f, angle: f32) -> Quat {
+        let s = sin(angle * 0.5);
+        Quat {
+            x: axis.x * s,
+            y: axis.y * s,
+            z: axis.z * s,
+            w: cos(angle * 0.5),
+        }
+    }
+
+    /// Builds a quaternion from an orthonormal rotation matrix,
+    /// matching glam's `Quat::from_mat3`.
+    pub fn from_rotation_mat3(m: Mat3x3f) -> Quat {
+        let c0 = m[0u32];
+        let c1 = m[1u32];
+        let c2 = m[2u32];
+        let trace = c0.x + c1.y + c2.z;
+        if trace > 0.0 {
+            let s = sqrt(trace + 1.0);
+            let inv = 0.5 / s;
+            Quat {
+                x: (c1.z - c2.y) * inv,
+                y: (c2.x - c0.z) * inv,
+                z: (c0.y - c1.x) * inv,
+                w: s * 0.5,
+            }
+        } else if c0.x > c1.y && c0.x > c2.z {
+            let s = sqrt(1.0 + c0.x - c1.y - c2.z);
+            let inv = 0.5 / s;
+            Quat {
+                x: s * 0.5,
+                y: (c0.y + c1.x) * inv,
+                z: (c0.z + c2.x) * inv,
+                w: (c1.z - c2.y) * inv,
+            }
+        } else if c1.y > c2.z {
+            let s = sqrt(1.0 + c1.y - c0.x - c2.z);
+            let inv = 0.5 / s;
+            Quat {
+                x: (c0.y + c1.x) * inv,
+                y: s * 0.5,
+                z: (c1.z + c2.y) * inv,
+                w: (c2.x - c0.z) * inv,
+            }
+        } else {
+            let s = sqrt(1.0 + c2.z - c0.x - c1.y);
+            let inv = 0.5 / s;
+            Quat {
+                x: (c0.z + c2.x) * inv,
+                y: (c1.z + c2.y) * inv,
+                z: s * 0.5,
+                w: (c0.y - c1.x) * inv,
+            }
+        }
+    }
+
+    /// Builds the rotation matrix for `q`, matching glam's
+    /// `Mat3::from_quat`.
+    pub fn mat3_from_quat(q: Quat) -> Mat3x3f {
+        let x2 = q.x + q.x;
+        let y2 = q.y + q.y;
+        let z2 = q.z + q.z;
+        let xx2 = q.x * x2;
+        let xy2 = q.x * y2;
+        let xz2 = q.x * z2;
+        let yy2 = q.y * y2;
+        let yz2 = q.y * z2;
+        let zz2 = q.z * z2;
+        let wx2 = q.w * x2;
+        let wy2 = q.w * y2;
+        let wz2 = q.w * z2;
+        mat3x3f(
+            vec3f(1.0 - yy2 - zz2, xy2 + wz2, xz2 - wy2),
+            vec3f(xy2 - wz2, 1.0 - xx2 - zz2, yz2 + wx2),
+            vec3f(xz2 + wy2, yz2 - wx2, 1.0 - xx2 - yy2),
+        )
+    }
+
+    /// Returns the Hamilton product `a * b`, matching glam's
+    /// `Quat::mul`.
+    pub fn quat_mul(a: Quat, b: Quat) -> Quat {
+        Quat {
+            x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+        }
+    }
+
+    /// Rotates `v` by the unit quaternion `q`, matching glam's
+    /// `Quat * Vec3`.
+    pub fn rotate_vec3(q: Quat, v: Vec3f) -> Vec3f {
+        let qv = vec3f(q.x, q.y, q.z);
+        let t = cross(qv, v) * 2.0;
+        v + t * q.w + cross(qv, t)
+    }
+
+    /// Returns the conjugate of `q`: the vector part negated.
+    pub fn conjugate(q: Quat) -> Quat {
+        Quat {
+            x: -q.x,
+            y: -q.y,
+            z: -q.z,
+            w: q.w,
+        }
+    }
+
+    /// Returns the inverse of `q`.
+    ///
+    /// For unit quaternions this is the conjugate. The general form
+    /// (dividing by the squared length, matching glam's `inverse`) is
+    /// used so non-unit inputs stay correct.
+    pub fn inverse(q: Quat) -> Quat {
+        let inv_len_sq = 1.0 / quat_length_squared(q);
+        Quat {
+            x: -q.x * inv_len_sq,
+            y: -q.y * inv_len_sq,
+            z: -q.z * inv_len_sq,
+            w: q.w * inv_len_sq,
+        }
+    }
+
+    /// Returns the squared length of `q`.
+    pub fn quat_length_squared(q: Quat) -> f32 {
+        q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w
+    }
+
+    /// Returns the dot product of two quaternions.
+    pub fn quat_dot(a: Quat, b: Quat) -> f32 {
+        a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+    }
+
+    /// Returns `q` normalized, or the identity rotation if `q` has zero
+    /// length (a zero quaternion has no rotation to preserve).
+    pub fn quat_normalize_or_zero(q: Quat) -> Quat {
+        let ls = quat_length_squared(q);
+        let defined = ls > 0.0;
+        let inv = select(0.0, inverse_sqrt(ls), defined);
+        Quat {
+            x: q.x * inv,
+            y: q.y * inv,
+            z: q.z * inv,
+            w: select(1.0, q.w * inv, defined),
+        }
+    }
+
+    /// Returns the angle in radians between two unit quaternions.
+    pub fn quat_angle_between(a: Quat, b: Quat) -> f32 {
+        2.0 * acos(clamp(abs(quat_dot(a, b)), -1.0, 1.0))
+    }
+
+    /// Spherical interpolation between unit quaternions, matching
+    /// glam's `Quat::slerp`.
+    ///
+    /// The interpolation takes the shortest path. Nearly-parallel inputs
+    /// fall back to normalized linear interpolation for numerical
+    /// stability, as glam does.
+    pub fn quat_slerp(a: Quat, b: Quat, t: f32) -> Quat {
+        let mut d = quat_dot(a, b);
+        let mut b = b;
+        // Take the shortest path: negate b when the rotations point in
+        // opposite directions.
+        if d < 0.0 {
+            b = Quat {
+                x: -b.x,
+                y: -b.y,
+                z: -b.z,
+                w: -b.w,
+            };
+            d = -d;
+        }
+        if d > 0.9995 {
+            // Nearly parallel: nlerp is stable where sin(theta) is not.
+            let q = Quat {
+                x: a.x + (b.x - a.x) * t,
+                y: a.y + (b.y - a.y) * t,
+                z: a.z + (b.z - a.z) * t,
+                w: a.w + (b.w - a.w) * t,
+            };
+            return quat_normalize_or_zero(q);
+        }
+        let theta = acos(clamp(d, -1.0, 1.0));
+        let sin_theta = sin(theta);
+        let s1 = sin((1.0 - t) * theta) / sin_theta;
+        let s2 = sin(t * theta) / sin_theta;
+        Quat {
+            x: a.x * s1 + b.x * s2,
+            y: a.y * s1 + b.y * s2,
+            z: a.z * s1 + b.z * s2,
+            w: a.w * s1 + b.w * s2,
+        }
+    }
+}
+
+#[cfg(feature = "glm")]
+mod glm_quat_conversions {
+    //! CPU-side conversions for `glm::Quat`, plain Rust outside the wgsl
+    //! module: trait impls and glam types do not transpile.
+
+    use crate::glm::Quat;
+
+    impl Quat {
+        /// Returns the components as `[x, y, z, w]`, glam's wire order.
+        pub fn to_array(self) -> [f32; 4] {
+            [self.x, self.y, self.z, self.w]
+        }
+    }
+
+    impl From<[f32; 4]> for Quat {
+        fn from(a: [f32; 4]) -> Self {
+            Self {
+                x: a[0],
+                y: a[1],
+                z: a[2],
+                w: a[3],
+            }
+        }
+    }
+
+    impl From<Quat> for [f32; 4] {
+        fn from(q: Quat) -> Self {
+            q.to_array()
+        }
+    }
+
+    impl From<glam::Quat> for Quat {
+        fn from(q: glam::Quat) -> Self {
+            Self::from(q.to_array())
+        }
+    }
+
+    impl From<Quat> for glam::Quat {
+        fn from(q: Quat) -> Self {
+            glam::Quat::from_xyzw(q.x, q.y, q.z, q.w)
+        }
+    }
+}
+
+#[cfg(all(test, feature = "glm"))]
+mod glm_test {
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_glm {
+        use crate::glm::*;
+
+        pub fn squared() -> f32 {
+            let v = vec3f(1.0, 2.0, 2.0);
+            length_squared3(v)
+        }
+
+        pub fn zero_stays_zero() -> Vec3f {
+            normalize_or_zero3(vec3f(0.0, 0.0, 0.0))
+        }
+
+        pub fn unit_normalize() -> Vec3f {
+            normalize_or_zero3(vec3f(3.0, 4.0, 0.0))
+        }
+
+        pub fn right_angle() -> f32 {
+            angle_between3(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0))
+        }
+
+        pub fn flat_angle() -> f32 {
+            angle_between2(vec2f(2.0, 0.0), vec2f(-3.0, 0.0))
+        }
+
+        pub fn zero_angle() -> f32 {
+            angle_between3(vec3f(0.0, 0.0, 0.0), vec3f(1.0, 0.0, 0.0))
+        }
+
+        pub fn squared_2_4() -> f32 {
+            length_squared2(vec2f(3.0, 4.0)) + length_squared4(vec4f(1.0, 1.0, 1.0, 1.0))
+        }
+
+        pub fn norm_or_zero_2_4() -> Vec3f {
+            let v2 = normalize_or_zero2(vec2f(0.0, 0.0));
+            let v4 = normalize_or_zero4(vec4f(2.0, 2.0, 2.0, 2.0));
+            vec3f(v2.x, v2.y, v4.x)
+        }
+    }
+
+    #[test]
+    fn glm_helpers_work_in_both_worlds() {
+        use crate::std::vec3f;
+
+        // CPU world: the helpers are plain Rust over the concrete types.
+        assert_eq!(uses_glm::squared(), 9.0);
+        assert_eq!(uses_glm::zero_stays_zero(), vec3f(0.0, 0.0, 0.0));
+        let n = uses_glm::unit_normalize();
+        assert!(
+            (n.x - 0.6).abs() < 1e-6 && (n.y - 0.8).abs() < 1e-6 && n.z == 0.0,
+            "unit normalize: {n:?}"
+        );
+        assert!(
+            (uses_glm::right_angle() - std::f32::consts::FRAC_PI_2).abs() < 1e-6,
+            "right angle: {}",
+            uses_glm::right_angle()
+        );
+        assert!(
+            (uses_glm::flat_angle() - std::f32::consts::PI).abs() < 1e-6,
+            "flat angle: {}",
+            uses_glm::flat_angle()
+        );
+        // The angle of a zero vector is selected to 0.0 in both worlds.
+        assert_eq!(uses_glm::zero_angle(), 0.0);
+        assert_eq!(uses_glm::squared_2_4(), 29.0);
+        assert_eq!(uses_glm::norm_or_zero_2_4().to_array(), [0.0, 0.0, 0.5]);
+
+        // WGSL world: helpers assembled from the glm module, naga-valid.
+        let src = uses_glm::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("length_squared3"), "helper assembled: {src}");
+        assert!(
+            src.contains("normalize_or_zero3"),
+            "helper assembled: {src}"
+        );
+        assert!(src.contains("angle_between3"), "helper assembled: {src}");
+        assert!(src.contains("vec3f_ZERO"), "builtin constant path: {src}");
+        #[cfg(feature = "validation")]
+        uses_glm::WGSL_SOURCE.validate().unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "glm"))]
+mod glm_matrix_test {
+    use crate::{glm::*, std::*};
+
+    /// Renders ours vs glam with per-element context in the failure.
+    fn assert_mat4_close(actual: Mat4x4f, expected: glam::Mat4, ctx: &str) {
+        let eps = 1e-5;
+        let e = expected.to_cols_array();
+        for c in 0..4usize {
+            let col = actual[c].to_array();
+            for r in 0..4usize {
+                assert!(
+                    (col[r] - e[c * 4 + r]).abs() < eps,
+                    "{ctx}: column {c}, row {r}: got {}, want {}",
+                    col[r],
+                    e[c * 4 + r]
+                );
+            }
+        }
+    }
+
+    fn to_glam_mat4(m: &Mat4x4f) -> glam::Mat4 {
+        glam::Mat4::from_cols(
+            m[0u32].into(),
+            m[1u32].into(),
+            m[2u32].into(),
+            m[3u32].into(),
+        )
+    }
+
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_glm_matrices {
+        use crate::glm::*;
+
+        pub fn build_view() -> Mat4x4f {
+            look_at_rh(
+                vec3f(3.0, 4.0, 5.0),
+                vec3f(0.0, 0.0, 0.0),
+                vec3f(0.0, 1.0, 0.0),
+            )
+        }
+
+        pub fn build_view_lh() -> Mat4x4f {
+            look_at_lh(
+                vec3f(0.0, 0.0, 5.0),
+                vec3f(0.0, 0.0, 0.0),
+                vec3f(0.0, 1.0, 0.0),
+            )
+        }
+
+        pub fn build_proj() -> Mat4x4f {
+            perspective_rh(1.2, 1.5, 0.1, 100.0)
+        }
+
+        pub fn build_proj_gl() -> Mat4x4f {
+            perspective_rh_gl(1.0, 2.0, 0.5, 10.0)
+        }
+
+        pub fn build_ortho() -> Mat4x4f {
+            orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0)
+        }
+
+        pub fn compose() -> Mat4x4f {
+            let m = translation(vec3f(1.0, 2.0, 3.0));
+            let m = rotate(m, 0.7, vec3f(0.0, 1.0, 0.0));
+            scale(m, vec3f(2.0, 2.0, 2.0))
+        }
+
+        pub fn moved() -> Vec3f {
+            transform_point3(compose(), vec3f(1.0, 1.0, 1.0))
+        }
+
+        pub fn aimed() -> Vec4f {
+            build_proj() * build_view() * vec4f(1.0, 2.0, 3.0, 1.0)
+        }
+
+        pub fn uninverted() -> Mat4x4f {
+            inverse4x4(compose()) * compose()
+        }
+
+        pub fn inv2() -> Mat2x2f {
+            inverse2x2(mat2x2f(vec2f(4.0, 1.0), vec2f(2.0, 2.0)))
+        }
+
+        pub fn inv3() -> Mat3x3f {
+            inverse3x3(mat3x3f(
+                vec3f(1.0, 0.0, 2.0),
+                vec3f(0.0, 2.0, 0.0),
+                vec3f(0.0, 0.0, 4.0),
+            ))
+        }
+
+        pub fn point2() -> Vec2f {
+            let m = mat3x3f(
+                vec3f(2.0, 0.0, 1.0),
+                vec3f(0.0, 3.0, 2.0),
+                vec3f(0.0, 0.0, 1.0),
+            );
+            transform_point2(m, vec2f(1.0, 1.0)) + transform_vector2(m, vec2f(1.0, 0.0))
+        }
+    }
+
+    #[test]
+    fn glm_matrix_builders_match_glam() {
+        let t = vec3f(1.0, 2.0, 3.0);
+        assert_mat4_close(
+            translation(t),
+            glam::Mat4::from_translation(t.into()),
+            "translation",
+        );
+        assert_mat4_close(scaling(t), glam::Mat4::from_scale(t.into()), "scaling");
+        let axis = vec3f(0.0, 1.0, 0.0);
+        assert_mat4_close(
+            rotation_axis_angle(axis, 0.7),
+            glam::Mat4::from_axis_angle(axis.into(), 0.7),
+            "rotation_axis_angle",
+        );
+
+        // GLM accumulate form: m * builder.
+        let m = uses_glm_matrices::compose();
+        let g = glam::Mat4::from_translation(vec3f(1.0, 2.0, 3.0).into())
+            * glam::Mat4::from_axis_angle(glam::Vec3::Y, 0.7)
+            * glam::Mat4::from_scale(glam::Vec3::splat(2.0));
+        assert_mat4_close(m, g, "translate/rotate/scale composition");
+
+        assert_mat4_close(
+            translate(m, t),
+            g * glam::Mat4::from_translation(t.into()),
+            "translate accumulate",
+        );
+    }
+
+    #[test]
+    fn glm_view_and_projections_match_glam() {
+        let eye = vec3f(3.0, 4.0, 5.0);
+        let center = vec3f(0.0, 0.0, 0.0);
+        let up = vec3f(0.0, 1.0, 0.0);
+        assert_mat4_close(
+            look_at_rh(eye, center, up),
+            glam::Mat4::look_at_rh(eye.into(), center.into(), up.into()),
+            "look_at_rh",
+        );
+        assert_mat4_close(
+            look_at_lh(eye, center, up),
+            glam::Mat4::look_at_lh(eye.into(), center.into(), up.into()),
+            "look_at_lh",
+        );
+
+        let (fov, aspect, near, far) = (1.2f32, 1.5f32, 0.1f32, 100.0f32);
+        assert_mat4_close(
+            perspective_rh(fov, aspect, near, far),
+            glam::Mat4::perspective_rh(fov, aspect, near, far),
+            "perspective_rh",
+        );
+        assert_mat4_close(
+            perspective_lh(fov, aspect, near, far),
+            glam::Mat4::perspective_lh(fov, aspect, near, far),
+            "perspective_lh",
+        );
+        assert_mat4_close(
+            perspective_rh_gl(fov, aspect, near, far),
+            glam::Mat4::perspective_rh_gl(fov, aspect, near, far),
+            "perspective_rh_gl",
+        );
+
+        let (l, r, b, t, n, f) = (-2.0f32, 3.0, -1.0, 4.0, 0.5, 50.0);
+        assert_mat4_close(
+            orthographic_rh(l, r, b, t, n, f),
+            glam::Mat4::orthographic_rh(l, r, b, t, n, f),
+            "orthographic_rh",
+        );
+        assert_mat4_close(
+            orthographic_lh(l, r, b, t, n, f),
+            glam::Mat4::orthographic_lh(l, r, b, t, n, f),
+            "orthographic_lh",
+        );
+        assert_mat4_close(
+            orthographic_rh_gl(l, r, b, t, n, f),
+            glam::Mat4::orthographic_rh_gl(l, r, b, t, n, f),
+            "orthographic_rh_gl",
+        );
+
+        // The wgsl test module's builders are the same checks, asserted
+        // through the module functions.
+        let eye = glam::Vec3::new(3.0, 4.0, 5.0);
+        assert_mat4_close(
+            uses_glm_matrices::build_view(),
+            glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+            "module build_view",
+        );
+        assert_mat4_close(
+            uses_glm_matrices::build_view_lh(),
+            glam::Mat4::look_at_lh(
+                glam::Vec3::new(0.0, 0.0, 5.0),
+                glam::Vec3::ZERO,
+                glam::Vec3::Y,
+            ),
+            "module build_view_lh",
+        );
+        assert_mat4_close(
+            uses_glm_matrices::build_proj(),
+            glam::Mat4::perspective_rh(1.2, 1.5, 0.1, 100.0),
+            "module build_proj",
+        );
+        assert_mat4_close(
+            uses_glm_matrices::build_proj_gl(),
+            glam::Mat4::perspective_rh_gl(1.0, 2.0, 0.5, 10.0),
+            "module build_proj_gl",
+        );
+        assert_mat4_close(
+            uses_glm_matrices::build_ortho(),
+            glam::Mat4::orthographic_rh(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0),
+            "module build_ortho",
+        );
+
+        // aimed() = perspective_rh * look_at_rh * (1, 2, 3, 1).
+        let want = glam::Mat4::perspective_rh(1.2, 1.5, 0.1, 100.0)
+            * glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Y)
+            * glam::Vec4::new(1.0, 2.0, 3.0, 1.0);
+        let got = uses_glm_matrices::aimed();
+        let diff = (got - Vec4f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-4),
+            "module aimed: {got:?} vs {want:?}"
+        );
+    }
+
+    #[test]
+    fn glm_transform_point_vector_match_glam() {
+        let m = uses_glm_matrices::compose();
+        let g = to_glam_mat4(&m);
+        let p = vec3f(1.0, 2.0, 3.0);
+        let want = g.transform_point3(p.into());
+        let got = transform_point3(m, p);
+        let diff = (got - Vec3f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-5),
+            "transform_point3: {got:?} vs {want:?}"
+        );
+        let want = g.transform_vector3(p.into());
+        let got = transform_vector3(m, p);
+        let diff = (got - Vec3f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-5),
+            "transform_vector3: {got:?} vs {want:?}"
+        );
+
+        let m2 = mat3x3f(
+            vec3f(2.0, 0.0, 1.0),
+            vec3f(0.0, 3.0, 2.0),
+            vec3f(0.0, 0.0, 1.0),
+        );
+        let g2 = glam::Mat3::from_cols(m2[0u32].into(), m2[1u32].into(), m2[2u32].into());
+        let p2 = vec2f(1.0, 1.0);
+        let want = g2.transform_point2(p2.into());
+        let got = transform_point2(m2, p2);
+        let diff = (got - Vec2f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-5),
+            "transform_point2: {got:?} vs {want:?}"
+        );
+        let want = g2.transform_vector2(p2.into());
+        let got = transform_vector2(m2, p2);
+        let diff = (got - Vec2f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-5),
+            "transform_vector2: {got:?} vs {want:?}"
+        );
+
+        // Through the wgsl test module: point2() is
+        // transform_point2 + transform_vector2 on the same matrix.
+        let want = g2.transform_point2(p2.into()) + g2.transform_vector2(glam::Vec2::X);
+        let got = uses_glm_matrices::point2();
+        let diff = (got - Vec2f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-5),
+            "module point2: {got:?} vs {want:?}"
+        );
+
+        // Through the wgsl test module: moved() is
+        // transform_point3(compose(), (1, 1, 1)).
+        let want = g.transform_point3(glam::Vec3::new(1.0, 1.0, 1.0));
+        let got = uses_glm_matrices::moved();
+        let diff = (got - Vec3f::from(want)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < 1e-5),
+            "module moved: {got:?} vs {want:?}"
+        );
+    }
+
+    #[test]
+    fn glm_inverses_match_glam_and_recover_identity() {
+        let m = uses_glm_matrices::compose();
+        let g = to_glam_mat4(&m);
+        assert_mat4_close(inverse4x4(m), g.inverse(), "inverse4x4");
+
+        // inverse * m recovers the identity.
+        let recovered = inverse4x4(m) * m;
+        for c in 0..4usize {
+            let col = recovered[c].to_array();
+            for (r, want) in col.iter().zip(
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ][c],
+            ) {
+                assert!((r - want).abs() < 1e-4, "identity recovery: {recovered:?}");
+            }
+        }
+
+        let m2 = mat2x2f(vec2f(4.0, 1.0), vec2f(2.0, 2.0));
+        let g2 = glam::Mat2::from_cols(m2[0u32].into(), m2[1u32].into());
+        let want = g2.inverse();
+        let got = inverse2x2(m2);
+        let e = want.to_cols_array();
+        for c in 0..2usize {
+            let col = got[c].to_array();
+            for r in 0..2usize {
+                assert!(
+                    (col[r] - e[c * 2 + r]).abs() < 1e-5,
+                    "inverse2x2 col {c} row {r}: {} vs {}",
+                    col[r],
+                    e[c * 2 + r]
+                );
+            }
+        }
+
+        let m3 = mat3x3f(
+            vec3f(1.0, 0.0, 2.0),
+            vec3f(0.0, 2.0, 0.0),
+            vec3f(0.0, 0.0, 4.0),
+        );
+        let g3 = glam::Mat3::from_cols(m3[0u32].into(), m3[1u32].into(), m3[2u32].into());
+        let want = g3.inverse();
+        let got = inverse3x3(m3);
+        let e = want.to_cols_array();
+        for c in 0..3usize {
+            let col = got[c].to_array();
+            for r in 0..3usize {
+                assert!(
+                    (col[r] - e[c * 3 + r]).abs() < 1e-5,
+                    "inverse3x3 col {c} row {r}: {} vs {}",
+                    col[r],
+                    e[c * 3 + r]
+                );
+            }
+        }
+
+        // The wgsl-world module exercises the same functions; its source
+        // assembles the helpers and naga validates it. inv2()/inv3() and
+        // uninverted() assert through the module functions.
+        let want =
+            glam::Mat2::from_cols(glam::Vec2::new(4.0, 1.0), glam::Vec2::new(2.0, 2.0)).inverse();
+        let got = uses_glm_matrices::inv2();
+        let e = want.to_cols_array();
+        for c in 0..2usize {
+            let col = got[c].to_array();
+            for r in 0..2usize {
+                assert!(
+                    (col[r] - e[c * 2 + r]).abs() < 1e-5,
+                    "module inv2 col {c} row {r}: {} vs {}",
+                    col[r],
+                    e[c * 2 + r]
+                );
+            }
+        }
+        let want = glam::Mat3::from_cols(
+            glam::Vec3::new(1.0, 0.0, 2.0),
+            glam::Vec3::new(0.0, 2.0, 0.0),
+            glam::Vec3::new(0.0, 0.0, 4.0),
+        )
+        .inverse();
+        let got = uses_glm_matrices::inv3();
+        let e = want.to_cols_array();
+        for c in 0..3usize {
+            let col = got[c].to_array();
+            for r in 0..3usize {
+                assert!(
+                    (col[r] - e[c * 3 + r]).abs() < 1e-5,
+                    "module inv3 col {c} row {r}: {} vs {}",
+                    col[r],
+                    e[c * 3 + r]
+                );
+            }
+        }
+        let recovered = uses_glm_matrices::uninverted();
+        for c in 0..4usize {
+            let col = recovered[c].to_array();
+            for (r, want) in col.iter().zip(
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ][c],
+            ) {
+                assert!((r - want).abs() < 1e-4, "module uninverted: {recovered:?}");
+            }
+        }
+
+        let src = uses_glm_matrices::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("fn inverse4x4"), "helper assembled: {src}");
+        assert!(src.contains("fn look_at_rh"), "helper assembled: {src}");
+        assert!(src.contains("fn perspective_rh"), "helper assembled: {src}");
+        #[cfg(feature = "validation")]
+        uses_glm_matrices::WGSL_SOURCE.validate().unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "glm"))]
+mod glm_quat_test {
+    use crate::{glm::*, std::*};
+
+    fn assert_quat_close(actual: Quat, expected: glam::Quat, ctx: &str) {
+        let eps = 1e-5;
+        let a = actual.to_array();
+        let e = expected.to_array();
+        for i in 0..4 {
+            assert!(
+                (a[i] - e[i]).abs() < eps,
+                "{ctx}: component {i}: got {}, want {}",
+                a[i],
+                e[i]
+            );
+        }
+    }
+
+    fn assert_vec3_close(actual: Vec3f, expected: glam::Vec3, ctx: &str) {
+        let eps = 1e-5;
+        let diff = (actual - Vec3f::from(expected)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < eps),
+            "{ctx}: {actual:?} vs {expected:?}"
+        );
+    }
+
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_glm_quats {
+        use crate::glm::*;
+
+        pub fn composed_rotation(angle: f32) -> Quat {
+            let a = from_axis_angle(Vec3f::Y, angle);
+            let b = from_axis_angle(Vec3f::X, 0.5);
+            quat_mul(a, b)
+        }
+
+        pub fn rotated(angle: f32) -> Vec3f {
+            rotate_vec3(composed_rotation(angle), vec3f(1.0, 2.0, 3.0))
+        }
+
+        /// Applying a rotation composed with its own inverse is the
+        /// identity.
+        pub fn spun(angle: f32) -> Vec3f {
+            let q = composed_rotation(angle);
+            rotate_vec3(quat_mul(q, inverse(q)), vec3f(1.0, 2.0, 3.0))
+        }
+
+        pub fn blended(angle: f32) -> Quat {
+            quat_slerp(Quat::IDENTITY, from_axis_angle(Vec3f::Y, angle), 0.25)
+        }
+
+        pub fn mat_roundtrip(angle: f32) -> Quat {
+            from_rotation_mat3(mat3_from_quat(from_axis_angle(Vec3f::Y, angle)))
+        }
+
+        pub fn zero_normalized() -> Quat {
+            quat_normalize_or_zero(Quat {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 0.0,
+            })
+        }
+
+        pub fn angled() -> f32 {
+            quat_angle_between(Quat::IDENTITY, from_axis_angle(Vec3f::Y, 1.2))
+        }
+    }
+
+    #[test]
+    fn glm_quat_construction_and_conversions_match_glam() {
+        let q = from_axis_angle(Vec3f::Y, 0.7);
+        assert_quat_close(
+            q,
+            glam::Quat::from_axis_angle(glam::Vec3::Y, 0.7),
+            "from_axis_angle",
+        );
+        assert_eq!(Quat::IDENTITY.to_array(), [0.0, 0.0, 0.0, 1.0]);
+
+        // glam conversions roundtrip both ways.
+        let g = glam::Quat::from_xyzw(0.1, 0.2, 0.3, 0.9).normalize();
+        assert_eq!(Quat::from(g).to_array(), g.to_array());
+        assert_eq!(glam::Quat::from(q).to_array(), q.to_array());
+        assert_eq!(
+            Quat::from([1.0, 2.0, 3.0, 4.0]).to_array(),
+            [1.0, 2.0, 3.0, 4.0]
+        );
+        assert_eq!(
+            <[f32; 4]>::from(Quat::from([1.0, 2.0, 3.0, 4.0])),
+            [1.0, 2.0, 3.0, 4.0]
+        );
+    }
+
+    #[test]
+    fn glm_quat_ops_match_glam() {
+        let a = from_axis_angle(Vec3f::Y, 0.7);
+        let b = from_axis_angle(Vec3f::X, 0.5);
+        let ga = glam::Quat::from(a);
+        let gb = glam::Quat::from(b);
+
+        assert_quat_close(quat_mul(a, b), ga * gb, "quat_mul");
+        assert_vec3_close(
+            rotate_vec3(a, vec3f(1.0, 2.0, 3.0)),
+            ga * glam::Vec3::new(1.0, 2.0, 3.0),
+            "rotate_vec3",
+        );
+        assert_quat_close(conjugate(a), ga.conjugate(), "conjugate");
+        assert_quat_close(inverse(a), ga.inverse(), "inverse");
+        assert!((quat_length_squared(a) - ga.length_squared()).abs() < 1e-6);
+        assert!((quat_dot(a, b) - glam::Quat::dot(ga, gb)).abs() < 1e-6);
+
+        // q * inverse(q) is the identity, so spinning a vector by the
+        // composed rotation and back is a (near) no-op.
+        let spun = uses_glm_quats::spun(0.9).to_array();
+        for (got, want) in spun.iter().zip([1.0, 2.0, 3.0]) {
+            assert!((got - want).abs() < 1e-6, "spun: {spun:?}");
+        }
+
+        // Composition and application through the module fns.
+        let want = ga * gb;
+        assert_quat_close(uses_glm_quats::composed_rotation(0.7), want, "composed");
+        assert_vec3_close(
+            uses_glm_quats::rotated(0.7),
+            want * glam::Vec3::new(1.0, 2.0, 3.0),
+            "rotated",
+        );
+
+        // The matrix roundtrip recovers the same rotation (q and -q are
+        // the same rotation, so compare applications, not components).
+        let q = uses_glm_quats::mat_roundtrip(0.9);
+        let v = vec3f(1.0, 2.0, 3.0);
+        assert_vec3_close(
+            rotate_vec3(q, v),
+            q_rotation_reference(0.9) * glam::Vec3::from(v),
+            "mat_roundtrip",
+        );
+
+        // Zero-length input normalizes to the identity.
+        assert_eq!(
+            uses_glm_quats::zero_normalized().to_array(),
+            [0.0, 0.0, 0.0, 1.0]
+        );
+
+        // acos(cos(x)) = x for x in [0, pi], so a 1.2 radian rotation is
+        // 1.2 radians away from identity.
+        assert!(
+            (uses_glm_quats::angled() - 1.2).abs() < 1e-5,
+            "angled: {}",
+            uses_glm_quats::angled()
+        );
+    }
+
+    fn q_rotation_reference(angle: f32) -> glam::Quat {
+        glam::Quat::from_axis_angle(glam::Vec3::Y, angle)
+    }
+
+    #[test]
+    fn glm_quat_slerp_matches_glam() {
+        let a = from_axis_angle(Vec3f::Y, 0.3);
+        let b = from_axis_angle(Vec3f::X, 1.1);
+        let ga = glam::Quat::from(a);
+        let gb = glam::Quat::from(b);
+
+        // Endpoints are exact.
+        assert_quat_close(quat_slerp(a, b, 0.0), ga, "slerp t=0");
+        assert_quat_close(quat_slerp(a, b, 1.0), gb, "slerp t=1");
+        // Midpoints match glam.
+        assert_quat_close(quat_slerp(a, b, 0.25), ga.slerp(gb, 0.25), "slerp t=0.25");
+        assert_quat_close(quat_slerp(a, b, 0.5), ga.slerp(gb, 0.5), "slerp t=0.5");
+        // Nearly-parallel inputs hit the nlerp fallback on both sides.
+        let c = quat_mul(a, from_axis_angle(Vec3f::Y, 0.0001));
+        let gc = glam::Quat::from(c);
+        assert_quat_close(quat_slerp(a, c, 0.5), ga.slerp(gc, 0.5), "slerp nlerp path");
+        // The module's blended() exercises slerp from identity.
+        assert_quat_close(
+            uses_glm_quats::blended(1.3),
+            glam::Quat::IDENTITY.slerp(glam::Quat::from_axis_angle(glam::Vec3::Y, 1.3), 0.25),
+            "blended",
+        );
+
+        // WGSL world: the quat struct and helpers assemble and naga
+        // validates them.
+        let src = uses_glm_quats::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("struct Quat"), "quat struct rendered: {src}");
+        assert!(src.contains("fn quat_mul"), "helper assembled: {src}");
+        assert!(src.contains("fn quat_slerp"), "helper assembled: {src}");
+        assert!(src.contains("Quat_IDENTITY"), "const mangled: {src}");
+        #[cfg(feature = "validation")]
+        uses_glm_quats::WGSL_SOURCE.validate().unwrap();
     }
 }
 

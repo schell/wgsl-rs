@@ -38,6 +38,43 @@ let n = normalize_or_zero3(v);          // never NaN
 let angle = angle_between3(v, Vec3f::X);
 ```
 
+## Matrix Transforms
+
+All matrices are column-major `Mat4x4f` (or `Mat3x3f`/`Mat2x2f` where
+noted), matching glam's storage. Builders, GLM-style accumulate forms,
+transform helpers, and hand-written inverses:
+
+| Function | Notes |
+| -------- | ----- |
+| `translation(v)`, `scaling(v)`, `rotation_axis_angle(axis, angle)` | pure builders; `axis` must be normalized |
+| `translate(m, v)`, `rotate(m, angle, axis)`, `scale(m, v)` | post-multiply: `m * builder(...)` |
+| `transform_point2(m, v)`, `transform_point3(m, v)` | affine point transform, no perspective divide |
+| `transform_vector2(m, v)`, `transform_vector3(m, v)` | direction transform, no translation |
+| `look_at_rh(eye, center, up)`, `look_at_lh(...)` | view matrices |
+| `perspective_rh/lh/rh_gl(...)`, `orthographic_rh/lh/rh_gl(...)` | projections, see conventions |
+| `inverse2x2(m)`, `inverse3x3(m)`, `inverse4x4(m)` | hand-written, shared by both worlds |
+
+`determinant` and `transpose` already live in
+[`std`](./std/matrix-vector.md); glm does not wrap them. Singular input
+to the inverses produces inf/NaN components, matching glam's documented
+behavior.
+
+```rust
+use wgsl_rs::glm::*;
+
+let model = translate(
+    rotation_axis_angle(Vec3f::Y, 0.7),
+    vec3f(1.0, 2.0, 3.0),
+);
+let view = look_at_rh(
+    vec3f(3.0, 4.0, 5.0),
+    vec3f(0.0, 0.0, 0.0),
+    Vec3f::Y,
+);
+let clip = perspective_rh(1.2, 1.5, 0.1, 100.0) * view
+    * vec4f_from_3(transform_point3(model, vec3f(0.0, 0.0, 0.0)), 1.0);
+```
+
 ### Zero-Vector Semantics
 
 WGSL's `normalize` on a zero vector is not glam's: glam returns zero,
@@ -49,6 +86,7 @@ behavior and names it: `normalize_or_zero`, and the zero-guard inside
 
 Handedness and depth-range conventions follow glam's explicit suffix
 style (`_rh`/`_lh`, `_gl` for -1..1 depth) rather than GLM's compile-time
-defines, which Rust has no equivalent of. Defaults lean wgpu-native:
-right-handed, 0..1 depth. Matrix and quaternion helpers arrive in later
-phases.
+defines, which Rust has no equivalent of. The unsuffixed projection
+variants use the wgpu-native 0..1 depth range (right-handed is the usual
+default). The projection set mirrors glam 0.30 exactly, including its
+lack of `_lh_gl` variants. Quaternion helpers arrive in a later phase.

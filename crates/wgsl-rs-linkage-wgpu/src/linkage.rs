@@ -4,13 +4,13 @@
 // as a module), it must stay free of inner attributes (`//!`), and it
 // is compiled once per enabled major as the body of `crate::vNN`.
 //
-// The wgpu-free core (errors, IR assembly, WGSL §14.4.1 sizing, binding
+// The wgpu-free core (errors, WGSL §14.4.1 sizing, binding
 // metadata, and the wgsl-rs#177 stage analysis) lives in
 // `crate::analysis`, compiled exactly once per crate.
 //
-// Given an `ir::Module` (produced by a `#[wgsl]` source's
-// `WGSL_SOURCE.ir_constructor`, or by the macro-emitted
-// `instantiate::<...>()` function for templates), this module extracts
+// Given an `ir::Module` (produced by the macro-emitted `instantiate()`
+// function — zero arguments for concrete modules, generic
+// `instantiate::<T>()` for templates), this module extracts
 // the binding and entry-point information needed to build wgpu
 // pipelines at runtime (no proc-macro-time code generation), so
 // template instantiations get the same linkage analysis as concrete
@@ -43,7 +43,7 @@ pub use crate::analysis::{
 
 use crate::analysis::{
     DuplicateBindingNameSnafu, MissingBindingSnafu, NoSuchBindGroupSnafu, UnknownBindingNameSnafu,
-    analyze_stages, assemble_ir, binding_kind_label, buffer_kind_label,
+    analyze_stages, binding_kind_label, buffer_kind_label,
 };
 
 /// All the wgpu linkage information extracted from a WGSL module.
@@ -58,11 +58,13 @@ pub struct WgpuLinkage {
 
     /// The concrete, fully-assembled IR the linkage was built from. This
     /// is the IR rendered by [`Self::wgsl_source`] to produce the shader
-    /// source's WGSL text. For sources built from [`wgsl_rs::Source`] it
-    /// is the result of flattening imports and template instantiations;
-    /// for modules built from [`ir::Module`] (e.g. an instantiated
-    /// template) it is that module directly. Always concrete: no
-    /// `Type::TypeParam` nodes.
+    /// source's WGSL text. Sources built from [`wgsl_rs::Source`] are
+    /// assembled by [`Source::assemble_ir`] (flattening imports and
+    /// template instantiations), and `ir::Module` inputs (e.g. an
+    /// instantiated template) are whatever the caller passed in — build
+    /// them with the macro-emitted `instantiate()` so imports are
+    /// included, not with `WGSL_SOURCE.ir_constructor` (own items
+    /// only). Always concrete: no `Type::TypeParam` nodes.
     ir: ir::Module,
 
     /// Bind groups keyed by `@group(N)` index. Each group is sorted by
@@ -952,7 +954,7 @@ pub fn analyze_wgsl_module(wgsl_source: &Source) -> Result<WgpuLinkage, Error> {
         }
         .into());
     }
-    let ir_module = assemble_ir(wgsl_source)?;
+    let ir_module = wgsl_source.assemble_ir()?;
     Ok(analyze_ir_module(ir_module))
 }
 

@@ -793,6 +793,31 @@ fn gen_wgsl_module(
     }
     let module_id = module_id::deterministic_module_id(&source_descriptor);
 
+    // Concrete modules get an `instantiate()` constructor with the same
+    // shape as template modules' `instantiate::<T>()`: the fully
+    // assembled IR (imports depth-first + own items + cross-source
+    // template instantiations). Consumers must build pipelines from
+    // this, never from `(WGSL_SOURCE.ir_constructor)()`, which returns
+    // own items only and silently drops imports (wgsl-rs#195).
+    let concrete_instantiate = if module_type_params.is_empty() {
+        let expect_msg = format!("failed to assemble IR for wgsl module '{name}'");
+        quote! {
+            /// Returns this module's fully assembled IR: imported
+            /// sources first (depth-first, deduplicated by id), then
+            /// this module's own items, then cross-source template
+            /// instantiations.
+            ///
+            /// Build pipelines and shader modules from this — not from
+            /// `(WGSL_SOURCE.ir_constructor)()`, which returns this
+            /// module's own items only and silently drops imports.
+            pub fn instantiate() -> #ir_p::Module {
+                WGSL_SOURCE.assemble_ir().expect(#expect_msg)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         #module_statics
 
@@ -824,6 +849,8 @@ fn gen_wgsl_module(
                 #(#module_type_params_lits),*
             ],
         };
+
+        #concrete_instantiate
     })
 }
 
@@ -989,11 +1016,13 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         }
     }
 
-    // For template modules (those with module-level type parameters),
-    // emit an `instantiate` function alongside `WGSL_SOURCE`. The
-    // function uses `wgsl_rs::linkage::Type<Is = ...>` constraints to
-    // enforce at compile time that every linkage variable's concrete type
-    // is consistent across all entry points that use it.
+    // Every module gets an `instantiate` constructor alongside
+    // `WGSL_SOURCE`. Template modules (those with module-level type
+    // parameters) get the generic form here, which uses
+    // `wgsl_rs::linkage::Type<Is = ...>` constraints to enforce at
+    // compile time that every linkage variable's concrete type is
+    // consistent across all entry points that use it. Concrete modules
+    // get the zero-argument form from `gen_wgsl_module` itself.
     let builder_fragment = if module_type_params.is_empty() {
         quote! {}
     } else {

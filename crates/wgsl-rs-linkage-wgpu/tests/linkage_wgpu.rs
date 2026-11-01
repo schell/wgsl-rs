@@ -155,6 +155,80 @@ pub mod generic_triangle {
     }
 }
 
+/// Imported items of every shape the linkage path used to silently
+/// drop (wgsl-rs#195): a const, a struct, and impl methods
+/// (crabslab `SlabItemExt`-style machinery).
+#[wgsl]
+pub mod linkage_provider {
+    use wgsl_rs::std::*;
+
+    pub const QUAD_CCW: [Vec2f; 4] = [
+        vec2f(-1.0, -1.0),
+        vec2f(1.0, -1.0),
+        vec2f(1.0, 1.0),
+        vec2f(-1.0, 1.0),
+    ];
+
+    pub struct Quad {
+        pub uv: Vec2f,
+    }
+
+    impl Quad {
+        /// The upper-left component of `q`'s UV, scaled by `s`.
+        pub fn upper_left(q: Quad, s: f32) -> Vec2f {
+            vec2f(q.uv.x * s, q.uv.y * s)
+        }
+    }
+}
+
+/// A complete pipeline module assembled from `linkage_provider` via a
+/// glob import: the entries live here, everything they reference lives
+/// in the imported module.
+#[wgsl]
+pub mod linkage_consumer {
+    use super::linkage_provider::*;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), FRAME: u32);
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vi: u32) -> Vec4f {
+        let uv = QUAD_CCW[(vi % 4u32) as usize];
+        vec4f(uv.x, uv.y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        let q: Quad = Quad {
+            uv: vec2f(0.0, 0.0),
+        };
+        let ul = Quad::upper_left(q, f32(get!(FRAME)) * 0.0 + 1.0);
+        vec4f(ul.x, ul.y, 0.0, 1.0)
+    }
+}
+
+/// A template module importing a concrete module: `instantiate::<T>()`
+/// must flatten the import too, not just substitute own items
+/// (wgsl-rs#195).
+#[wgsl(crate_path = wgsl_rs, validate_with_instantiation_types(f32, f32))]
+pub mod generic_importer {
+    use super::linkage_provider::*;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), SCALE: impl Convert<f32>);
+
+    #[fragment]
+    pub fn fs_main<T: Convert<f32> + Wgsl>() -> Vec4f {
+        let _s = get!(SCALE, T);
+        let uv = QUAD_CCW[0];
+        let q: Quad = Quad {
+            uv: vec2f(0.0, 0.0),
+        };
+        let ul = Quad::upper_left(q, 1.0);
+        vec4f(ul.x + uv.x * 0.0, ul.y, 0.0, 1.0)
+    }
+}
+
 // ===== Basic shape tests =====
 
 #[test]
@@ -1264,4 +1338,62 @@ fn create_bind_group_named_reuses_cached_layout() {
             ],
         )
         .expect("second call should succeed");
+}
+
+// ===== IR assembly / `instantiate()` tests (wgsl-rs#195) =====
+
+/// wgsl-rs#195: a linkage built from the macro-emitted `instantiate()`
+/// must contain every imported item — consts, structs, and impl
+/// methods (crabslab `SlabItemExt`-style machinery) — not just the
+/// consuming module's own items. Building from a bare
+/// `(WGSL_SOURCE.ir_constructor)()` silently dropped them all.
+#[test]
+fn instantiate_based_linkage_contains_imported_items() {
+    let linkage = linkage_consumer::instantiate().generate_linkage();
+
+    let source = linkage.wgsl_source();
+    assert!(
+        source.contains("QUAD_CCW"),
+        "imported const missing from the assembled linkage, got:\n{source}"
+    );
+    assert!(
+        // The method's render name is mangle-escaped (`Quad__1upper_left`),
+        // so match on the method's distinctive part.
+        source.contains("upper_left"),
+        "imported impl method missing from the assembled linkage, got:\n{source}"
+    );
+    assert!(
+        source.contains("fn vtx_main") && source.contains("fn frag_main"),
+        "the consumer module's own entries must still be present, got:\n{source}"
+    );
+
+    wgsl_rs::validate_wgsl_source(&source)
+        .expect("the instantiate-based linkage source must validate in naga");
+}
+
+/// wgsl-rs#195: template modules' `instantiate::<T>()` flattens imports
+/// too, so a generic entry point sees imported helpers, structs, and
+/// consts after instantiation.
+#[test]
+fn template_instantiate_flattens_imports() {
+    let linkage = generic_importer::instantiate::<f32, f32>().generate_linkage();
+
+    let source = linkage.wgsl_source();
+    assert!(
+        source.contains("QUAD_CCW"),
+        "imported const missing from the instantiated template, got:\n{source}"
+    );
+    assert!(
+        // The method's render name is mangle-escaped (`Quad__1upper_left`),
+        // so match on the method's distinctive part.
+        source.contains("upper_left"),
+        "imported impl method missing from the instantiated template, got:\n{source}"
+    );
+    assert!(
+        source.contains("fs_main"),
+        "the template module's own entry must still be present, got:\n{source}"
+    );
+
+    wgsl_rs::validate_wgsl_source(&source)
+        .expect("the instantiated template's linkage source must validate in naga");
 }

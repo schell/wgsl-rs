@@ -2145,3 +2145,48 @@ two colliding same-name definitions from different modules still
 collide at WGSL redefinition time when both chunks concatenate;
 cross-module collision rules (loud assembly-time errors,
 qualification) are future work.
+
+### 2026-11-01: Module construction unifies on `instantiate`; `ir_constructor` is a primitive
+
+**Problem.** Building a `WgpuLinkage` (or any shader module) from
+`(WGSL_SOURCE.ir_constructor)()` silently produced a pipeline over the
+module's own items only: `Source.imports` were never merged, so
+imported consts, functions, structs, and extension machinery vanished
+from the generated WGSL, and naga failed with unknown-identifier
+errors far from the cause. The docs recommended exactly that call
+shape, and the template path had the same hole: `instantiate::<T>()`
+substituted over own items without flattening imports either.
+
+**Decision.** One construction path. The runtime gained
+`Source::assemble_ir` — the IR-level counterpart of `wgsl_source()`
+(imports depth-first, own items, cross-source template
+instantiations) — moved out of the linkage crate so macro-emitted code
+can call it. The macro now emits `instantiate()` for every module:
+zero-argument for concrete modules, generic `instantiate::<T>()` for
+templates, both returning the assembled IR. Template instantiation
+assembles first and substitutes after: imported sources are concrete
+by construction, so substitution only touches the module's own items.
+`analyze_wgsl_module` routes a `Source` through the same assembly,
+and the linkage crate's parallel `assemble_ir` free function is gone.
+`ir_constructor` remains as the documented own-items primitive, with
+warnings at the field and in the book. Deshadowing stays in
+`analyze_ir_module` per the existing note.
+
+A side effect worth recording: the IR path now resolves template
+instantiations through pub re-export edges and deduplicates on const
+args, matching the text path. The two paths previously disagreed —
+the old IR-path resolver looked at direct candidate modules only — so
+a consumer instantiating through a prelude hop worked as text and
+failed as IR. Sharing `resolve_template` and `build_instance_items`
+pins the two worlds together.
+
+**Why.** Every consumer that built a pipeline from a module had to
+know which constructor flattens imports; now there is one documented
+shape for concrete and template modules alike. Two assemblies of the
+same graph drifting apart is the actual bug class here. One emission
+constraint learned the hard way: the emitted `instantiate` bodies use
+`.expect(...)`, not `unwrap_or_else(|e| panic!(...))` — in a generic
+function with deliberately contradictory `Type<Is = ...>` bounds
+(the `generic_linkage_specialization` fixture), a closure inference
+variable makes rustc try to solve those bounds at the definition and
+the module stops compiling.

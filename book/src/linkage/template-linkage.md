@@ -22,24 +22,22 @@ parameters, so there is nothing concrete to link.
 
 The correct flow is:
 
-1. Get the template's IR (or `Source`).
-2. Call `instantiate::<T1, T2, ...>()` to produce a concrete `ir::Module`.
-3. Pass the concrete IR to `analyze_ir_module`.
+1. Call the module's `instantiate::<T1, T2, ...>()` to produce a concrete
+   `ir::Module` (imports flattened).
+2. Pass the concrete IR to `analyze_ir_module`.
 
 ```rust
 use wgsl_rs_linkage_wgpu::analyze_ir_module;
-use wgsl_rs::*;
 
-let template: &Source = &renderer::SOURCE;
-let concrete_ir: ir::Module = template.instantiate::<f32, Vec4f>()?;
+let concrete_ir: ir::Module = renderer::instantiate::<f32, Vec4f>();
 let linkage = analyze_ir_module(concrete_ir);
 ```
 
-`ir::Module::generate_linkage()` (the `IrModuleExt` re-export) does the
-second step in one call:
+`ir::Module::generate_linkage()` (the `IrModuleExt` re-export) combines
+both steps in one call:
 
 ```rust
-let linkage = concrete_ir.generate_linkage()?;
+let linkage = renderer::instantiate::<f32, Vec4f>().generate_linkage();
 ```
 
 ## `WgpuLinkage` owns the concrete IR
@@ -76,12 +74,11 @@ pub mod generic_blit {
 }
 
 // In application code:
-use wgsl_rs::*;
+use wgsl_rs_linkage_wgpu::IrModuleExt;
 
-let concrete = generic_blit::SOURCE.instantiate::<Vec4f>()?;
-let mut linkage = concrete.generate_linkage()?;
+let mut linkage = generic_blit::instantiate::<Vec4f>().generate_linkage();
 let shader = linkage.shader_module(&device);
-let layout = linkage.pipeline_layout(&mut linkage, &device, Some("blit"));
+let layout = linkage.pipeline_layout(&device, Some("blit"));
 // ... build pipeline as usual
 ```
 
@@ -89,7 +86,8 @@ let layout = linkage.pipeline_layout(&mut linkage, &device, Some("blit"));
 
 | Step | API |
 |------|-----|
-| Instantiate template IR | `source.instantiate::<T...>() -> ir::Module` |
+| Instantiate a concrete module | `module::instantiate() -> ir::Module` |
+| Instantiate a template module | `module::instantiate::<T...>() -> ir::Module` |
 | Analyze concrete IR | `analyze_ir_module(ir) -> WgpuLinkage` |
-| Or, combined | `ir.generate_linkage() -> WgpuLinkage` |
-| Analyze concrete source | `analyze_wgsl_module(&source) -> WgpuLinkage` |
+| Or, combined | `instantiate().generate_linkage() -> WgpuLinkage` |
+| Analyze a concrete source | `analyze_wgsl_module(&source) -> WgpuLinkage` |

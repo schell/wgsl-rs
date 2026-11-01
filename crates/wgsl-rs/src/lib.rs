@@ -22,6 +22,8 @@ pub mod extension;
 pub mod linkage;
 pub mod source_error;
 
+mod assemble;
+
 pub use extension::{WgslExtension, any_ext_claims, contains_str};
 
 pub use source_error::SourceError;
@@ -98,8 +100,14 @@ pub struct Source {
     /// for 2026-10-31 for the reasoning.
     pub reexports: &'static [&'static Source],
 
-    /// Constructor function that builds this module's IR. Called lazily by
-    /// `wgsl_source()` / `instantiate()`.
+    /// Constructor function that builds this module's IR.
+    ///
+    /// **Own items only**: imported sources are not merged. This is the
+    /// low-level primitive behind [`Source::wgsl_source`] and
+    /// [`Source::assemble_ir`]; use those (or the macro-emitted
+    /// `instantiate()`) instead. Building a pipeline from a bare
+    /// `(ir_constructor)()` result silently drops every imported item
+    /// (wgsl-rs#195).
     ///
     /// The returned IR is owned and freshly constructed on each call; the
     /// caller is free to clone, mutate, or substitute over it.
@@ -632,7 +640,7 @@ fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
 /// possible: proc macros cannot introspect what a sibling module
 /// re-exports, so only the literal `use` paths can be recorded as
 /// candidates.
-fn resolve_template<'a>(
+pub(crate) fn resolve_template<'a>(
     sources: &[&'a Source],
     template_name: &str,
     mangled_type_args: &[String],
@@ -693,7 +701,7 @@ fn resolve_template<'a>(
 /// the instance to its mangled name. Uses `ir::mangle` so that names
 /// with underscores in either the template name or the type-arg-mangled
 /// strings are escaped unambiguously (see issue #112).
-fn build_instance_items(
+pub(crate) fn build_instance_items(
     template: &GenericTemplate,
     type_args: &[ir::Type],
     const_args: &[i64],
@@ -3213,6 +3221,110 @@ mod test {
             assert!(
                 src.contains("HELPER_ANSWER"),
                 "private import chunks must be concatenated, got:\n{src}"
+            );
+        }
+
+        // --- IR-level assembly (wgsl-rs#195) ---
+
+        /// A module with real items, so IR-level flattening is
+        /// observable (the other statics carry empty IRs).
+        fn assembled_const_ir() -> ir::Module {
+            ir::Module {
+                name: "consts_mod",
+                items: vec![ir::Item::Const(ir::ItemConst {
+                    name: "ASSEMBLED_CONST".to_string(),
+                    ty: ir::Type::Scalar(ir::ScalarType::U32),
+                    expr: ir::Expr::Lit(ir::Lit::Int {
+                        digits: "7".to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+
+        static CONSTS_MOD: Source = Source {
+            id: 240,
+            name: "consts_mod",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: assembled_const_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        fn item_names(module: &ir::Module) -> Vec<String> {
+            module
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ir::Item::Const(c) => Some(c.name.to_string()),
+                    ir::Item::Fn(f) => Some(f.name.to_string()),
+                    ir::Item::Struct(s) => Some(s.name.to_string()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn assemble_ir_flattens_imports_any_visibility() {
+            // Assembly concatenates every import edge, private ones
+            // included, so the module's own code keeps resolving.
+            static PRIVATE_USER: Source = Source {
+                id: 241,
+                name: "private_user",
+                imports: &[&CONSTS_MOD], // a private `use`
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let assembled = PRIVATE_USER.assemble_ir().expect("concrete assembly");
+            let names = item_names(&assembled);
+            assert!(
+                names.contains(&"ASSEMBLED_CONST".to_string()),
+                "imported items must be flattened into the assembled IR, got: {names:?}"
+            );
+        }
+
+        #[test]
+        fn assemble_ir_resolves_instantiations_through_reexport_hops() {
+            // The IR path resolves through pub re-export edges exactly
+            // like the text path: the root names the hop, the hop
+            // re-exports DEFS.
+            static HOP_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&PRELUDE],
+                template_name: "id",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static HOP_ROOT: Source = Source {
+                id: 242,
+                name: "hop_root",
+                imports: &[&CONSTS_MOD, &PRELUDE],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &HOP_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let assembled = HOP_ROOT
+                .assemble_ir()
+                .expect("instantiation must resolve through the pub re-export hop");
+            let names = item_names(&assembled);
+            assert!(
+                names.contains(&"id_f32".to_string()),
+                "the instantiation must be assembled from the re-exported definition, got: \
+                 {names:?}"
+            );
+            assert!(
+                names.contains(&"ASSEMBLED_CONST".to_string()),
+                "imported items must be flattened too, got: {names:?}"
             );
         }
     }

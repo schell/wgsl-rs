@@ -22,6 +22,8 @@ pub mod extension;
 pub mod linkage;
 pub mod source_error;
 
+mod assemble;
+
 pub use extension::{WgslExtension, any_ext_claims, contains_str};
 
 pub use source_error::SourceError;
@@ -98,8 +100,14 @@ pub struct Source {
     /// for 2026-10-31 for the reasoning.
     pub reexports: &'static [&'static Source],
 
-    /// Constructor function that builds this module's IR. Called lazily by
-    /// `wgsl_source()` / `instantiate()`.
+    /// Constructor function that builds this module's IR.
+    ///
+    /// **Own items only**: imported sources are not merged. This is the
+    /// low-level primitive behind [`Source::wgsl_source`] and
+    /// [`Source::assemble_ir`]; use those (or the macro-emitted
+    /// `instantiate()`) instead. Building a pipeline from a bare
+    /// `(ir_constructor)()` result silently drops every imported item
+    /// (wgsl-rs#195).
     ///
     /// The returned IR is owned and freshly constructed on each call; the
     /// caller is free to clone, mutate, or substitute over it.
@@ -227,6 +235,12 @@ impl Source {
         }
         let mut out = String::new();
         let mut visited_sources: HashSet<u64> = HashSet::new();
+        // Seed the assembly root's own id: when the root sits inside an
+        // import cycle (A -> B -> A), the recursive descent through the
+        // imports would otherwise re-enter and emit the root's chunk a
+        // second time before the outer frame renders it (`collect`
+        // only marks nodes it descends *into*).
+        visited_sources.insert(self.id);
         let mut seen: HashSet<(u64, String, Vec<String>, Vec<String>)> = HashSet::new();
         let mut needs_tier1 = false;
         let mut imports = ir::TypeImports::default();
@@ -426,7 +440,7 @@ impl Source {
 /// module's references are checked against the names that module
 /// itself can name, so a middle module's private imports are
 /// harvested even though they are invisible to the root.
-fn collect_template_names(source: &Source, names: &mut HashSet<String>) {
+pub(crate) fn collect_template_names(source: &Source, names: &mut HashSet<String>) {
     for template in source.templates {
         names.insert(template.name.to_string());
     }
@@ -632,7 +646,7 @@ fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
 /// possible: proc macros cannot introspect what a sibling module
 /// re-exports, so only the literal `use` paths can be recorded as
 /// candidates.
-fn resolve_template<'a>(
+pub(crate) fn resolve_template<'a>(
     sources: &[&'a Source],
     template_name: &str,
     mangled_type_args: &[String],
@@ -693,7 +707,7 @@ fn resolve_template<'a>(
 /// the instance to its mangled name. Uses `ir::mangle` so that names
 /// with underscores in either the template name or the type-arg-mangled
 /// strings are escaped unambiguously (see issue #112).
-fn build_instance_items(
+pub(crate) fn build_instance_items(
     template: &GenericTemplate,
     type_args: &[ir::Type],
     const_args: &[i64],
@@ -2467,6 +2481,62 @@ mod test {
         );
     }
 
+    #[wgsl(crate_path = crate)]
+    mod mono_provider {
+        pub fn id<T: Copy>(v: T) -> T {
+            v
+        }
+
+        // The provider's own code monomorphizes `id::<u32>` at macro
+        // time, so `id_u32` lands in the provider's own chunk.
+        pub fn concrete_user() -> u32 {
+            id::<u32>(7u32)
+        }
+    }
+
+    #[expect(dead_code)]
+    #[wgsl(crate_path = crate)]
+    mod mono_consumer {
+        use super::mono_provider::*;
+
+        // Cross-module, so it is recorded as a runtime instantiation
+        // against the provider — duplicating the provider's own
+        // compile-time monomorphization unless assembly dedups against
+        // names already emitted by source chunks.
+        pub fn also_user() -> u32 {
+            id::<u32>(9u32)
+        }
+    }
+
+    #[test]
+    fn assemble_ir_dedups_provider_monomorphized_instances() {
+        let ir_module = mono_consumer::WGSL_SOURCE
+            .assemble_ir()
+            .expect("concrete assembly");
+        let id_u32_count = ir_module
+            .items
+            .iter()
+            .filter(|item| matches!(item, ir::Item::Fn(f) if f.name.as_ref() == "id_u32"))
+            .count();
+        assert_eq!(
+            id_u32_count, 1,
+            "the consumer's instantiation must dedup against the provider's own monomorphized \
+             chunk, items:\n{ir_module:#?}"
+        );
+        crate::validate_wgsl_source(&ir_module.wgsl_source())
+            .expect("the deduped assembly must render valid WGSL");
+    }
+
+    #[test]
+    fn text_assembly_dedups_provider_monomorphized_instances() {
+        let full_src = mono_consumer::WGSL_SOURCE.wgsl_source().unwrap();
+        assert_eq!(
+            full_src.matches("fn id_u32(").count(),
+            1,
+            "expected id_u32 to appear once, got:\n{full_src}"
+        );
+    }
+
     #[test]
     fn ambiguous_template_provider_errors() {
         // Build hand-crafted sources where two distinct provider sources
@@ -3077,6 +3147,81 @@ mod test {
             }
         }
 
+        /// Defines `Hidden<T>`; reachable only through `middle`'s
+        /// private import.
+        fn hidden_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Struct(ir::ItemStruct {
+                type_params: vec!["T".to_string()],
+                const_params: vec![],
+                name: "Hidden".to_string(),
+                fields: vec![],
+                attrs: vec![],
+            })]
+        }
+        static HIDDEN_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
+            name: "Hidden",
+            type_params: &["T"],
+            const_params: &[],
+            ir_constructor: hidden_template_items,
+            dependencies: &DEP,
+        }];
+        static HIDDEN_DEFS: Source = Source {
+            id: 116,
+            name: "hidden_defs",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &HIDDEN_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// References `Hidden` without instantiating it (a `Type::Struct`
+        /// ref in a fn return type).
+        fn middle_ir() -> ir::Module {
+            ir::Module {
+                name: "middle",
+                items: vec![ir::Item::Fn(ir::ItemFn {
+                    type_params: vec![],
+                    const_params: vec![],
+                    fn_attrs: ir::FnAttrs::None,
+                    name: "uses_hidden".to_string().into(),
+                    inputs: vec![],
+                    return_type: ir::ReturnType::Type {
+                        annotation: ir::ReturnTypeAnnotation::None,
+                        ty: ir::Type::Struct {
+                            name: "Hidden".to_string(),
+                            type_args: vec![],
+                        },
+                    },
+                    block: ir::Block { stmts: vec![] },
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        static MIDDLE: Source = Source {
+            id: 117,
+            name: "middle",
+            // `use super::hidden_defs::*;` — a private import.
+            imports: &[&HIDDEN_DEFS],
+            reexports: &NO_SOURCES,
+            ir_constructor: middle_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static UNRESOLVED_ROOT: Source = Source {
+            id: 227,
+            name: "root",
+            imports: &[&MIDDLE],
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
         #[test]
         fn middle_module_private_imports_are_checked() {
             // wgsl-rs#237's unresolved-reference check runs per chunk
@@ -3086,76 +3231,7 @@ mod test {
             // (so a root-level harvest would miss it), but `middle`
             // can — the check inside `middle`'s chunk must fire instead
             // of letting the un-mangled name leak to WGSL validation.
-            fn hidden_template_items() -> Vec<ir::Item> {
-                vec![ir::Item::Struct(ir::ItemStruct {
-                    type_params: vec!["T".to_string()],
-                    const_params: vec![],
-                    name: "Hidden".to_string(),
-                    fields: vec![],
-                    attrs: vec![],
-                })]
-            }
-            static HIDDEN_TEMPLATES: [GenericTemplate; 1] = [GenericTemplate {
-                name: "Hidden",
-                type_params: &["T"],
-                const_params: &[],
-                ir_constructor: hidden_template_items,
-                dependencies: &DEP,
-            }];
-            static HIDDEN_DEFS: Source = Source {
-                id: 116,
-                name: "hidden_defs",
-                imports: &NO_SOURCES,
-                reexports: &NO_SOURCES,
-                ir_constructor: empty_source_ir,
-                templates: &HIDDEN_TEMPLATES,
-                instantiations: &NO_INSTS,
-                module_type_params: &NO_TYPE_PARAMS,
-            };
-            fn middle_ir() -> ir::Module {
-                ir::Module {
-                    name: "middle",
-                    items: vec![ir::Item::Fn(ir::ItemFn {
-                        type_params: vec![],
-                        const_params: vec![],
-                        fn_attrs: ir::FnAttrs::None,
-                        name: "uses_hidden".to_string().into(),
-                        inputs: vec![],
-                        return_type: ir::ReturnType::Type {
-                            annotation: ir::ReturnTypeAnnotation::None,
-                            ty: ir::Type::Struct {
-                                name: "Hidden".to_string(),
-                                type_args: vec![],
-                            },
-                        },
-                        block: ir::Block { stmts: vec![] },
-                        attrs: vec![],
-                    })],
-                    attrs: vec![],
-                }
-            }
-            static MIDDLE: Source = Source {
-                id: 117,
-                name: "middle",
-                // `use super::hidden_defs::*;` — a private import.
-                imports: &[&HIDDEN_DEFS],
-                reexports: &NO_SOURCES,
-                ir_constructor: middle_ir,
-                templates: &[],
-                instantiations: &NO_INSTS,
-                module_type_params: &NO_TYPE_PARAMS,
-            };
-            static ROOT: Source = Source {
-                id: 227,
-                name: "root",
-                imports: &[&MIDDLE],
-                reexports: &NO_SOURCES,
-                ir_constructor: empty_source_ir,
-                templates: &[],
-                instantiations: &NO_INSTS,
-                module_type_params: &NO_TYPE_PARAMS,
-            };
-            let err = ROOT.wgsl_source().unwrap_err();
+            let err = UNRESOLVED_ROOT.wgsl_source().unwrap_err();
             match &err {
                 crate::SourceError::UnresolvedTemplateRef {
                     source_name,
@@ -3164,6 +3240,137 @@ mod test {
                 } => {
                     assert_eq!(source_name, "middle");
                     assert_eq!(template_name, "Hidden");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn assemble_ir_flags_unresolved_template_refs() {
+            // The IR path runs the same per-chunk #237 check
+            // (wgsl-rs#195 review): `instantiate()` must fail with the
+            // structured error, not leak an un-mangled identifier into
+            // WGSL validation.
+            let err = UNRESOLVED_ROOT.assemble_ir().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef {
+                    source_name,
+                    template_name,
+                    ..
+                } => {
+                    assert_eq!(source_name, "middle");
+                    assert_eq!(template_name, "Hidden");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
+            }
+        }
+
+        /// A template whose body references another template
+        /// (`helper`) without a recorded dependency or instantiation.
+        fn outer_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                const_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "outer".to_string().into(),
+                inputs: vec![],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::TypePath {
+                        ty: "helper".to_string(),
+                        member: "NONE".to_string(),
+                    }))],
+                },
+                attrs: vec![],
+            })]
+        }
+        fn helper_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                const_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "helper".to_string().into(),
+                inputs: vec![],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::Ident("x".to_string())))],
+                },
+                attrs: vec![],
+            })]
+        }
+        static OUTER_DEFS_TEMPLATES: [GenericTemplate; 2] = [
+            GenericTemplate {
+                name: "outer",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: outer_template_items,
+                dependencies: &DEP,
+            },
+            GenericTemplate {
+                name: "helper",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: helper_template_items,
+                dependencies: &DEP,
+            },
+        ];
+        static OUTER_DEFS: Source = Source {
+            id: 250,
+            name: "outer_defs",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: empty_source_ir,
+            templates: &OUTER_DEFS_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn assemble_ir_flags_unresolved_refs_in_instance_bodies() {
+            // Instance-level #237 check (wgsl-rs#195 review): the
+            // instance's body was written in the defining module, so
+            // its un-resolved reference to `helper` must fail the
+            // assembly with the structured error, mirroring the text
+            // path.
+            static OUTER_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&OUTER_DEFS],
+                template_name: "outer",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static OUTER_ROOT: Source = Source {
+                id: 251,
+                name: "outer_root",
+                imports: &[&OUTER_DEFS],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &OUTER_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = OUTER_ROOT.assemble_ir().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef {
+                    source_name,
+                    template_name,
+                    member,
+                    ..
+                } => {
+                    assert_eq!(source_name, "outer_defs");
+                    assert_eq!(template_name, "helper");
+                    assert_eq!(member.as_deref(), Some("NONE"));
                 }
                 other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
             }
@@ -3213,6 +3420,200 @@ mod test {
             assert!(
                 src.contains("HELPER_ANSWER"),
                 "private import chunks must be concatenated, got:\n{src}"
+            );
+        }
+
+        // --- IR-level assembly (wgsl-rs#195) ---
+
+        /// A module with real items, so IR-level flattening is
+        /// observable (the other statics carry empty IRs).
+        fn assembled_const_ir() -> ir::Module {
+            ir::Module {
+                name: "consts_mod",
+                items: vec![ir::Item::Const(ir::ItemConst {
+                    name: "ASSEMBLED_CONST".to_string(),
+                    ty: ir::Type::Scalar(ir::ScalarType::U32),
+                    expr: ir::Expr::Lit(ir::Lit::Int {
+                        digits: "7".to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+
+        static CONSTS_MOD: Source = Source {
+            id: 240,
+            name: "consts_mod",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            ir_constructor: assembled_const_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        fn item_names(module: &ir::Module) -> Vec<String> {
+            module
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ir::Item::Const(c) => Some(c.name.to_string()),
+                    ir::Item::Fn(f) => Some(f.name.to_string()),
+                    ir::Item::Struct(s) => Some(s.name.to_string()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn assemble_ir_flattens_imports_any_visibility() {
+            // Assembly concatenates every import edge, private ones
+            // included, so the module's own code keeps resolving.
+            static PRIVATE_USER: Source = Source {
+                id: 241,
+                name: "private_user",
+                imports: &[&CONSTS_MOD], // a private `use`
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let assembled = PRIVATE_USER.assemble_ir().expect("concrete assembly");
+            let names = item_names(&assembled);
+            assert!(
+                names.contains(&"ASSEMBLED_CONST".to_string()),
+                "imported items must be flattened into the assembled IR, got: {names:?}"
+            );
+        }
+
+        #[test]
+        fn assemble_ir_resolves_instantiations_through_reexport_hops() {
+            // The IR path resolves through pub re-export edges exactly
+            // like the text path: the root names the hop, the hop
+            // re-exports DEFS.
+            static HOP_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&PRELUDE],
+                template_name: "id",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static HOP_ROOT: Source = Source {
+                id: 242,
+                name: "hop_root",
+                imports: &[&CONSTS_MOD, &PRELUDE],
+                reexports: &NO_SOURCES,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &HOP_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let assembled = HOP_ROOT
+                .assemble_ir()
+                .expect("instantiation must resolve through the pub re-export hop");
+            let names = item_names(&assembled);
+            assert!(
+                names.contains(&"id_f32".to_string()),
+                "the instantiation must be assembled from the re-exported definition, got: \
+                 {names:?}"
+            );
+            assert!(
+                names.contains(&"ASSEMBLED_CONST".to_string()),
+                "imported items must be flattened too, got: {names:?}"
+            );
+        }
+
+        /// A cycle whose members carry real items, so duplicate
+        /// emission is observable: the assembly root itself sits inside
+        /// the cycle (A -> B -> A).
+        fn cyc_left_ir() -> ir::Module {
+            ir::Module {
+                name: "cyc_left",
+                items: vec![ir::Item::Const(ir::ItemConst {
+                    name: "CYCLE_LEFT_MARK".to_string(),
+                    ty: ir::Type::Scalar(ir::ScalarType::U32),
+                    expr: ir::Expr::Lit(ir::Lit::Int {
+                        digits: "1".to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        fn cyc_right_ir() -> ir::Module {
+            ir::Module {
+                name: "cyc_right",
+                items: vec![ir::Item::Const(ir::ItemConst {
+                    name: "CYCLE_RIGHT_MARK".to_string(),
+                    ty: ir::Type::Scalar(ir::ScalarType::U32),
+                    expr: ir::Expr::Lit(ir::Lit::Int {
+                        digits: "2".to_string(),
+                        suffix: "u32".to_string(),
+                    }),
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        static CYC_LEFT: Source = Source {
+            id: 260,
+            name: "cyc_left",
+            imports: &[&CYC_RIGHT],
+            reexports: &NO_SOURCES,
+            ir_constructor: cyc_left_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static CYC_RIGHT: Source = Source {
+            id: 261,
+            name: "cyc_right",
+            imports: &[&CYC_LEFT],
+            reexports: &NO_SOURCES,
+            ir_constructor: cyc_right_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn assemble_ir_emits_cycle_members_once() {
+            // Assembling a module that sits inside an import cycle must
+            // emit each member exactly once: without seeding the root's
+            // id, the descent through `cyc_right` re-enters `cyc_left`
+            // and appends its items before the outer frame does.
+            let assembled = CYC_LEFT.assemble_ir().expect("assembly must terminate");
+            let names = item_names(&assembled);
+            let left_count = names
+                .iter()
+                .filter(|n| n.as_str() == "CYCLE_LEFT_MARK")
+                .count();
+            assert_eq!(
+                left_count, 1,
+                "the cycle member assembling the graph must not be emitted twice, got: {names:?}"
+            );
+            assert!(
+                names.contains(&"CYCLE_RIGHT_MARK".to_string()),
+                "the other cycle member must be flattened in, got: {names:?}"
+            );
+        }
+
+        #[test]
+        fn text_assembly_emits_cycle_members_once() {
+            let src = CYC_LEFT.wgsl_source().expect("assembly must terminate");
+            assert_eq!(
+                src.matches("CYCLE_LEFT_MARK").count(),
+                1,
+                "the cycle member assembling the graph must not be rendered twice, got:\n{src}"
+            );
+            assert!(
+                src.contains("CYCLE_RIGHT_MARK"),
+                "the other cycle member must be flattened in, got:\n{src}"
             );
         }
     }

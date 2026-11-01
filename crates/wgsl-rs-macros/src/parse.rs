@@ -5961,6 +5961,33 @@ impl ItemMod {
         }
         (imports, reexports)
     }
+
+    /// The `#[wgsl]` macro emits a `WGSL_SOURCE` static and an
+    /// `instantiate` IR constructor into every module; a user item
+    /// declared with either name collides with the generated item and
+    /// fails with a confusing duplicate-definition error in the
+    /// consumer crate. Returns the offending item's span and kind for
+    /// a targeted diagnostic.
+    pub fn reserved_name_conflict(&self) -> Option<(proc_macro2::Span, &'static str)> {
+        for item in &self.content {
+            let (ident, kind) = match item {
+                Item::Const(c) => (&c.ident, "const"),
+                Item::Fn(f) => (&f.ident, "fn"),
+                Item::Struct(s) => (&s.ident, "struct"),
+                Item::Enum(e) => (&e.ident, "enum"),
+                Item::Uniform(u) => (&u.name, "uniform"),
+                Item::Storage(s) => (&s.name, "storage"),
+                Item::Workgroup(w) => (&w.name, "workgroup"),
+                Item::Sampler(s) => (&s.name, "sampler"),
+                Item::Texture(t) => (&t.name, "texture"),
+                _ => continue,
+            };
+            if ident == "instantiate" || ident == "WGSL_SOURCE" {
+                return Some((ident.span(), kind));
+            }
+        }
+        None
+    }
 }
 
 /// A WGSL use/import statement.
@@ -12074,6 +12101,39 @@ mod test {
         assert!(
             reexports[0].contains("pub_helper"),
             "the pub use module must be the re-export edge, got: {reexports:?}"
+        );
+    }
+
+    /// `instantiate` and `WGSL_SOURCE` are the macro-emitted items; a
+    /// user item with either name must be detected for a targeted
+    /// diagnostic instead of a duplicate-definition error in the
+    /// consumer crate.
+    #[test]
+    fn reserved_generated_names_are_detected() {
+        for (src, expected) in [
+            ("mod m { pub fn instantiate() -> u32 { 1u32 } }", "fn"),
+            ("mod m { pub const WGSL_SOURCE: u32 = 1u32; }", "const"),
+        ] {
+            let item_mod: syn::ItemMod = syn::parse_str(src).unwrap();
+            let module = ItemMod::try_from(&item_mod).unwrap();
+            let (_span, kind) = module
+                .reserved_name_conflict()
+                .unwrap_or_else(|| panic!("the reserved name must be detected in: {src}"));
+            assert_eq!(kind, expected, "in: {src}");
+        }
+
+        // Ordinary names pass.
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod m {
+                pub fn fine() -> u32 {
+                    1u32
+                }
+            }
+        };
+        let module = ItemMod::try_from(&item_mod).unwrap();
+        assert!(
+            module.reserved_name_conflict().is_none(),
+            "ordinary names must not be flagged"
         );
     }
 }

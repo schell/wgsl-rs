@@ -1,0 +1,13 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       a fn named `instantiate` or `WGSL_SOURCE` collides with the items the `#[wgsl]` macro emits into this module: the `WGSL_SOURCE` static and the `instantiate` IR constructor. Rename the item.'
+ --> tests/ui/fail/reserved_generated_names.rs:8:12
+  |
+8 |     pub fn instantiate() -> u32 {
+  |            ^^^^^^^^^^^
+
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       a const named `instantiate` or `WGSL_SOURCE` collides with the items the `#[wgsl]` macro emits into this module: the `WGSL_SOURCE` static and the `instantiate` IR constructor. Rename the item.'
+  --> tests/ui/fail/reserved_generated_names.rs:15:15
+   |
+15 |     pub const WGSL_SOURCE: u32 = 1u32;
+   |               ^^^^^^^^^^^

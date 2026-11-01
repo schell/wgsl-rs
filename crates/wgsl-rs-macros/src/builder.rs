@@ -30,7 +30,9 @@
 //!     FRAME: Convert<f32> + wgsl_rs::std::Wgsl,
 //!     FRAME: wgsl_rs::linkage::Type<Is = T>,
 //! {
-//!     let mut ir_module = (WGSL_SOURCE.ir_constructor)();
+//!     let mut ir_module = WGSL_SOURCE
+//!         .assemble_ir()
+//!         .expect("failed to assemble IR for wgsl module 'my_shader'");
 //!     let __subst: ::std::collections::HashMap<::std::string::String, wgsl_rs::ir::Type> = [
 //!         ("FRAME".to_string(), <FRAME as wgsl_rs::std::Wgsl>::to_ir()),
 //!         ("frag_main_0".to_string(), <T as wgsl_rs::std::Wgsl>::to_ir()),
@@ -105,6 +107,8 @@ struct EntryPointConstSlot {
 /// no `impl Trait` linkage variables and no generic entry points).
 pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) -> TokenStream {
     let ir_p = quote! { #crate_path::ir };
+    let module_name = wgsl_module.ident.to_string();
+    let expect_msg = format!("failed to assemble IR for wgsl module '{module_name}'");
     let std_p = quote! { #crate_path::std };
     let linkage_p = quote! { #crate_path::linkage };
 
@@ -359,7 +363,9 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         pub fn instantiate #impl_generics () -> #ir_p::Module
         #split_where_clause
         {
-            let mut __ir_module = (WGSL_SOURCE.ir_constructor)();
+            let mut __ir_module = WGSL_SOURCE
+                .assemble_ir()
+                .expect(#expect_msg);
             let __subst: ::std::collections::HashMap<::std::string::String, #ir_p::Type> = [
                 #(#subst_entries),*
             ].into_iter().collect();

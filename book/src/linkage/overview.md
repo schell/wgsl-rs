@@ -43,33 +43,28 @@ See [Cargo Features](../getting-started/cargo-features.md).
 ## `WgpuLinkage`
 
 `WgpuLinkage` is the main type. It owns the concrete IR it was built from and
-renders the WGSL source via `ir::render_module`. You get one of two ways:
-
-```rust
-use wgsl_rs_linkage_wgpu::{analyze_wgsl_module, analyze_ir_module, WgpuLinkage};
-
-// From a concrete (non-template) Source:
-let linkage: WgpuLinkage = analyze_wgsl_module(&my_shader::WGSL_SOURCE)?;
-
-// From an instantiated template's IR (see [Template Modules & Instantiation](../generics/templates.md)):
-let concrete_ir: ir::Module = my_shader::instantiate::<f32, u32>();
-let linkage: WgpuLinkage = analyze_ir_module(concrete_ir);
-```
-
-Concrete IR modules also expose `generate_linkage()` — an extension
-trait method (`IrModuleExt`) exported from the linkage crate's root —
-as a shorthand for `analyze_ir_module`. For a `Source`, use
-`analyze_wgsl_module`:
+renders the WGSL source via `ir::render_module`. Every `#[wgsl]` module ships
+an `instantiate()` constructor returning its fully assembled IR — imports
+included — and `generate_linkage()` turns that IR into a linkage:
 
 ```rust
 use wgsl_rs_linkage_wgpu::*;
 
-// From a concrete IR module (e.g. a template instantiation):
+// A concrete (non-template) module:
+let linkage = my_shader::instantiate().generate_linkage();
+
+// A template module (see [Template Modules & Instantiation](../generics/templates.md)):
 let linkage = my_shader::instantiate::<f32, u32>().generate_linkage();
 
-// From a Source:
+// Or hand a concrete Source straight to the analyzer —
+// `analyze_wgsl_module` is `instantiate()` + analysis in one call:
 let linkage = analyze_wgsl_module(&my_shader::WGSL_SOURCE)?;
 ```
+
+`generate_linkage()` is an extension-trait method (`IrModuleExt`) exported
+from the linkage crate's root; it is the shorthand for `analyze_ir_module`.
+Build the IR you hand it with the macro-emitted `instantiate()`, never with
+`WGSL_SOURCE.ir_constructor` (own items only — imports silently drop).
 
 ## What `WgpuLinkage` provides
 

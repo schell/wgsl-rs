@@ -44,15 +44,15 @@
 //! live in the same crate without a dependency cycle. `wgsl-rs` itself
 //! stays wgpu-free.
 //!
-//! Given an IR module (produced by a `#[wgsl]` source's
-//! `WGSL_SOURCE.ir_constructor`, or by the macro-emitted
-//! `instantiate::<...>()` function for templates), the analyzer
+//! Given an IR module (produced by the macro-emitted `instantiate()`
+//! function — zero arguments for concrete modules, generic
+//! `instantiate::<T>()` for templates), the analyzer
 //! extracts the binding and entry-point information needed to build
 //! wgpu pipelines at runtime — no proc-macro-time code generation — so
 //! template instantiations get the same linkage analysis as concrete
 //! sources.
 
-/// The wgpu-free core of the linkage crate: errors, IR assembly,
+/// The wgpu-free core of the linkage crate: errors,
 /// WGSL §14.4.1 sizing, binding metadata, and the shader-stage
 /// analysis. Compiled exactly once, regardless of which wgpu majors
 /// are enabled; a bare `--no-default-features` build compiles this

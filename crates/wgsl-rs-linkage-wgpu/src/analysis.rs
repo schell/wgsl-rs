@@ -17,7 +17,7 @@ use std::borrow::Cow;
 use snafu::prelude::*;
 use wgsl_rs_ir as ir;
 
-use wgsl_rs::Source;
+use wgsl_rs::SourceError;
 
 /// Errors thrown by the WGPU linkage module.
 #[derive(Snafu, Debug)]
@@ -101,10 +101,10 @@ pub enum Error {
     },
 }
 
-impl From<wgsl_rs::SourceError<'_>> for Error {
-    fn from(err: wgsl_rs::SourceError<'_>) -> Self {
+impl From<SourceError<'_>> for Error {
+    fn from(err: SourceError<'_>) -> Self {
         match err {
-            wgsl_rs::SourceError::TemplateWgsl {
+            SourceError::TemplateWgsl {
                 uninstantiated_source,
             } => Error::TemplateResolution {
                 template_name: format!("<source {}>", uninstantiated_source.name),
@@ -115,7 +115,7 @@ impl From<wgsl_rs::SourceError<'_>> for Error {
                     .collect(),
                 available: Vec::new(),
             },
-            wgsl_rs::SourceError::TemplateNotFound {
+            SourceError::TemplateNotFound {
                 template_name,
                 mangled_type_args,
                 available_templates,
@@ -124,7 +124,7 @@ impl From<wgsl_rs::SourceError<'_>> for Error {
                 mangled_type_args,
                 available: available_templates,
             },
-            wgsl_rs::SourceError::AmbiguousTemplate {
+            SourceError::AmbiguousTemplate {
                 template_name,
                 mangled_type_args,
                 matching_source_names,
@@ -134,7 +134,7 @@ impl From<wgsl_rs::SourceError<'_>> for Error {
                 mangled_type_args,
                 available: matching_source_names,
             },
-            wgsl_rs::SourceError::UnresolvedTemplateRef {
+            SourceError::UnresolvedTemplateRef {
                 source_name,
                 template_name,
                 member,
@@ -568,182 +568,6 @@ pub struct ComputeEntryInfo {
 // `wgpu::ComputePipelineDescriptor` shape is simple enough to assemble
 // at the call site, and the previous `compute_pipeline_descriptor` /
 // `compute_pipeline` helpers had zero in-tree call sites).
-
-// ===== IR assembly (flattens imports) =====
-
-/// Build a single owned `ir::Module` from a `wgsl_rs::Source` and all
-/// its transitive imports and template instantiations. The result is
-/// concrete (no `Type::TypeParam`s) and self-contained: every struct
-/// referenced by a binding is defined within the assembled source.
-///
-/// This is the same traversal that `Source::wgsl_source()` performs,
-/// but it stops at IR rather than rendering. It exists so the runtime
-/// linkage analyzer can correctly size buffers whose types are defined
-/// in imported sources, and it is usable standalone, with zero wgpu
-/// enabled, whenever assembled IR is all you need.
-pub fn assemble_ir(wgsl_source: &Source) -> Result<ir::Module, Error> {
-    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    let mut seen: std::collections::HashSet<(u64, String, Vec<String>)> =
-        std::collections::HashSet::new();
-    let mut items: Vec<ir::Item> = Vec::new();
-    collect_items(wgsl_source, &mut visited, &mut seen, &mut items, None)?;
-    // Note: deshadowing is deferred to `analyze_ir_module`, which is the
-    // sole consumer of this assembled IR. Deshadowing here too would be
-    // redundant (the pass is idempotent but wastes work).
-    Ok(ir::Module {
-        name: wgsl_source.name,
-        items,
-        attrs: Vec::new(),
-    })
-}
-
-fn collect_items(
-    wgsl_source: &Source,
-    visited: &mut std::collections::HashSet<u64>,
-    seen: &mut std::collections::HashSet<(u64, String, Vec<String>)>,
-    out: &mut Vec<ir::Item>,
-    subst: Option<&std::collections::HashMap<String, ir::Type>>,
-) -> Result<(), Error> {
-    // Imports first (depth-first, deduplicated by source id).
-    for m in wgsl_source.imports {
-        if visited.insert(m.id) {
-            collect_items(m, visited, seen, out, None)?;
-        }
-    }
-
-    // This source's own items, optionally substituted.
-    let mut ir_module = (wgsl_source.ir_constructor)();
-    if let Some(s) = subst {
-        ir::substitute_types(&mut ir_module, s);
-    }
-    out.extend(ir_module.items);
-
-    // Cross-source template instantiations.
-    for inst in wgsl_source.instantiations {
-        let mangled: Vec<String> = inst
-            .mangled_type_args
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        let type_args = (inst.type_args_constructor)();
-        collect_instantiation(
-            inst.modules,
-            inst.template_name,
-            &mangled,
-            &type_args,
-            out,
-            seen,
-        )?;
-    }
-    Ok(())
-}
-
-fn collect_instantiation(
-    sources: &[&Source],
-    template_name: &str,
-    mangled_type_args: &[String],
-    type_args: &[ir::Type],
-    out: &mut Vec<ir::Item>,
-    seen: &mut std::collections::HashSet<(u64, String, Vec<String>)>,
-) -> Result<(), Error> {
-    let available: Vec<String> = sources
-        .iter()
-        .copied()
-        .flat_map(|m| m.templates.iter().map(|t| t.name.to_string()))
-        .collect();
-
-    let mut matching: Vec<&Source> = sources
-        .iter()
-        .copied()
-        .filter(|m| m.templates.iter().any(|t| t.name == template_name))
-        .collect();
-
-    snafu::ensure!(
-        !matching.is_empty(),
-        TemplateResolutionSnafu {
-            template_name: template_name.to_string(),
-            mangled_type_args: mangled_type_args.to_vec(),
-            available,
-        }
-    );
-
-    if matching.len() > 1 {
-        let names: Vec<String> = matching.iter().map(|m| m.name.to_string()).collect();
-        return TemplateResolutionSnafu {
-            template_name: template_name.to_string(),
-            mangled_type_args: mangled_type_args.to_vec(),
-            available: names,
-        }
-        .fail();
-    }
-
-    let source = matching
-        .pop()
-        .expect("matching is non-empty after the check above");
-    let Some(template) = source.templates.iter().find(|t| t.name == template_name) else {
-        // Invariant: `matching` was built by filtering on
-        // `templates.iter().any(|t| t.name == template_name)`, so the
-        // sole surviving source must contain the template.
-        unreachable!(
-            "resolved source '{}' has no template '{}'; available: {:?}",
-            source.name, template_name, available
-        );
-    };
-
-    let key = (
-        source.id,
-        template_name.to_string(),
-        mangled_type_args.to_vec(),
-    );
-    snafu::ensure!(
-        seen.insert(key),
-        TemplateResolutionSnafu {
-            template_name: template_name.to_owned(),
-            mangled_type_args: mangled_type_args.to_vec(),
-            available
-        }
-    );
-
-    // Recurse into dependencies first.
-    for dep in template.dependencies {
-        let dep_mangled: Vec<String> = dep
-            .type_param_mapping
-            .iter()
-            .map(|&idx| mangled_type_args[idx].clone())
-            .collect();
-        let dep_args: Vec<ir::Type> = dep
-            .type_param_mapping
-            .iter()
-            .map(|&idx| type_args[idx].clone())
-            .collect();
-        collect_instantiation(&[source], dep.callee, &dep_mangled, &dep_args, out, seen)?;
-    }
-
-    let mut subst: std::collections::HashMap<String, ir::Type> = std::collections::HashMap::new();
-    for (param, arg) in template.type_params.iter().zip(type_args.iter()) {
-        subst.insert((*param).to_string(), arg.clone());
-    }
-
-    let mut items = (template.ir_constructor)();
-    ir::substitute_items(&mut items, &subst);
-
-    let instance_name = if mangled_type_args.is_empty() {
-        template.name.to_string()
-    } else {
-        let mut components: Vec<&str> = Vec::with_capacity(1 + mangled_type_args.len());
-        components.push(template.name);
-        for s in mangled_type_args {
-            components.push(s.as_str());
-        }
-        ir::mangle(&components)
-    };
-    if instance_name != template.name {
-        ir::rename_items(&mut items, template.name, &instance_name);
-    }
-    out.extend(items);
-
-    Ok(())
-}
 
 // ===== WGSL §14.4.1 type sizing =====
 

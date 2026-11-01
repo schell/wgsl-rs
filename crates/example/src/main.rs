@@ -2,7 +2,7 @@ use clap::Parser;
 
 mod examples;
 use examples::*;
-use wgsl_rs_linkage_wgpu::{IrModuleExt, analyze_wgsl_module};
+use wgsl_rs_linkage_wgpu::analyze_wgsl_module;
 
 #[derive(Parser)]
 #[command(
@@ -99,10 +99,13 @@ fn print_linkage(module: &wgsl_rs::Source) {
         }
     }
 
-    let ir_module = (module.ir_constructor)();
-    let linkage = ir_module.generate_linkage();
-    println!("{linkage}");
-    println!("======\n");
+    match analyze_wgsl_module(module) {
+        Ok(linkage) => {
+            println!("{linkage}");
+            println!("======\n");
+        }
+        Err(e) => eprintln!("linkage error: {e}"),
+    }
 }
 
 /// Build the linkage into a working `winit` + `wgpu` app, as a

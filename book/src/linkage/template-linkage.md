@@ -22,24 +22,27 @@ parameters, so there is nothing concrete to link.
 
 The correct flow is:
 
-1. Get the template's IR (or `Source`).
-2. Call `instantiate::<T1, T2, ...>()` to produce a concrete `ir::Module`.
-3. Pass the concrete IR to `analyze_ir_module`.
+1. Call the module's `instantiate::<T1, T2, ...>()` to produce a concrete
+   `ir::Module` (imports flattened).
+2. Pass the concrete IR to `analyze_ir_module`.
 
 ```rust
+use wgsl_rs::ir;
+use wgsl_rs::std::Vec4f;
 use wgsl_rs_linkage_wgpu::analyze_ir_module;
-use wgsl_rs::*;
 
-let template: &Source = &renderer::SOURCE;
-let concrete_ir: ir::Module = template.instantiate::<f32, Vec4f>()?;
+let concrete_ir: ir::Module = renderer::instantiate::<f32, Vec4f>();
 let linkage = analyze_ir_module(concrete_ir);
 ```
 
-`ir::Module::generate_linkage()` (the `IrModuleExt` re-export) does the
-second step in one call:
+`ir::Module::generate_linkage()` (the `IrModuleExt` re-export) combines
+both steps in one call:
 
 ```rust
-let linkage = concrete_ir.generate_linkage()?;
+use wgsl_rs::std::Vec4f;
+use wgsl_rs_linkage_wgpu::IrModuleExt;
+
+let linkage = renderer::instantiate::<f32, Vec4f>().generate_linkage();
 ```
 
 ## `WgpuLinkage` owns the concrete IR
@@ -56,32 +59,27 @@ owns it the same way.
 
 ```rust
 #[wgsl]
-pub mod generic_blit {
+pub mod tinted_output {
     use wgsl_rs::std::*;
 
-    pub struct Params<T> { pub scale: T, pub bias: T }
-
-    uniform!(PARAMS, Params<Vec4f>);     // concrete after instantiation
-    texture!(SRC, Texture2d);
-    sampler!(SMP, Sampler);
-
-    #[vertex]
-    pub fn vs(...) -> VertexOutput { /* ... */ }
+    // The uniform's concrete type is chosen at instantiation time.
+    uniform!(group(0), binding(0), TINT: impl Convert<f32>);
 
     #[fragment]
-    pub fn fs(in: VertexOutput) -> Vec4f {
-        let c = textureSample(SRC, SMP, in.uv);
-        c * PARAMS.scale + PARAMS.bias
+    pub fn fs<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
+        let tint = get!(TINT, T);
+        vec4f(f32(tint), f32(tint) * 0.5, 0.0, 1.0)
     }
 }
 
-// In application code:
-use wgsl_rs::*;
+// In application code: one type argument per module parameter, in
+// `module_type_params` order — linkage variables first, then entry
+// point parameters. Here: TINT, then fs's `T`, both f32.
+use wgsl_rs_linkage_wgpu::IrModuleExt;
 
-let concrete = generic_blit::SOURCE.instantiate::<Vec4f>()?;
-let mut linkage = concrete.generate_linkage()?;
+let mut linkage = tinted_output::instantiate::<f32, f32>().generate_linkage();
 let shader = linkage.shader_module(&device);
-let layout = linkage.pipeline_layout(&mut linkage, &device, Some("blit"));
+let layout = linkage.pipeline_layout(&device, Some("tint"));
 // ... build pipeline as usual
 ```
 
@@ -89,7 +87,8 @@ let layout = linkage.pipeline_layout(&mut linkage, &device, Some("blit"));
 
 | Step | API |
 |------|-----|
-| Instantiate template IR | `source.instantiate::<T...>() -> ir::Module` |
+| Instantiate a concrete module | `module::instantiate() -> ir::Module` |
+| Instantiate a template module | `module::instantiate::<T...>() -> ir::Module` |
 | Analyze concrete IR | `analyze_ir_module(ir) -> WgpuLinkage` |
-| Or, combined | `ir.generate_linkage() -> WgpuLinkage` |
-| Analyze concrete source | `analyze_wgsl_module(&source) -> WgpuLinkage` |
+| Or, combined | `instantiate().generate_linkage() -> WgpuLinkage` |
+| Analyze a concrete source | `analyze_wgsl_module(&source) -> WgpuLinkage` |

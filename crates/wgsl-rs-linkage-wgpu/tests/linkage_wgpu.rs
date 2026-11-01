@@ -155,6 +155,124 @@ pub mod generic_triangle {
     }
 }
 
+/// Imported items of every shape the linkage path used to silently
+/// drop (wgsl-rs#195): a const, a struct, and impl methods
+/// (crabslab `SlabItemExt`-style machinery).
+#[wgsl]
+pub mod linkage_provider {
+    use wgsl_rs::std::*;
+
+    pub const QUAD_CCW: [Vec2f; 4] = [
+        vec2f(-1.0, -1.0),
+        vec2f(1.0, -1.0),
+        vec2f(1.0, 1.0),
+        vec2f(-1.0, 1.0),
+    ];
+
+    pub struct Quad {
+        pub uv: Vec2f,
+    }
+
+    impl Quad {
+        /// The upper-left component of `q`'s UV, scaled by `s`.
+        pub fn upper_left(q: Quad, s: f32) -> Vec2f {
+            vec2f(q.uv.x * s, q.uv.y * s)
+        }
+    }
+}
+
+/// A complete pipeline module assembled from `linkage_provider` via a
+/// glob import: the entries live here, everything they reference lives
+/// in the imported module.
+#[wgsl]
+pub mod linkage_consumer {
+    use super::linkage_provider::*;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), FRAME: u32);
+
+    #[vertex]
+    pub fn vtx_main(#[builtin(vertex_index)] vi: u32) -> Vec4f {
+        let uv = QUAD_CCW[(vi % 4u32) as usize];
+        vec4f(uv.x, uv.y, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        let q: Quad = Quad {
+            uv: vec2f(0.0, 0.0),
+        };
+        let ul = Quad::upper_left(q, f32(get!(FRAME)) * 0.0 + 1.0);
+        vec4f(ul.x, ul.y, 0.0, 1.0)
+    }
+}
+
+/// A template module importing a concrete module: `instantiate::<T>()`
+/// must flatten the import too, not just substitute own items
+/// (wgsl-rs#195).
+#[wgsl(crate_path = wgsl_rs, validate_with_instantiation_types(f32, f32))]
+pub mod generic_importer {
+    use super::linkage_provider::*;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), SCALE: impl Convert<f32>);
+
+    #[fragment]
+    pub fn fs_main<T: Convert<f32> + Wgsl>() -> Vec4f {
+        let _s = get!(SCALE, T);
+        let uv = QUAD_CCW[0];
+        let q: Quad = Quad {
+            uv: vec2f(0.0, 0.0),
+        };
+        let ul = Quad::upper_left(q, 1.0);
+        vec4f(ul.x + uv.x * 0.0, ul.y, 0.0, 1.0)
+    }
+}
+
+/// A tier-1 storage texture format: `Rgba16unorm` requires the
+/// `texture_formats_tier1` language extension. Declared in an imported
+/// module so the assembled IR contains the texture item across the
+/// import boundary. `skip_validation` because the in-tree naga
+/// predates the `texture_formats_tier1` extension.
+#[wgsl(skip_validation)]
+pub mod tier1_provider {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), SCRATCH: TextureStorage2D<Rgba16unorm, Write>);
+
+    #[compute]
+    #[workgroup_size(1)]
+    pub fn clear() {}
+}
+
+#[wgsl(skip_validation)]
+pub mod tier1_consumer {
+    // WGSL-only import: the edge pulls `tier1_provider` (and its
+    // tier-1 texture) into the assembly; nothing is named on the Rust
+    // side.
+    #[allow(unused_imports)]
+    use super::tier1_provider::*;
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(1), FRAME: u32);
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        vec4f(f32(get!(FRAME)) * 0.0, 0.0, 0.0, 1.0)
+    }
+}
+
+/// Same-scope shadowing: legal Rust, invalid WGSL until the deshadow
+/// pass renames the redeclaration.
+#[wgsl]
+pub mod shadowing_consumer {
+    pub fn shadowed() -> u32 {
+        let x: u32 = 1u32;
+        let x: u32 = x + 1u32;
+        x
+    }
+}
+
 // ===== Basic shape tests =====
 
 #[test]
@@ -1264,4 +1382,121 @@ fn create_bind_group_named_reuses_cached_layout() {
             ],
         )
         .expect("second call should succeed");
+}
+
+// ===== IR assembly / `instantiate()` tests (wgsl-rs#195) =====
+
+/// wgsl-rs#195: a linkage built from the macro-emitted `instantiate()`
+/// must contain every imported item — consts, structs, and impl
+/// methods (crabslab `SlabItemExt`-style machinery) — not just the
+/// consuming module's own items. Building from a bare
+/// `(WGSL_SOURCE.ir_constructor)()` silently dropped them all.
+#[test]
+fn instantiate_based_linkage_contains_imported_items() {
+    let linkage = linkage_consumer::instantiate().generate_linkage();
+
+    let source = linkage.wgsl_source();
+    assert!(
+        source.contains("QUAD_CCW"),
+        "imported const missing from the assembled linkage, got:\n{source}"
+    );
+    assert!(
+        // The method's render name is mangle-escaped (`Quad__1upper_left`),
+        // so match on the method's distinctive part.
+        source.contains("upper_left"),
+        "imported impl method missing from the assembled linkage, got:\n{source}"
+    );
+    assert!(
+        source.contains("fn vtx_main") && source.contains("fn frag_main"),
+        "the consumer module's own entries must still be present, got:\n{source}"
+    );
+
+    wgsl_rs::validate_wgsl_source(&source)
+        .expect("the instantiate-based linkage source must validate in naga");
+}
+
+/// wgsl-rs#195: template modules' `instantiate::<T>()` flattens imports
+/// too, so a generic entry point sees imported helpers, structs, and
+/// consts after instantiation.
+#[test]
+fn template_instantiate_flattens_imports() {
+    let linkage = generic_importer::instantiate::<f32, f32>().generate_linkage();
+
+    let source = linkage.wgsl_source();
+    assert!(
+        source.contains("QUAD_CCW"),
+        "imported const missing from the instantiated template, got:\n{source}"
+    );
+    assert!(
+        // The method's render name is mangle-escaped (`Quad__1upper_left`),
+        // so match on the method's distinctive part.
+        source.contains("upper_left"),
+        "imported impl method missing from the instantiated template, got:\n{source}"
+    );
+    assert!(
+        source.contains("fs_main"),
+        "the template module's own entry must still be present, got:\n{source}"
+    );
+
+    wgsl_rs::validate_wgsl_source(&source)
+        .expect("the instantiated template's linkage source must validate in naga");
+}
+
+/// The IR render paths must derive the tier-1 `enable` directive from
+/// the assembled items themselves: a tier-1 storage texture format
+/// (`Rgba16unorm`, here imported from another module) requires the
+/// `texture_formats_tier1` extension, and WGSL demands the directive at
+/// the very start of the translation unit. Not asserted through naga:
+/// the in-tree naga predates the extension (the text path has emitted
+/// the same directive since the tier-1 feature landed), so the
+/// directive itself is the contract under test.
+#[test]
+fn instantiate_based_linkage_enables_tier1() {
+    let linkage = tier1_consumer::instantiate().generate_linkage();
+    let source = linkage.wgsl_source();
+    assert!(
+        source.starts_with("enable texture_formats_tier1;"),
+        "the tier-1 enable directive must lead the assembled source, got:\n{source}"
+    );
+    assert!(
+        source.contains("SCRATCH"),
+        "the imported tier-1 texture must be assembled in, got:\n{source}"
+    );
+}
+
+/// The `instantiate().wgsl_source()` route must deshadow like the text
+/// path: same-scope shadowing is legal Rust but invalid WGSL, and
+/// `Module::wgsl_source` (the canonical render entry) deshadows its
+/// clone before rendering.
+#[test]
+fn instantiate_wgsl_source_deshadows() {
+    let via_instantiate = shadowing_consumer::instantiate().wgsl_source();
+    assert!(
+        via_instantiate.contains("x_1"),
+        "the shadowed redeclaration must be renamed, got:\n{via_instantiate}"
+    );
+    wgsl_rs::validate_wgsl_source(&via_instantiate)
+        .expect("the deshadowed module source must validate in naga");
+
+    // And the two render routes must agree.
+    let via_source = shadowing_consumer::WGSL_SOURCE.wgsl_source().unwrap();
+    assert_eq!(
+        via_instantiate, via_source,
+        "the instantiate route and the text route must render identically"
+    );
+}
+
+/// The direct module render route (`instantiate().wgsl_source()`)
+/// must derive the same tier-1 directive.
+#[test]
+fn instantiate_wgsl_source_enables_tier1() {
+    let source = tier1_consumer::instantiate().wgsl_source();
+    assert!(
+        source.starts_with("enable texture_formats_tier1;"),
+        "the tier-1 enable directive must lead the assembled source, got:\n{source}"
+    );
+    assert!(
+        source.contains("SCRATCH"),
+        "the imported tier-1 texture must be assembled in, got:\n{source}"
+    );
 }

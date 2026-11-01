@@ -781,117 +781,225 @@ pub fn validate_wgsl_source(source: &str) -> Result<(), String> {
 
 pub mod std;
 
-#[cfg(feature = "extras")]
+#[cfg(test)]
+mod std_splats_test {
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_std_splats {
+        // The std glob import alone is sufficient in both worlds: the
+        // splat and extend calls lower to WGSL constructors through the
+        // function mapping table, so no helper functions are assembled.
+        use crate::std::*;
+
+        pub fn splat_and_extend() -> Vec4f {
+            let v = vec4f(1.0, 2.0, 3.0, 4.0);
+            let w = vec4f_splat(2.0);
+            let e = vec4f_from_3(vec3f_from_2(vec2f(5.0, 6.0), 7.0), 8.0);
+            v + w + e
+        }
+    }
+
+    #[test]
+    fn splats_and_extends_work_in_both_worlds() {
+        // CPU world: plain std functions, reached through the std glob.
+        assert_eq!(
+            uses_std_splats::splat_and_extend().to_array(),
+            [8.0, 10.0, 12.0, 14.0]
+        );
+
+        // WGSL world: the calls lower to WGSL's splat and mixed
+        // constructors; no helper functions are rendered.
+        let src = uses_std_splats::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("vec4f(2.0)"), "splat lowered: {src}");
+        assert!(
+            src.contains("vec3f(vec2f(5.0, 6.0), 7.0)"),
+            "extend lowered to the mixed constructor: {src}"
+        );
+        assert!(
+            !src.contains("_splat") && !src.contains("_from_"),
+            "no helper functions rendered: {src}"
+        );
+        #[cfg(feature = "validation")]
+        uses_std_splats::WGSL_SOURCE.validate().unwrap();
+    }
+}
+
+#[cfg(feature = "glm")]
 #[crate::wgsl(crate_path = crate)]
-pub mod extras {
-    //! Helpers like splats, extend functions, etc.
+pub mod glm {
+    //! GLM-lineage helpers over the WGSL vector types.
     //!
-    //! This module is only included with the **`extras`** cargo feature
-    //! enabled.
+    //! Lineage: GLSL → GLM (C++) → glam (Rust) → this module.
+    //! [`crate::std`] already provides the WGSL builtin surface as free
+    //! functions (`length`, `normalize`, `mix`, `dot`, `cross`, ...), so
+    //! this module only adds what GLM added on top of GLSL, as free
+    //! functions over the concrete vector types (`Vec3f` etc.).
+    //!
+    //! In `#[wgsl]` modules, import this module directly; it re-exports
+    //! [`crate::std`], so this one glob brings the whole surface:
+    //!
+    //! ```ignore
+    //! use wgsl_rs::glm::*;
+    //! ```
     use crate::std::*;
 
-    // -- Extend functions
+    // Re-export std so a single glob import brings the helpers and the
+    // WGSL builtin surface together.
+    pub use crate::std::*;
 
-    /// Extend a [`Vec2f`] into a [`Vec3f`].
-    pub fn vec3f_from_2(v: Vec2f, z: f32) -> Vec3f {
-        vec3f(v.x, v.y, z)
+    // -- Length
+
+    /// Returns the squared length of a 2D vector.
+    ///
+    /// No square root: exact under CPU/GPU roundtrip, unlike
+    /// `length(v) * length(v)`.
+    pub fn length_squared2(v: Vec2f) -> f32 {
+        dot(v, v)
     }
 
-    /// Extend a [`Vec3f`] into a [`Vec4f`].
-    pub fn vec4f_from_3(v: Vec3f, w: f32) -> Vec4f {
-        vec4f(v.x, v.y, v.z, w)
+    /// Returns the squared length of a 3D vector.
+    ///
+    /// No square root: exact under CPU/GPU roundtrip, unlike
+    /// `length(v) * length(v)`.
+    pub fn length_squared3(v: Vec3f) -> f32 {
+        dot(v, v)
     }
 
-    /// Extend a [`Vec2i`] into a [`Vec3i`].
-    pub fn vec3i_from_2(v: Vec2i, z: i32) -> Vec3i {
-        vec3i(v.x, v.y, z)
+    /// Returns the squared length of a 4D vector.
+    ///
+    /// No square root: exact under CPU/GPU roundtrip, unlike
+    /// `length(v) * length(v)`.
+    pub fn length_squared4(v: Vec4f) -> f32 {
+        dot(v, v)
     }
 
-    /// Extend a [`Vec3i`] into a [`Vec4i`].
-    pub fn vec4i_from_3(v: Vec3i, w: i32) -> Vec4i {
-        vec4i(v.x, v.y, v.z, w)
+    // -- Normalization
+
+    /// Returns `v` normalized, or the zero vector if `v` has zero length.
+    ///
+    /// Unlike WGSL's `normalize`, never produces NaN for zero input.
+    pub fn normalize_or_zero2(v: Vec2f) -> Vec2f {
+        select(Vec2f::ZERO, normalize(v), length(v) > 0.0)
     }
 
-    /// Extend a [`Vec2u`] into a [`Vec3u`].
-    pub fn vec3u_from_2(v: Vec2u, z: u32) -> Vec3u {
-        vec3u(v.x, v.y, z)
+    /// Returns `v` normalized, or the zero vector if `v` has zero length.
+    ///
+    /// Unlike WGSL's `normalize`, never produces NaN for zero input.
+    pub fn normalize_or_zero3(v: Vec3f) -> Vec3f {
+        select(Vec3f::ZERO, normalize(v), length(v) > 0.0)
     }
 
-    /// Extend a [`Vec3u`] into a [`Vec4u`].
-    pub fn vec4u_from_3(v: Vec3u, w: u32) -> Vec4u {
-        vec4u(v.x, v.y, v.z, w)
+    /// Returns `v` normalized, or the zero vector if `v` has zero length.
+    ///
+    /// Unlike WGSL's `normalize`, never produces NaN for zero input.
+    pub fn normalize_or_zero4(v: Vec4f) -> Vec4f {
+        select(Vec4f::ZERO, normalize(v), length(v) > 0.0)
     }
 
-    /// Extend a [`Vec2b`] into a [`Vec3b`].
-    pub fn vec3b_from_2(v: Vec2b, z: bool) -> Vec3b {
-        vec3b(v.x, v.y, z)
+    // -- Angles
+
+    /// Returns the angle in radians between two 2D vectors.
+    ///
+    /// Uses the `atan2` form so near-parallel vectors never hit `acos`
+    /// domain errors. Returns 0.0 if either vector is zero: the angle is
+    /// undefined there, and the raw `atan2(0, 0)` differs between the
+    /// worlds (0 on CPU, NaN on Metal), so it is selected away.
+    pub fn angle_between2(a: Vec2f, b: Vec2f) -> f32 {
+        let defined = length_squared2(a) * length_squared2(b) > 0.0;
+        select(0.0, atan2(a.x * b.y - a.y * b.x, dot(a, b)), defined)
     }
 
-    /// Extend a [`Vec3b`] into a [`Vec4b`].
-    pub fn vec4b_from_3(v: Vec3b, w: bool) -> Vec4b {
-        vec4b(v.x, v.y, v.z, w)
+    /// Returns the angle in radians between two 3D vectors.
+    ///
+    /// Uses the `atan2` form so near-parallel vectors never hit `acos`
+    /// domain errors. Returns 0.0 if either vector is zero: the angle is
+    /// undefined there, and the raw `atan2(0, 0)` differs between the
+    /// worlds (0 on CPU, NaN on Metal), so it is selected away.
+    pub fn angle_between3(a: Vec3f, b: Vec3f) -> f32 {
+        let defined = length_squared3(a) * length_squared3(b) > 0.0;
+        select(0.0, atan2(length(cross(a, b)), dot(a, b)), defined)
+    }
+}
+
+#[cfg(all(test, feature = "glm"))]
+mod glm_test {
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_glm {
+        use crate::glm::*;
+
+        pub fn squared() -> f32 {
+            let v = vec3f(1.0, 2.0, 2.0);
+            length_squared3(v)
+        }
+
+        pub fn zero_stays_zero() -> Vec3f {
+            normalize_or_zero3(vec3f(0.0, 0.0, 0.0))
+        }
+
+        pub fn unit_normalize() -> Vec3f {
+            normalize_or_zero3(vec3f(3.0, 4.0, 0.0))
+        }
+
+        pub fn right_angle() -> f32 {
+            angle_between3(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0))
+        }
+
+        pub fn flat_angle() -> f32 {
+            angle_between2(vec2f(2.0, 0.0), vec2f(-3.0, 0.0))
+        }
+
+        pub fn zero_angle() -> f32 {
+            angle_between3(vec3f(0.0, 0.0, 0.0), vec3f(1.0, 0.0, 0.0))
+        }
+
+        pub fn squared_2_4() -> f32 {
+            length_squared2(vec2f(3.0, 4.0)) + length_squared4(vec4f(1.0, 1.0, 1.0, 1.0))
+        }
+
+        pub fn norm_or_zero_2_4() -> Vec3f {
+            let v2 = normalize_or_zero2(vec2f(0.0, 0.0));
+            let v4 = normalize_or_zero4(vec4f(2.0, 2.0, 2.0, 2.0));
+            vec3f(v2.x, v2.y, v4.x)
+        }
     }
 
-    // -- Splats
+    #[test]
+    fn glm_helpers_work_in_both_worlds() {
+        use crate::std::vec3f;
 
-    /// Create a [`Vec2f`] with all components set to the given value.
-    pub fn vec2f_splat(t: f32) -> Vec2f {
-        vec2f(t, t)
-    }
+        // CPU world: the helpers are plain Rust over the concrete types.
+        assert_eq!(uses_glm::squared(), 9.0);
+        assert_eq!(uses_glm::zero_stays_zero(), vec3f(0.0, 0.0, 0.0));
+        let n = uses_glm::unit_normalize();
+        assert!(
+            (n.x - 0.6).abs() < 1e-6 && (n.y - 0.8).abs() < 1e-6 && n.z == 0.0,
+            "unit normalize: {n:?}"
+        );
+        assert!(
+            (uses_glm::right_angle() - std::f32::consts::FRAC_PI_2).abs() < 1e-6,
+            "right angle: {}",
+            uses_glm::right_angle()
+        );
+        assert!(
+            (uses_glm::flat_angle() - std::f32::consts::PI).abs() < 1e-6,
+            "flat angle: {}",
+            uses_glm::flat_angle()
+        );
+        // The angle of a zero vector is selected to 0.0 in both worlds.
+        assert_eq!(uses_glm::zero_angle(), 0.0);
+        assert_eq!(uses_glm::squared_2_4(), 29.0);
+        assert_eq!(uses_glm::norm_or_zero_2_4().to_array(), [0.0, 0.0, 0.5]);
 
-    /// Create a [`Vec3f`] with all components set to the given value.
-    pub fn vec3f_splat(t: f32) -> Vec3f {
-        vec3f(t, t, t)
-    }
-
-    /// Create a [`Vec4f`] with all components set to the given value.
-    pub fn vec4f_splat(t: f32) -> Vec4f {
-        vec4f(t, t, t, t)
-    }
-
-    /// Create a [`Vec2i`] with all components set to the given value.
-    pub fn vec2i_splat(t: i32) -> Vec2i {
-        vec2i(t, t)
-    }
-
-    /// Create a [`Vec3i`] with all components set to the given value.
-    pub fn vec3i_splat(t: i32) -> Vec3i {
-        vec3i(t, t, t)
-    }
-
-    /// Create a [`Vec4i`] with all components set to the given value.
-    pub fn vec4i_splat(t: i32) -> Vec4i {
-        vec4i(t, t, t, t)
-    }
-
-    /// Create a [`Vec2u`] with all components set to the given value.
-    pub fn vec2u_splat(t: u32) -> Vec2u {
-        vec2u(t, t)
-    }
-
-    /// Create a [`Vec3u`] with all components set to the given value.
-    pub fn vec3u_splat(t: u32) -> Vec3u {
-        vec3u(t, t, t)
-    }
-
-    /// Create a [`Vec4u`] with all components set to the given value.
-    pub fn vec4u_splat(t: u32) -> Vec4u {
-        vec4u(t, t, t, t)
-    }
-
-    /// Create a [`Vec2b`] with all components set to the given value.
-    pub fn vec2b_splat(t: bool) -> Vec2b {
-        vec2b(t, t)
-    }
-
-    /// Create a [`Vec3b`] with all components set to the given value.
-    pub fn vec3b_splat(t: bool) -> Vec3b {
-        vec3b(t, t, t)
-    }
-
-    /// Create a [`Vec4b`] with all components set to the given value.
-    pub fn vec4b_splat(t: bool) -> Vec4b {
-        vec4b(t, t, t, t)
+        // WGSL world: helpers assembled from the glm module, naga-valid.
+        let src = uses_glm::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("length_squared3"), "helper assembled: {src}");
+        assert!(
+            src.contains("normalize_or_zero3"),
+            "helper assembled: {src}"
+        );
+        assert!(src.contains("angle_between3"), "helper assembled: {src}");
+        assert!(src.contains("vec3f_ZERO"), "builtin constant path: {src}");
+        #[cfg(feature = "validation")]
+        uses_glm::WGSL_SOURCE.validate().unwrap();
     }
 }
 

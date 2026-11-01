@@ -1,6 +1,6 @@
 # Cargo Features
 
-`wgsl-rs` exposes two cargo features, and both are on by default.
+`wgsl-rs` exposes four cargo features, and all of them are on by default.
 
 ## `validation` (default)
 
@@ -30,6 +30,21 @@ wgsl-rs = { version = "0.1", features = ["dispatch-runtime"] }
 
 Use this when writing tests that exercise fragment shaders without spinning up a full wgpu pipeline, or when debugging shader logic on the CPU.
 
+## `fast-compile` (default)
+
+Emits the module IR as static `static_ir` data plus a slim conversion shim
+instead of a constructor function that builds the IR expression-by-expression.
+Large shaders compile much faster this way. Opting out requires
+`default-features = false` (and re-enabling the wanted defaults) across the
+whole build graph, because cargo unifies features.
+
+## `glm` (default)
+
+Includes the `wgsl_rs::glm` module: GLM-lineage helpers
+(`length_squared`, `normalize_or_zero`, `angle_between`) over the std
+vector types. See
+[The glm Module](../glm.md).
+
 ## Linkage: a separate crate
 
 wgpu linkage generation used to live behind a `linkage-wgpu` feature. It now
@@ -51,8 +66,8 @@ the full API.
 ## Combining features
 
 Features compose freely. A typical application crate leaves `wgsl-rs` at
-its defaults (`validation` and `dispatch-runtime` are both on) and adds
-the linkage crate:
+its defaults (`validation`, `dispatch-runtime`, `fast-compile` and `glm`
+are all on) and adds the linkage crate:
 
 ```toml
 [dependencies]
@@ -73,6 +88,8 @@ wgsl-rs = { version = "0.1", default-features = false, features = ["validation"]
 | ------------------ | ------- | --------------------------- | ----------------------------------------------- |
 | `validation`       | on      | (macro-internal, naga)      | Always, unless you strip naga deliberately.     |
 | `dispatch-runtime` | on      | `wgsl_rs::std::runtime`     | CPU-side fragment dispatch and roundtrip tests. |
+| `fast-compile`     | on      | (macro-internal)            | Always; compiles much slower without it.        |
+| `glm`              | on      | `wgsl_rs::glm`              | GLM-lineage helpers and type aliases.           |
 
 | Separate crate               | Default        | When to use                                  |
 | ---------------------------- | -------------- | -------------------------------------------- |

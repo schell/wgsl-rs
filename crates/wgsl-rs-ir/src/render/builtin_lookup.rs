@@ -20,6 +20,29 @@ pub const TABLE: &[(&str, &str)] = &[
     ("vec2b", "vec2<bool>"),
     ("vec3b", "vec3<bool>"),
     ("vec4b", "vec4<bool>"),
+    // Vector splat and extend helpers (std). The argument list passes
+    // through unchanged: WGSL's splat constructors (`vec2f(t)`) and mixed
+    // vector/scalar constructors (`vec3f(v, z)`) do the work.
+    ("vec2f_splat", "vec2f"),
+    ("vec3f_splat", "vec3f"),
+    ("vec4f_splat", "vec4f"),
+    ("vec2i_splat", "vec2i"),
+    ("vec3i_splat", "vec3i"),
+    ("vec4i_splat", "vec4i"),
+    ("vec2u_splat", "vec2u"),
+    ("vec3u_splat", "vec3u"),
+    ("vec4u_splat", "vec4u"),
+    ("vec2b_splat", "vec2<bool>"),
+    ("vec3b_splat", "vec3<bool>"),
+    ("vec4b_splat", "vec4<bool>"),
+    ("vec3f_from_2", "vec3f"),
+    ("vec4f_from_3", "vec4f"),
+    ("vec3i_from_2", "vec3i"),
+    ("vec4i_from_3", "vec4i"),
+    ("vec3u_from_2", "vec3u"),
+    ("vec4u_from_3", "vec4u"),
+    ("vec3b_from_2", "vec3<bool>"),
+    ("vec4b_from_3", "vec4<bool>"),
     // Arrays
     ("array_length", "arrayLength"),
     // Bitcast

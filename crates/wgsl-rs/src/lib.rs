@@ -1281,6 +1281,274 @@ pub mod glm {
             vec4f(cf30, cf31, cf32, cf33) * inv_det,
         )
     }
+
+    // -- Quaternions
+    //
+    // WGSL has no quaternion type, so `Quat` is a wgsl-rs struct that
+    // transpiles to a WGSL struct with four `f32` fields. All the math
+    // is hand-written once, shared by both worlds, and checked against
+    // glam's conventions: Hamilton product, w-last, unit quats rotate.
+
+    /// A quaternion: `x`, `y`, `z` vector part, `w` scalar part.
+    ///
+    /// The wire layout matches `glam::Quat` (`[x, y, z, w]`).
+    #[derive(Copy, Clone, Default, PartialEq)]
+    pub struct Quat {
+        pub x: f32,
+        pub y: f32,
+        pub z: f32,
+        pub w: f32,
+    }
+
+    impl Quat {
+        /// The identity rotation: no rotation at all.
+        pub const IDENTITY: Quat = Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        };
+    }
+
+    /// Builds a quaternion rotating `angle` radians around `axis`.
+    ///
+    /// `axis` must be normalized, matching glam's `from_axis_angle`.
+    pub fn from_axis_angle(axis: Vec3f, angle: f32) -> Quat {
+        let s = sin(angle * 0.5);
+        Quat {
+            x: axis.x * s,
+            y: axis.y * s,
+            z: axis.z * s,
+            w: cos(angle * 0.5),
+        }
+    }
+
+    /// Builds a quaternion from an orthonormal rotation matrix,
+    /// matching glam's `Quat::from_mat3`.
+    pub fn from_rotation_mat3(m: Mat3x3f) -> Quat {
+        let c0 = m[0u32];
+        let c1 = m[1u32];
+        let c2 = m[2u32];
+        let trace = c0.x + c1.y + c2.z;
+        if trace > 0.0 {
+            let s = sqrt(trace + 1.0);
+            let inv = 0.5 / s;
+            Quat {
+                x: (c1.z - c2.y) * inv,
+                y: (c2.x - c0.z) * inv,
+                z: (c0.y - c1.x) * inv,
+                w: s * 0.5,
+            }
+        } else if c0.x > c1.y && c0.x > c2.z {
+            let s = sqrt(1.0 + c0.x - c1.y - c2.z);
+            let inv = 0.5 / s;
+            Quat {
+                x: s * 0.5,
+                y: (c0.y + c1.x) * inv,
+                z: (c0.z + c2.x) * inv,
+                w: (c1.z - c2.y) * inv,
+            }
+        } else if c1.y > c2.z {
+            let s = sqrt(1.0 + c1.y - c0.x - c2.z);
+            let inv = 0.5 / s;
+            Quat {
+                x: (c0.y + c1.x) * inv,
+                y: s * 0.5,
+                z: (c1.z + c2.y) * inv,
+                w: (c2.x - c0.z) * inv,
+            }
+        } else {
+            let s = sqrt(1.0 + c2.z - c0.x - c1.y);
+            let inv = 0.5 / s;
+            Quat {
+                x: (c0.z + c2.x) * inv,
+                y: (c1.z + c2.y) * inv,
+                z: s * 0.5,
+                w: (c0.y - c1.x) * inv,
+            }
+        }
+    }
+
+    /// Builds the rotation matrix for `q`, matching glam's
+    /// `Mat3::from_quat`.
+    pub fn mat3_from_quat(q: Quat) -> Mat3x3f {
+        let x2 = q.x + q.x;
+        let y2 = q.y + q.y;
+        let z2 = q.z + q.z;
+        let xx2 = q.x * x2;
+        let xy2 = q.x * y2;
+        let xz2 = q.x * z2;
+        let yy2 = q.y * y2;
+        let yz2 = q.y * z2;
+        let zz2 = q.z * z2;
+        let wx2 = q.w * x2;
+        let wy2 = q.w * y2;
+        let wz2 = q.w * z2;
+        mat3x3f(
+            vec3f(1.0 - yy2 - zz2, xy2 + wz2, xz2 - wy2),
+            vec3f(xy2 - wz2, 1.0 - xx2 - zz2, yz2 + wx2),
+            vec3f(xz2 + wy2, yz2 - wx2, 1.0 - xx2 - yy2),
+        )
+    }
+
+    /// Returns the Hamilton product `a * b`, matching glam's
+    /// `Quat::mul`.
+    pub fn quat_mul(a: Quat, b: Quat) -> Quat {
+        Quat {
+            x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+        }
+    }
+
+    /// Rotates `v` by the unit quaternion `q`, matching glam's
+    /// `Quat * Vec3`.
+    pub fn rotate_vec3(q: Quat, v: Vec3f) -> Vec3f {
+        let qv = vec3f(q.x, q.y, q.z);
+        let t = cross(qv, v) * 2.0;
+        v + t * q.w + cross(qv, t)
+    }
+
+    /// Returns the conjugate of `q`: the vector part negated.
+    pub fn conjugate(q: Quat) -> Quat {
+        Quat {
+            x: -q.x,
+            y: -q.y,
+            z: -q.z,
+            w: q.w,
+        }
+    }
+
+    /// Returns the inverse of `q`.
+    ///
+    /// For unit quaternions this is the conjugate. The general form
+    /// (dividing by the squared length, matching glam's `inverse`) is
+    /// used so non-unit inputs stay correct.
+    pub fn inverse(q: Quat) -> Quat {
+        let inv_len_sq = 1.0 / quat_length_squared(q);
+        Quat {
+            x: -q.x * inv_len_sq,
+            y: -q.y * inv_len_sq,
+            z: -q.z * inv_len_sq,
+            w: q.w * inv_len_sq,
+        }
+    }
+
+    /// Returns the squared length of `q`.
+    pub fn quat_length_squared(q: Quat) -> f32 {
+        q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w
+    }
+
+    /// Returns the dot product of two quaternions.
+    pub fn quat_dot(a: Quat, b: Quat) -> f32 {
+        a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+    }
+
+    /// Returns `q` normalized, or the identity rotation if `q` has zero
+    /// length (a zero quaternion has no rotation to preserve).
+    pub fn quat_normalize_or_zero(q: Quat) -> Quat {
+        let ls = quat_length_squared(q);
+        let defined = ls > 0.0;
+        let inv = select(0.0, inverse_sqrt(ls), defined);
+        Quat {
+            x: q.x * inv,
+            y: q.y * inv,
+            z: q.z * inv,
+            w: select(1.0, q.w * inv, defined),
+        }
+    }
+
+    /// Returns the angle in radians between two unit quaternions.
+    pub fn quat_angle_between(a: Quat, b: Quat) -> f32 {
+        2.0 * acos(clamp(abs(quat_dot(a, b)), -1.0, 1.0))
+    }
+
+    /// Spherical interpolation between unit quaternions, matching
+    /// glam's `Quat::slerp`.
+    ///
+    /// The interpolation takes the shortest path. Nearly-parallel inputs
+    /// fall back to normalized linear interpolation for numerical
+    /// stability, as glam does.
+    pub fn quat_slerp(a: Quat, b: Quat, t: f32) -> Quat {
+        let mut d = quat_dot(a, b);
+        let mut b = b;
+        // Take the shortest path: negate b when the rotations point in
+        // opposite directions.
+        if d < 0.0 {
+            b = Quat {
+                x: -b.x,
+                y: -b.y,
+                z: -b.z,
+                w: -b.w,
+            };
+            d = -d;
+        }
+        if d > 0.9995 {
+            // Nearly parallel: nlerp is stable where sin(theta) is not.
+            let q = Quat {
+                x: a.x + (b.x - a.x) * t,
+                y: a.y + (b.y - a.y) * t,
+                z: a.z + (b.z - a.z) * t,
+                w: a.w + (b.w - a.w) * t,
+            };
+            return quat_normalize_or_zero(q);
+        }
+        let theta = acos(clamp(d, -1.0, 1.0));
+        let sin_theta = sin(theta);
+        let s1 = sin((1.0 - t) * theta) / sin_theta;
+        let s2 = sin(t * theta) / sin_theta;
+        Quat {
+            x: a.x * s1 + b.x * s2,
+            y: a.y * s1 + b.y * s2,
+            z: a.z * s1 + b.z * s2,
+            w: a.w * s1 + b.w * s2,
+        }
+    }
+}
+
+#[cfg(feature = "glm")]
+mod glm_quat_conversions {
+    //! CPU-side conversions for `glm::Quat`, plain Rust outside the wgsl
+    //! module: trait impls and glam types do not transpile.
+
+    use crate::glm::Quat;
+
+    impl Quat {
+        /// Returns the components as `[x, y, z, w]`, glam's wire order.
+        pub fn to_array(self) -> [f32; 4] {
+            [self.x, self.y, self.z, self.w]
+        }
+    }
+
+    impl From<[f32; 4]> for Quat {
+        fn from(a: [f32; 4]) -> Self {
+            Self {
+                x: a[0],
+                y: a[1],
+                z: a[2],
+                w: a[3],
+            }
+        }
+    }
+
+    impl From<Quat> for [f32; 4] {
+        fn from(q: Quat) -> Self {
+            q.to_array()
+        }
+    }
+
+    impl From<glam::Quat> for Quat {
+        fn from(q: glam::Quat) -> Self {
+            Self::from(q.to_array())
+        }
+    }
+
+    impl From<Quat> for glam::Quat {
+        fn from(q: Quat) -> Self {
+            glam::Quat::from_xyzw(q.x, q.y, q.z, q.w)
+        }
+    }
 }
 
 #[cfg(all(test, feature = "glm"))]
@@ -1774,6 +2042,199 @@ mod glm_matrix_test {
         assert!(src.contains("fn perspective_rh"), "helper assembled: {src}");
         #[cfg(feature = "validation")]
         uses_glm_matrices::WGSL_SOURCE.validate().unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "glm"))]
+mod glm_quat_test {
+    use crate::{glm::*, std::*};
+
+    fn assert_quat_close(actual: Quat, expected: glam::Quat, ctx: &str) {
+        let eps = 1e-5;
+        let a = actual.to_array();
+        let e = expected.to_array();
+        for i in 0..4 {
+            assert!(
+                (a[i] - e[i]).abs() < eps,
+                "{ctx}: component {i}: got {}, want {}",
+                a[i],
+                e[i]
+            );
+        }
+    }
+
+    fn assert_vec3_close(actual: Vec3f, expected: glam::Vec3, ctx: &str) {
+        let eps = 1e-5;
+        let diff = (actual - Vec3f::from(expected)).to_array();
+        assert!(
+            diff.iter().all(|d| d.abs() < eps),
+            "{ctx}: {actual:?} vs {expected:?}"
+        );
+    }
+
+    #[crate::wgsl(crate_path = crate)]
+    pub mod uses_glm_quats {
+        use crate::glm::*;
+
+        pub fn composed_rotation(angle: f32) -> Quat {
+            let a = from_axis_angle(Vec3f::Y, angle);
+            let b = from_axis_angle(Vec3f::X, 0.5);
+            quat_mul(a, b)
+        }
+
+        pub fn rotated(angle: f32) -> Vec3f {
+            rotate_vec3(composed_rotation(angle), vec3f(1.0, 2.0, 3.0))
+        }
+
+        /// Applying a rotation composed with its own inverse is the
+        /// identity.
+        pub fn spun(angle: f32) -> Vec3f {
+            let q = composed_rotation(angle);
+            rotate_vec3(quat_mul(q, inverse(q)), vec3f(1.0, 2.0, 3.0))
+        }
+
+        pub fn blended(angle: f32) -> Quat {
+            quat_slerp(Quat::IDENTITY, from_axis_angle(Vec3f::Y, angle), 0.25)
+        }
+
+        pub fn mat_roundtrip(angle: f32) -> Quat {
+            from_rotation_mat3(mat3_from_quat(from_axis_angle(Vec3f::Y, angle)))
+        }
+
+        pub fn zero_normalized() -> Quat {
+            quat_normalize_or_zero(Quat {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 0.0,
+            })
+        }
+
+        pub fn angled() -> f32 {
+            quat_angle_between(Quat::IDENTITY, from_axis_angle(Vec3f::Y, 1.2))
+        }
+    }
+
+    #[test]
+    fn glm_quat_construction_and_conversions_match_glam() {
+        let q = from_axis_angle(Vec3f::Y, 0.7);
+        assert_quat_close(
+            q,
+            glam::Quat::from_axis_angle(glam::Vec3::Y, 0.7),
+            "from_axis_angle",
+        );
+        assert_eq!(Quat::IDENTITY.to_array(), [0.0, 0.0, 0.0, 1.0]);
+
+        // glam conversions roundtrip both ways.
+        let g = glam::Quat::from_xyzw(0.1, 0.2, 0.3, 0.9).normalize();
+        assert_eq!(Quat::from(g).to_array(), g.to_array());
+        assert_eq!(glam::Quat::from(q).to_array(), q.to_array());
+        assert_eq!(
+            Quat::from([1.0, 2.0, 3.0, 4.0]).to_array(),
+            [1.0, 2.0, 3.0, 4.0]
+        );
+        assert_eq!(
+            <[f32; 4]>::from(Quat::from([1.0, 2.0, 3.0, 4.0])),
+            [1.0, 2.0, 3.0, 4.0]
+        );
+    }
+
+    #[test]
+    fn glm_quat_ops_match_glam() {
+        let a = from_axis_angle(Vec3f::Y, 0.7);
+        let b = from_axis_angle(Vec3f::X, 0.5);
+        let ga = glam::Quat::from(a);
+        let gb = glam::Quat::from(b);
+
+        assert_quat_close(quat_mul(a, b), ga * gb, "quat_mul");
+        assert_vec3_close(
+            rotate_vec3(a, vec3f(1.0, 2.0, 3.0)),
+            ga * glam::Vec3::new(1.0, 2.0, 3.0),
+            "rotate_vec3",
+        );
+        assert_quat_close(conjugate(a), ga.conjugate(), "conjugate");
+        assert_quat_close(inverse(a), ga.inverse(), "inverse");
+        assert!((quat_length_squared(a) - ga.length_squared()).abs() < 1e-6);
+        assert!((quat_dot(a, b) - glam::Quat::dot(ga, gb)).abs() < 1e-6);
+
+        // q * inverse(q) is the identity, so spinning a vector by the
+        // composed rotation and back is a (near) no-op.
+        let spun = uses_glm_quats::spun(0.9).to_array();
+        for (got, want) in spun.iter().zip([1.0, 2.0, 3.0]) {
+            assert!((got - want).abs() < 1e-6, "spun: {spun:?}");
+        }
+
+        // Composition and application through the module fns.
+        let want = ga * gb;
+        assert_quat_close(uses_glm_quats::composed_rotation(0.7), want, "composed");
+        assert_vec3_close(
+            uses_glm_quats::rotated(0.7),
+            want * glam::Vec3::new(1.0, 2.0, 3.0),
+            "rotated",
+        );
+
+        // The matrix roundtrip recovers the same rotation (q and -q are
+        // the same rotation, so compare applications, not components).
+        let q = uses_glm_quats::mat_roundtrip(0.9);
+        let v = vec3f(1.0, 2.0, 3.0);
+        assert_vec3_close(
+            rotate_vec3(q, v),
+            q_rotation_reference(0.9) * glam::Vec3::from(v),
+            "mat_roundtrip",
+        );
+
+        // Zero-length input normalizes to the identity.
+        assert_eq!(
+            uses_glm_quats::zero_normalized().to_array(),
+            [0.0, 0.0, 0.0, 1.0]
+        );
+
+        // acos(cos(x)) = x for x in [0, pi], so a 1.2 radian rotation is
+        // 1.2 radians away from identity.
+        assert!(
+            (uses_glm_quats::angled() - 1.2).abs() < 1e-5,
+            "angled: {}",
+            uses_glm_quats::angled()
+        );
+    }
+
+    fn q_rotation_reference(angle: f32) -> glam::Quat {
+        glam::Quat::from_axis_angle(glam::Vec3::Y, angle)
+    }
+
+    #[test]
+    fn glm_quat_slerp_matches_glam() {
+        let a = from_axis_angle(Vec3f::Y, 0.3);
+        let b = from_axis_angle(Vec3f::X, 1.1);
+        let ga = glam::Quat::from(a);
+        let gb = glam::Quat::from(b);
+
+        // Endpoints are exact.
+        assert_quat_close(quat_slerp(a, b, 0.0), ga, "slerp t=0");
+        assert_quat_close(quat_slerp(a, b, 1.0), gb, "slerp t=1");
+        // Midpoints match glam.
+        assert_quat_close(quat_slerp(a, b, 0.25), ga.slerp(gb, 0.25), "slerp t=0.25");
+        assert_quat_close(quat_slerp(a, b, 0.5), ga.slerp(gb, 0.5), "slerp t=0.5");
+        // Nearly-parallel inputs hit the nlerp fallback on both sides.
+        let c = quat_mul(a, from_axis_angle(Vec3f::Y, 0.0001));
+        let gc = glam::Quat::from(c);
+        assert_quat_close(quat_slerp(a, c, 0.5), ga.slerp(gc, 0.5), "slerp nlerp path");
+        // The module's blended() exercises slerp from identity.
+        assert_quat_close(
+            uses_glm_quats::blended(1.3),
+            glam::Quat::IDENTITY.slerp(glam::Quat::from_axis_angle(glam::Vec3::Y, 1.3), 0.25),
+            "blended",
+        );
+
+        // WGSL world: the quat struct and helpers assemble and naga
+        // validates them.
+        let src = uses_glm_quats::WGSL_SOURCE.wgsl_source().unwrap();
+        assert!(src.contains("struct Quat"), "quat struct rendered: {src}");
+        assert!(src.contains("fn quat_mul"), "helper assembled: {src}");
+        assert!(src.contains("fn quat_slerp"), "helper assembled: {src}");
+        assert!(src.contains("Quat_IDENTITY"), "const mangled: {src}");
+        #[cfg(feature = "validation")]
+        uses_glm_quats::WGSL_SOURCE.validate().unwrap();
     }
 }
 

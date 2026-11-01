@@ -75,6 +75,30 @@ let clip = perspective_rh(1.2, 1.5, 0.1, 100.0) * view
     * vec4f_from_3(transform_point3(model, vec3f(0.0, 0.0, 0.0)), 1.0);
 ```
 
+## Quaternions
+
+WGSL has no quaternion type, so `glm` provides one: `Quat`, with public
+`x`, `y`, `z`, `w` fields, glam's wire layout (`[x, y, z, w]`), and the
+`Quat::IDENTITY` constant. All the math is hand-written once, shared by
+both worlds, and checked against glam's conventions: Hamilton product,
+`w`-last, unit quaternions rotate. There is no `*` operator on quats, in
+either world; use the functions.
+
+| Function | Notes |
+| -------- | ----- |
+| `from_axis_angle(axis, angle)` | `axis` must be normalized |
+| `from_rotation_mat3(m)`, `mat3_from_quat(q)` | orthonormal matrices |
+| `quat_mul(a, b)` | the Hamilton product |
+| `rotate_vec3(q, v)` | unit quaternion assumed |
+| `conjugate(q)`, `inverse(q)` | `inverse` divides by the squared length, matching glam |
+| `quat_length_squared(q)`, `quat_dot(a, b)` | |
+| `quat_normalize_or_zero(q)` | zero input yields `IDENTITY`: a zero quat has no rotation to preserve |
+| `quat_angle_between(a, b)` | radians between unit quaternions |
+| `quat_slerp(a, b, t)` | shortest path; nearly-parallel inputs fall back to normalized lerp, matching glam |
+
+CPU-side conversions (`to_array`, `From<[f32; 4]>`, `From<glam::Quat>`
+both ways) are plain Rust and do not transpile.
+
 ### Zero-Vector Semantics
 
 WGSL's `normalize` on a zero vector is not glam's: glam returns zero,
@@ -89,4 +113,4 @@ style (`_rh`/`_lh`, `_gl` for -1..1 depth) rather than GLM's compile-time
 defines, which Rust has no equivalent of. The unsuffixed projection
 variants use the wgpu-native 0..1 depth range (right-handed is the usual
 default). The projection set mirrors glam 0.30 exactly, including its
-lack of `_lh_gl` variants. Quaternion helpers arrive in a later phase.
+lack of `_lh_gl` variants.

@@ -330,6 +330,54 @@ pub mod named_import_consumer {
     }
 }
 
+/// wgsl-rs#114: a NAMED import feeds cross-module instantiation
+/// candidates. Before the fix, a turbofish call through
+/// `use defs::id;` had no candidate module and failed resolution.
+#[wgsl]
+pub mod generic_named_defs {
+    pub fn id<T: Copy>(v: T) -> T {
+        v
+    }
+}
+
+#[wgsl]
+pub mod generic_named_consumer {
+    #[rustfmt::skip]
+    use super::generic_named_defs::id;
+
+    pub fn use_id() -> f32 {
+        id::<f32>(1.0)
+    }
+}
+
+/// wgsl-rs#114: a named import counts as an import for `load!`
+/// validation. The consumer's only wgsl-module import is the named
+/// `BUFFER` binding; its module variables are invisible to the
+/// validator's table, so the table must fail open — not reject
+/// `load!(BUFFER)` as if the module had no imports.
+#[wgsl]
+pub mod load_provider {
+    // The std glob also brings the linkage macros into scope.
+    #[allow(unused_imports)]
+    use wgsl_rs::std::*;
+
+    storage!(group(0), binding(0), read_only, BUFFER: [f32; 4]);
+}
+
+#[wgsl]
+pub mod load_named_consumer {
+    #[rustfmt::skip]
+    use super::load_provider::BUFFER;
+    // The std glob also brings the linkage macros into scope.
+    #[allow(unused_imports)]
+    use wgsl_rs::std::*;
+
+    pub fn read_first() -> f32 {
+        let v = load!(BUFFER);
+        v[0]
+    }
+}
+
 // ===== Basic shape tests =====
 
 #[test]
@@ -1645,6 +1693,34 @@ fn named_reexport_pipeline_builds_on_device() {
         cache: None,
     });
     let _ = pipeline;
+}
+
+/// wgsl-rs#114 review: a turbofish call through a NAMED import must
+/// record the named module as an instantiation candidate — the named
+/// path folds the same whole source a glob would.
+#[test]
+fn generic_named_import_resolves() {
+    let source = generic_named_consumer::instantiate().wgsl_source();
+    assert!(
+        source.contains("id_f32"),
+        "the cross-module instantiation must resolve through the named import, got:\n{source}"
+    );
+    wgsl_rs::validate_wgsl_source(&source)
+        .expect("the named-import instantiation must validate in naga");
+}
+
+/// wgsl-rs#114 review: a named import satisfies the `load!` validator's
+/// has-imports fail-open rule (the fixture compiles at all because of
+/// it); assert the assembled output carries the imported binding.
+#[test]
+fn load_validation_accepts_named_imports() {
+    let source = load_named_consumer::instantiate().wgsl_source();
+    assert!(
+        source.contains("BUFFER"),
+        "the named-imported binding must be folded in, got:\n{source}"
+    );
+    wgsl_rs::validate_wgsl_source(&source)
+        .expect("the named-import load module must validate in naga");
 }
 
 /// The direct module render route (`instantiate().wgsl_source()`)

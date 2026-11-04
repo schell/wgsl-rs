@@ -110,13 +110,17 @@ impl ModuleVarTable {
                     );
                 }
                 Item::Use(u) => {
-                    for module in &u.modules {
+                    let imported_paths =
+                        u.modules.iter().chain(u.named.iter().map(|(path, _)| path));
+                    for module in imported_paths {
                         // `use <crate_path>::std::*` is the built-in prelude
                         // import; it never carries module variables. Any
                         // other import may be another wgsl module, whose
-                        // variables this table cannot see. The check matches
-                        // the full crate path so a user module named `std`
-                        // is not mistaken for the prelude.
+                        // variables this table cannot see — a named import
+                        // folds the same whole source as a glob, so its
+                        // module path counts too (wgsl-rs#114). The check
+                        // matches the full crate path so a user module
+                        // named `std` is not mistaken for the prelude.
                         if !is_wgsl_std_import(crate_path, module) {
                             has_imports = true;
                         }

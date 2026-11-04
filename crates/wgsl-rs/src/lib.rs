@@ -539,10 +539,20 @@ fn collect_public_template_names(
         collect_public_template_names(reexport, names, visited);
     }
     for named in source.named_exports {
-        if source.templates.iter().any(|t| t.name == named.name) {
+        // A named edge exposes exactly ONE name (wgsl-rs#114): harvest
+        // it when the aliased source can actually resolve a template
+        // under it — through its own pub edges, name-matched, exactly
+        // like `reachable_sources`. The source's OTHER templates stay
+        // unharvested: they are not nameable through this edge, and
+        // harvesting them would make downstream chunks' references to
+        // same-named local items look like unresolved generic
+        // templates (#237 false positives).
+        if reachable_sources(&[named.source], named.name)
+            .iter()
+            .any(|m| m.templates.iter().any(|t| t.name == named.name))
+        {
             names.insert(named.name.to_string());
         }
-        collect_public_template_names(named.source, names, visited);
     }
 }
 
@@ -4017,6 +4027,112 @@ mod test {
                     text.contains("ASSEMBLED_CONST"),
                     "a pub {src_name} re-export edge must fold its source's chunk, got:\n{text}"
                 );
+            }
+        }
+
+        // --- Named re-export harvest scoping (wgsl-rs#114 review) ---
+
+        /// A chunk whose fn returns a plain struct named `hidden` — a
+        /// template NAMED_DEFS defines but the prelude does NOT
+        /// re-export. Because the named edge exposes exactly one name,
+        /// `hidden` must NOT be harvested, or the #237 check would
+        /// misclassify this reference as an unresolved generic.
+        fn local_hidden_ir() -> ir::Module {
+            ir::Module {
+                name: "local_hidden_root",
+                items: vec![ir::Item::Fn(ir::ItemFn {
+                    type_params: vec![],
+                    const_params: vec![],
+                    fn_attrs: ir::FnAttrs::None,
+                    name: "uses_local_hidden".to_string().into(),
+                    inputs: vec![],
+                    return_type: ir::ReturnType::Type {
+                        annotation: ir::ReturnTypeAnnotation::None,
+                        ty: ir::Type::Struct {
+                            name: "hidden".to_string(),
+                            type_args: vec![],
+                        },
+                    },
+                    block: ir::Block { stmts: vec![] },
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        static LOCAL_HIDDEN_ROOT: Source = Source {
+            id: 282,
+            name: "local_hidden_root",
+            imports: &[&NAMED_PRELUDE],
+            reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
+            ir_constructor: local_hidden_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn named_reexports_do_not_harvest_unexported_templates() {
+            // Negative: `hidden` is not nameable through the named
+            // edge, so the #237 check must not flag the chunk's
+            // reference to it — on either assembly path.
+            let assembled = LOCAL_HIDDEN_ROOT
+                .assemble_ir()
+                .expect("an unexported template name must not trip the #237 check");
+            let names = item_names(&assembled);
+            assert!(
+                names.contains(&"uses_local_hidden".to_string()),
+                "the chunk must assemble, got: {names:?}"
+            );
+            LOCAL_HIDDEN_ROOT
+                .wgsl_source()
+                .expect("the text path must not flag the reference either");
+
+            // Positive control: a chunk referencing the EXPORTED name
+            // `id` without instantiating it must still be flagged —
+            // the exported name IS harvested through the named edge.
+            fn unresolved_id_ir() -> ir::Module {
+                ir::Module {
+                    name: "unresolved_id_root",
+                    items: vec![ir::Item::Fn(ir::ItemFn {
+                        type_params: vec![],
+                        const_params: vec![],
+                        fn_attrs: ir::FnAttrs::None,
+                        name: "calls_id".to_string().into(),
+                        inputs: vec![],
+                        return_type: ir::ReturnType::Default,
+                        block: ir::Block {
+                            stmts: vec![ir::Stmt::Expr {
+                                expr: ir::Expr::FnCall {
+                                    path: ir::FnPath::Ident("id".to_string()),
+                                    type_args: vec![],
+                                    params: vec![],
+                                },
+                                has_semi: true,
+                            }],
+                        },
+                        attrs: vec![],
+                    })],
+                    attrs: vec![],
+                }
+            }
+            static UNRESOLVED_ID_ROOT: Source = Source {
+                id: 283,
+                name: "unresolved_id_root",
+                imports: &[&NAMED_PRELUDE],
+                reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
+                ir_constructor: unresolved_id_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = UNRESOLVED_ID_ROOT.assemble_ir().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef { template_name, .. } => {
+                    assert_eq!(template_name, "id");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
             }
         }
     }

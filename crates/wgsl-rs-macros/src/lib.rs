@@ -771,20 +771,24 @@ fn gen_wgsl_module(
         source_descriptor.push('\0');
         source_descriptor.push_str(&import.to_string());
     }
-    // Glob re-export edges are deliberately NOT part of the descriptor: a
-    // `use` flipping to `pub use` changes only what downstream modules
-    // may resolve through this one, not this module's own assembled
-    // content (assembly concatenates every import either way), so the
-    // id — and with it assembly dedup — must stay byte-stable
-    // (wgsl-rs#245).
-    //
-    // Named re-export alias-table entries ARE part of the descriptor:
-    // two modules importing the same source can re-export different
-    // names (`pub use defs::Id;` vs `pub use defs::Hidden;`) and
-    // otherwise hash to one id — the id-keyed visited sets of the
-    // resolution and harvest walks would collapse the two modules and
-    // silently drop one alias, making downstream resolution depend on
-    // traversal order (wgsl-rs#114 review).
+    // Glob re-export edges ARE part of the descriptor: two modules
+    // identical except for a glob's visibility (`use defs::*` vs
+    // `pub use defs::*`) must not hash to one id — the id-keyed
+    // visited sets of the resolution and harvest walks would collapse
+    // the pair, and if the private variant is visited first the
+    // public variant's edges are silently dropped, making downstream
+    // resolution depend on traversal order (wgsl-rs#114 review,
+    // superseding the 2026-10-31 #245 exclusion). This also restores
+    // symmetry with named re-export entries below.
+    for reexport in reexports {
+        source_descriptor.push('\0');
+        source_descriptor.push_str(&reexport.to_string());
+    }
+    // Named re-export alias-table entries, for the same reason and
+    // one sharper: two modules importing the same source can
+    // re-export different names (`pub use defs::Id;` vs
+    // `pub use defs::Hidden;`) and otherwise hash to one id — one
+    // alias would be dropped outright.
     for (name, source) in named_exports {
         source_descriptor.push('\0');
         source_descriptor.push_str(name);
@@ -2164,14 +2168,14 @@ pub fn derive_wgsl(input: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
-    /// A `use` flipping to `pub use` must not shift the emitted module
-    /// id (wgsl-rs#245): visibility changes only what downstream
-    /// modules may resolve through this one, not this module's own
-    /// assembled content (assembly concatenates every import either
-    /// way), so assembly dedup must keep treating the two as
-    /// interchangeable.
+    /// Two modules identical except for a glob's visibility
+    /// (`use defs::*` vs `pub use defs::*`) must get DISTINCT ids: the
+    /// id-keyed visited sets of the resolution and harvest walks would
+    /// otherwise collapse the pair, and with the private variant
+    /// visited first the public variant's edges are silently dropped
+    /// (wgsl-rs#114 review, superseding the 2026-10-31 #245 exclusion).
     #[test]
-    fn module_id_ignores_reexport_edges() {
+    fn module_id_distinguishes_reexport_edges() {
         fn gen_module_id(reexports: &[proc_macro2::TokenStream]) -> u64 {
             let item_mod: syn::ItemMod = syn::parse_quote! {
                 mod m {
@@ -2213,9 +2217,14 @@ mod tests {
 
         let private = gen_module_id(&[]);
         let reexported = gen_module_id(&[quote! { super::defs::WGSL_SOURCE }]);
-        assert_eq!(
+        assert_ne!(
             private, reexported,
-            "re-export edges must not be part of the module id descriptor"
+            "a pub glob re-export must distinguish the module's id from the private spelling"
+        );
+        // Stability: identical re-export sets hash to the same id.
+        assert_eq!(
+            reexported,
+            gen_module_id(&[quote! { super::defs::WGSL_SOURCE }])
         );
     }
 

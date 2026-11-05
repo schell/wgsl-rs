@@ -2133,7 +2133,13 @@ Re-export edges are deliberately excluded from the module-id content
 descriptor: flipping `use` to `pub use` changes only what downstream
 modules may resolve through this module, not this module's own
 assembled content (assembly concatenates every import either way),
-so ids, and with them assembly dedup, stay byte-stable. A unit test
+so ids, and with them assembly dedup, stay byte-stable.
+
+> Superseded 2026-11-01 (the named-imports entry below): re-export
+> edges — glob and named alike — ARE part of the descriptor. The
+> byte-stability property conflicts with walk correctness when a
+> public and a private variant of the same content coexist in one
+> graph. A unit test
 pins this.
 
 **Why.** The alternative (flag-carrying import entries) changes the
@@ -2176,16 +2182,21 @@ re-exporting a vertex entry to become a complete pipeline module).
    and the #237 harvest walk it name-matched — a named edge exposes
    exactly one name, where a glob edge (`reexports`) exposes every
    name of its source. Two hops exporting the same name from distinct
-   sources is a genuine `AmbiguousTemplate`, mirroring rustc. Unlike
-   glob edges, named entries ARE part of the module-id descriptor:
-   two modules importing the same source but re-exporting different
-   names (`pub use defs::Id;` vs `pub use defs::Hidden;`) must not
-   share an id — the id-keyed visited sets of the resolution and
-   harvest walks would collapse the pair and silently drop one alias.
-   Glob edges keep the #245 exclusion: flipping a glob's visibility
-   still does not change the module's own assembled chunk, and a
-   named *import* (non-`pub`) still hashes identically to a glob of
-   the same module, because both fold the same assembly.
+   sources is a genuine `AmbiguousTemplate`, mirroring rustc. Both
+   named entries AND glob re-export edges are part of the module-id
+   descriptor: two modules importing the same source can re-export
+   different names (`pub use defs::Id;` vs
+   `pub use defs::Hidden;`) or differ only in a glob's visibility
+   (`use defs::*` vs `pub use defs::*`), and hashing either pair to
+   one id makes the id-keyed visited sets of the resolution and
+   harvest walks collapse the two modules — with the variant carrying
+   fewer edges visited first, the other's edges are silently dropped
+   and downstream resolution depends on traversal order. This
+   supersedes the 2026-10-31 #245 exclusion: the "byte-stable on
+   visibility flip" property was nice to have, but walk correctness
+   when both variants coexist in one graph is a real requirement,
+   and content-identical sources (the diamond-dedup contract) still
+   hash identically because their pub-edge sets are identical too.
 
 3. **Assembly follows pub edges**: chunk folding walks `imports` (all
    edges, any visibility) *plus* the pub edges (`reexports` and

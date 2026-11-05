@@ -2209,7 +2209,8 @@ re-exporting a vertex entry to become a complete pipeline module).
 4. **Rejected spellings**: renaming (`use path::item as other;`) —
    the WGSL name of an imported item is always its own, and a rename
    would silently split the two worlds; grouped use
-   (`use path::{a, b};`) — separately tracked work; bare module
+   (`use path::{a, b};`) — separately tracked work (superseded the
+   same day, see the grouped-use entry below); bare module
    imports (`use path;`) — namespaces do not transpile, only items
    do, and the diagnostic says which spellings to use instead.
    Path-qualified bare module imports (`use super::defs;`) are
@@ -2296,3 +2297,38 @@ function with deliberately contradictory `Type<Is = ...>` bounds
 (the `generic_linkage_specialization` fixture), a closure inference
 variable makes rustc try to solve those bounds at the definition and
 the module stops compiling.
+
+### 2026-11-05: Grouped use statements flatten at parse time
+
+**Problem.** `use a::{b, c};` was rejected outright, which is worse
+than missing sugar: `rustfmt.toml` pins `imports_granularity =
+"crate"`, so rustfmt regenerates the grouped form from every pair of
+consecutive same-root imports inside `#[wgsl]` modules — the
+unsupported syntax resurrected itself on every format and blocked the
+whole module (hit live in the renderling port and twice in the
+named-imports PR, whose fixtures needed `#[rustfmt::skip]`).
+
+**Decision.** Groups flatten at parse time: the `UseTree::Group` arm
+converts each item through the existing `ItemUse` conversion and
+merges its `modules`/`named` entries, so the parent `Path` arms
+prefix everything as usual. A group therefore produces *exactly* the
+edges of the split form — same imports, same re-exports, same
+alias-table entries, same id descriptors — and every downstream
+consumer (assembly, instantiation candidates, `load!` validation,
+harvest) works without change because it only ever sees the merged
+entry lists. Two boundaries, both documented in the book: a group
+inherits its statement's visibility (`pub use a::{b, c};` re-exports
+both; spell separate statements when imports need different
+visibility — per-item `pub` inside groups is out of scope), and empty
+groups (`use a::{};`) reject with a targeted diagnostic, because a
+no-op entry cannot be expressed without colliding with the
+glob-fallback chain that materializes module paths.
+
+**Why.** Flattening at the leaf keeps exactly one edge model (the
+#114 lesson: no parallel machinery), and the equivalence to the
+split form is the test contract: parse tests assert the flattened
+entries are identical, the fixture that previously needed
+`#[rustfmt::skip]` now uses the grouped spelling as its proof, and a
+grouped-glob fixture covers the exact renderling shape
+(`use super::{a::*, b::*};`) with a cross-module instantiation
+resolving through it.

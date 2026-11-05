@@ -2563,10 +2563,7 @@ mod test {
     #[expect(dead_code)]
     #[wgsl(crate_path = crate)]
     mod dedupe_root {
-        #[rustfmt::skip]
-        use super::dedupe_left::*;
-        #[rustfmt::skip]
-        use super::dedupe_right::*;
+        use super::{dedupe_left::*, dedupe_right::*};
 
         pub fn root() -> f32 {
             left() + right()

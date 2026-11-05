@@ -17,16 +17,19 @@ pub mod lighting {
 
 The generated WGSL is emitted into `WGSL_SOURCE` for that module.
 
-## Glob Imports Only
+## Import Forms
 
-wgsl-rs supports glob imports exclusively. Named imports are not transpiled. The two valid import forms are:
+wgsl-rs supports two import spellings: glob imports of a whole module, and named imports of a single item:
 
 ```rust
-use wgsl_rs::std::*;        // standard WGSL types and builtins
-use super::other_module::*; // another #[wgsl] module in the same parent
+use wgsl_rs::std::*;                    // standard WGSL types and builtins
+use super::other_module::*;             // everything from another #[wgsl] module
+use super::other_module::specific_fn;   // one item, by name
 ```
 
 `wgsl_rs::std` provides the scalar/vector/matrix types (`Vec2f`, `Vec3f`, `Vec4f`, `vec2f`, `Mat4f`, ...), builtins, and texture types.
+
+A named import and a glob of the same module assemble identically: the whole source folds in either way, so every definition the imported item depends on is present. Importing `specific_fn` does not cherry-pick — the source module's other items land in the assembly too.
 
 ## Importing Other wgsl Modules
 
@@ -96,6 +99,25 @@ pub mod shader {
 Everything a glob import brings into scope also travels through re-export chains: concrete items and generic templates alike. Instantiating `Id<f32>` through `prelude` assembles the same WGSL as importing `defs` directly. Chains of any depth work, and a defining module reached through several paths is imported only once.
 
 Re-export chains follow `pub`: a downstream module can only resolve names along `pub use` edges. A plain `use` inside a prelude is a private import — its items still assemble, because the prelude's own code needs them, but downstream modules cannot reach through it, exactly as in Rust. `pub(crate)`, `pub(super)` and `pub(in path)` count as private here: a consumer in another crate cannot traverse them in Rust, so the transpiler does not either. Spell `pub use` when a prelude is meant to forward names.
+
+Re-exports work by name too. A named re-export (`pub use path::item;`) exposes exactly one name of the source; a glob re-export (`pub use path::*;`) exposes all of them. Generic items instantiated through the chain resolve by the exported name — this is the shape a prelude is made of:
+
+```rust
+#[wgsl]
+pub mod prelude {
+    pub use super::defs::Id;
+}
+
+#[wgsl]
+pub mod shader {
+    use super::prelude::*; // Id resolves through the named re-export
+    // ...
+}
+```
+
+This also composes whole pipelines in a single module: a fragment module that re-exports a vertex entry by name carries both entries and both stages' bindings in one assembled source — one linkage, one pipeline layout, no runtime merge.
+
+Renaming (`use path::item as other;`) and grouped use statements (`use path::{a, b};`) are not transpiled; spell each import on its own line under its own name.
 
 If two different defining modules are both reachable through your imports and both define a template with the same name, instantiation fails with an ambiguity error. Import the defining module directly to pick one. Privately imported colliding definitions do not trigger this — they are not reachable through the hop.
 

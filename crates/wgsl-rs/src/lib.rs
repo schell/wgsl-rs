@@ -100,6 +100,19 @@ pub struct Source {
     /// for 2026-10-31 for the reasoning.
     pub reexports: &'static [&'static Source],
 
+    /// The named `pub use path::item;` re-exports: the alias table
+    /// mapping each re-exported name to the source the item was
+    /// imported from (wgsl-rs#114).
+    ///
+    /// Pairs with [`Self::reexports`] (the `pub use path::*;`
+    /// whole-source edges): a glob re-export exposes every name of its
+    /// source, a named re-export exposes exactly one. Downstream
+    /// resolution and the #237 template-name harvest follow both kinds
+    /// of edge, and assembly folds both — a chunk re-exported through
+    /// a hop must be present in downstream assemblies for the items it
+    /// re-exports to resolve.
+    pub named_exports: &'static [NamedExport],
+
     /// Constructor function that builds this module's IR.
     ///
     /// **Own items only**: imported sources are not merged. This is the
@@ -150,6 +163,21 @@ pub struct Source {
     /// `wgsl_rs::linkage::Type<Is = ...>` constraints to check at
     /// compile time that every parameter has been bound.
     pub module_type_params: &'static [&'static str],
+}
+
+/// One entry of the named re-export alias table: a
+/// `pub use path::item;` statement (wgsl-rs#114).
+///
+/// Downstream template resolution follows `source` when looking for a
+/// template named `name` through a re-export hop. The name is always
+/// the item's own WGSL name — renaming in use statements is rejected
+/// at parse time.
+#[derive(Clone, Copy, Debug)]
+pub struct NamedExport {
+    /// The name visible to downstream modules.
+    pub name: &'static str,
+    /// The source the item was imported from.
+    pub source: &'static Source,
 }
 
 /// A generic function (or struct) template defined within a module.
@@ -310,6 +338,39 @@ impl Source {
             }
         }
 
+        // 1b. Public re-export edges fold the same way: downstream
+        // modules can name items through them (glob re-exports expose
+        // every name of their source, named re-exports exactly one),
+        // so the re-exported chunks must be present in the assembly.
+        // Without this, an item re-exported through a hop would
+        // reference a definition that never lands (wgsl-rs#114).
+        for r in self.reexports {
+            if visited_sources.insert(r.id) {
+                r.collect(
+                    out,
+                    visited_sources,
+                    seen,
+                    None,
+                    needs_tier1,
+                    imports,
+                    emitted_names,
+                )?;
+            }
+        }
+        for named in self.named_exports {
+            if visited_sources.insert(named.source.id) {
+                named.source.collect(
+                    out,
+                    visited_sources,
+                    seen,
+                    None,
+                    needs_tier1,
+                    imports,
+                    emitted_names,
+                )?;
+            }
+        }
+
         // 2. Build this source's IR, optionally substituting type params.
         let mut ir_module = (self.ir_constructor)();
         if let Some(s) = subst {
@@ -458,7 +519,11 @@ pub(crate) fn collect_template_names(source: &Source, names: &mut HashSet<String
 }
 
 /// Harvest a starting module's template names and, transitively, those
-/// of every module it publicly re-exports (wgsl-rs#245).
+/// of every module it publicly re-exports (wgsl-rs#245): glob
+/// re-exports contribute every name of their source; named re-exports
+/// (`pub use path::item;`) contribute their exported name when the
+/// source defines a template under it, and their source's pub closure
+/// recursively (wgsl-rs#114).
 fn collect_public_template_names(
     source: &Source,
     names: &mut HashSet<String>,
@@ -472,6 +537,22 @@ fn collect_public_template_names(
     }
     for reexport in source.reexports {
         collect_public_template_names(reexport, names, visited);
+    }
+    for named in source.named_exports {
+        // A named edge exposes exactly ONE name (wgsl-rs#114): harvest
+        // it when the aliased source can actually resolve a template
+        // under it — through its own pub edges, name-matched, exactly
+        // like `reachable_sources`. The source's OTHER templates stay
+        // unharvested: they are not nameable through this edge, and
+        // harvesting them would make downstream chunks' references to
+        // same-named local items look like unresolved generic
+        // templates (#237 false positives).
+        if reachable_sources(&[named.source], named.name)
+            .iter()
+            .any(|m| m.templates.iter().any(|t| t.name == named.name))
+        {
+            names.insert(named.name.to_string());
+        }
     }
 }
 
@@ -602,7 +683,10 @@ fn instantiate_template_into<'a>(
 /// The starting sources are a module's own `use` paths, reachable in
 /// full regardless of visibility (a module can always name what it
 /// imports directly). Everything past the first hop crosses a
-/// re-export, so only [`Source::reexports`] is walked: a module's
+/// re-export, so only public edges are walked: glob re-exports
+/// ([`Source::reexports`]) unconditionally, named re-exports
+/// ([`Source::named_exports`], `pub use path::item;`) only when
+/// `template_name` matches the exported name (wgsl-rs#114). A module's
 /// private imports are not re-export edges and must not be traversed
 /// (wgsl-rs#245) — mirroring Rust, where a downstream module cannot
 /// reach through another module's private import. Traversing them
@@ -613,24 +697,37 @@ fn instantiate_template_into<'a>(
 /// module reached through two different re-export paths appears once
 /// here — diamond imports cannot manufacture a template ambiguity.
 /// The macro records an instantiation's candidate modules as the
-/// importing module's `use` paths, so the starting points reach every
-/// module a source could have imported from (wgsl-rs#238).
-fn reachable_sources<'a>(sources: &[&'a Source]) -> Vec<&'a Source> {
+/// importing module's `use` paths (glob and named alike), so the
+/// starting points reach every module a source could have imported
+/// from (wgsl-rs#238).
+fn reachable_sources<'a>(sources: &[&'a Source], template_name: &str) -> Vec<&'a Source> {
     /// Depth-first visit with an id-based cycle/dedup guard.
-    fn visit<'a>(source: &'a Source, out: &mut Vec<&'a Source>, visited: &mut HashSet<u64>) {
+    fn visit<'a>(
+        source: &'a Source,
+        template_name: &str,
+        out: &mut Vec<&'a Source>,
+        visited: &mut HashSet<u64>,
+    ) {
         if !visited.insert(source.id) {
             return;
         }
         out.push(source);
+        // `pub use path::*;`: every name of the re-exported source.
         for reexport in source.reexports {
-            visit(reexport, out, visited);
+            visit(reexport, template_name, out, visited);
+        }
+        // `pub use path::item;`: exactly one name per edge.
+        for named in source.named_exports {
+            if named.name == template_name {
+                visit(named.source, template_name, out, visited);
+            }
         }
     }
 
     let mut out = Vec::new();
     let mut visited = HashSet::new();
     for &source in sources {
-        visit(source, &mut out, &mut visited);
+        visit(source, template_name, &mut out, &mut visited);
     }
     out
 }
@@ -651,7 +748,7 @@ pub(crate) fn resolve_template<'a>(
     template_name: &str,
     mangled_type_args: &[String],
 ) -> Result<(&'a Source, &'a GenericTemplate), SourceError<'a>> {
-    let reachable = reachable_sources(sources);
+    let reachable = reachable_sources(sources, template_name);
 
     let available_templates: Vec<String> = reachable
         .iter()
@@ -2306,7 +2403,12 @@ mod glm_quat_test {
 #[cfg(test)]
 #[allow(dead_code)]
 mod test {
-    use crate::{GenericTemplate, Source, TemplateDependency, TemplateInstantiation, ir, wgsl};
+    use crate::{
+        GenericTemplate, NamedExport, Source, TemplateDependency, TemplateInstantiation, ir, wgsl,
+    };
+
+    /// Empty named re-export alias table for hand-built test sources.
+    static NO_NAMED: [NamedExport; 0] = [];
 
     #[wgsl(crate_path = crate)]
     pub mod a {
@@ -2601,6 +2703,7 @@ mod test {
             name: "a",
             imports: &EMPTY_SOURCES,
             reexports: &EMPTY_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &A_TEMPLATES,
             instantiations: &EMPTY_INSTS,
@@ -2611,6 +2714,7 @@ mod test {
             name: "b",
             imports: &EMPTY_SOURCES,
             reexports: &EMPTY_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &B_TEMPLATES,
             instantiations: &EMPTY_INSTS,
@@ -2629,6 +2733,7 @@ mod test {
             name: "root",
             imports: &EMPTY_SOURCES,
             reexports: &EMPTY_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &ROOT_INSTS,
@@ -2663,7 +2768,12 @@ mod test {
         //! must resolve through `pub use` re-export chains, multi-hop
         //! chains, diamonds, and import cycles.
 
-        use crate::{GenericTemplate, Source, TemplateDependency, TemplateInstantiation, ir};
+        use crate::{
+            GenericTemplate, NamedExport, Source, TemplateDependency, TemplateInstantiation, ir,
+        };
+
+        /// Empty named re-export alias table for hand-built test sources.
+        static NO_NAMED: [NamedExport; 0] = [];
 
         fn empty_source_ir() -> ir::Module {
             ir::Module {
@@ -2727,6 +2837,7 @@ mod test {
             name: "defs",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -2740,6 +2851,7 @@ mod test {
             name: "defs",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -2753,6 +2865,7 @@ mod test {
             name: "other_defs",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -2765,6 +2878,7 @@ mod test {
             name: "prelude",
             imports: &[&DEFS],
             reexports: &[&DEFS],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2777,6 +2891,7 @@ mod test {
             name: "mid",
             imports: &[&PRELUDE],
             reexports: &[&PRELUDE],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2789,6 +2904,7 @@ mod test {
             name: "hop_a",
             imports: &[&DEFS],
             reexports: &[&DEFS],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2799,6 +2915,7 @@ mod test {
             name: "hop_b",
             imports: &[&DEFS_DUPLICATE],
             reexports: &[&DEFS_DUPLICATE],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2811,6 +2928,7 @@ mod test {
             name: "path_a",
             imports: &[&DEFS],
             reexports: &[&DEFS],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2821,6 +2939,7 @@ mod test {
             name: "path_b",
             imports: &[&OTHER_DEFS],
             reexports: &[&OTHER_DEFS],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2836,6 +2955,7 @@ mod test {
             name: "cyc_a",
             imports: &[&CYC_B],
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -2846,6 +2966,7 @@ mod test {
             name: "cyc_b",
             imports: &[&CYC_A],
             reexports: &[&CYC_A],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -2870,6 +2991,7 @@ mod test {
                     name: "root",
                     imports: $candidates,
                     reexports: &NO_SOURCES,
+                    named_exports: &NO_NAMED,
                     ir_constructor: empty_source_ir,
                     templates: &[],
                     instantiations: &INSTS,
@@ -2956,6 +3078,7 @@ mod test {
                 name: "missing_root",
                 imports: &[&PRELUDE],
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &MISSING_INSTS,
@@ -2989,6 +3112,7 @@ mod test {
             name: "mixed_prelude",
             imports: &[&OTHER_DEFS, &DEFS],
             reexports: &[&DEFS],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3003,6 +3127,7 @@ mod test {
             name: "private_prelude",
             imports: &[&OTHER_DEFS],
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3036,6 +3161,7 @@ mod test {
             name: "crab_internal",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &ID_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -3048,6 +3174,7 @@ mod test {
             imports: &[&CRAB_INTERNAL],
             // `pub use super::defs::*;` — the only traversable edge.
             reexports: &[&DEFS],
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3126,6 +3253,7 @@ mod test {
                 name: "own_root",
                 imports: &[&DEFS],
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &NO_SUCH_INSTS,
@@ -3170,6 +3298,7 @@ mod test {
             name: "hidden_defs",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &HIDDEN_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -3206,6 +3335,7 @@ mod test {
             // `use super::hidden_defs::*;` — a private import.
             imports: &[&HIDDEN_DEFS],
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: middle_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3216,6 +3346,7 @@ mod test {
             name: "root",
             imports: &[&MIDDLE],
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3329,6 +3460,7 @@ mod test {
             name: "outer_defs",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: empty_source_ir,
             templates: &OUTER_DEFS_TEMPLATES,
             instantiations: &NO_INSTS,
@@ -3355,6 +3487,7 @@ mod test {
                 name: "outer_root",
                 imports: &[&OUTER_DEFS],
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &OUTER_INSTS,
@@ -3401,6 +3534,7 @@ mod test {
                 name: "helper",
                 imports: &NO_SOURCES,
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: helper_const_ir,
                 templates: &[],
                 instantiations: &NO_INSTS,
@@ -3411,6 +3545,7 @@ mod test {
                 name: "user",
                 imports: &[&HELPER],
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &NO_INSTS,
@@ -3448,6 +3583,7 @@ mod test {
             name: "consts_mod",
             imports: &NO_SOURCES,
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: assembled_const_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3476,6 +3612,7 @@ mod test {
                 name: "private_user",
                 imports: &[&CONSTS_MOD], // a private `use`
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &NO_INSTS,
@@ -3507,6 +3644,7 @@ mod test {
                 name: "hop_root",
                 imports: &[&CONSTS_MOD, &PRELUDE],
                 reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
                 ir_constructor: empty_source_ir,
                 templates: &[],
                 instantiations: &HOP_INSTS,
@@ -3565,6 +3703,7 @@ mod test {
             name: "cyc_left",
             imports: &[&CYC_RIGHT],
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: cyc_left_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3575,6 +3714,7 @@ mod test {
             name: "cyc_right",
             imports: &[&CYC_LEFT],
             reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
             ir_constructor: cyc_right_ir,
             templates: &[],
             instantiations: &NO_INSTS,
@@ -3615,6 +3755,385 @@ mod test {
                 src.contains("CYCLE_RIGHT_MARK"),
                 "the other cycle member must be flattened in, got:\n{src}"
             );
+        }
+
+        // --- Named re-exports (wgsl-rs#114) ---
+
+        /// A defining module with a second template the named hop does
+        /// NOT re-export, for name-scoping assertions.
+        fn unexported_template_items() -> Vec<ir::Item> {
+            vec![ir::Item::Fn(ir::ItemFn {
+                type_params: vec![],
+                const_params: vec![],
+                fn_attrs: ir::FnAttrs::None,
+                name: "hidden".to_string().into(),
+                inputs: vec![],
+                return_type: ir::ReturnType::Type {
+                    annotation: ir::ReturnTypeAnnotation::None,
+                    ty: ir::Type::TypeParam {
+                        name: "T".to_string(),
+                    },
+                },
+                block: ir::Block {
+                    stmts: vec![ir::Stmt::Return(Some(ir::Expr::Ident("x".to_string())))],
+                },
+                attrs: vec![],
+            })]
+        }
+        static NAMED_DEFS_TEMPLATES: [GenericTemplate; 2] = [
+            GenericTemplate {
+                name: "id",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: id_template_items,
+                dependencies: &DEP,
+            },
+            GenericTemplate {
+                name: "hidden",
+                type_params: &["T"],
+                const_params: &[],
+                ir_constructor: unexported_template_items,
+                dependencies: &DEP,
+            },
+        ];
+        static NAMED_DEFS: Source = Source {
+            id: 268,
+            name: "named_defs",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
+            ir_constructor: empty_source_ir,
+            templates: &NAMED_DEFS_TEMPLATES,
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        /// `pub use named_defs::id;` — the alias table entry is the
+        /// only pub edge; it exposes exactly the name `id`.
+        static NAMED_ID: NamedExport = NamedExport {
+            name: "id",
+            source: &NAMED_DEFS,
+        };
+        static NAMED_PRELUDE: Source = Source {
+            id: 270,
+            name: "named_prelude",
+            imports: &[&NAMED_DEFS],
+            reexports: &NO_SOURCES,
+            named_exports: &[NAMED_ID],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn named_reexport_resolves_templates() {
+            // The crabslab-prelude shape (schell-166): a consumer that
+            // only names the prelude resolves a template through the
+            // prelude's NAMED re-export edge. Before wgsl-rs#114 this
+            // failed with TemplateNotFound — named edges did not exist.
+            let root = id_root!(271, &[&NAMED_PRELUDE]);
+            let src = root
+                .wgsl_source()
+                .expect("id must resolve through the named re-export edge");
+            assert!(
+                src.matches("id_f32").count() == 1,
+                "expected id_f32 exactly once, got:\n{src}"
+            );
+        }
+
+        #[test]
+        fn named_reexports_are_name_scoped() {
+            // A named re-export exposes exactly ONE name: asking for a
+            // different template through the same hop must not reach
+            // the aliased source at all.
+            static HIDDEN_INSTS: [TemplateInstantiation; 1] = [TemplateInstantiation {
+                modules: &[&NAMED_PRELUDE],
+                template_name: "hidden",
+                type_args_constructor: f32_args,
+                mangled_type_args: &["f32"],
+                const_args_constructor: no_const_args,
+                mangled_const_args: &[],
+            }];
+            static HIDDEN_ROOT: Source = Source {
+                id: 272,
+                name: "hidden_root",
+                imports: &[&NAMED_PRELUDE],
+                reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &HIDDEN_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = HIDDEN_ROOT.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::TemplateNotFound {
+                    available_templates,
+                    ..
+                } => {
+                    assert!(
+                        !available_templates.contains(&"hidden".to_string()),
+                        "a named re-export must not leak the source's other templates, got: \
+                         {available_templates:?}"
+                    );
+                }
+                other => panic!("expected TemplateNotFound, got {other:?}"),
+            }
+        }
+
+        /// A second hop that itself re-exports the prelude's name by
+        /// name: resolution walks named edges recursively.
+        static NAMED_ID_VIA_PRELUDE: NamedExport = NamedExport {
+            name: "id",
+            source: &NAMED_PRELUDE,
+        };
+        static NAMED_MID: Source = Source {
+            id: 274,
+            name: "named_mid",
+            imports: &[&NAMED_PRELUDE],
+            reexports: &NO_SOURCES,
+            named_exports: &[NAMED_ID_VIA_PRELUDE],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn named_reexports_chain_through_hops() {
+            let root = id_root!(275, &[&NAMED_MID]);
+            let src = root
+                .wgsl_source()
+                .expect("id must resolve through the named re-export chain");
+            assert!(
+                src.matches("id_f32").count() == 1,
+                "expected id_f32 exactly once, got:\n{src}"
+            );
+        }
+
+        #[test]
+        fn colliding_named_reexports_are_ambiguous() {
+            // `pub use defs::id;` and `pub use other_defs::id;` in one
+            // hop: two named edges expose the same name from distinct
+            // defining sources — a genuine ambiguity.
+            static NAMED_DEFS_ID: NamedExport = NamedExport {
+                name: "id",
+                source: &DEFS,
+            };
+            static OTHER_DEFS_ID: NamedExport = NamedExport {
+                name: "id",
+                source: &OTHER_DEFS,
+            };
+            static AMBIGUOUS_HOP: Source = Source {
+                id: 276,
+                name: "ambiguous_hop",
+                imports: &[&DEFS, &OTHER_DEFS],
+                reexports: &NO_SOURCES,
+                named_exports: &[NAMED_DEFS_ID, OTHER_DEFS_ID],
+                ir_constructor: empty_source_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let root = id_root!(277, &[&AMBIGUOUS_HOP]);
+            let err = root.wgsl_source().unwrap_err();
+            match &err {
+                crate::SourceError::AmbiguousTemplate {
+                    matching_source_names,
+                    ..
+                } => {
+                    assert!(
+                        matching_source_names.contains(&"defs".to_string())
+                            && matching_source_names.contains(&"other_defs".to_string()),
+                        "expected matching sources [defs, other_defs], got \
+                         {matching_source_names:?}"
+                    );
+                }
+                other => panic!("expected AmbiguousTemplate, got {other:?}"),
+            }
+        }
+
+        /// A pure re-export hop (no imports of its own): assembly must
+        /// follow the recorded pub edges — glob and named alike — or
+        /// items re-exported through it would reference definitions
+        /// that never land.
+        static GLOB_HOP_NO_IMPORTS: Source = Source {
+            id: 278,
+            name: "glob_hop_no_imports",
+            imports: &NO_SOURCES,
+            reexports: &[&CONSTS_MOD],
+            named_exports: &NO_NAMED,
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static NAMED_CONST_EXPORT: NamedExport = NamedExport {
+            name: "ASSEMBLED_CONST",
+            source: &CONSTS_MOD,
+        };
+        static NAMED_HOP_NO_IMPORTS: Source = Source {
+            id: 279,
+            name: "named_hop_no_imports",
+            imports: &NO_SOURCES,
+            reexports: &NO_SOURCES,
+            named_exports: &[NAMED_CONST_EXPORT],
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static GLOB_HOP_ROOT: Source = Source {
+            id: 280,
+            name: "glob_hop_root",
+            imports: &[&GLOB_HOP_NO_IMPORTS],
+            reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+        static NAMED_HOP_ROOT: Source = Source {
+            id: 281,
+            name: "named_hop_root",
+            imports: &[&NAMED_HOP_NO_IMPORTS],
+            reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
+            ir_constructor: empty_source_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn assembly_follows_pub_edges_of_import_free_hops() {
+            let cases: [(&Source, &str); 2] =
+                [(&GLOB_HOP_ROOT, "glob"), (&NAMED_HOP_ROOT, "named")];
+            for (root, src_name) in cases {
+                let assembled = root
+                    .assemble_ir()
+                    .unwrap_or_else(|e| panic!("{src_name} hop assembly failed: {e}"));
+                let names = item_names(&assembled);
+                assert!(
+                    names.contains(&"ASSEMBLED_CONST".to_string()),
+                    "a pub {src_name} re-export edge must fold its source's chunk, got: {names:?}"
+                );
+                let text = root
+                    .wgsl_source()
+                    .unwrap_or_else(|e| panic!("{src_name} hop text assembly failed: {e}"));
+                assert!(
+                    text.contains("ASSEMBLED_CONST"),
+                    "a pub {src_name} re-export edge must fold its source's chunk, got:\n{text}"
+                );
+            }
+        }
+
+        // --- Named re-export harvest scoping (wgsl-rs#114 review) ---
+
+        /// A chunk whose fn returns a plain struct named `hidden` — a
+        /// template NAMED_DEFS defines but the prelude does NOT
+        /// re-export. Because the named edge exposes exactly one name,
+        /// `hidden` must NOT be harvested, or the #237 check would
+        /// misclassify this reference as an unresolved generic.
+        fn local_hidden_ir() -> ir::Module {
+            ir::Module {
+                name: "local_hidden_root",
+                items: vec![ir::Item::Fn(ir::ItemFn {
+                    type_params: vec![],
+                    const_params: vec![],
+                    fn_attrs: ir::FnAttrs::None,
+                    name: "uses_local_hidden".to_string().into(),
+                    inputs: vec![],
+                    return_type: ir::ReturnType::Type {
+                        annotation: ir::ReturnTypeAnnotation::None,
+                        ty: ir::Type::Struct {
+                            name: "hidden".to_string(),
+                            type_args: vec![],
+                        },
+                    },
+                    block: ir::Block { stmts: vec![] },
+                    attrs: vec![],
+                })],
+                attrs: vec![],
+            }
+        }
+        static LOCAL_HIDDEN_ROOT: Source = Source {
+            id: 282,
+            name: "local_hidden_root",
+            imports: &[&NAMED_PRELUDE],
+            reexports: &NO_SOURCES,
+            named_exports: &NO_NAMED,
+            ir_constructor: local_hidden_ir,
+            templates: &[],
+            instantiations: &NO_INSTS,
+            module_type_params: &NO_TYPE_PARAMS,
+        };
+
+        #[test]
+        fn named_reexports_do_not_harvest_unexported_templates() {
+            // Negative: `hidden` is not nameable through the named
+            // edge, so the #237 check must not flag the chunk's
+            // reference to it — on either assembly path.
+            let assembled = LOCAL_HIDDEN_ROOT
+                .assemble_ir()
+                .expect("an unexported template name must not trip the #237 check");
+            let names = item_names(&assembled);
+            assert!(
+                names.contains(&"uses_local_hidden".to_string()),
+                "the chunk must assemble, got: {names:?}"
+            );
+            LOCAL_HIDDEN_ROOT
+                .wgsl_source()
+                .expect("the text path must not flag the reference either");
+
+            // Positive control: a chunk referencing the EXPORTED name
+            // `id` without instantiating it must still be flagged —
+            // the exported name IS harvested through the named edge.
+            fn unresolved_id_ir() -> ir::Module {
+                ir::Module {
+                    name: "unresolved_id_root",
+                    items: vec![ir::Item::Fn(ir::ItemFn {
+                        type_params: vec![],
+                        const_params: vec![],
+                        fn_attrs: ir::FnAttrs::None,
+                        name: "calls_id".to_string().into(),
+                        inputs: vec![],
+                        return_type: ir::ReturnType::Default,
+                        block: ir::Block {
+                            stmts: vec![ir::Stmt::Expr {
+                                expr: ir::Expr::FnCall {
+                                    path: ir::FnPath::Ident("id".to_string()),
+                                    type_args: vec![],
+                                    params: vec![],
+                                },
+                                has_semi: true,
+                            }],
+                        },
+                        attrs: vec![],
+                    })],
+                    attrs: vec![],
+                }
+            }
+            static UNRESOLVED_ID_ROOT: Source = Source {
+                id: 283,
+                name: "unresolved_id_root",
+                imports: &[&NAMED_PRELUDE],
+                reexports: &NO_SOURCES,
+                named_exports: &NO_NAMED,
+                ir_constructor: unresolved_id_ir,
+                templates: &[],
+                instantiations: &NO_INSTS,
+                module_type_params: &NO_TYPE_PARAMS,
+            };
+            let err = UNRESOLVED_ID_ROOT.assemble_ir().unwrap_err();
+            match &err {
+                crate::SourceError::UnresolvedTemplateRef { template_name, .. } => {
+                    assert_eq!(template_name, "id");
+                }
+                other => panic!("expected UnresolvedTemplateRef, got {other:?}"),
+            }
         }
     }
 

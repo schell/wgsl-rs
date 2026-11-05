@@ -1827,12 +1827,17 @@ fn collect_cross_module_instantiations(
 ) -> Result<Vec<CrossModuleInstantiation>, crate::parse::Error> {
     // Build the import path lookup: for each use statement, record the
     // paths so we can attribute unresolved calls to an imported module.
+    // Named imports contribute their module half too — a named import
+    // folds the same whole source as a glob, so its module is as valid
+    // an instantiation candidate as a glob's (wgsl-rs#114).
     let import_paths: Vec<syn::Path> = module
         .content
         .iter()
         .filter_map(|item| {
             if let Item::Use(use_item) = item {
-                Some(use_item.modules.clone())
+                let mut paths = use_item.modules.clone();
+                paths.extend(use_item.named.iter().map(|(path, _ident)| path.clone()));
+                Some(paths)
             } else {
                 None
             }

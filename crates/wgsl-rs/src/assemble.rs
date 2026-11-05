@@ -98,6 +98,23 @@ fn collect_ir_items<'a>(
         }
     }
 
+    // Public re-export edges fold the same way: downstream modules can
+    // name items through them (glob re-exports expose every name of
+    // their source, named re-exports exactly one), so the re-exported
+    // chunks must be present in the assembly. Without this, an item
+    // re-exported through a hop would reference a definition that never
+    // lands (wgsl-rs#114).
+    for reexport in source.reexports {
+        if visited.insert(reexport.id) {
+            collect_ir_items(reexport, visited, seen, emitted_names, out)?;
+        }
+    }
+    for named in source.named_exports {
+        if visited.insert(named.source.id) {
+            collect_ir_items(named.source, visited, seen, emitted_names, out)?;
+        }
+    }
+
     // This source's own items. Flag references to generic templates
     // that were never resolved (wgsl-rs#237), mirroring the text path's
     // per-chunk check: the name set is the names *this module* can

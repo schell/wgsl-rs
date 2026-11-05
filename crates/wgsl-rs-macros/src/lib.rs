@@ -771,15 +771,27 @@ fn gen_wgsl_module(
         source_descriptor.push('\0');
         source_descriptor.push_str(&import.to_string());
     }
-    // Re-export edges are deliberately NOT part of the descriptor: a
+    // Glob re-export edges are deliberately NOT part of the descriptor: a
     // `use` flipping to `pub use` changes only what downstream modules
     // may resolve through this one, not this module's own assembled
     // content (assembly concatenates every import either way), so the
     // id — and with it assembly dedup — must stay byte-stable
-    // (wgsl-rs#245). The same holds for named re-export entries: a
-    // named import and a glob of the same module fold identically, so
-    // their descriptors are identical too (wgsl-rs#114).
+    // (wgsl-rs#245).
     //
+    // Named re-export alias-table entries ARE part of the descriptor:
+    // two modules importing the same source can re-export different
+    // names (`pub use defs::Id;` vs `pub use defs::Hidden;`) and
+    // otherwise hash to one id — the id-keyed visited sets of the
+    // resolution and harvest walks would collapse the two modules and
+    // silently drop one alias, making downstream resolution depend on
+    // traversal order (wgsl-rs#114 review).
+    for (name, source) in named_exports {
+        source_descriptor.push('\0');
+        source_descriptor.push_str(name);
+        source_descriptor.push('\0');
+        source_descriptor.push_str(&source.to_string());
+    }
+
     // The named re-export alias-table entries, interpolated below.
     let named_export_names: Vec<&str> = named_exports
         .iter()
@@ -2205,5 +2217,62 @@ mod tests {
             private, reexported,
             "re-export edges must not be part of the module id descriptor"
         );
+    }
+
+    /// Two modules whose content differs only in WHICH name they
+    /// re-export must get distinct ids (wgsl-rs#114 review): the
+    /// id-keyed visited sets of the resolution and harvest walks would
+    /// otherwise collapse the two modules and silently drop one
+    /// alias, making downstream resolution depend on traversal order.
+    #[test]
+    fn module_id_distinguishes_named_exports() {
+        fn gen_module_id(named_exports: &[(String, proc_macro2::TokenStream)]) -> u64 {
+            let item_mod: syn::ItemMod = syn::parse_quote! {
+                mod m {
+                    use super::defs::*;
+
+                    pub fn f() -> u32 {
+                        1u32
+                    }
+                }
+            };
+            let mut wgsl_module = parse::ItemMod::try_from(&item_mod).unwrap();
+            let mono_result = monomorphize::run(&mut wgsl_module).unwrap();
+            monomorphize::resolve_assoc_types(&mut wgsl_module).unwrap();
+            let imports = vec![quote! { super::defs::WGSL_SOURCE }];
+            let tokens = gen_wgsl_module(
+                &wgsl_module.ident,
+                &syn::parse_quote! { wgsl_rs },
+                &imports,
+                &[],
+                named_exports,
+                &wgsl_module,
+                &mono_result,
+                &[],
+                &[],
+            )
+            .unwrap();
+            let src = tokens.to_string();
+            let marker = src
+                .find("id :")
+                .or_else(|| src.find("id:"))
+                .expect("emitted Source must contain an id field");
+            let digits: String = src[marker..]
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            digits.parse().expect("the id field is a u64 literal")
+        }
+
+        let defs = quote! { super::defs::WGSL_SOURCE };
+        let id_of_id = gen_module_id(&[("Id".to_string(), defs.clone())]);
+        let id_of_hidden = gen_module_id(&[("Hidden".to_string(), defs.clone())]);
+        assert_ne!(
+            id_of_id, id_of_hidden,
+            "two modules re-exporting different names from the same source must not share an id"
+        );
+        // Stability: the same named exports hash to the same id.
+        assert_eq!(id_of_id, gen_module_id(&[("Id".to_string(), defs)]));
     }
 }

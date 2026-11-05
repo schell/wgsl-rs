@@ -2176,7 +2176,16 @@ re-exporting a vertex entry to become a complete pipeline module).
    and the #237 harvest walk it name-matched — a named edge exposes
    exactly one name, where a glob edge (`reexports`) exposes every
    name of its source. Two hops exporting the same name from distinct
-   sources is a genuine `AmbiguousTemplate`, mirroring rustc.
+   sources is a genuine `AmbiguousTemplate`, mirroring rustc. Unlike
+   glob edges, named entries ARE part of the module-id descriptor:
+   two modules importing the same source but re-exporting different
+   names (`pub use defs::Id;` vs `pub use defs::Hidden;`) must not
+   share an id — the id-keyed visited sets of the resolution and
+   harvest walks would collapse the pair and silently drop one alias.
+   Glob edges keep the #245 exclusion: flipping a glob's visibility
+   still does not change the module's own assembled chunk, and a
+   named *import* (non-`pub`) still hashes identically to a glob of
+   the same module, because both fold the same assembly.
 
 3. **Assembly follows pub edges**: chunk folding walks `imports` (all
    edges, any visibility) *plus* the pub edges (`reexports` and
@@ -2192,6 +2201,13 @@ re-exporting a vertex entry to become a complete pipeline module).
    (`use path::{a, b};`) — separately tracked work; bare module
    imports (`use path;`) — namespaces do not transpile, only items
    do, and the diagnostic says which spellings to use instead.
+   Path-qualified bare module imports (`use super::defs;`) are
+   syntactically indistinguishable at macro time from item imports
+   (`use super::Item;` where the parent is a wgsl module), so the
+   item interpretation wins: the emitted edge targets the parent
+   module's source, which fails loudly (`WGSL_SOURCE` not found in
+   `super`) when the parent is not a wgsl module — the common case
+   for a namespace-import mistake.
 
 Binding-name collisions across imported sources keep today's
 behavior: WGSL redefinition at validation is the loud error

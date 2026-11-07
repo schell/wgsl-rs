@@ -19,12 +19,13 @@ The generated WGSL is emitted into `WGSL_SOURCE` for that module.
 
 ## Import Forms
 
-wgsl-rs supports two import spellings: glob imports of a whole module, and named imports of a single item:
+wgsl-rs supports glob imports of a whole module, named imports of a single item, and grouped imports of several at once:
 
 ```rust
 use wgsl_rs::std::*;                    // standard WGSL types and builtins
 use super::other_module::*;             // everything from another #[wgsl] module
 use super::other_module::specific_fn;   // one item, by name
+use super::other_module::{Const, Struct};   // several items, one statement
 ```
 
 `wgsl_rs::std` provides the scalar/vector/matrix types (`Vec2f`, `Vec3f`, `Vec4f`, `vec2f`, `Mat4f`, ...), builtins, and texture types.
@@ -117,7 +118,7 @@ pub mod shader {
 
 This also composes whole pipelines in a single module: a fragment module that re-exports a vertex entry by name carries both entries and both stages' bindings in one assembled source — one linkage, one pipeline layout, no runtime merge.
 
-Renaming (`use path::item as other;`) and grouped use statements (`use path::{a, b};`) are not transpiled; spell each import on its own line under its own name.
+Renaming (`use path::item as other;`) is not transpiled; spell each import under its own name. Grouped imports (`use path::{a, b};`) transpile exactly like the split form, which also makes them the fmt-proof spelling: rustfmt's `imports_granularity` regenerates the grouped form from consecutive same-root imports, so writing groups directly avoids `#[rustfmt::skip]`. A group shares its statement's visibility — `pub use path::{a, b};` re-exports both — so spell separate statements when individual imports need different visibility.
 
 If two different defining modules are both reachable through your imports and both define a template with the same name, instantiation fails with an ambiguity error. Import the defining module directly to pick one. Privately imported colliding definitions do not trigger this — they are not reachable through the hop.
 

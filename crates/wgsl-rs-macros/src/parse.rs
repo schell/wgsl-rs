@@ -6120,12 +6120,35 @@ impl TryFrom<&syn::UseTree> for ItemUse {
                 modules: vec![],
                 named: vec![],
             },
-            syn::UseTree::Group(use_group) => UnsupportedSnafu {
-                span: use_group.span(),
-                note: "Grouped use statements are not supported; split the group into one use \
-                       statement per path.",
+            syn::UseTree::Group(use_group) => {
+                // Grouped use statements (`use a::{b, c::*};`) flatten
+                // through the same conversion as their split form:
+                // each item's entries merge into one `ItemUse`, and the
+                // parent `Path` arms prefix them as usual (wgsl-rs#250).
+                // A group's entries all share the statement's
+                // visibility; per-item `pub` spellings are not
+                // supported — split the statement when imports need
+                // different visibility.
+                if use_group.items.is_empty() {
+                    return UnsupportedSnafu {
+                        span: use_group.span(),
+                        note: "An empty use group (`use path::{};`) imports nothing and does not \
+                               transpile; remove it or name the items to import.",
+                    }
+                    .fail()?;
+                }
+                let mut item_use = Self {
+                    vis: syn::Visibility::Inherited,
+                    modules: vec![],
+                    named: vec![],
+                };
+                for tree in use_group.items.iter() {
+                    let inner = Self::try_from(tree)?;
+                    item_use.modules.extend(inner.modules);
+                    item_use.named.extend(inner.named);
+                }
+                item_use
             }
-            .fail()?,
         })
     }
 }
@@ -12196,6 +12219,169 @@ mod test {
         assert!(
             reexports[0].contains("pub_helper"),
             "the pub use module must be the re-export edge, got: {reexports:?}"
+        );
+    }
+
+    /// Grouped use statements flatten into the same module/named entry
+    /// lists as their split form, recursively through nested groups
+    /// and mixed name/glob items (wgsl-rs#250).
+    #[test]
+    fn grouped_use_statements_flatten() {
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod m {
+                use super::defs::{Id, Helper};
+                use crate::{alpha::*, beta::thing};
+                use super::nested::{a::{b, c}, d::*};
+            }
+        };
+        let module = ItemMod::try_from(&item_mod).unwrap();
+        let uses: Vec<&ItemUse> = module
+            .content
+            .iter()
+            .filter_map(|item| match item {
+                Item::Use(u) => Some(u),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(uses.len(), 3);
+
+        // `use super::defs::{Id, Helper};` — two named entries with the
+        // full prefix.
+        assert_eq!(uses[0].modules.len(), 0);
+        let segs = |(path, ident): &(syn::Path, syn::Ident)| {
+            (
+                path.segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>(),
+                ident.to_string(),
+            )
+        };
+        assert_eq!(uses[0].named.len(), 2);
+        assert_eq!(
+            segs(&uses[0].named[0]),
+            (
+                vec!["super".to_string(), "defs".to_string()],
+                "Id".to_string()
+            )
+        );
+        assert_eq!(
+            segs(&uses[0].named[1]),
+            (
+                vec!["super".to_string(), "defs".to_string()],
+                "Helper".to_string()
+            )
+        );
+
+        // `use crate::{alpha::*, beta::thing};` — one glob entry and
+        // one named entry from the same group.
+        assert_eq!(uses[1].modules.len(), 1);
+        assert_eq!(
+            uses[1].modules[0]
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>(),
+            vec!["crate".to_string(), "alpha".to_string()]
+        );
+        assert_eq!(
+            segs(&uses[1].named[0]),
+            (
+                vec!["crate".to_string(), "beta".to_string()],
+                "thing".to_string()
+            )
+        );
+
+        // `use super::nested::{a::{b, c}, d::*};` — a nested group's
+        // names and a sibling glob, all prefixed correctly.
+        assert_eq!(uses[2].modules.len(), 1);
+        assert_eq!(
+            uses[2].modules[0]
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>(),
+            vec!["super".to_string(), "nested".to_string(), "d".to_string()]
+        );
+        assert_eq!(uses[2].named.len(), 2);
+        assert_eq!(
+            segs(&uses[2].named[0]),
+            (
+                vec!["super".to_string(), "nested".to_string(), "a".to_string()],
+                "b".to_string()
+            )
+        );
+        assert_eq!(
+            segs(&uses[2].named[1]),
+            (
+                vec!["super".to_string(), "nested".to_string(), "a".to_string()],
+                "c".to_string()
+            )
+        );
+    }
+
+    /// Renames inside groups stay rejected, and empty groups get the
+    /// targeted no-op diagnostic (wgsl-rs#250).
+    #[test]
+    fn group_rename_and_empty_group_are_rejected() {
+        for (src, expected) in [
+            (
+                "mod m { use super::defs::{Id as Alias, Helper}; }",
+                "Renaming in use statements",
+            ),
+            ("mod m { use super::defs::{}; }", "empty use group"),
+        ] {
+            let item: syn::Item = syn::parse_str(src).unwrap();
+            let err = match Item::try_from(&item) {
+                Ok(_) => panic!("expected an error for: {src}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                err.contains(expected),
+                "expected the {expected:?} diagnostic in: {err}"
+            );
+        }
+    }
+
+    /// A `pub use` group re-exports every named entry in it, at the
+    /// statement's visibility (wgsl-rs#250, #245).
+    #[test]
+    fn grouped_named_reexports_emit_alias_entries() {
+        let crate_path: syn::Path = syn::parse_quote! { wgsl_rs };
+        let item_mod: syn::ItemMod = syn::parse_quote! {
+            mod m {
+                pub use super::defs::{Id, Helper};
+            }
+        };
+        let mut module = ItemMod::try_from(&item_mod).unwrap();
+        let ImportEdges {
+            imports,
+            reexports,
+            named_exports,
+        } = module.imports_and_reexports(&crate_path);
+
+        // The group folds one edge per named entry — identical to the
+        // split form (`pub use defs::Id; pub use defs::Helper;`);
+        // downstream assembly dedups by source id.
+        assert_eq!(
+            imports.len(),
+            2,
+            "one fold edge per named entry, like the split form: {imports:?}"
+        );
+        assert!(
+            imports.iter().all(|ts| ts.to_string().contains("defs")),
+            "every entry carries the group's module path: {imports:?}"
+        );
+        assert!(
+            reexports.is_empty(),
+            "a named group produces no glob re-export edges"
+        );
+        let mut names: Vec<&str> = named_exports.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["Helper", "Id"],
+            "every named entry in a pub group becomes an alias-table entry"
         );
     }
 

@@ -309,14 +309,12 @@ pub mod pipeline_compose {
 
 /// Named imports (wgsl-rs#114): each imported name brings its module
 /// path into the assembly — whole-source folding, exactly like a glob.
+/// The grouped form is the rustfmt-proof spelling: with
+/// `imports_granularity = "crate"`, rustfmt re-groups consecutive
+/// same-root imports, so the split form regenerates into this one.
 #[wgsl]
 pub mod named_import_consumer {
-    // rustfmt would merge these into a grouped use, which the parser
-    // does not support (wgsl-rs#250).
-    #[rustfmt::skip]
-    use super::linkage_provider::QUAD_CCW;
-    #[rustfmt::skip]
-    use super::linkage_provider::Quad;
+    use super::linkage_provider::{QUAD_CCW, Quad};
     use wgsl_rs::std::*;
 
     #[fragment]
@@ -342,7 +340,6 @@ pub mod generic_named_defs {
 
 #[wgsl]
 pub mod generic_named_consumer {
-    #[rustfmt::skip]
     use super::generic_named_defs::id;
 
     pub fn use_id() -> f32 {
@@ -366,7 +363,6 @@ pub mod load_provider {
 
 #[wgsl]
 pub mod load_named_consumer {
-    #[rustfmt::skip]
     use super::load_provider::BUFFER;
     // The std glob also brings the linkage macros into scope.
     #[allow(unused_imports)]
@@ -375,6 +371,23 @@ pub mod load_named_consumer {
     pub fn read_first() -> f32 {
         let v = load!(BUFFER);
         v[0]
+    }
+}
+
+/// Grouped globs (wgsl-rs#250): the shape rustfmt regenerates from two
+/// sibling glob imports under `imports_granularity = "crate"` — the
+/// exact spelling the renderling port hit. One group folds both
+/// sources and the cross-module instantiation resolves through them.
+#[wgsl]
+pub mod grouped_glob_consumer {
+    use super::{generic_named_defs::*, linkage_provider::*};
+    use wgsl_rs::std::*;
+
+    pub fn combined() -> f32 {
+        let q: Quad = Quad {
+            uv: vec2f(0.0, 0.0),
+        };
+        q.uv.x + id::<f32>(2.0)
     }
 }
 
@@ -1594,7 +1607,10 @@ fn instantiate_wgsl_source_deshadows() {
 /// wgsl-rs#114 named imports: the imported names' definitions must be
 /// present in the assembled output (whole-source folding — a named
 /// import and a glob of the same module fold identically), and the
-/// result must validate.
+/// result must validate. The fixture's grouped spelling doubles as
+/// the wgsl-rs#250 regression: it is the form rustfmt produces under
+/// `imports_granularity = "crate"`, so it survives `cargo fmt`
+/// without `#[rustfmt::skip]`.
 #[test]
 fn named_imports_assemble_and_validate() {
     let source = named_import_consumer::instantiate().wgsl_source();
@@ -1607,6 +1623,22 @@ fn named_imports_assemble_and_validate() {
         "the named-imported struct's impl method must be folded in, got:\n{source}"
     );
     wgsl_rs::validate_wgsl_source(&source).expect("the named-import module must validate in naga");
+}
+
+/// wgsl-rs#250 grouped globs: one group folds both sources, and the
+/// cross-module instantiation resolves through the grouped edges.
+#[test]
+fn grouped_globs_assemble_and_instantiate() {
+    let source = grouped_glob_consumer::instantiate().wgsl_source();
+    assert!(
+        source.contains("upper_left"),
+        "the first grouped source must be folded in, got:\n{source}"
+    );
+    assert!(
+        source.contains("id_f32"),
+        "the cross-module instantiation must resolve through the group, got:\n{source}"
+    );
+    wgsl_rs::validate_wgsl_source(&source).expect("the grouped-glob module must validate in naga");
 }
 
 /// wgsl-rs#114 pipeline composition: a fragment module that re-exports

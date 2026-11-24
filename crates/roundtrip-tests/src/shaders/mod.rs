@@ -27,6 +27,10 @@
 //!   `bitcast_i32`, `bitcast_vec4f`, `bitcast_vec4u`
 //! - [`bool_vector_types`] — Bool vector types in type position (#169):
 //!   explicit `Vec2b`/`Vec3b`/`Vec4b` annotations render as `vecN<bool>`
+//! - [`bool_const_generics`] — Bool const generic feature flags: a template
+//!   entry point (`main<const APPLY_FOG: bool>`) instantiated both ways through
+//!   `wgsl-rs-linkage-wgpu`, with the entry point looked up by its un-mangled
+//!   Rust name
 //! - [`packing`] — Pack/unpack quantization: `pack4x8snorm`, `pack4x8unorm`,
 //!   `pack2x16snorm`, `pack2x16unorm`, `pack2x16float`, `unpack4x8snorm`,
 //!   `unpack4x8unorm`, `unpack2x16snorm`, `unpack2x16unorm`, `unpack2x16float`
@@ -78,6 +82,7 @@ pub mod atomic_operations;
 pub mod basic_numeric;
 pub mod bit_manipulation;
 pub mod bitcast;
+pub mod bool_const_generics;
 pub mod bool_vector_types;
 pub mod clamping;
 pub mod derivative_operations;
@@ -131,6 +136,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(load_macro::LoadMacroTest),
         Box::new(select_operations::SelectOperationsTest),
         Box::new(signed_const_generics::SignedConstGenericsTest),
+        Box::new(bool_const_generics::BoolConstGenericsTest),
         Box::new(matrix_operations::MatrixOperationsTest),
         Box::new(synchronization::SynchronizationTest),
         Box::new(atomic_operations::AtomicOperationsTest),

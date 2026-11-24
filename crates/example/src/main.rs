@@ -54,6 +54,15 @@ fn validate_and_print_source(module: &wgsl_rs::Source) {
                  WgpuLinkage)",
                 uninstantiated_source.module_type_params
             );
+            // Still show the un-instantiated source: the concrete parts are
+            // visible (e.g. mangled bool const-generic helpers like
+            // `fog_scale_true`), alongside the placeholders where
+            // instantiation substitutes values.
+            let ir = uninstantiated_source
+                .assemble_ir()
+                .expect("assemble IR for template source");
+            let raw = wgsl_rs::ir::render_module(&ir);
+            println!("un-instantiated source (contains placeholders):\n\n{raw}\n");
             return;
         }
         Err(e) => {

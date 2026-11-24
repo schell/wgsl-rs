@@ -35,6 +35,7 @@ pub const EXAMPLE_MODULES: &[&wgsl_rs::Source] = &[
     &discard_example::WGSL_SOURCE,
     &generic_functions::WGSL_SOURCE,
     &clamp_bounds::WGSL_SOURCE,
+    &feature_flag::WGSL_SOURCE,
     &trait_impl_example::WGSL_SOURCE,
     &qself_call_example::WGSL_SOURCE,
     &renderer_specialization::WGSL_SOURCE,
@@ -1678,6 +1679,64 @@ pub mod clamp_bounds {
 
     pub fn run_sum(value: i32) -> i32 {
         sum_to::<-4>(value)
+    }
+}
+
+/// Bool const generic parameters: compile-time feature flags. A `const B:
+/// bool` parameter substitutes as `true` / `false` literals at
+/// instantiation time, so flagged branches compile in or out with no
+/// runtime cost: the WGSL for `instantiate::<true>()` branches on `true`
+/// and the CPU world evaluates the same branch in Rust.
+///
+/// Mangled names spell the value (with the usual issue-#112 underscore
+/// escaping): `fog_scale::<true>` renders `_1fog_scale_true` and
+/// `fog_scale::<false>` renders `_1fog_scale_false`. The module below is
+/// a template (its compute entry point declares a bool const param), so
+/// it cannot be validated standalone; run `instantiate::<true>()` /
+/// `instantiate::<false>()` to get concrete modules, e.g. via
+/// `wgsl-rs-linkage-wgpu::analyze_ir_module`. Entry points keep their
+/// un-mangled Rust name in concrete instantiations, so linkage lookups
+/// use the plain name (`compute_entry("main")`).
+#[wgsl(validate_with_instantiation_types(APPLY_FOG_TRUE))]
+pub mod feature_flag {
+    use wgsl_rs::std::*;
+
+    pub const APPLY_FOG_TRUE: bool = true;
+
+    storage!(group(0), binding(0), INPUT: [u32; 4]);
+    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 4]);
+
+    /// The feature-flag helper: doubles `x` when the flag is on.
+    /// `fog_scale::<true>` renders `_1fog_scale_true` and
+    /// `fog_scale::<false>` renders `_1fog_scale_false`.
+    pub fn fog_scale<const APPLY_FOG: bool>(x: u32) -> u32 {
+        select(x, x * 2u32, APPLY_FOG)
+    }
+
+    /// A flagged branch: compiles to `if true { .. }` in the `true`
+    /// instantiation.
+    pub fn flagged<const APPLY_FOG: bool>(x: u32) -> u32 {
+        let mut result = x;
+        if APPLY_FOG {
+            result = x * 2u32;
+        }
+        result
+    }
+
+    /// The motivating shape: a feature-flag entry point. This makes the
+    /// module a template; `instantiate::<true>()` / `instantiate::<false>()`
+    /// produce concrete modules whose entry point is still named `main`.
+    #[compute]
+    #[workgroup_size(4)]
+    pub fn main<const APPLY_FOG: bool>(#[builtin(global_invocation_id)] global_id: Vec3u) {
+        let idx = global_id.x as usize;
+        let x = get!(INPUT)[idx];
+        get_mut!(OUTPUT)[idx] = vec4u(
+            flagged::<true>(x),
+            flagged::<false>(x),
+            fog_scale::<true>(x),
+            select(x, x + 1u32, APPLY_FOG),
+        );
     }
 }
 

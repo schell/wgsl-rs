@@ -1,7 +1,8 @@
-//! Const generic parameters are limited to `u32`, `usize`, and `i32`.
-//! Other integer types (`u8` here) have no WGSL analog: `u32`/`usize`
-//! cover array lengths, `i32` covers value-position constants, and i32
-//! is the only signed integer WGSL has.
+//! Const generic parameters are limited to `u32`, `usize`, `i32`, and
+//! `bool`. Other types (`u8` here) have no WGSL analog: `u32`/`usize`
+//! cover array lengths, `i32` covers value-position constants (i32 is
+//! the only signed integer WGSL has), and `bool` covers compile-time
+//! feature flags.
 
 use wgsl_rs::wgsl;
 

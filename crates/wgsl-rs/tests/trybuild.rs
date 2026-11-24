@@ -221,6 +221,12 @@ fn signed_const_generics_compile() {
 }
 
 #[test]
+fn bool_const_generics_compile() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/bool_const_generics.rs");
+}
+
+#[test]
 fn const_param_unsupported_type_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/const_param_unsupported_type.rs");
@@ -230,6 +236,12 @@ fn const_param_unsupported_type_is_rejected() {
 fn const_param_i32_in_array_length_is_rejected_by_rustc() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/const_param_i32_in_array_length.rs");
+}
+
+#[test]
+fn const_param_bool_in_array_length_is_rejected_by_rustc() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/const_param_bool_in_array_length.rs");
 }
 
 #[test]

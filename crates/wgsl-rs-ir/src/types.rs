@@ -479,6 +479,25 @@ pub enum Lit {
     },
 }
 
+/// A concrete const-generic value, the payload substituted for `const`
+/// generic parameters at monomorphization and instantiation time.
+///
+/// The value carries its kind because substitution happens in IR
+/// contexts where the declared const-param type is unknown: an `i64`
+/// 0/1 encoding could not decide between rendering `0`/`1` (integer)
+/// or `true`/`false` (bool), and an integer substituted into a boolean
+/// position would emit invalid WGSL (e.g. `if 0 {`). The substitution
+/// pass builds the literal from it: `Int` renders as an abstract-int
+/// literal (negative values parenthesized), `Bool` as [`Lit::Bool`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ConstValue {
+    /// An integer const value (`u32`, `usize`, and `i32` const params).
+    Int(i64),
+    /// A boolean const value (`bool` const params, compile-time feature
+    /// flags).
+    Bool(bool),
+}
+
 /// Binary operators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BinOp {

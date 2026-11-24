@@ -1,0 +1,15 @@
+error: the constant `B` is not of type `usize`
+  --> tests/ui/fail/const_param_bool_in_array_length.rs:15:36
+   |
+15 |     pub fn sum<const B: bool>(arr: [f32; B]) -> f32 {
+   |                                    ^^^^^^^^ expected `usize`, found `bool`
+   |
+   = note: the length of array `[f32; B]` must be type `usize`
+
+error: the constant `B` is not of type `usize`
+  --> tests/ui/fail/const_param_bool_in_array_length.rs:16:9
+   |
+16 |         arr[0]
+   |         ^^^ expected `usize`, found `bool`
+   |
+   = note: the length of array `[f32; B]` must be type `usize`

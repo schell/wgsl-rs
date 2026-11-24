@@ -9,7 +9,7 @@ Use a template module when the type of an entry point, a linkage binding, or a s
 A module becomes a template when **any** of the following appear:
 
 - An entry-point function with type parameters.
-- An entry-point function with const parameters (`const N: usize`, `const N: u32`, or `const N: i32`).
+- An entry-point function with const parameters (`const N: usize`, `const N: u32`, `const N: i32`, or `const B: bool`).
 - A linkage macro (`uniform!`, `storage!`, ...) whose declared type uses `impl Trait`.
 - A `get!(VAR, T)` accessor that introduces a fresh type variable bound to a linkage variable.
 
@@ -101,7 +101,7 @@ Templates support multiple type parameters and transitive generic calls just lik
 
 ## Const Parameters on Entry Points
 
-Entry points can also take `const N: usize`, `const N: u32`, or `const N: i32` parameters. The module becomes a template and is instantiated with a concrete integer:
+Entry points can also take `const N: usize`, `const N: u32`, `const N: i32`, or `const B: bool` parameters. The module becomes a template and is instantiated with a concrete value (integer or bool):
 
 ```rust
 #[wgsl(skip_validation)]
@@ -124,3 +124,5 @@ let module: ir::Module = entry_point::instantiate::<4>();
 ```
 
 Const params use a separate positional namespace (`{fn}_c{i}`) so type and const params on the same entry point don't collide. The `instantiate::<...>()` turbofish accepts both type and const arguments in the order they're declared on the entry point.
+
+A `bool` const param on an entry point instantiates the same way, with the flag value: `entry_point::instantiate::<true>()`. This is the compile-time feature-flag pattern; entry points keep their un-mangled Rust name in concrete instantiations, so linkage lookups use the plain name. See [Bool const parameters](generic-functions.md#bool-const-parameters).

@@ -44,6 +44,14 @@ pub fn emit_type(ir_path: &TokenStream, t: &ir::Type) -> TokenStream {
     ty(ir_path, t)
 }
 
+/// Emit an expression that constructs an `ir::ConstValue` at runtime.
+pub fn emit_const_value(ir_path: &TokenStream, value: ir::ConstValue) -> TokenStream {
+    match value {
+        ir::ConstValue::Int(n) => quote! { #ir_path::ConstValue::Int(#n) },
+        ir::ConstValue::Bool(b) => quote! { #ir_path::ConstValue::Bool(#b) },
+    }
+}
+
 // ===== Items =====
 
 pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {

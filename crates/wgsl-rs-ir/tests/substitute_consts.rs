@@ -1,13 +1,14 @@
 //! Unit tests for const-generic substitution (`substitute_consts`) — the
 //! const parallel of `substitute_types` (see smoke.rs for the type side).
 //!
-//! Const values are `i64` (signed const generics): non-negative values
-//! must render byte-identically to the pre-signed output, and negative
-//! values must render as parenthesized literals so they are unambiguous
-//! in every expression context. A negative value must never reach an
-//! array-length position (rustc guards that path for macro-authored
-//! code by requiring array sizes to evaluate to `usize`; the defensive
-//! check exists for hand-rolled IR).
+//! Const values are `ConstValue`. `Int` covers signed const generics:
+//! non-negative values must render byte-identically to the pre-signed
+//! output, and negative values must render as parenthesized literals so
+//! they are unambiguous in every expression context. `Bool` covers
+//! compile-time feature flags, rendering as `true` / `false`. Neither a
+//! negative value nor a bool may reach an array-length position (rustc
+//! guards that path for macro-authored code by requiring array sizes to
+//! evaluate to `usize`; the defensive check exists for hand-rolled IR).
 
 use std::collections::HashMap;
 
@@ -50,8 +51,20 @@ fn fn_with_body(body_stmts: Vec<Stmt>, const_params: &[&str]) -> Module {
     }
 }
 
-fn consts_of(pairs: &[(&str, i64)]) -> HashMap<String, i64> {
-    pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+/// Integer const map helper: each pair becomes `ConstValue::Int`.
+fn consts_of(pairs: &[(&str, i64)]) -> HashMap<String, ConstValue> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), ConstValue::Int(*v)))
+        .collect()
+}
+
+/// Bool const map helper: each pair becomes `ConstValue::Bool`.
+fn bool_consts_of(pairs: &[(&str, bool)]) -> HashMap<String, ConstValue> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), ConstValue::Bool(*v)))
+        .collect()
 }
 
 #[test]
@@ -178,4 +191,77 @@ fn positive_const_in_array_length_substitutes() {
     substitute_consts(&mut m, &consts_of(&[("N", 4)]));
     let wgsl = render_module(&m);
     assert!(wgsl.contains("array<f32, 4>"), "got: {wgsl}");
+}
+
+#[test]
+fn bool_const_substitutes_true_and_false_literals() {
+    // The motivating case: a compile-time feature flag. `ConstValue::Bool`
+    // substitutes as `Lit::Bool`, the same node a written `true` /
+    // `false` parses to, so the flag branch renders valid WGSL and the
+    // two worlds agree (CPU Rust evaluates the same branch).
+    let mk = |flag: bool| {
+        let body = vec![Stmt::If(StmtIf {
+            condition: ident("APPLY_FOG"),
+            then_block: Block {
+                stmts: vec![Stmt::Return(Some(ident("x")))],
+            },
+            else_branch: None,
+        })];
+        let mut m = fn_with_body(body, &["APPLY_FOG"]);
+        substitute_consts(&mut m, &bool_consts_of(&[("APPLY_FOG", flag)]));
+        render_module(&m)
+    };
+    let true_wgsl = mk(true);
+    assert!(true_wgsl.contains("if true {"), "got: {true_wgsl}");
+    assert!(!true_wgsl.contains("APPLY_FOG"), "got: {true_wgsl}");
+    let false_wgsl = mk(false);
+    assert!(false_wgsl.contains("if false {"), "got: {false_wgsl}");
+}
+
+#[test]
+fn bool_const_in_boolean_expression_renders_parenthesized() {
+    // `B && x` with B = true renders `(true && x)`: the same
+    // parenthesization discipline as the integer substitution paths.
+    let body = vec![Stmt::Return(Some(Expr::Binary {
+        lhs: Box::new(ident("B")),
+        op: BinOp::And,
+        rhs: Box::new(ident("x")),
+    }))];
+    let mut m = fn_with_body(body, &["B"]);
+    substitute_consts(&mut m, &bool_consts_of(&[("B", true)]));
+    let wgsl = render_module(&m);
+    assert!(wgsl.contains("return (true && x);"), "got: {wgsl}");
+}
+
+#[test]
+#[should_panic(expected = "bool const generic value substituted into an array length")]
+fn bool_const_in_array_length_panics() {
+    // Unreachable through wgsl-rs macros for the same reason as the
+    // negative-length case: rustc requires array sizes to evaluate to
+    // `usize`. The defensive check fires for hand-rolled IR before
+    // invalid WGSL (`array<f32, true>`) renders.
+    let mut m = Module {
+        name: "t",
+        items: vec![Item::Fn(ItemFn {
+            type_params: vec![],
+            const_params: vec!["N".to_string()],
+            fn_attrs: FnAttrs::None,
+            name: "f".to_string().into(),
+            inputs: vec![FnArg {
+                inter_stage_io: vec![],
+                name: "a".to_string(),
+                ty: Type::Array {
+                    elem: Box::new(Type::Scalar(ScalarType::F32)),
+                    len: ident("N"),
+                },
+                attrs: vec![],
+            }],
+            return_type: ReturnType::Default,
+            block: Block { stmts: vec![] },
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    };
+    substitute_consts(&mut m, &bool_consts_of(&[("N", true)]));
+    let _ = render_module(&m);
 }

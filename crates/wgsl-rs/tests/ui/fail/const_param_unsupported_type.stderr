@@ -1,6 +1,6 @@
 error: Parsing error: 'Encountered unsupported Rust syntax:
-       only `u32`, `usize`, and `i32` const generic parameters are supported in WGSL.'
-  --> tests/ui/fail/const_param_unsupported_type.rs:10:32
+       only `u32`, `usize`, `i32`, and `bool` const generic parameters are supported in WGSL.'
+  --> tests/ui/fail/const_param_unsupported_type.rs:11:32
    |
-10 |     pub fn scale<const FACTOR: u8>(x: u32) -> u32 {
+11 |     pub fn scale<const FACTOR: u8>(x: u32) -> u32 {
    |                                ^^

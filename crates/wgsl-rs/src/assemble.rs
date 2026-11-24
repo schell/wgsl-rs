@@ -188,7 +188,7 @@ fn collect_ir_instantiation<'a>(
     mangled_type_args: &[String],
     mangled_const_args: &[String],
     type_args: &[ir::Type],
-    const_args: &[i64],
+    const_args: &[ir::ConstValue],
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     emitted_names: &mut HashSet<String>,
     out: &mut Vec<ir::Item>,

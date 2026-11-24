@@ -231,9 +231,10 @@ pub struct TemplateInstantiation {
     /// Identifier-safe mangled type argument names, used for deduplication
     /// keys and the `seen` set (e.g. `"array_f32_4"`, `"ptr_function_f32"`).
     pub mangled_type_args: &'static [&'static str],
-    /// Constructor that builds the concrete `i64` const values to
-    /// substitute for the template's const parameters.
-    pub const_args_constructor: fn() -> Vec<i64>,
+    /// Constructor that builds the concrete const values to substitute
+    /// for the template's const parameters, integer or bool (see
+    /// [`ir::ConstValue`]).
+    pub const_args_constructor: fn() -> Vec<ir::ConstValue>,
     /// Identifier-safe mangled const argument names (e.g. `["4"]`).
     pub mangled_const_args: &'static [&'static str],
 }
@@ -571,7 +572,7 @@ fn instantiate_template_into<'a>(
     mangled_type_args: &[String],
     type_args: &[ir::Type],
     mangled_const_args: &[String],
-    const_args: &[i64],
+    const_args: &[ir::ConstValue],
     out: &mut String,
     seen: &mut HashSet<(u64, String, Vec<String>, Vec<String>)>,
     needs_tier1: &mut bool,
@@ -807,17 +808,17 @@ pub(crate) fn resolve_template<'a>(
 pub(crate) fn build_instance_items(
     template: &GenericTemplate,
     type_args: &[ir::Type],
-    const_args: &[i64],
+    const_args: &[ir::ConstValue],
     mangled_type_args: &[String],
     mangled_const_args: &[String],
 ) -> Vec<ir::Item> {
     // Build substitution maps: type params -> concrete types, const
-    // params -> concrete i64 values.
+    // params -> concrete const values (integer or bool).
     let mut subst: HashMap<String, ir::Type> = HashMap::new();
     for (param, arg) in template.type_params.iter().zip(type_args.iter()) {
         subst.insert((*param).to_string(), arg.clone());
     }
-    let mut consts: HashMap<String, i64> = HashMap::new();
+    let mut consts: HashMap<String, ir::ConstValue> = HashMap::new();
     for (param, arg) in template.const_params.iter().zip(const_args.iter()) {
         consts.insert((*param).to_string(), *arg);
     }
@@ -861,7 +862,7 @@ fn instance_type_imports(
     sources: &[&Source],
     template_name: &str,
     type_args: &[ir::Type],
-    const_args: &[i64],
+    const_args: &[ir::ConstValue],
     mangled_type_args: &[String],
     mangled_const_args: &[String],
 ) -> ir::TypeImports {
@@ -2812,7 +2813,7 @@ mod test {
             vec![ir::Type::Scalar(ir::ScalarType::F32)]
         }
 
-        fn no_const_args() -> Vec<i64> {
+        fn no_const_args() -> Vec<ir::ConstValue> {
             vec![]
         }
 

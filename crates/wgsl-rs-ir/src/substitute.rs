@@ -7,7 +7,8 @@
 //!
 //! [`substitute_consts`] is the parallel pass for `const` generic
 //! parameters: it replaces every `Expr::Ident(name)` referencing a const
-//! param with a concrete `Expr::Lit` integer literal.
+//! param with a concrete literal. [`ConstValue::Int`] values substitute
+//! as integer literals, [`ConstValue::Bool`] values as `true` / `false`.
 
 use std::{
     borrow::Cow,
@@ -33,14 +34,16 @@ pub fn substitute_items(items: &mut [Item], subst: &HashMap<String, Type>) {
 }
 
 /// Substitute every const-param reference (`Expr::Ident(name)`) in
-/// `module` whose name appears in `consts` with a concrete
-/// `Expr::Lit(Lit::Int { ... })`. Mutates in place.
+/// `module` whose name appears in `consts` with a concrete literal.
+/// Mutates in place.
 ///
 /// This is the const-generic parallel of [`substitute_types`]. It walks
 /// the same IR tree but rewrites array length expressions (and any other
-/// `Expr::Ident` naming a const param) to integer literals. The two passes
+/// `Expr::Ident` naming a const param) to the concrete literal:
+/// [`ConstValue::Int`] substitutes as an integer literal, and
+/// [`ConstValue::Bool`] as `Expr::Lit(Lit::Bool(..))`. The two passes
 /// are independent and can be run in either order.
-pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, i64>) {
+pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, ConstValue>) {
     for item in &mut module.items {
         sub_item_const(item, consts);
     }
@@ -48,7 +51,7 @@ pub fn substitute_consts(module: &mut Module, consts: &HashMap<String, i64>) {
 
 /// Like [`substitute_consts`] but over a slice of items (e.g. a generic
 /// template's body, as used by the cross-module template machinery).
-pub fn substitute_consts_in_items(items: &mut [Item], consts: &HashMap<String, i64>) {
+pub fn substitute_consts_in_items(items: &mut [Item], consts: &HashMap<String, ConstValue>) {
     for item in items {
         sub_item_const(item, consts);
     }
@@ -630,12 +633,12 @@ fn sub_if(i: &mut StmtIf, s: &HashMap<String, Type>) {
 // ===== Const substitution =====
 //
 // Parallel to the type substitution walkers above, but replaces
-// `Expr::Ident(name)` with `Expr::Lit(Lit::Int { ... })` when `name`
-// names a const generic parameter. The substitution target is always a
-// bare ident because stable Rust only allows bare idents (or literals)
-// as const generic arguments in type position.
+// `Expr::Ident(name)` with the literal built from a [`ConstValue`] when
+// `name` names a const generic parameter. The substitution target is
+// always a bare ident because stable Rust only allows bare idents (or
+// literals) as const generic arguments in type position.
 
-fn sub_item_const(item: &mut Item, consts: &HashMap<String, i64>) {
+fn sub_item_const(item: &mut Item, consts: &HashMap<String, ConstValue>) {
     match item {
         Item::Const(c) => {
             sub_type_const(&mut c.ty, consts);
@@ -668,7 +671,7 @@ fn sub_item_const(item: &mut Item, consts: &HashMap<String, i64>) {
     }
 }
 
-fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, i64>) {
+fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, ConstValue>) {
     for arg in &mut f.inputs {
         sub_type_const(&mut arg.ty, consts);
     }
@@ -678,7 +681,7 @@ fn sub_fn_const(f: &mut ItemFn, consts: &HashMap<String, i64>) {
     sub_block_const(&mut f.block, consts);
 }
 
-fn sub_type_const(ty: &mut Type, consts: &HashMap<String, i64>) {
+fn sub_type_const(ty: &mut Type, consts: &HashMap<String, ConstValue>) {
     match ty {
         Type::Scalar(_)
         | Type::Sampler
@@ -708,53 +711,70 @@ fn sub_type_const(ty: &mut Type, consts: &HashMap<String, i64>) {
 
 /// Build the IR expression for a concrete const-generic value.
 ///
-/// Non-negative values render as a bare abstract-int literal —
+/// `Int`: non-negative values render as a bare abstract-int literal,
 /// byte-identical to the output before signed const support. Negative
 /// values are wrapped in parentheses so they stay unambiguous in every
 /// expression context (e.g. `2 - (-4)` rather than `2 - -4`, and
 /// `-(-4)` rather than `--4`).
-fn const_value_expr(n: i64) -> Expr {
-    let lit = Expr::Lit(Lit::Int {
-        digits: n.unsigned_abs().to_string(),
-        suffix: String::new(),
-    });
-    if n < 0 {
-        Expr::Paren(Box::new(Expr::Unary {
-            op: UnOp::Neg,
-            expr: Box::new(lit),
-        }))
-    } else {
-        lit
+///
+/// `Bool`: renders as `Lit::Bool`, the same node a written `true` /
+/// `false` literal parses to, so a feature-flag branch substitutes
+/// into valid WGSL in boolean positions (`if true { .. }`).
+fn const_value_expr(value: ConstValue) -> Expr {
+    match value {
+        ConstValue::Int(n) => {
+            let lit = Expr::Lit(Lit::Int {
+                digits: n.unsigned_abs().to_string(),
+                suffix: String::new(),
+            });
+            if n < 0 {
+                Expr::Paren(Box::new(Expr::Unary {
+                    op: UnOp::Neg,
+                    expr: Box::new(lit),
+                }))
+            } else {
+                lit
+            }
+        }
+        ConstValue::Bool(b) => Expr::Lit(Lit::Bool(b)),
     }
 }
 
-/// Guard an array-length position against a negative const value: a
-/// negative length is never valid in WGSL. This is unreachable through
-/// wgsl-rs macros — rustc rejects non-`usize` array lengths, so an
-/// `i32` const param can't occupy this position in valid Rust — but
-/// hand-rolled IR (extensions) could produce it, and the failure would
-/// otherwise surface as an opaque WGSL validation error far from the
-/// cause. Zero-length arrays are deliberately not guarded here: they
-/// are legal Rust (`[f32; 0]`) and reachable through the macro, so
-/// WGSL validation reports them like any other invalid length.
-fn expect_nonneg_const(len: &Expr, consts: &HashMap<String, i64>) {
+/// Guard an array-length position against const values that can never
+/// form a valid WGSL length: negative integers and bools. Both are
+/// unreachable through wgsl-rs macros, because rustc requires array
+/// sizes to evaluate to `usize` (so neither an `i32` nor a `bool` const
+/// param can occupy this position in valid Rust), but hand-rolled IR
+/// (extensions) could produce them, and the failure would otherwise
+/// surface as an opaque WGSL validation error far from the cause.
+/// Zero-length arrays are deliberately not guarded here: they are
+/// legal Rust (`[f32; 0]`) and reachable through the macro, so WGSL
+/// validation reports them like any other invalid length.
+fn expect_nonneg_const(len: &Expr, consts: &HashMap<String, ConstValue>) {
     if let Expr::Ident(name) = len
-        && let Some(&n) = consts.get(name)
-        && n < 0
+        && let Some(&value) = consts.get(name)
     {
-        panic!(
-            "negative const generic value {n} substituted into an array length; negative lengths \
-             are never valid (unreachable through wgsl-rs macros, which only allow `usize` array \
-             lengths; this indicates hand-rolled IR)"
-        );
+        match value {
+            ConstValue::Int(n) if n < 0 => panic!(
+                "negative const generic value {n} substituted into an array length; negative \
+                 lengths are never valid (unreachable through wgsl-rs macros, which only allow \
+                 `usize` array lengths; this indicates hand-rolled IR)"
+            ),
+            ConstValue::Bool(_) => panic!(
+                "bool const generic value substituted into an array length; bool lengths are \
+                 never valid (unreachable through wgsl-rs macros, which only allow `usize` array \
+                 lengths; this indicates hand-rolled IR)"
+            ),
+            ConstValue::Int(_) => {}
+        }
     }
 }
 
-fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, i64>) {
+fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, ConstValue>) {
     match e {
         Expr::Ident(name) => {
-            if let Some(&n) = consts.get(name) {
-                *e = const_value_expr(n);
+            if let Some(&value) = consts.get(name) {
+                *e = const_value_expr(value);
             }
         }
         Expr::Lit(_) | Expr::TypePath { .. } => {}
@@ -828,13 +848,13 @@ fn sub_expr_const(e: &mut Expr, consts: &HashMap<String, i64>) {
     }
 }
 
-fn sub_block_const(b: &mut Block, consts: &HashMap<String, i64>) {
+fn sub_block_const(b: &mut Block, consts: &HashMap<String, ConstValue>) {
     for stmt in &mut b.stmts {
         sub_stmt_const(stmt, consts);
     }
 }
 
-fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, i64>) {
+fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, ConstValue>) {
     match st {
         Stmt::Local(l) => {
             if let Some(t) = &mut l.ty {
@@ -906,7 +926,7 @@ fn sub_stmt_const(st: &mut Stmt, consts: &HashMap<String, i64>) {
     }
 }
 
-fn sub_if_const(i: &mut StmtIf, consts: &HashMap<String, i64>) {
+fn sub_if_const(i: &mut StmtIf, consts: &HashMap<String, ConstValue>) {
     sub_expr_const(&mut i.condition, consts);
     sub_block_const(&mut i.then_block, consts);
     if let Some(eb) = &mut i.else_branch {

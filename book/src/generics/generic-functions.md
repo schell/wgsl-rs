@@ -74,7 +74,7 @@ A call `mix::<f32, u32>(x, y)` produces `mix_f32_u32`.
 
 ## Const Generic Parameters
 
-Functions can also take `const` generic parameters of type `u32`, `usize`, or `i32`. `u32`/`usize` const params are used as array lengths; `i32` const params are for value-position constants like internal min/max clamps (see [Signed const parameters](#signed-i32-const-parameters) below). The const param is substituted with a concrete integer literal at monomorphization time:
+Functions can also take `const` generic parameters of type `u32`, `usize`, `i32`, or `bool`. `u32`/`usize` const params are used as array lengths; `i32` const params are for value-position constants like internal min/max clamps (see [Signed const parameters](#signed-i32-const-parameters) below); `bool` const params are compile-time feature flags (see [Bool const parameters](#bool-const-parameters) below). The const param is substituted with a concrete literal at monomorphization time:
 
 ```rust
 pub fn sum_n<const N: usize>(arr: [u32; N]) -> u32 {
@@ -115,6 +115,31 @@ Three things to know about negative values:
 3. **Value positions only.** An `i32` const param can never appear in an array length or index: Rust requires array sizes to evaluate to `usize`, so rustc rejects that code before wgsl-rs is involved at all. The same applies to switch case selectors (`NEG => ...`), which rustc refuses (E0158). So an `i32` const param is confined to ordinary value expressions by construction — no extra rules to remember.
 
 See the `clamp_bounds` example module (`cargo run -p example -- source clamp_bounds`).
+
+## Bool const parameters
+
+`bool` const params are compile-time feature flags. Instead of passing a runtime argument and branching on it in every invocation, the flag is chosen at instantiation time and the unused branch is never shipped to the GPU:
+
+```rust
+use wgsl_rs::std::*;
+
+pub fn shade<const APPLY_FOG: bool>(c: f32) -> f32 {
+    select(c, c * 0.5, APPLY_FOG)
+}
+
+pub fn shaded(c: f32) -> f32 {
+    shade::<true>(c)
+}
+```
+
+`shade::<true>` produces the WGSL function `shade_true` with the flag replaced by the literal `true` throughout (and `shade::<false>` produces `shade_false`); mangled names spell the value. The flag can also drive an `if APPLY_FOG { .. }` branch: the `true` instantiation renders `if true { .. }`, and the CPU world evaluates the identical branch in Rust, so the two worlds agree by construction.
+
+Two things to know:
+
+1. **Entry points.** A `bool` const param on an entry point makes the module a template; instantiate it with `instantiate::<true>()` / `instantiate::<false>()`. Entry points keep their un-mangled Rust name in concrete instantiations, so linkage lookups use the plain name (`compute_entry("main")`).
+2. **Value positions only.** A `bool` const param can never appear in an array length or index: Rust requires array sizes to evaluate to `usize`, so rustc rejects that code before wgsl-rs is involved at all.
+
+See the `feature_flag` example module (`cargo run -p example -- source feature_flag`).
 
 ## Trait Bounds are Rust-Only
 

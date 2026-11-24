@@ -23,8 +23,8 @@ below covers the exact forms that work.
 - All binary, unary, and compound assignment operators
 - Arrays
 - Generic functions and generic structs (monomorphized)
-- Const generic parameters (`const N: usize` / `const N: u32` / `const N: i32`) on functions,
-  structs, impl blocks, and template entry points
+- Const generic parameters (`const N: usize` / `const N: u32` / `const N: i32` / `const B: bool`)
+  on functions, structs, impl blocks, and template entry points
 - Direct QSelf calls (`<T>::method()`, e.g. `<[u32; 4]>::zero()`)
 
 ## Traits

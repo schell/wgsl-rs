@@ -489,7 +489,7 @@ pub enum Lit {
 /// position would emit invalid WGSL (e.g. `if 0 {`). The substitution
 /// pass builds the literal from it: `Int` renders as an abstract-int
 /// literal (negative values parenthesized), `Bool` as [`Lit::Bool`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConstValue {
     /// An integer const value (`u32`, `usize`, and `i32` const params).
     Int(i64),

@@ -83,7 +83,7 @@ struct EntryPointSlot {
 }
 
 /// An entry-point const-parameter slot. Each supported const parameter
-/// (`const N: u32`, `usize`, or `i32`) of each entry point function
+/// (`const N: u32`, `usize`, `i32`, or `bool`) of each entry point function
 /// becomes a generic const parameter on `instantiate`. Const params use a
 /// separate positional namespace (`{fn}_c{i}`) from type params
 /// (`{fn}_{i}`) so they don't collide.
@@ -96,7 +96,7 @@ struct EntryPointConstSlot {
     /// The parent function's name (for diagnostics).
     #[allow(dead_code)]
     fn_name: String,
-    /// The declared const-param type (`u32`, `usize`, or `i32`),
+    /// The declared const-param type (`u32`, `usize`, `i32`, or `bool`),
     /// replayed verbatim on `instantiate` so rustc type-checks
     /// instantiation values at the call site.
     ty: syn::Type,
@@ -171,8 +171,8 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             let upper_cp = cp.to_string().to_uppercase();
             let upper_fn = fn_name_str.to_uppercase();
             let name = format_ident!("{}_C{}_{}", upper_cp, i, upper_fn);
-            // Replay the declared const-param type (`u32`, `usize`, or
-            // `i32`) verbatim; see the `ty` field on
+            // Replay the declared const-param type (`u32`, `usize`,
+            // `i32`, or `bool`) verbatim; see the `ty` field on
             // `EntryPointConstSlot`. The lookup can only fail if
             // `const_params` and `syn_generics` disagree, which would be
             // a parser bug — not something to paper over with a
@@ -323,15 +323,25 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     }
 
     // Build the const substitution-map entries (parallel to the type
-    // subst above). Const params are passed directly and widened to
-    // `i64` for the substitution map; no trait dispatch is needed
+    // subst above). Const params are passed directly and wrapped in
+    // `ConstValue` for the substitution map (`Int` via `as i64` for the
+    // integer types, `Bool` for `bool`); no trait dispatch is needed
     // (unlike the type-param case which uses `<T as Wgsl>::to_ir()`).
     let mut const_subst_entries: Vec<TokenStream> = Vec::new();
     for slot in &ep_const_slots {
         let name = &slot.name;
         let encoded_name_str = &slot.encoded_name;
+        let is_bool = matches!(
+            &slot.ty,
+            syn::Type::Path(p) if p.qself.is_none() && p.path.is_ident("bool")
+        );
+        let value = if is_bool {
+            quote! { #ir_p::ConstValue::Bool(#name) }
+        } else {
+            quote! { #ir_p::ConstValue::Int(#name as i64) }
+        };
         const_subst_entries.push(quote! {
-            (::std::string::String::from(#encoded_name_str), #name as i64)
+            (::std::string::String::from(#encoded_name_str), #value)
         });
     }
 
@@ -370,7 +380,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
                 #(#subst_entries),*
             ].into_iter().collect();
             #ir_p::substitute_types(&mut __ir_module, &__subst);
-            let __const_subst: ::std::collections::HashMap<::std::string::String, i64> = [
+            let __const_subst: ::std::collections::HashMap<::std::string::String, #ir_p::ConstValue> = [
                 #(#const_subst_entries),*
             ].into_iter().collect();
             #ir_p::substitute_consts(&mut __ir_module, &__const_subst);

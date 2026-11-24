@@ -714,10 +714,14 @@ fn gen_wgsl_module(
                 .collect();
 
             // Build the const-args constructor. Const values are known
-            // at macro time (parsed from integer literals in turbofish,
-            // possibly negative), so the constructor is a simple
-            // `vec![4, 8, ...]` literal.
-            let const_vals: Vec<i64> = inst.const_args.clone();
+            // at macro time (parsed from literals in turbofish: integer,
+            // possibly negative, or bool), so the constructor is a simple
+            // `vec![ConstValue::Int(4), ...]` literal.
+            let const_vals: Vec<proc_macro2::TokenStream> = inst
+                .const_args
+                .iter()
+                .map(|v| ir_emit::emit_const_value(&ir_p, *v))
+                .collect();
 
             let ctor_ident = quote::format_ident!("__wgsl_inst_{}_ctor", idx);
             inst_constructors.push(quote! {
@@ -728,7 +732,7 @@ fn gen_wgsl_module(
 
             let const_ctor_ident = quote::format_ident!("__wgsl_inst_const_{}_ctor", idx);
             inst_constructors.push(quote! {
-                fn #const_ctor_ident() -> ::std::vec::Vec<i64> {
+                fn #const_ctor_ident() -> ::std::vec::Vec<#ir_p::ConstValue> {
                     ::std::vec![#(#const_vals),*]
                 }
             });

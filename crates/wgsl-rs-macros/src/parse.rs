@@ -4844,27 +4844,12 @@ impl FnArg {
                     let ir_attrs = syn_attrs_to_ir(attrs);
 
                     let mut inter_stage_io = vec![];
-                    let mut io_count = 0;
-                    let mut second_io_span = None;
                     for attr in attrs.iter() {
                         if is_known_io_ident(attr) {
                             let isio = InterStageIo::try_from(attr)?;
-                            io_count += 1;
-                            if io_count == 2 {
-                                second_io_span = Some(attr.span());
-                            }
                             inter_stage_io.push(isio);
                         }
                     }
-
-                    snafu::ensure!(
-                        io_count <= 1,
-                        UnsupportedSnafu {
-                            span: second_io_span.unwrap_or_else(|| attrs[0].span()),
-                            note: "WGSL only supports a single IO annotation on function \
-                                   parameters."
-                        }
-                    );
 
                     let ty = Type::parse(ty.as_ref(), ctx)?;
 

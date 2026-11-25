@@ -57,6 +57,8 @@
 //!   arithmetic, bitwise, exchange, compare_exchange_weak
 //! - [`derivative_operations`] — Fragment derivatives: `dpdx`, `dpdy`,
 //!   `fwidth`, and fine/coarse variants
+//! - [`location_params`]: Direct entry-point location parameters, including
+//!   location plus interpolation on one fragment parameter (#259)
 //! - [`texture_operations`] — Texture functions: `texture_load`,
 //!   `texture_sample` on 2D sampled textures
 //! - [`advanced_texture_operations`] — Advanced texture builtins:
@@ -88,6 +90,7 @@ pub mod glm_quat_helpers;
 pub mod glm_vector_helpers;
 pub mod literal_suffixes;
 pub mod load_macro;
+pub mod location_params;
 pub mod logical_operations;
 pub mod matrix_operations;
 pub mod modf_frexp_ldexp;
@@ -129,6 +132,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(literal_suffixes::LiteralSuffixTest),
         Box::new(literal_suffixes::LoopVarTypeTest),
         Box::new(load_macro::LoadMacroTest),
+        Box::new(location_params::LocationParamsTest),
         Box::new(select_operations::SelectOperationsTest),
         Box::new(signed_const_generics::SignedConstGenericsTest),
         Box::new(matrix_operations::MatrixOperationsTest),

@@ -269,7 +269,15 @@ fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
         binding: lit_int_to_u32(&s.binding)?,
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
-        filterable: ir::Filterability::Concrete(!s.unfilterable),
+        filterable: if s.unfilterable {
+            ir::Filterability::Concrete(false)
+        } else {
+            match &s.ty {
+                parse::Type::Sampler { filterable, .. } => filterable.clone(),
+                parse::Type::SamplerComparison { .. } => ir::Filterability::Concrete(true),
+                _ => unreachable!("ItemSampler validated the sampler type"),
+            }
+        },
         attrs: s.attrs.clone(),
     })
 }
@@ -280,7 +288,17 @@ fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
         binding: lit_int_to_u32(&t.binding)?,
         name: t.name.to_string(),
         ty: ty_from_parse(&t.ty)?,
-        filterable: ir::Filterability::Concrete(!t.unfilterable),
+        filterable: if t.unfilterable {
+            ir::Filterability::Concrete(false)
+        } else {
+            match &t.ty {
+                parse::Type::Texture { filterable, .. } => filterable.clone(),
+                parse::Type::TextureDepth { .. } | parse::Type::TextureStorage { .. } => {
+                    ir::Filterability::Concrete(true)
+                }
+                _ => unreachable!("ItemTexture validated the texture type"),
+            }
+        },
         attrs: t.attrs.clone(),
     })
 }
@@ -1180,6 +1198,22 @@ fn case_selector(s: &parse::CaseSelector) -> Result<ir::CaseSelector> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_level_unfilterable_texture_threads_into_ir() {
+        let parsed: parse::ItemTexture =
+            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32, false>").unwrap();
+        let ir_texture = item_texture(&parsed).unwrap();
+        assert_eq!(ir_texture.filterable.concrete(), Some(false));
+    }
+
+    #[test]
+    fn type_level_unfilterable_sampler_threads_into_ir() {
+        let parsed: parse::ItemSampler =
+            syn::parse_str("group(0), binding(1), MY_SMP: Sampler<false>").unwrap();
+        let ir_sampler = item_sampler(&parsed).unwrap();
+        assert_eq!(ir_sampler.filterable.concrete(), Some(false));
+    }
 
     #[test]
     fn unfilterable_texture_threads_into_ir() {

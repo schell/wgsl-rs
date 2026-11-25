@@ -49,7 +49,7 @@ pub mod texture_load_2d {
 pub mod texture_load_2d_unfilterable {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), TEX: Texture2D<f32>, unfilterable);
+    texture!(group(0), binding(0), TEX: Texture2D<f32, false>);
 
     pub struct FragInput {
         #[builtin(position)]
@@ -79,8 +79,8 @@ pub mod texture_load_2d_unfilterable {
 pub mod texture_sample_2d_unfilterable {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), TEX: Texture2D<f32>, unfilterable);
-    sampler!(group(0), binding(1), SMP: Sampler, unfilterable);
+    texture!(group(0), binding(0), TEX: Texture2D<f32, false>);
+    sampler!(group(0), binding(1), SMP: Sampler<false>);
 
     pub struct FragInput {
         #[builtin(position)]
@@ -310,7 +310,10 @@ fn create_gpu_r32float_texture(
 /// Writes single-channel values into a CPU `Texture2D<f32>`, replicating
 /// how WGSL `textureLoad` on an `r32float` texture returns `(r, 0, 0, 1)`
 /// for the missing channels.
-fn write_cpu_texture_r32(tex: &wgsl_rs::std::Texture2D<f32>, values: &[f32]) {
+fn write_cpu_texture_r32<const FILTERABLE: bool>(
+    tex: &wgsl_rs::std::Texture2D<f32, FILTERABLE>,
+    values: &[f32],
+) {
     tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {

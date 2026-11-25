@@ -11,17 +11,22 @@ pub fn sampler(input: TokenStream) -> TokenStream {
         binding,
         name,
         ty,
+        rust_ty,
         ..
     } = parse_macro_input!(input as ItemSampler);
 
     // Determine if this is a comparison sampler
     let is_comparison = matches!(ty, Type::SamplerComparison { .. });
 
-    // Generate the type based on whether it's a comparison sampler
-    let sampler_type = if is_comparison {
+    let sampler_ctor = if is_comparison {
         quote! { SamplerComparison }
     } else {
         quote! { Sampler }
+    };
+    let sampler_type = if is_comparison {
+        quote! { SamplerComparison }
+    } else {
+        quote! { #rust_ty }
     };
 
     // Generate a hidden inner static and a public const reference.
@@ -33,7 +38,7 @@ pub fn sampler(input: TokenStream) -> TokenStream {
     // TODO(schell): expand the linkage generated
     let expanded = quote! {
         #[doc(hidden)]
-        static #inner_name: #sampler_type = #sampler_type::new(#group, #binding);
+        static #inner_name: #sampler_type = #sampler_ctor::new(#group, #binding);
         pub const #name: &'static #sampler_type = &#inner_name;
     };
 

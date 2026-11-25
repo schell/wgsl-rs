@@ -63,9 +63,9 @@ pub mod dual_compute {
 pub mod binding_filterability {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32>, unfilterable);
+    texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32, false>);
     texture!(group(0), binding(1), FILTERABLE_TEX: Texture2D<f32>);
-    sampler!(group(0), binding(2), UNFILTERABLE_SMP: Sampler, unfilterable);
+    sampler!(group(0), binding(2), UNFILTERABLE_SMP: Sampler<false>);
     sampler!(group(0), binding(3), FILTERABLE_SMP: Sampler);
     sampler!(group(0), binding(4), CMP_SMP: SamplerComparison);
 
@@ -828,7 +828,7 @@ fn analyze_rejects_unresolved_filterability() {
     let _ = ir_module.generate_linkage();
 }
 
-/// The `, unfilterable` modifier lowers to
+/// The type-level `false` argument lowers to
 /// `TextureSampleType::Float { filterable: false }` for textures and
 /// `SamplerBindingType::NonFiltering` for samplers, while plain
 /// bindings keep their filterable defaults (wgsl-rs#171, wgsl-rs#201).
@@ -846,7 +846,7 @@ fn analyze_binding_filterability_flags() {
                 ..
             }
         ),
-        "expected `filterable: false` for the `, unfilterable` texture, got {:?}",
+        "expected `filterable: false` for the type-level `false` texture, got {:?}",
         bg.entries[0].ty
     );
     assert!(
@@ -865,7 +865,7 @@ fn analyze_binding_filterability_flags() {
             bg.entries[2].ty,
             wg::wgpu::BindingType::Sampler(wg::wgpu::SamplerBindingType::NonFiltering)
         ),
-        "expected `NonFiltering` for the `, unfilterable` sampler, got {:?}",
+        "expected `NonFiltering` for the `Sampler<false>` sampler, got {:?}",
         bg.entries[2].ty
     );
     assert!(

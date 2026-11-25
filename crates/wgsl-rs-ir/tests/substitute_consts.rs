@@ -265,3 +265,75 @@ fn bool_const_in_array_length_panics() {
     substitute_consts(&mut m, &bool_consts_of(&[("N", true)]));
     let _ = render_module(&m);
 }
+
+fn module_with_filterability_params() -> Module {
+    Module {
+        name: "filterability",
+        items: vec![
+            Item::Texture(ItemTexture {
+                group: 0,
+                binding: 0,
+                name: "TEX".into(),
+                ty: Type::Texture {
+                    kind: TextureKind::Texture2D,
+                    sampled_type: ScalarType::F32,
+                },
+                filterable: Filterability::Param("TEX_FILTERABLE".into()),
+                attrs: vec![],
+            }),
+            Item::Sampler(ItemSampler {
+                group: 0,
+                binding: 1,
+                name: "SMP".into(),
+                ty: Type::Sampler,
+                filterable: Filterability::Param("SMP_FILTERABLE".into()),
+                attrs: vec![],
+            }),
+        ],
+        attrs: vec![],
+    }
+}
+
+#[test]
+fn bool_consts_resolve_binding_filterability_without_changing_wgsl() {
+    for value in [true, false] {
+        let mut module = module_with_filterability_params();
+        let before = render_module(&module);
+        substitute_consts(
+            &mut module,
+            &bool_consts_of(&[("TEX_FILTERABLE", value), ("SMP_FILTERABLE", !value)]),
+        );
+
+        assert_eq!(render_module(&module), before);
+        let Item::Texture(texture) = &module.items[0] else {
+            unreachable!()
+        };
+        assert_eq!(texture.filterable, Filterability::Concrete(value));
+        let Item::Sampler(sampler) = &module.items[1] else {
+            unreachable!()
+        };
+        assert_eq!(sampler.filterable, Filterability::Concrete(!value));
+    }
+}
+
+#[test]
+fn filterability_params_remain_unresolved_without_a_substitution() {
+    let mut module = module_with_filterability_params();
+    substitute_consts(&mut module, &HashMap::new());
+
+    let Item::Texture(texture) = &module.items[0] else {
+        unreachable!()
+    };
+    assert_eq!(texture.filterable.concrete(), None);
+    let Item::Sampler(sampler) = &module.items[1] else {
+        unreachable!()
+    };
+    assert_eq!(sampler.filterable.concrete(), None);
+}
+
+#[test]
+#[should_panic(expected = "filterability requires a bool")]
+fn integer_const_does_not_coerce_to_filterability() {
+    let mut module = module_with_filterability_params();
+    substitute_consts(&mut module, &consts_of(&[("TEX_FILTERABLE", 1)]));
+}

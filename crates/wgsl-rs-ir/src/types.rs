@@ -498,6 +498,36 @@ pub enum ConstValue {
     Bool(bool),
 }
 
+/// Host-side filterability for a texture or sampler binding.
+///
+/// Filterability is not part of the WGSL type. A template binding may defer
+/// its value to a module-level `const ...: bool` parameter, which is resolved
+/// by [`crate::substitute_consts`] before wgpu layout analysis.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Filterability {
+    /// A concrete binding-layout value.
+    Concrete(bool),
+    /// A binding-owned const parameter to resolve during instantiation.
+    Param(String),
+}
+
+impl Filterability {
+    /// Returns the concrete value, or `None` while this is a template
+    /// parameter.
+    pub fn concrete(&self) -> Option<bool> {
+        match self {
+            Self::Concrete(value) => Some(*value),
+            Self::Param(_) => None,
+        }
+    }
+}
+
+impl From<bool> for Filterability {
+    fn from(value: bool) -> Self {
+        Self::Concrete(value)
+    }
+}
+
 /// Binary operators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BinOp {
@@ -940,7 +970,7 @@ pub struct ItemSampler {
     /// macro's `unfilterable` token sets it to `false`. Meaningless for
     /// comparison samplers, whose layout is always
     /// `SamplerBindingType::Comparison`.
-    pub filterable: bool,
+    pub filterable: Filterability,
     /// Attributes preserved from Rust source.
     pub attrs: Vec<Attribute>,
 }
@@ -958,7 +988,7 @@ pub struct ItemTexture {
     /// filterable: false }` for textures backed by non-filterable formats
     /// (e.g. `R32Float`). Defaults to `true`; the `texture!` macro's
     /// `unfilterable` token sets it to `false`.
-    pub filterable: bool,
+    pub filterable: Filterability,
     /// Attributes preserved from Rust source.
     pub attrs: Vec<Attribute>,
 }

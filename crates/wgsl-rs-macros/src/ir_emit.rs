@@ -52,6 +52,16 @@ pub fn emit_const_value(ir_path: &TokenStream, value: ir::ConstValue) -> TokenSt
     }
 }
 
+/// Emit an expression that constructs binding filterability metadata.
+fn emit_filterability(p: &TokenStream, filterable: &ir::Filterability) -> TokenStream {
+    match filterable {
+        ir::Filterability::Concrete(value) => quote! { #p::Filterability::Concrete(#value) },
+        ir::Filterability::Param(name) => quote! {
+            #p::Filterability::Param(::std::string::String::from(#name))
+        },
+    }
+}
+
 // ===== Items =====
 
 pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
@@ -114,7 +124,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = s.binding;
             let n = &s.name;
             let t = ty(p, &s.ty);
-            let filterable = s.filterable;
+            let filterable = emit_filterability(p, &s.filterable);
             let attrs = emit_attrs(p, &s.attrs);
             quote! {
                 #p::Item::Sampler(#p::ItemSampler {
@@ -132,7 +142,7 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             let binding = t_.binding;
             let n = &t_.name;
             let t = ty(p, &t_.ty);
-            let filterable = t_.filterable;
+            let filterable = emit_filterability(p, &t_.filterable);
             let attrs = emit_attrs(p, &t_.attrs);
             quote! {
                 #p::Item::Texture(#p::ItemTexture {

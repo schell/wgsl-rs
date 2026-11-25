@@ -638,6 +638,24 @@ fn sub_if(i: &mut StmtIf, s: &HashMap<String, Type>) {
 // always a bare ident because stable Rust only allows bare idents (or
 // literals) as const generic arguments in type position.
 
+/// Resolve a binding-owned filterability parameter without changing the
+/// binding's WGSL type.
+fn sub_filterability_const(filterable: &mut Filterability, consts: &HashMap<String, ConstValue>) {
+    let Filterability::Param(name) = filterable else {
+        return;
+    };
+    let Some(value) = consts.get(name) else {
+        return;
+    };
+    match value {
+        ConstValue::Bool(value) => *filterable = Filterability::Concrete(*value),
+        ConstValue::Int(value) => panic!(
+            "integer const generic value {value} cannot substitute filterability parameter \
+             {name}; filterability requires a bool"
+        ),
+    }
+}
+
 fn sub_item_const(item: &mut Item, consts: &HashMap<String, ConstValue>) {
     match item {
         Item::Const(c) => {
@@ -647,8 +665,14 @@ fn sub_item_const(item: &mut Item, consts: &HashMap<String, ConstValue>) {
         Item::Uniform(u) => sub_type_const(&mut u.ty, consts),
         Item::Storage(st) => sub_type_const(&mut st.ty, consts),
         Item::Workgroup(w) => sub_type_const(&mut w.ty, consts),
-        Item::Sampler(sa) => sub_type_const(&mut sa.ty, consts),
-        Item::Texture(t) => sub_type_const(&mut t.ty, consts),
+        Item::Sampler(sa) => {
+            sub_type_const(&mut sa.ty, consts);
+            sub_filterability_const(&mut sa.filterable, consts);
+        }
+        Item::Texture(t) => {
+            sub_type_const(&mut t.ty, consts);
+            sub_filterability_const(&mut t.filterable, consts);
+        }
         Item::Fn(f) => sub_fn_const(f, consts),
         Item::Struct(st) => {
             for f in &mut st.fields {

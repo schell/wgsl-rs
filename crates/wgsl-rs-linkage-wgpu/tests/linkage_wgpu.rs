@@ -757,7 +757,7 @@ fn analyze_texture_and_sampler_bindings() {
                     kind: TextureKind::Texture2D,
                     sampled_type: ir::ScalarType::F32,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -767,7 +767,7 @@ fn analyze_texture_and_sampler_bindings() {
                 ty: ir::Type::TextureDepth {
                     kind: TextureDepthKind::Depth2D,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -775,7 +775,7 @@ fn analyze_texture_and_sampler_bindings() {
                 binding: 2,
                 name: "SAMP".to_string(),
                 ty: ir::Type::Sampler,
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -783,7 +783,7 @@ fn analyze_texture_and_sampler_bindings() {
                 binding: 3,
                 name: "CSAMP".to_string(),
                 ty: ir::Type::SamplerComparison,
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
         ],
@@ -803,6 +803,29 @@ fn analyze_texture_and_sampler_bindings() {
         bg.bindings[3].kind,
         wg::BindingKind::Sampler { comparison: true }
     ));
+}
+
+/// An unresolved binding-owned const must not silently select a concrete
+/// wgpu layout when a caller analyzes hand-assembled IR directly.
+#[test]
+#[should_panic(expected = "unresolved filterability parameter")]
+fn analyze_rejects_unresolved_filterability() {
+    let ir_module = ir::Module {
+        name: "unresolved_filterability",
+        items: vec![ir::Item::Texture(ir::ItemTexture {
+            group: 0,
+            binding: 0,
+            name: "TEX".to_string(),
+            ty: ir::Type::Texture {
+                kind: TextureKind::Texture2D,
+                sampled_type: ir::ScalarType::F32,
+            },
+            filterable: ir::Filterability::Param("FILTERABLE".into()),
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    };
+    let _ = ir_module.generate_linkage();
 }
 
 /// The `, unfilterable` modifier lowers to
@@ -879,7 +902,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8unorm,
                     access: StorageTextureAccess::Write,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -891,7 +914,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8uint,
                     access: StorageTextureAccess::Read,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -903,7 +926,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::R32float,
                     access: StorageTextureAccess::ReadWrite,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
         ],

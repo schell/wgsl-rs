@@ -810,7 +810,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 let comparison = matches!(s.ty, ir::Type::SamplerComparison);
                 let sampler_ty = if comparison {
                     wgpu::SamplerBindingType::Comparison
-                } else if !s.filterable {
+                } else if !concrete_filterability(&s.filterable, &s.name) {
                     wgpu::SamplerBindingType::NonFiltering
                 } else {
                     wgpu::SamplerBindingType::Filtering
@@ -968,6 +968,23 @@ pub fn analyze_wgsl_module(wgsl_source: &Source) -> Result<WgpuLinkage, Error> {
 
 // ===== Texture helpers =====
 
+/// Resolve host-side filterability after template instantiation.
+///
+/// `analyze_ir_module` accepts owned IR directly, so a caller can bypass the
+/// `Source::is_template` guard. Do not silently turn an unresolved parameter
+/// into a concrete layout in that case.
+fn concrete_filterability(filterable: &ir::Filterability, binding_name: &str) -> bool {
+    filterable.concrete().unwrap_or_else(|| {
+        let ir::Filterability::Param(name) = filterable else {
+            unreachable!("concrete() returns None only for parameters")
+        };
+        panic!(
+            "binding {binding_name:?} has unresolved filterability parameter {name:?}; \
+             instantiate the template module before analyzing wgpu linkage"
+        )
+    })
+}
+
 fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, BindingKind) {
     let view_dimension = match &item.ty {
         ir::Type::Texture { kind, .. } => texture_kind_view_dimension(*kind),
@@ -987,7 +1004,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
         ir::Type::Texture { sampled_type, .. } => {
             let sample = match sampled_type {
                 ir::ScalarType::F32 => wgpu::TextureSampleType::Float {
-                    filterable: item.filterable,
+                    filterable: concrete_filterability(&item.filterable, &item.name),
                 },
                 ir::ScalarType::I32 => wgpu::TextureSampleType::Sint,
                 ir::ScalarType::U32 => wgpu::TextureSampleType::Uint,

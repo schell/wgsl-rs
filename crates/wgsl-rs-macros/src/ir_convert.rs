@@ -269,7 +269,7 @@ fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
         binding: lit_int_to_u32(&s.binding)?,
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
-        filterable: !s.unfilterable,
+        filterable: ir::Filterability::Concrete(!s.unfilterable),
         attrs: s.attrs.clone(),
     })
 }
@@ -280,7 +280,7 @@ fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
         binding: lit_int_to_u32(&t.binding)?,
         name: t.name.to_string(),
         ty: ty_from_parse(&t.ty)?,
-        filterable: !t.unfilterable,
+        filterable: ir::Filterability::Concrete(!t.unfilterable),
         attrs: t.attrs.clone(),
     })
 }
@@ -1187,7 +1187,7 @@ mod tests {
             syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>, unfilterable").unwrap();
         let ir_texture = item_texture(&parsed).unwrap();
         assert!(
-            !ir_texture.filterable,
+            ir_texture.filterable.concrete() == Some(false),
             "expected `filterable: false` for the `, unfilterable` modifier"
         );
     }
@@ -1198,7 +1198,7 @@ mod tests {
             syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>").unwrap();
         let ir_texture = item_texture(&parsed).unwrap();
         assert!(
-            ir_texture.filterable,
+            ir_texture.filterable.concrete() == Some(true),
             "expected `filterable: true` without the `, unfilterable` modifier"
         );
     }
@@ -1209,7 +1209,7 @@ mod tests {
             syn::parse_str("group(0), binding(1), MY_SMP: Sampler, unfilterable").unwrap();
         let ir_sampler = item_sampler(&parsed).unwrap();
         assert!(
-            !ir_sampler.filterable,
+            ir_sampler.filterable.concrete() == Some(false),
             "expected `filterable: false` for the `, unfilterable` modifier"
         );
     }
@@ -1220,7 +1220,7 @@ mod tests {
             syn::parse_str("group(0), binding(1), MY_SMP: Sampler").unwrap();
         let ir_sampler = item_sampler(&parsed).unwrap();
         assert!(
-            ir_sampler.filterable,
+            ir_sampler.filterable.concrete() == Some(true),
             "expected `filterable: true` without the `, unfilterable` modifier"
         );
     }

@@ -16,7 +16,7 @@ help: the return type of this call is `i32` due to the type of the argument pass
 note: function defined here
   --> src/std/texture/builtins.rs
    |
-   | pub fn texture_sample_level<T, C, L>(t: &T, s: &Sampler, coords: C, level: L) -> T::Output
+   | pub fn texture_sample_level<T, C, L, const SAMPLER_FILTERABLE: bool>(
    |        ^^^^^^^^^^^^^^^^^^^^
 help: change the type of the numeric literal from `i32` to `f32`
    |
@@ -42,7 +42,7 @@ help: the return type of this call is `u32` due to the type of the argument pass
 note: function defined here
   --> src/std/texture/builtins.rs
    |
-   | pub fn texture_sample_level<T, C, L>(t: &T, s: &Sampler, coords: C, level: L) -> T::Output
+   | pub fn texture_sample_level<T, C, L, const SAMPLER_FILTERABLE: bool>(
    |        ^^^^^^^^^^^^^^^^^^^^
 help: change the type of the numeric literal from `u32` to `f32`
    |

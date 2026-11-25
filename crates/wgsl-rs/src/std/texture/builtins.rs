@@ -797,32 +797,37 @@ pub trait TextureLoadArray<Coords, ArrayIndex, Level> {
 }
 
 /// Trait for textures that support `textureSample`.
-pub trait TextureSample<Coords> {
+pub trait TextureSample<Coords, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates.
-    fn sample(&self, sampler: &Sampler, coords: Coords) -> Self::Output;
+    fn sample(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Coords) -> Self::Output;
 }
 
 /// Trait for textures that support `textureSample` with offset.
-pub trait TextureSampleOffset<Coords, Offset> {
+pub trait TextureSampleOffset<Coords, Offset, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates with offset.
-    fn sample_offset(&self, sampler: &Sampler, coords: Coords, offset: Offset) -> Self::Output;
+    fn sample_offset(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+        offset: Offset,
+    ) -> Self::Output;
 }
 
 /// Trait for array textures that support `textureSample` with array index.
-pub trait TextureSampleArray<Coords, ArrayIndex> {
+pub trait TextureSampleArray<Coords, ArrayIndex, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates and array index.
     fn sample_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
     ) -> Self::Output;
@@ -832,30 +837,46 @@ pub trait TextureSampleArray<Coords, ArrayIndex> {
 ///
 /// Per the WGSL spec, the `level` parameter must be `f32` for non-depth
 /// sampled textures; only depth textures accept `i32`/`u32` levels.
-pub trait TextureSampleLevel<Coords, Level> {
+pub trait TextureSampleLevel<Coords, Level, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates and explicit LOD.
-    fn sample_level(&self, sampler: &Sampler, coords: Coords, level: Level) -> Self::Output;
+    fn sample_level(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+        level: Level,
+    ) -> Self::Output;
 }
 
 /// Trait for textures that support `textureSampleBias`.
-pub trait TextureSampleBias<Coords, Bias> {
+pub trait TextureSampleBias<Coords, Bias, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates with LOD bias.
-    fn sample_bias(&self, sampler: &Sampler, coords: Coords, bias: Bias) -> Self::Output;
+    fn sample_bias(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+        bias: Bias,
+    ) -> Self::Output;
 }
 
 /// Trait for textures that support `textureSampleGrad`.
-pub trait TextureSampleGrad<Coords, Ddx, Ddy> {
+pub trait TextureSampleGrad<Coords, Ddx, Ddy, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture with explicit gradients.
-    fn sample_grad(&self, sampler: &Sampler, coords: Coords, ddx: Ddx, ddy: Ddy) -> Self::Output;
+    fn sample_grad(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+        ddx: Ddx,
+        ddy: Ddy,
+    ) -> Self::Output;
 }
 
 /// Trait for textures that support `textureSampleCompare`.
@@ -887,28 +908,37 @@ pub trait TextureSampleCompareLevel<Coords, DepthRef> {
 ///
 /// Samples a texture at mip level 0 with coordinates clamped to
 /// `[0.5/dim, 1.0 - 0.5/dim]` to prevent edge wrapping artifacts.
-pub trait TextureSampleBaseClampToEdge<Coords> {
+pub trait TextureSampleBaseClampToEdge<Coords, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at base level with coordinates clamped to the edge.
-    fn sample_base_clamp_to_edge(&self, sampler: &Sampler, coords: Coords) -> Self::Output;
+    fn sample_base_clamp_to_edge(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+    ) -> Self::Output;
 }
 
 /// Trait for textures that support `textureGather`.
-pub trait TextureGather<Coords> {
+pub trait TextureGather<Coords, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Gather one component from 4 texels.
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Coords) -> Self::Output;
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+    ) -> Self::Output;
 }
 
 /// Trait for depth textures that support `textureGather` (no component
 /// parameter).
-pub trait TextureGatherDepth<Coords> {
+pub trait TextureGatherDepth<Coords, const SAMPLER_FILTERABLE: bool = true> {
     /// Gather depth values from 4 texels.
-    fn gather_depth(&self, sampler: &Sampler, coords: Coords) -> Vec4f;
+    fn gather_depth(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Coords) -> Vec4f;
 }
 
 /// Trait for textures that support `textureGatherCompare`.
@@ -924,14 +954,20 @@ pub trait TextureGatherCompare<Coords, DepthRef> {
 
 /// Trait for array textures that support `textureSample` with array index and
 /// offset.
-pub trait TextureSampleArrayOffset<Coords, ArrayIndex, Offset> {
+pub trait TextureSampleArrayOffset<
+    Coords,
+    ArrayIndex,
+    Offset,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates, array index, and offset.
     fn sample_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         offset: Offset,
@@ -939,7 +975,7 @@ pub trait TextureSampleArrayOffset<Coords, ArrayIndex, Offset> {
 }
 
 /// Trait for textures that support `textureSampleLevel` with offset.
-pub trait TextureSampleLevelOffset<Coords, Level, Offset> {
+pub trait TextureSampleLevelOffset<Coords, Level, Offset, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
@@ -947,7 +983,7 @@ pub trait TextureSampleLevelOffset<Coords, Level, Offset> {
     /// offset.
     fn sample_level_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         level: Level,
         offset: Offset,
@@ -955,7 +991,8 @@ pub trait TextureSampleLevelOffset<Coords, Level, Offset> {
 }
 
 /// Trait for array textures that support `textureSampleLevel` with array index.
-pub trait TextureSampleLevelArray<Coords, ArrayIndex, Level> {
+pub trait TextureSampleLevelArray<Coords, ArrayIndex, Level, const SAMPLER_FILTERABLE: bool = true>
+{
     /// The output type
     type Output;
 
@@ -963,7 +1000,7 @@ pub trait TextureSampleLevelArray<Coords, ArrayIndex, Level> {
     /// LOD.
     fn sample_level_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         level: Level,
@@ -972,7 +1009,14 @@ pub trait TextureSampleLevelArray<Coords, ArrayIndex, Level> {
 
 /// Trait for array textures that support `textureSampleLevel` with array index
 /// and offset.
-pub trait TextureSampleLevelArrayOffset<Coords, ArrayIndex, Level, Offset> {
+pub trait TextureSampleLevelArrayOffset<
+    Coords,
+    ArrayIndex,
+    Level,
+    Offset,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// The output type
     type Output;
 
@@ -980,7 +1024,7 @@ pub trait TextureSampleLevelArrayOffset<Coords, ArrayIndex, Level, Offset> {
     /// and offset.
     fn sample_level_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         level: Level,
@@ -989,14 +1033,14 @@ pub trait TextureSampleLevelArrayOffset<Coords, ArrayIndex, Level, Offset> {
 }
 
 /// Trait for textures that support `textureSampleBias` with offset.
-pub trait TextureSampleBiasOffset<Coords, Bias, Offset> {
+pub trait TextureSampleBiasOffset<Coords, Bias, Offset, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates with LOD bias and offset.
     fn sample_bias_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         bias: Bias,
         offset: Offset,
@@ -1004,14 +1048,14 @@ pub trait TextureSampleBiasOffset<Coords, Bias, Offset> {
 }
 
 /// Trait for array textures that support `textureSampleBias` with array index.
-pub trait TextureSampleBiasArray<Coords, ArrayIndex, Bias> {
+pub trait TextureSampleBiasArray<Coords, ArrayIndex, Bias, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture at the given coordinates, array index, with LOD bias.
     fn sample_bias_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         bias: Bias,
@@ -1020,7 +1064,14 @@ pub trait TextureSampleBiasArray<Coords, ArrayIndex, Bias> {
 
 /// Trait for array textures that support `textureSampleBias` with array index
 /// and offset.
-pub trait TextureSampleBiasArrayOffset<Coords, ArrayIndex, Bias, Offset> {
+pub trait TextureSampleBiasArrayOffset<
+    Coords,
+    ArrayIndex,
+    Bias,
+    Offset,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// The output type
     type Output;
 
@@ -1028,7 +1079,7 @@ pub trait TextureSampleBiasArrayOffset<Coords, ArrayIndex, Bias, Offset> {
     /// offset.
     fn sample_bias_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         bias: Bias,
@@ -1037,14 +1088,14 @@ pub trait TextureSampleBiasArrayOffset<Coords, ArrayIndex, Bias, Offset> {
 }
 
 /// Trait for textures that support `textureSampleGrad` with offset.
-pub trait TextureSampleGradOffset<Coords, Ddx, Ddy, Offset> {
+pub trait TextureSampleGradOffset<Coords, Ddx, Ddy, Offset, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
     /// Sample the texture with explicit gradients and offset.
     fn sample_grad_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         ddx: Ddx,
         ddy: Ddy,
@@ -1053,14 +1104,21 @@ pub trait TextureSampleGradOffset<Coords, Ddx, Ddy, Offset> {
 }
 
 /// Trait for array textures that support `textureSampleGrad` with array index.
-pub trait TextureSampleGradArray<Coords, ArrayIndex, Ddx, Ddy> {
+pub trait TextureSampleGradArray<
+    Coords,
+    ArrayIndex,
+    Ddx,
+    Ddy,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// The output type
     type Output;
 
     /// Sample the texture with explicit gradients and array index.
     fn sample_grad_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         ddx: Ddx,
@@ -1070,14 +1128,22 @@ pub trait TextureSampleGradArray<Coords, ArrayIndex, Ddx, Ddy> {
 
 /// Trait for array textures that support `textureSampleGrad` with array index
 /// and offset.
-pub trait TextureSampleGradArrayOffset<Coords, ArrayIndex, Ddx, Ddy, Offset> {
+pub trait TextureSampleGradArrayOffset<
+    Coords,
+    ArrayIndex,
+    Ddx,
+    Ddy,
+    Offset,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// The output type
     type Output;
 
     /// Sample the texture with explicit gradients, array index, and offset.
     fn sample_grad_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         ddx: Ddx,
@@ -1167,7 +1233,7 @@ pub trait TextureSampleCompareLevelArrayOffset<Coords, ArrayIndex, DepthRef, Off
 }
 
 /// Trait for textures that support `textureGather` with offset.
-pub trait TextureGatherOffset<Coords, Offset> {
+pub trait TextureGatherOffset<Coords, Offset, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
@@ -1175,14 +1241,14 @@ pub trait TextureGatherOffset<Coords, Offset> {
     fn gather_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         offset: Offset,
     ) -> Self::Output;
 }
 
 /// Trait for array textures that support `textureGather` with array index.
-pub trait TextureGatherArray<Coords, ArrayIndex> {
+pub trait TextureGatherArray<Coords, ArrayIndex, const SAMPLER_FILTERABLE: bool = true> {
     /// The output type
     type Output;
 
@@ -1190,7 +1256,7 @@ pub trait TextureGatherArray<Coords, ArrayIndex> {
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
     ) -> Self::Output;
@@ -1198,7 +1264,13 @@ pub trait TextureGatherArray<Coords, ArrayIndex> {
 
 /// Trait for array textures that support `textureGather` with array index and
 /// offset.
-pub trait TextureGatherArrayOffset<Coords, ArrayIndex, Offset> {
+pub trait TextureGatherArrayOffset<
+    Coords,
+    ArrayIndex,
+    Offset,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// The output type
     type Output;
 
@@ -1206,7 +1278,7 @@ pub trait TextureGatherArrayOffset<Coords, ArrayIndex, Offset> {
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         offset: Offset,
@@ -1215,18 +1287,23 @@ pub trait TextureGatherArrayOffset<Coords, ArrayIndex, Offset> {
 
 /// Trait for depth textures that support `textureGather` with offset (no
 /// component).
-pub trait TextureGatherDepthOffset<Coords, Offset> {
+pub trait TextureGatherDepthOffset<Coords, Offset, const SAMPLER_FILTERABLE: bool = true> {
     /// Gather depth values from 4 texels with offset.
-    fn gather_depth_offset(&self, sampler: &Sampler, coords: Coords, offset: Offset) -> Vec4f;
+    fn gather_depth_offset(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Coords,
+        offset: Offset,
+    ) -> Vec4f;
 }
 
 /// Trait for depth array textures that support `textureGather` with array index
 /// (no component).
-pub trait TextureGatherDepthArray<Coords, ArrayIndex> {
+pub trait TextureGatherDepthArray<Coords, ArrayIndex, const SAMPLER_FILTERABLE: bool = true> {
     /// Gather depth values from 4 texels with array index.
     fn gather_depth_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
     ) -> Vec4f;
@@ -1234,11 +1311,17 @@ pub trait TextureGatherDepthArray<Coords, ArrayIndex> {
 
 /// Trait for depth array textures that support `textureGather` with array index
 /// and offset.
-pub trait TextureGatherDepthArrayOffset<Coords, ArrayIndex, Offset> {
+pub trait TextureGatherDepthArrayOffset<
+    Coords,
+    ArrayIndex,
+    Offset,
+    const SAMPLER_FILTERABLE: bool = true,
+>
+{
     /// Gather depth values from 4 texels with array index and offset.
     fn gather_depth_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Coords,
         array_index: ArrayIndex,
         offset: Offset,
@@ -1482,9 +1565,13 @@ where
 /// ```wgsl
 /// let color = textureSample(my_texture, my_sampler, uv);
 /// ```
-pub fn texture_sample<T, C>(t: &T, s: &Sampler, coords: C) -> T::Output
+pub fn texture_sample<T, C, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+) -> T::Output
 where
-    T: TextureSample<C>,
+    T: TextureSample<C, SAMPLER_FILTERABLE>,
 {
     t.sample(s, coords)
 }
@@ -1496,9 +1583,14 @@ where
 /// ```wgsl
 /// let color = textureSample(my_texture, my_sampler, uv, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_offset<T, C, O>(t: &T, s: &Sampler, coords: C, offset: O) -> T::Output
+pub fn texture_sample_offset<T, C, O, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    offset: O,
+) -> T::Output
 where
-    T: TextureSampleOffset<C, O>,
+    T: TextureSampleOffset<C, O, SAMPLER_FILTERABLE>,
 {
     t.sample_offset(s, coords, offset)
 }
@@ -1510,9 +1602,14 @@ where
 /// ```wgsl
 /// let color = textureSample(my_texture_array, my_sampler, uv, array_index);
 /// ```
-pub fn texture_sample_array<T, C, A>(t: &T, s: &Sampler, coords: C, array_index: A) -> T::Output
+pub fn texture_sample_array<T, C, A, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    array_index: A,
+) -> T::Output
 where
-    T: TextureSampleArray<C, A>,
+    T: TextureSampleArray<C, A, SAMPLER_FILTERABLE>,
 {
     t.sample_array(s, coords, array_index)
 }
@@ -1524,9 +1621,14 @@ where
 /// ```wgsl
 /// let color = textureSampleLevel(my_texture, my_sampler, uv, 2.0);
 /// ```
-pub fn texture_sample_level<T, C, L>(t: &T, s: &Sampler, coords: C, level: L) -> T::Output
+pub fn texture_sample_level<T, C, L, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    level: L,
+) -> T::Output
 where
-    T: TextureSampleLevel<C, L>,
+    T: TextureSampleLevel<C, L, SAMPLER_FILTERABLE>,
 {
     t.sample_level(s, coords, level)
 }
@@ -1538,9 +1640,14 @@ where
 /// ```wgsl
 /// let color = textureSampleBias(my_texture, my_sampler, uv, 1.0);
 /// ```
-pub fn texture_sample_bias<T, C, B>(t: &T, s: &Sampler, coords: C, bias: B) -> T::Output
+pub fn texture_sample_bias<T, C, B, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    bias: B,
+) -> T::Output
 where
-    T: TextureSampleBias<C, B>,
+    T: TextureSampleBias<C, B, SAMPLER_FILTERABLE>,
 {
     t.sample_bias(s, coords, bias)
 }
@@ -1552,9 +1659,15 @@ where
 /// ```wgsl
 /// let color = textureSampleGrad(my_texture, my_sampler, uv, ddx, ddy);
 /// ```
-pub fn texture_sample_grad<T, C, D>(t: &T, s: &Sampler, coords: C, ddx: D, ddy: D) -> T::Output
+pub fn texture_sample_grad<T, C, D, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    ddx: D,
+    ddy: D,
+) -> T::Output
 where
-    T: TextureSampleGrad<C, D, D>,
+    T: TextureSampleGrad<C, D, D, SAMPLER_FILTERABLE>,
 {
     t.sample_grad(s, coords, ddx, ddy)
 }
@@ -1607,9 +1720,13 @@ where
 /// ```wgsl
 /// let color = textureSampleBaseClampToEdge(my_texture, my_sampler, uv);
 /// ```
-pub fn texture_sample_base_clamp_to_edge<T, C>(t: &T, s: &Sampler, coords: C) -> T::Output
+pub fn texture_sample_base_clamp_to_edge<T, C, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+) -> T::Output
 where
-    T: TextureSampleBaseClampToEdge<C>,
+    T: TextureSampleBaseClampToEdge<C, SAMPLER_FILTERABLE>,
 {
     t.sample_base_clamp_to_edge(s, coords)
 }
@@ -1622,9 +1739,14 @@ where
 /// ```wgsl
 /// let gathered = textureGather(0, my_texture, my_sampler, uv);
 /// ```
-pub fn texture_gather<T, C>(component: impl IntoCoord, t: &T, s: &Sampler, coords: C) -> T::Output
+pub fn texture_gather<T, C, const SAMPLER_FILTERABLE: bool>(
+    component: impl IntoCoord,
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+) -> T::Output
 where
-    T: TextureGather<C>,
+    T: TextureGather<C, SAMPLER_FILTERABLE>,
 {
     t.gather(component.into_u32(), s, coords)
 }
@@ -1636,9 +1758,13 @@ where
 /// ```wgsl
 /// let gathered = textureGather(depth_texture, my_sampler, uv);
 /// ```
-pub fn texture_gather_depth<T, C>(t: &T, s: &Sampler, coords: C) -> Vec4f
+pub fn texture_gather_depth<T, C, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+) -> Vec4f
 where
-    T: TextureGatherDepth<C>,
+    T: TextureGatherDepth<C, SAMPLER_FILTERABLE>,
 {
     t.gather_depth(s, coords)
 }
@@ -1669,15 +1795,15 @@ where
 /// ```wgsl
 /// let color = textureSample(my_array_tex, my_sampler, uv, array_index, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_array_offset<T, C, A, O>(
+pub fn texture_sample_array_offset<T, C, A, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleArrayOffset<C, A, O>,
+    T: TextureSampleArrayOffset<C, A, O, SAMPLER_FILTERABLE>,
 {
     t.sample_array_offset(s, coords, array_index, offset)
 }
@@ -1689,15 +1815,15 @@ where
 /// ```wgsl
 /// let color = textureSampleLevel(my_texture, my_sampler, uv, 2.0, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_level_offset<T, C, L, O>(
+pub fn texture_sample_level_offset<T, C, L, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     level: L,
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleLevelOffset<C, L, O>,
+    T: TextureSampleLevelOffset<C, L, O, SAMPLER_FILTERABLE>,
 {
     t.sample_level_offset(s, coords, level, offset)
 }
@@ -1709,15 +1835,15 @@ where
 /// ```wgsl
 /// let color = textureSampleLevel(my_array_tex, my_sampler, uv, array_index, 2.0);
 /// ```
-pub fn texture_sample_level_array<T, C, A, L>(
+pub fn texture_sample_level_array<T, C, A, L, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     level: L,
 ) -> T::Output
 where
-    T: TextureSampleLevelArray<C, A, L>,
+    T: TextureSampleLevelArray<C, A, L, SAMPLER_FILTERABLE>,
 {
     t.sample_level_array(s, coords, array_index, level)
 }
@@ -1729,16 +1855,16 @@ where
 /// ```wgsl
 /// let color = textureSampleLevel(my_array_tex, my_sampler, uv, idx, 2.0, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_level_array_offset<T, C, A, L, O>(
+pub fn texture_sample_level_array_offset<T, C, A, L, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     level: L,
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleLevelArrayOffset<C, A, L, O>,
+    T: TextureSampleLevelArrayOffset<C, A, L, O, SAMPLER_FILTERABLE>,
 {
     t.sample_level_array_offset(s, coords, array_index, level, offset)
 }
@@ -1750,15 +1876,15 @@ where
 /// ```wgsl
 /// let color = textureSampleBias(my_texture, my_sampler, uv, 1.0, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_bias_offset<T, C, B, O>(
+pub fn texture_sample_bias_offset<T, C, B, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     bias: B,
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleBiasOffset<C, B, O>,
+    T: TextureSampleBiasOffset<C, B, O, SAMPLER_FILTERABLE>,
 {
     t.sample_bias_offset(s, coords, bias, offset)
 }
@@ -1770,15 +1896,15 @@ where
 /// ```wgsl
 /// let color = textureSampleBias(my_array_tex, my_sampler, uv, array_index, 1.0);
 /// ```
-pub fn texture_sample_bias_array<T, C, A, B>(
+pub fn texture_sample_bias_array<T, C, A, B, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     bias: B,
 ) -> T::Output
 where
-    T: TextureSampleBiasArray<C, A, B>,
+    T: TextureSampleBiasArray<C, A, B, SAMPLER_FILTERABLE>,
 {
     t.sample_bias_array(s, coords, array_index, bias)
 }
@@ -1790,16 +1916,16 @@ where
 /// ```wgsl
 /// let color = textureSampleBias(my_array_tex, my_sampler, uv, idx, 1.0, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_bias_array_offset<T, C, A, B, O>(
+pub fn texture_sample_bias_array_offset<T, C, A, B, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     bias: B,
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleBiasArrayOffset<C, A, B, O>,
+    T: TextureSampleBiasArrayOffset<C, A, B, O, SAMPLER_FILTERABLE>,
 {
     t.sample_bias_array_offset(s, coords, array_index, bias, offset)
 }
@@ -1811,16 +1937,16 @@ where
 /// ```wgsl
 /// let color = textureSampleGrad(my_texture, my_sampler, uv, ddx, ddy, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_grad_offset<T, C, D, O>(
+pub fn texture_sample_grad_offset<T, C, D, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     ddx: D,
     ddy: D,
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleGradOffset<C, D, D, O>,
+    T: TextureSampleGradOffset<C, D, D, O, SAMPLER_FILTERABLE>,
 {
     t.sample_grad_offset(s, coords, ddx, ddy, offset)
 }
@@ -1832,16 +1958,16 @@ where
 /// ```wgsl
 /// let color = textureSampleGrad(my_array_tex, my_sampler, uv, array_index, ddx, ddy);
 /// ```
-pub fn texture_sample_grad_array<T, C, A, D>(
+pub fn texture_sample_grad_array<T, C, A, D, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     ddx: D,
     ddy: D,
 ) -> T::Output
 where
-    T: TextureSampleGradArray<C, A, D, D>,
+    T: TextureSampleGradArray<C, A, D, D, SAMPLER_FILTERABLE>,
 {
     t.sample_grad_array(s, coords, array_index, ddx, ddy)
 }
@@ -1853,9 +1979,9 @@ where
 /// ```wgsl
 /// let color = textureSampleGrad(my_arr, my_sampler, uv, idx, ddx, ddy, vec2<i32>(1, 0));
 /// ```
-pub fn texture_sample_grad_array_offset<T, C, A, D, O>(
+pub fn texture_sample_grad_array_offset<T, C, A, D, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     ddx: D,
@@ -1863,7 +1989,7 @@ pub fn texture_sample_grad_array_offset<T, C, A, D, O>(
     offset: O,
 ) -> T::Output
 where
-    T: TextureSampleGradArrayOffset<C, A, D, D, O>,
+    T: TextureSampleGradArrayOffset<C, A, D, D, O, SAMPLER_FILTERABLE>,
 {
     t.sample_grad_array_offset(s, coords, array_index, ddx, ddy, offset)
 }
@@ -1997,15 +2123,15 @@ where
 /// ```wgsl
 /// let gathered = textureGather(0, my_texture, my_sampler, uv, vec2<i32>(1, 0));
 /// ```
-pub fn texture_gather_offset<T, C, O>(
+pub fn texture_gather_offset<T, C, O, const SAMPLER_FILTERABLE: bool>(
     component: impl IntoCoord,
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     offset: O,
 ) -> T::Output
 where
-    T: TextureGatherOffset<C, O>,
+    T: TextureGatherOffset<C, O, SAMPLER_FILTERABLE>,
 {
     t.gather_offset(component.into_u32(), s, coords, offset)
 }
@@ -2017,15 +2143,15 @@ where
 /// ```wgsl
 /// let gathered = textureGather(0, my_array_tex, my_sampler, uv, array_index);
 /// ```
-pub fn texture_gather_array<T, C, A>(
+pub fn texture_gather_array<T, C, A, const SAMPLER_FILTERABLE: bool>(
     component: impl IntoCoord,
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
 ) -> T::Output
 where
-    T: TextureGatherArray<C, A>,
+    T: TextureGatherArray<C, A, SAMPLER_FILTERABLE>,
 {
     t.gather_array(component.into_u32(), s, coords, array_index)
 }
@@ -2037,16 +2163,16 @@ where
 /// ```wgsl
 /// let gathered = textureGather(0, my_arr, my_sampler, uv, idx, vec2<i32>(1, 0));
 /// ```
-pub fn texture_gather_array_offset<T, C, A, O>(
+pub fn texture_gather_array_offset<T, C, A, O, const SAMPLER_FILTERABLE: bool>(
     component: impl IntoCoord,
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     offset: O,
 ) -> T::Output
 where
-    T: TextureGatherArrayOffset<C, A, O>,
+    T: TextureGatherArrayOffset<C, A, O, SAMPLER_FILTERABLE>,
 {
     t.gather_array_offset(component.into_u32(), s, coords, array_index, offset)
 }
@@ -2058,9 +2184,14 @@ where
 /// ```wgsl
 /// let gathered = textureGather(depth_texture, my_sampler, uv, vec2<i32>(1, 0));
 /// ```
-pub fn texture_gather_depth_offset<T, C, O>(t: &T, s: &Sampler, coords: C, offset: O) -> Vec4f
+pub fn texture_gather_depth_offset<T, C, O, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    offset: O,
+) -> Vec4f
 where
-    T: TextureGatherDepthOffset<C, O>,
+    T: TextureGatherDepthOffset<C, O, SAMPLER_FILTERABLE>,
 {
     t.gather_depth_offset(s, coords, offset)
 }
@@ -2072,9 +2203,14 @@ where
 /// ```wgsl
 /// let gathered = textureGather(depth_array_texture, my_sampler, uv, array_index);
 /// ```
-pub fn texture_gather_depth_array<T, C, A>(t: &T, s: &Sampler, coords: C, array_index: A) -> Vec4f
+pub fn texture_gather_depth_array<T, C, A, const SAMPLER_FILTERABLE: bool>(
+    t: &T,
+    s: &Sampler<SAMPLER_FILTERABLE>,
+    coords: C,
+    array_index: A,
+) -> Vec4f
 where
-    T: TextureGatherDepthArray<C, A>,
+    T: TextureGatherDepthArray<C, A, SAMPLER_FILTERABLE>,
 {
     t.gather_depth_array(s, coords, array_index)
 }
@@ -2086,15 +2222,15 @@ where
 /// ```wgsl
 /// let gathered = textureGather(depth_arr, my_sampler, uv, idx, vec2<i32>(1, 0));
 /// ```
-pub fn texture_gather_depth_array_offset<T, C, A, O>(
+pub fn texture_gather_depth_array_offset<T, C, A, O, const SAMPLER_FILTERABLE: bool>(
     t: &T,
-    s: &Sampler,
+    s: &Sampler<SAMPLER_FILTERABLE>,
     coords: C,
     array_index: A,
     offset: O,
 ) -> Vec4f
 where
-    T: TextureGatherDepthArrayOffset<C, A, O>,
+    T: TextureGatherDepthArrayOffset<C, A, O, SAMPLER_FILTERABLE>,
 {
     t.gather_depth_array_offset(s, coords, array_index, offset)
 }

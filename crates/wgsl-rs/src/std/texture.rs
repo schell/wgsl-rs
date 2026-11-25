@@ -22,6 +22,9 @@ use wgsl_rs_ir as ir;
 
 /// A shader sampler for texture sampling operations.
 ///
+/// `FILTERABLE` controls the generated host-side wgpu layout and defaults to
+/// `true`. It does not change the WGSL `sampler` type or CPU sampling code.
+///
 /// In WGSL, this transpiles to the `sampler` type. Samplers control how
 /// textures are sampled, including filtering modes and address wrapping
 /// behavior.
@@ -45,21 +48,26 @@ use wgsl_rs_ir as ir;
 /// ```wgsl
 /// @group(0) @binding(1) var TEX_SAMPLER: sampler;
 /// ```
-pub struct Sampler {
+pub struct Sampler<const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     /// CPU-side sampler state
     data: ModuleVar<SamplerState>,
 }
 
-impl Wgsl for Sampler {
+impl<const FILTERABLE: bool> Wgsl for Sampler<FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Sampler
     }
 }
 
-impl Sampler {
+impl<const FILTERABLE: bool> Sampler<FILTERABLE> {
     /// Creates a new sampler with the given group and binding indices.
+    ///
+    /// When calling this without an expected type, write
+    /// `Sampler::<true>::new(...)` or annotate the binding as `Sampler`.
+    /// Rust does not use the default const parameter to infer an otherwise
+    /// unconstrained `Sampler::new(...)` call.
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -192,13 +200,13 @@ impl SamplerComparison {
 ///
 /// texture!(group(0), binding(0), LUT_TEX: Texture1D<f32>);
 /// ```
-pub struct Texture1D<T> {
+pub struct Texture1D<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureData1D<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for Texture1D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture1D<T, FILTERABLE> {
     fn to_ir() -> ir::Type {
         ir::Type::Texture {
             kind: ir::TextureKind::Texture1D,
@@ -207,7 +215,7 @@ impl<T: WgslTextureScalar> Wgsl for Texture1D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> Texture1D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture1D<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -239,7 +247,7 @@ impl<T: WgslTextureScalar> Texture1D<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> Texture1D<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture1D<T, FILTERABLE> {
     /// Initialize the texture with the given width.
     ///
     /// Not available in WGSL.
@@ -248,7 +256,9 @@ impl<T: WgslTextureScalar + Default + Copy> Texture1D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture1D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureDimensionsQuery
+    for Texture1D<T, FILTERABLE>
+{
     type Output = u32;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -256,13 +266,15 @@ impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture1D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureNumLevelsQuery for Texture1D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureNumLevelsQuery
+    for Texture1D<T, FILTERABLE>
+{
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
 }
 
-impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<f32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<u32, L> for Texture1D<f32, FILTERABLE> {
     type Output = Vec4f;
 
     fn load(&self, coords: u32, level: L) -> Self::Output {
@@ -275,7 +287,7 @@ impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<f32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<f32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<i32, L> for Texture1D<f32, FILTERABLE> {
     type Output = Vec4f;
 
     fn load(&self, coords: i32, level: L) -> Self::Output {
@@ -289,7 +301,7 @@ impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<f32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<i32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<u32, L> for Texture1D<i32, FILTERABLE> {
     type Output = Vec4i;
 
     fn load(&self, coords: u32, level: L) -> Self::Output {
@@ -302,7 +314,7 @@ impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<i32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<i32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<i32, L> for Texture1D<i32, FILTERABLE> {
     type Output = Vec4i;
 
     fn load(&self, coords: i32, level: L) -> Self::Output {
@@ -316,7 +328,7 @@ impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<i32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<u32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<u32, L> for Texture1D<u32, FILTERABLE> {
     type Output = Vec4u;
 
     fn load(&self, coords: u32, level: L) -> Self::Output {
@@ -329,7 +341,7 @@ impl<L: IntoLevel> TextureLoad<u32, L> for Texture1D<u32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<u32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<i32, L> for Texture1D<u32, FILTERABLE> {
     type Output = Vec4u;
 
     fn load(&self, coords: i32, level: L) -> Self::Output {
@@ -343,10 +355,12 @@ impl<L: IntoLevel> TextureLoad<i32, L> for Texture1D<u32> {
     }
 }
 
-impl TextureSample<f32> for Texture1D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool> TextureSample<f32, SAMPLER_FILTERABLE>
+    for Texture1D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample(&self, sampler: &Sampler, coords: f32) -> Self::Output {
+    fn sample(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: f32) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_1d(&data, &sampler_state, coords, 0);
@@ -354,10 +368,17 @@ impl TextureSample<f32> for Texture1D<f32> {
     }
 }
 
-impl TextureSampleLevel<f32, f32> for Texture1D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevel<f32, f32, SAMPLER_FILTERABLE> for Texture1D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_level(&self, sampler: &Sampler, coords: f32, level: f32) -> Self::Output {
+    fn sample_level(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: f32,
+        level: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let level = level.floor() as u32;
         let data = self.get();
@@ -366,10 +387,17 @@ impl TextureSampleLevel<f32, f32> for Texture1D<f32> {
     }
 }
 
-impl TextureSampleBias<f32, f32> for Texture1D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBias<f32, f32, SAMPLER_FILTERABLE> for Texture1D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_bias(&self, sampler: &Sampler, coords: f32, _bias: f32) -> Self::Output {
+    fn sample_bias(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: f32,
+        _bias: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_1d(&data, &sampler_state, coords, 0);
@@ -377,10 +405,18 @@ impl TextureSampleBias<f32, f32> for Texture1D<f32> {
     }
 }
 
-impl TextureSampleGrad<f32, f32, f32> for Texture1D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGrad<f32, f32, f32, SAMPLER_FILTERABLE> for Texture1D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_grad(&self, sampler: &Sampler, coords: f32, _ddx: f32, _ddy: f32) -> Self::Output {
+    fn sample_grad(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: f32,
+        _ddx: f32,
+        _ddy: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_1d(&data, &sampler_state, coords, 0);
@@ -410,13 +446,13 @@ impl TextureSampleGrad<f32, f32, f32> for Texture1D<f32> {
 ///     // let color = textureSample(DIFFUSE_TEX, TEX_SAMPLER, uv);
 /// }
 /// ```
-pub struct Texture2D<T> {
+pub struct Texture2D<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureData2D<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for Texture2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture2D<T, FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::Texture2D,
@@ -425,7 +461,7 @@ impl<T: WgslTextureScalar> Wgsl for Texture2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> Texture2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture2D<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -457,7 +493,7 @@ impl<T: WgslTextureScalar> Texture2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> Texture2D<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture2D<T, FILTERABLE> {
     /// Initialize the texture with the given dimensions.
     ///
     /// Not available in WGSL.
@@ -473,7 +509,9 @@ impl<T: WgslTextureScalar + Default + Copy> Texture2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureDimensionsQuery
+    for Texture2D<T, FILTERABLE>
+{
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -482,13 +520,15 @@ impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureNumLevelsQuery for Texture2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureNumLevelsQuery
+    for Texture2D<T, FILTERABLE>
+{
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<f32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec2u, L> for Texture2D<f32, FILTERABLE> {
     type Output = Vec4f;
 
     fn load(&self, coords: Vec2u, level: L) -> Self::Output {
@@ -501,7 +541,7 @@ impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<f32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<f32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec2i, L> for Texture2D<f32, FILTERABLE> {
     type Output = Vec4f;
 
     fn load(&self, coords: Vec2i, level: L) -> Self::Output {
@@ -519,7 +559,7 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<f32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<i32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec2u, L> for Texture2D<i32, FILTERABLE> {
     type Output = Vec4i;
 
     fn load(&self, coords: Vec2u, level: L) -> Self::Output {
@@ -532,7 +572,7 @@ impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<i32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<i32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec2i, L> for Texture2D<i32, FILTERABLE> {
     type Output = Vec4i;
 
     fn load(&self, coords: Vec2i, level: L) -> Self::Output {
@@ -550,7 +590,7 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<i32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<u32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec2u, L> for Texture2D<u32, FILTERABLE> {
     type Output = Vec4u;
 
     fn load(&self, coords: Vec2u, level: L) -> Self::Output {
@@ -563,7 +603,7 @@ impl<L: IntoLevel> TextureLoad<Vec2u, L> for Texture2D<u32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<u32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec2i, L> for Texture2D<u32, FILTERABLE> {
     type Output = Vec4u;
 
     fn load(&self, coords: Vec2i, level: L) -> Self::Output {
@@ -586,10 +626,12 @@ impl<L: IntoLevel> TextureLoad<Vec2i, L> for Texture2D<u32> {
     }
 }
 
-impl TextureSample<Vec2f> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSample<Vec2f, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample(&self, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+    fn sample(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Vec2f) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), 0);
@@ -597,10 +639,17 @@ impl TextureSample<Vec2f> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleLevel<Vec2f, f32> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevel<Vec2f, f32, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_level(&self, sampler: &Sampler, coords: Vec2f, level: f32) -> Self::Output {
+    fn sample_level(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        level: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let level = level.floor() as u32; // Use floor for mip level selection
         let data = self.get();
@@ -609,10 +658,16 @@ impl TextureSampleLevel<Vec2f, f32> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleBaseClampToEdge<Vec2f> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBaseClampToEdge<Vec2f, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_base_clamp_to_edge(&self, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+    fn sample_base_clamp_to_edge(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let (w, h) = data.dimensions(0);
@@ -627,10 +682,17 @@ impl TextureSampleBaseClampToEdge<Vec2f> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleOffset<Vec2f, Vec2i> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleOffset<Vec2f, Vec2i, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_offset(&self, sampler: &Sampler, coords: Vec2f, offset: Vec2i) -> Self::Output {
+    fn sample_offset(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        offset: Vec2i,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let (w, h) = data.dimensions(0);
@@ -643,12 +705,14 @@ impl TextureSampleOffset<Vec2f, Vec2i> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleLevelOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevelOffset<Vec2f, f32, Vec2i, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_level_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         level: f32,
         offset: Vec2i,
@@ -664,12 +728,19 @@ impl TextureSampleLevelOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleBias<Vec2f, f32> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBias<Vec2f, f32, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     // On CPU, bias is effectively ignored (no mip chain selection from
     // derivatives).
-    fn sample_bias(&self, sampler: &Sampler, coords: Vec2f, _bias: f32) -> Self::Output {
+    fn sample_bias(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        _bias: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_2d(&data, &sampler_state, coords.x(), coords.y(), 0);
@@ -677,12 +748,14 @@ impl TextureSampleBias<Vec2f, f32> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleBiasOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBiasOffset<Vec2f, f32, Vec2i, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_bias_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         _bias: f32,
         offset: Vec2i,
@@ -697,12 +770,14 @@ impl TextureSampleBiasOffset<Vec2f, f32, Vec2i> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleGrad<Vec2f, Vec2f, Vec2f> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGrad<Vec2f, Vec2f, Vec2f, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         _ddx: Vec2f,
         _ddy: Vec2f,
@@ -718,12 +793,15 @@ impl TextureSampleGrad<Vec2f, Vec2f, Vec2f> for Texture2D<f32> {
     }
 }
 
-impl TextureSampleGradOffset<Vec2f, Vec2f, Vec2f, Vec2i> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGradOffset<Vec2f, Vec2f, Vec2f, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         _ddx: Vec2f,
         _ddy: Vec2f,
@@ -739,10 +817,17 @@ impl TextureSampleGradOffset<Vec2f, Vec2f, Vec2f, Vec2i> for Texture2D<f32> {
     }
 }
 
-impl TextureGather<Vec2f> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGather<Vec2f, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let g = gather_texture_2d(&data, &sampler_state, coords.x(), coords.y(), component);
@@ -750,13 +835,15 @@ impl TextureGather<Vec2f> for Texture2D<f32> {
     }
 }
 
-impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherOffset<Vec2f, Vec2i, SAMPLER_FILTERABLE> for Texture2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         offset: Vec2i,
     ) -> Self::Output {
@@ -769,10 +856,17 @@ impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<f32> {
     }
 }
 
-impl TextureGather<Vec2f> for Texture2D<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGather<Vec2f, SAMPLER_FILTERABLE> for Texture2D<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let g = gather_texture_2d(&data, &sampler_state, coords.x(), coords.y(), component);
@@ -780,10 +874,17 @@ impl TextureGather<Vec2f> for Texture2D<i32> {
     }
 }
 
-impl TextureGather<Vec2f> for Texture2D<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGather<Vec2f, SAMPLER_FILTERABLE> for Texture2D<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec2f) -> Self::Output {
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let g = gather_texture_2d(&data, &sampler_state, coords.x(), coords.y(), component);
@@ -791,13 +892,15 @@ impl TextureGather<Vec2f> for Texture2D<u32> {
     }
 }
 
-impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherOffset<Vec2f, Vec2i, SAMPLER_FILTERABLE> for Texture2D<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         offset: Vec2i,
     ) -> Self::Output {
@@ -810,13 +913,15 @@ impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<i32> {
     }
 }
 
-impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherOffset<Vec2f, Vec2i, SAMPLER_FILTERABLE> for Texture2D<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         offset: Vec2i,
     ) -> Self::Output {
@@ -841,13 +946,13 @@ impl TextureGatherOffset<Vec2f, Vec2i> for Texture2D<u32> {
 ///
 /// texture!(group(0), binding(0), TEXTURE_ARRAY: Texture2DArray<f32>);
 /// ```
-pub struct Texture2DArray<T> {
+pub struct Texture2DArray<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureData2DArray<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for Texture2DArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture2DArray<T, FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::Texture2DArray,
@@ -856,7 +961,7 @@ impl<T: WgslTextureScalar> Wgsl for Texture2DArray<T> {
     }
 }
 
-impl<T: WgslTextureScalar> Texture2DArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture2DArray<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -888,14 +993,16 @@ impl<T: WgslTextureScalar> Texture2DArray<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> Texture2DArray<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture2DArray<T, FILTERABLE> {
     /// Initialize the texture with the given dimensions.
     pub fn init(&self, width: u32, height: u32, layers: u32) {
         self.set(TextureData2DArray::new(width, height, layers))
     }
 }
 
-impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture2DArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureDimensionsQuery
+    for Texture2DArray<T, FILTERABLE>
+{
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -904,22 +1011,33 @@ impl<T: WgslTextureScalar> TextureDimensionsQuery for Texture2DArray<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureNumLayersQuery for Texture2DArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureNumLayersQuery
+    for Texture2DArray<T, FILTERABLE>
+{
     fn query_num_layers(&self) -> u32 {
         self.get().num_layers()
     }
 }
 
-impl<T: WgslTextureScalar + Default + Clone> TextureNumLevelsQuery for Texture2DArray<T> {
+impl<T: WgslTextureScalar + Default + Clone, const FILTERABLE: bool> TextureNumLevelsQuery
+    for Texture2DArray<T, FILTERABLE>
+{
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
 }
 
-impl TextureSampleArray<Vec2f, u32> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleArray<Vec2f, u32, SAMPLER_FILTERABLE> for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_array(&self, sampler: &Sampler, coords: Vec2f, array_index: u32) -> Self::Output {
+    fn sample_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        array_index: u32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let layer = array_index.min(data.num_layers().saturating_sub(1));
@@ -932,10 +1050,17 @@ impl TextureSampleArray<Vec2f, u32> for Texture2DArray<f32> {
     }
 }
 
-impl TextureSampleArray<Vec2f, i32> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleArray<Vec2f, i32, SAMPLER_FILTERABLE> for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_array(&self, sampler: &Sampler, coords: Vec2f, array_index: i32) -> Self::Output {
+    fn sample_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        array_index: i32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let layer = (array_index.max(0) as u32).min(data.num_layers().saturating_sub(1));
@@ -948,12 +1073,15 @@ impl TextureSampleArray<Vec2f, i32> for Texture2DArray<f32> {
     }
 }
 
-impl TextureSampleArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleArrayOffset<Vec2f, u32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         offset: Vec2i,
@@ -973,12 +1101,15 @@ impl TextureSampleArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<f32> {
     }
 }
 
-impl TextureSampleLevelArray<Vec2f, u32, f32> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevelArray<Vec2f, u32, f32, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_level_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         level: f32,
@@ -997,12 +1128,15 @@ impl TextureSampleLevelArray<Vec2f, u32, f32> for Texture2DArray<f32> {
     }
 }
 
-impl TextureSampleLevelArrayOffset<Vec2f, u32, f32, Vec2i> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevelArrayOffset<Vec2f, u32, f32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_level_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         level: f32,
@@ -1024,12 +1158,15 @@ impl TextureSampleLevelArrayOffset<Vec2f, u32, f32, Vec2i> for Texture2DArray<f3
     }
 }
 
-impl TextureSampleBiasArray<Vec2f, u32, f32> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBiasArray<Vec2f, u32, f32, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_bias_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         _bias: f32,
@@ -1046,12 +1183,15 @@ impl TextureSampleBiasArray<Vec2f, u32, f32> for Texture2DArray<f32> {
     }
 }
 
-impl TextureSampleBiasArrayOffset<Vec2f, u32, f32, Vec2i> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBiasArrayOffset<Vec2f, u32, f32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_bias_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         _bias: f32,
@@ -1072,12 +1212,15 @@ impl TextureSampleBiasArrayOffset<Vec2f, u32, f32, Vec2i> for Texture2DArray<f32
     }
 }
 
-impl TextureSampleGradArray<Vec2f, u32, Vec2f, Vec2f> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGradArray<Vec2f, u32, Vec2f, Vec2f, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         _ddx: Vec2f,
@@ -1095,12 +1238,15 @@ impl TextureSampleGradArray<Vec2f, u32, Vec2f, Vec2f> for Texture2DArray<f32> {
     }
 }
 
-impl TextureSampleGradArrayOffset<Vec2f, u32, Vec2f, Vec2f, Vec2i> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGradArrayOffset<Vec2f, u32, Vec2f, Vec2f, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         _ddx: Vec2f,
@@ -1122,13 +1268,15 @@ impl TextureSampleGradArrayOffset<Vec2f, u32, Vec2f, Vec2f, Vec2i> for Texture2D
     }
 }
 
-impl TextureGatherArray<Vec2f, u32> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec2f, u32, SAMPLER_FILTERABLE> for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
     ) -> Self::Output {
@@ -1146,13 +1294,15 @@ impl TextureGatherArray<Vec2f, u32> for Texture2DArray<f32> {
     }
 }
 
-impl TextureGatherArray<Vec2f, i32> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec2f, i32, SAMPLER_FILTERABLE> for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
     ) -> Self::Output {
@@ -1160,13 +1310,16 @@ impl TextureGatherArray<Vec2f, i32> for Texture2DArray<f32> {
     }
 }
 
-impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArrayOffset<Vec2f, u32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         offset: Vec2i,
@@ -1185,13 +1338,16 @@ impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<f32> {
     }
 }
 
-impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArrayOffset<Vec2f, i32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
         offset: Vec2i,
@@ -1206,13 +1362,15 @@ impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<f32> {
     }
 }
 
-impl TextureGatherArray<Vec2f, u32> for Texture2DArray<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec2f, u32, SAMPLER_FILTERABLE> for Texture2DArray<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
     ) -> Self::Output {
@@ -1230,13 +1388,15 @@ impl TextureGatherArray<Vec2f, u32> for Texture2DArray<i32> {
     }
 }
 
-impl TextureGatherArray<Vec2f, i32> for Texture2DArray<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec2f, i32, SAMPLER_FILTERABLE> for Texture2DArray<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
     ) -> Self::Output {
@@ -1244,13 +1404,16 @@ impl TextureGatherArray<Vec2f, i32> for Texture2DArray<i32> {
     }
 }
 
-impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArrayOffset<Vec2f, u32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         offset: Vec2i,
@@ -1269,13 +1432,16 @@ impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<i32> {
     }
 }
 
-impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArrayOffset<Vec2f, i32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
         offset: Vec2i,
@@ -1290,13 +1456,15 @@ impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<i32> {
     }
 }
 
-impl TextureGatherArray<Vec2f, u32> for Texture2DArray<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec2f, u32, SAMPLER_FILTERABLE> for Texture2DArray<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
     ) -> Self::Output {
@@ -1314,13 +1482,15 @@ impl TextureGatherArray<Vec2f, u32> for Texture2DArray<u32> {
     }
 }
 
-impl TextureGatherArray<Vec2f, i32> for Texture2DArray<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec2f, i32, SAMPLER_FILTERABLE> for Texture2DArray<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
     ) -> Self::Output {
@@ -1328,13 +1498,16 @@ impl TextureGatherArray<Vec2f, i32> for Texture2DArray<u32> {
     }
 }
 
-impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArrayOffset<Vec2f, u32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         offset: Vec2i,
@@ -1353,13 +1526,16 @@ impl TextureGatherArrayOffset<Vec2f, u32, Vec2i> for Texture2DArray<u32> {
     }
 }
 
-impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArrayOffset<Vec2f, i32, Vec2i, SAMPLER_FILTERABLE>
+    for Texture2DArray<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_array_offset(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
         offset: Vec2i,
@@ -1386,13 +1562,13 @@ impl TextureGatherArrayOffset<Vec2f, i32, Vec2i> for Texture2DArray<u32> {
 ///
 /// texture!(group(0), binding(0), VOLUME_TEX: Texture3D<f32>);
 /// ```
-pub struct Texture3D<T> {
+pub struct Texture3D<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureData3D<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for Texture3D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture3D<T, FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::Texture3D,
@@ -1401,7 +1577,7 @@ impl<T: WgslTextureScalar> Wgsl for Texture3D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> Texture3D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture3D<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1419,7 +1595,7 @@ impl<T: WgslTextureScalar> Texture3D<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> Texture3D<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture3D<T, FILTERABLE> {
     /// Initialize the texture with the given dimensions.
     pub fn init(&self, width: u32, height: u32, depth: u32) {
         self.set(TextureData3D::new(width, height, depth))
@@ -1433,7 +1609,7 @@ impl<T: WgslTextureScalar + Default + Copy> Texture3D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> Texture3D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture3D<T, FILTERABLE> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
@@ -1449,7 +1625,9 @@ impl<T: WgslTextureScalar> Texture3D<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Clone> TextureDimensionsQuery for Texture3D<T> {
+impl<T: WgslTextureScalar + Default + Clone, const FILTERABLE: bool> TextureDimensionsQuery
+    for Texture3D<T, FILTERABLE>
+{
     type Output = Vec3u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -1458,13 +1636,15 @@ impl<T: WgslTextureScalar + Default + Clone> TextureDimensionsQuery for Texture3
     }
 }
 
-impl<T: WgslTextureScalar + Default + Clone> TextureNumLevelsQuery for Texture3D<T> {
+impl<T: WgslTextureScalar + Default + Clone, const FILTERABLE: bool> TextureNumLevelsQuery
+    for Texture3D<T, FILTERABLE>
+{
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<f32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec3u, L> for Texture3D<f32, FILTERABLE> {
     type Output = Vec4f;
 
     fn load(&self, coords: Vec3u, level: L) -> Self::Output {
@@ -1477,7 +1657,7 @@ impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<f32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<f32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec3i, L> for Texture3D<f32, FILTERABLE> {
     type Output = Vec4f;
 
     fn load(&self, coords: Vec3i, level: L) -> Self::Output {
@@ -1488,7 +1668,7 @@ impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<f32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<i32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec3u, L> for Texture3D<i32, FILTERABLE> {
     type Output = Vec4i;
 
     fn load(&self, coords: Vec3u, level: L) -> Self::Output {
@@ -1501,7 +1681,7 @@ impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<i32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<i32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec3i, L> for Texture3D<i32, FILTERABLE> {
     type Output = Vec4i;
 
     fn load(&self, coords: Vec3i, level: L) -> Self::Output {
@@ -1512,7 +1692,7 @@ impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<i32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<u32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec3u, L> for Texture3D<u32, FILTERABLE> {
     type Output = Vec4u;
 
     fn load(&self, coords: Vec3u, level: L) -> Self::Output {
@@ -1525,7 +1705,7 @@ impl<L: IntoLevel> TextureLoad<Vec3u, L> for Texture3D<u32> {
     }
 }
 
-impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<u32> {
+impl<L: IntoLevel, const FILTERABLE: bool> TextureLoad<Vec3i, L> for Texture3D<u32, FILTERABLE> {
     type Output = Vec4u;
 
     fn load(&self, coords: Vec3i, level: L) -> Self::Output {
@@ -1536,10 +1716,12 @@ impl<L: IntoLevel> TextureLoad<Vec3i, L> for Texture3D<u32> {
     }
 }
 
-impl TextureSample<Vec3f> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSample<Vec3f, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample(&self, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+    fn sample(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Vec3f) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result =
@@ -1548,10 +1730,17 @@ impl TextureSample<Vec3f> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleOffset<Vec3f, Vec3i> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleOffset<Vec3f, Vec3i, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_offset(&self, sampler: &Sampler, coords: Vec3f, offset: Vec3i) -> Self::Output {
+    fn sample_offset(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        offset: Vec3i,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let (w, h, d) = data.dimensions(0);
@@ -1563,10 +1752,17 @@ impl TextureSampleOffset<Vec3f, Vec3i> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleLevel<Vec3f, f32> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevel<Vec3f, f32, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: f32) -> Self::Output {
+    fn sample_level(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        level: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let level = level.floor() as u32;
         let data = self.get();
@@ -1582,12 +1778,14 @@ impl TextureSampleLevel<Vec3f, f32> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleLevelOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevelOffset<Vec3f, f32, Vec3i, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_level_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         level: f32,
         offset: Vec3i,
@@ -1604,10 +1802,17 @@ impl TextureSampleLevelOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleBias<Vec3f, f32> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBias<Vec3f, f32, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_bias(&self, sampler: &Sampler, coords: Vec3f, _bias: f32) -> Self::Output {
+    fn sample_bias(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        _bias: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result =
@@ -1616,12 +1821,14 @@ impl TextureSampleBias<Vec3f, f32> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleBiasOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBiasOffset<Vec3f, f32, Vec3i, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_bias_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         _bias: f32,
         offset: Vec3i,
@@ -1637,12 +1844,14 @@ impl TextureSampleBiasOffset<Vec3f, f32, Vec3i> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGrad<Vec3f, Vec3f, Vec3f, SAMPLER_FILTERABLE> for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         _ddx: Vec3f,
         _ddy: Vec3f,
@@ -1655,12 +1864,15 @@ impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for Texture3D<f32> {
     }
 }
 
-impl TextureSampleGradOffset<Vec3f, Vec3f, Vec3f, Vec3i> for Texture3D<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGradOffset<Vec3f, Vec3f, Vec3f, Vec3i, SAMPLER_FILTERABLE>
+    for Texture3D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         _ddx: Vec3f,
         _ddy: Vec3f,
@@ -1689,13 +1901,13 @@ impl TextureSampleGradOffset<Vec3f, Vec3f, Vec3f, Vec3i> for Texture3D<f32> {
 ///
 /// texture!(group(0), binding(0), SKYBOX: TextureCube<f32>);
 /// ```
-pub struct TextureCube<T> {
+pub struct TextureCube<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureDataCube<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for TextureCube<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureCube<T, FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::TextureCube,
@@ -1704,7 +1916,7 @@ impl<T: WgslTextureScalar> Wgsl for TextureCube<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureCube<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureCube<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1736,14 +1948,16 @@ impl<T: WgslTextureScalar> TextureCube<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> TextureCube<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> TextureCube<T, FILTERABLE> {
     /// Initialize the texture with the given face size.
     pub fn init(&self, size: u32) {
         self.set(TextureDataCube::new(size))
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> TextureDimensionsQuery for TextureCube<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> TextureDimensionsQuery
+    for TextureCube<T, FILTERABLE>
+{
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -1752,16 +1966,20 @@ impl<T: WgslTextureScalar + Default + Copy> TextureDimensionsQuery for TextureCu
     }
 }
 
-impl<T: WgslTextureScalar + Default + Clone> TextureNumLevelsQuery for TextureCube<T> {
+impl<T: WgslTextureScalar + Default + Clone, const FILTERABLE: bool> TextureNumLevelsQuery
+    for TextureCube<T, FILTERABLE>
+{
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
 }
 
-impl TextureSample<Vec3f> for TextureCube<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSample<Vec3f, SAMPLER_FILTERABLE> for TextureCube<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample(&self, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+    fn sample(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Vec3f) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result =
@@ -1770,10 +1988,17 @@ impl TextureSample<Vec3f> for TextureCube<f32> {
     }
 }
 
-impl TextureSampleLevel<Vec3f, f32> for TextureCube<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevel<Vec3f, f32, SAMPLER_FILTERABLE> for TextureCube<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_level(&self, sampler: &Sampler, coords: Vec3f, level: f32) -> Self::Output {
+    fn sample_level(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        level: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let level = level.floor() as u32;
         let data = self.get();
@@ -1789,10 +2014,17 @@ impl TextureSampleLevel<Vec3f, f32> for TextureCube<f32> {
     }
 }
 
-impl TextureSampleBias<Vec3f, f32> for TextureCube<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBias<Vec3f, f32, SAMPLER_FILTERABLE> for TextureCube<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_bias(&self, sampler: &Sampler, coords: Vec3f, _bias: f32) -> Self::Output {
+    fn sample_bias(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        _bias: f32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result =
@@ -1801,12 +2033,14 @@ impl TextureSampleBias<Vec3f, f32> for TextureCube<f32> {
     }
 }
 
-impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for TextureCube<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGrad<Vec3f, Vec3f, Vec3f, SAMPLER_FILTERABLE> for TextureCube<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         _ddx: Vec3f,
         _ddy: Vec3f,
@@ -1819,10 +2053,17 @@ impl TextureSampleGrad<Vec3f, Vec3f, Vec3f> for TextureCube<f32> {
     }
 }
 
-impl TextureGather<Vec3f> for TextureCube<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGather<Vec3f, SAMPLER_FILTERABLE> for TextureCube<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let g = gather_texture_cube(
@@ -1837,10 +2078,17 @@ impl TextureGather<Vec3f> for TextureCube<f32> {
     }
 }
 
-impl TextureGather<Vec3f> for TextureCube<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGather<Vec3f, SAMPLER_FILTERABLE> for TextureCube<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let g = gather_texture_cube(
@@ -1855,10 +2103,17 @@ impl TextureGather<Vec3f> for TextureCube<i32> {
     }
 }
 
-impl TextureGather<Vec3f> for TextureCube<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGather<Vec3f, SAMPLER_FILTERABLE> for TextureCube<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
-    fn gather(&self, component: u32, sampler: &Sampler, coords: Vec3f) -> Self::Output {
+    fn gather(
+        &self,
+        component: u32,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let g = gather_texture_cube(
@@ -1885,13 +2140,13 @@ impl TextureGather<Vec3f> for TextureCube<u32> {
 ///
 /// texture!(group(0), binding(0), CUBE_ARRAY: TextureCubeArray<f32>);
 /// ```
-pub struct TextureCubeArray<T> {
+pub struct TextureCubeArray<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureDataCubeArray<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for TextureCubeArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureCubeArray<T, FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::TextureCubeArray,
@@ -1900,7 +2155,7 @@ impl<T: WgslTextureScalar> Wgsl for TextureCubeArray<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureCubeArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureCubeArray<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -1932,14 +2187,18 @@ impl<T: WgslTextureScalar> TextureCubeArray<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> TextureCubeArray<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool>
+    TextureCubeArray<T, FILTERABLE>
+{
     /// Initialize the texture with the given face size and layer count.
     pub fn init(&self, size: u32, layers: u32) {
         self.set(TextureDataCubeArray::new(size, layers))
     }
 }
 
-impl<T: WgslTextureScalar> TextureDimensionsQuery for TextureCubeArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureDimensionsQuery
+    for TextureCubeArray<T, FILTERABLE>
+{
     type Output = Vec2u;
 
     fn query_dimensions(&self, level: u32) -> Self::Output {
@@ -1948,22 +2207,33 @@ impl<T: WgslTextureScalar> TextureDimensionsQuery for TextureCubeArray<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureNumLayersQuery for TextureCubeArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureNumLayersQuery
+    for TextureCubeArray<T, FILTERABLE>
+{
     fn query_num_layers(&self) -> u32 {
         self.get().num_layers()
     }
 }
 
-impl<T: WgslTextureScalar> TextureNumLevelsQuery for TextureCubeArray<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureNumLevelsQuery
+    for TextureCubeArray<T, FILTERABLE>
+{
     fn query_num_levels(&self) -> u32 {
         self.get().num_levels()
     }
 }
 
-impl TextureSampleArray<Vec3f, u32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleArray<Vec3f, u32, SAMPLER_FILTERABLE> for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_array(&self, sampler: &Sampler, coords: Vec3f, array_index: u32) -> Self::Output {
+    fn sample_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        array_index: u32,
+    ) -> Self::Output {
         let sampler_state = sampler.get();
         let data = self.get();
         let result = sample_texture_cube_array(
@@ -1979,20 +2249,30 @@ impl TextureSampleArray<Vec3f, u32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureSampleArray<Vec3f, i32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleArray<Vec3f, i32, SAMPLER_FILTERABLE> for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
-    fn sample_array(&self, sampler: &Sampler, coords: Vec3f, array_index: i32) -> Self::Output {
+    fn sample_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        array_index: i32,
+    ) -> Self::Output {
         self.sample_array(sampler, coords, array_index.max(0) as u32)
     }
 }
 
-impl TextureSampleLevelArray<Vec3f, u32, f32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevelArray<Vec3f, u32, f32, SAMPLER_FILTERABLE>
+    for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_level_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: u32,
         level: f32,
@@ -2013,12 +2293,15 @@ impl TextureSampleLevelArray<Vec3f, u32, f32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureSampleLevelArray<Vec3f, i32, f32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleLevelArray<Vec3f, i32, f32, SAMPLER_FILTERABLE>
+    for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_level_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: i32,
         level: f32,
@@ -2027,12 +2310,15 @@ impl TextureSampleLevelArray<Vec3f, i32, f32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureSampleBiasArray<Vec3f, u32, f32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBiasArray<Vec3f, u32, f32, SAMPLER_FILTERABLE>
+    for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_bias_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: u32,
         _bias: f32,
@@ -2052,12 +2338,15 @@ impl TextureSampleBiasArray<Vec3f, u32, f32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureSampleBiasArray<Vec3f, i32, f32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleBiasArray<Vec3f, i32, f32, SAMPLER_FILTERABLE>
+    for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_bias_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: i32,
         bias: f32,
@@ -2066,12 +2355,15 @@ impl TextureSampleBiasArray<Vec3f, i32, f32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureSampleGradArray<Vec3f, u32, Vec3f, Vec3f> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGradArray<Vec3f, u32, Vec3f, Vec3f, SAMPLER_FILTERABLE>
+    for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: u32,
         _ddx: Vec3f,
@@ -2092,12 +2384,15 @@ impl TextureSampleGradArray<Vec3f, u32, Vec3f, Vec3f> for TextureCubeArray<f32> 
     }
 }
 
-impl TextureSampleGradArray<Vec3f, i32, Vec3f, Vec3f> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureSampleGradArray<Vec3f, i32, Vec3f, Vec3f, SAMPLER_FILTERABLE>
+    for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn sample_grad_array(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: i32,
         ddx: Vec3f,
@@ -2107,13 +2402,15 @@ impl TextureSampleGradArray<Vec3f, i32, Vec3f, Vec3f> for TextureCubeArray<f32> 
     }
 }
 
-impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec3f, u32, SAMPLER_FILTERABLE> for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: u32,
     ) -> Self::Output {
@@ -2132,13 +2429,15 @@ impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<f32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec3f, i32, SAMPLER_FILTERABLE> for TextureCubeArray<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: i32,
     ) -> Self::Output {
@@ -2146,13 +2445,15 @@ impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<f32> {
     }
 }
 
-impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec3f, u32, SAMPLER_FILTERABLE> for TextureCubeArray<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: u32,
     ) -> Self::Output {
@@ -2171,13 +2472,15 @@ impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<i32> {
     }
 }
 
-impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<i32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec3f, i32, SAMPLER_FILTERABLE> for TextureCubeArray<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: i32,
     ) -> Self::Output {
@@ -2185,13 +2488,15 @@ impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<i32> {
     }
 }
 
-impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec3f, u32, SAMPLER_FILTERABLE> for TextureCubeArray<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: u32,
     ) -> Self::Output {
@@ -2210,13 +2515,15 @@ impl TextureGatherArray<Vec3f, u32> for TextureCubeArray<u32> {
     }
 }
 
-impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<u32> {
+impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
+    TextureGatherArray<Vec3f, i32, SAMPLER_FILTERABLE> for TextureCubeArray<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn gather_array(
         &self,
         component: u32,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec3f,
         array_index: i32,
     ) -> Self::Output {
@@ -2236,13 +2543,13 @@ impl TextureGatherArray<Vec3f, i32> for TextureCubeArray<u32> {
 ///
 /// texture!(group(0), binding(0), MSAA_TEX: TextureMultisampled2D<f32>);
 /// ```
-pub struct TextureMultisampled2D<T> {
+pub struct TextureMultisampled2D<T, const FILTERABLE: bool = true> {
     group: u32,
     binding: u32,
     data: ModuleVar<TextureDataMultisampled2D<T>>,
 }
 
-impl<T: WgslTextureScalar> Wgsl for TextureMultisampled2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureMultisampled2D<T, FILTERABLE> {
     fn to_ir() -> wgsl_rs_ir::Type {
         wgsl_rs_ir::Type::Texture {
             kind: wgsl_rs_ir::TextureKind::TextureMultisampled2D,
@@ -2251,7 +2558,7 @@ impl<T: WgslTextureScalar> Wgsl for TextureMultisampled2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar> TextureMultisampled2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureMultisampled2D<T, FILTERABLE> {
     pub const fn new(group: u32, binding: u32) -> Self {
         Self {
             group,
@@ -2283,14 +2590,18 @@ impl<T: WgslTextureScalar> TextureMultisampled2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Copy> TextureMultisampled2D<T> {
+impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool>
+    TextureMultisampled2D<T, FILTERABLE>
+{
     /// Initialize the texture with the given dimensions and sample count.
     pub fn init(&self, width: u32, height: u32, sample_count: u32) {
         self.set(TextureDataMultisampled2D::new(width, height, sample_count));
     }
 }
 
-impl<T: WgslTextureScalar> TextureDimensionsQuery for TextureMultisampled2D<T> {
+impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureDimensionsQuery
+    for TextureMultisampled2D<T, FILTERABLE>
+{
     type Output = Vec2u;
 
     fn query_dimensions(&self, _level: u32) -> Self::Output {
@@ -2299,13 +2610,17 @@ impl<T: WgslTextureScalar> TextureDimensionsQuery for TextureMultisampled2D<T> {
     }
 }
 
-impl<T: WgslTextureScalar + Default + Clone> TextureNumSamplesQuery for TextureMultisampled2D<T> {
+impl<T: WgslTextureScalar + Default + Clone, const FILTERABLE: bool> TextureNumSamplesQuery
+    for TextureMultisampled2D<T, FILTERABLE>
+{
     fn query_num_samples(&self) -> u32 {
         self.get().num_samples()
     }
 }
 
-impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<f32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2u, u32>
+    for TextureMultisampled2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn load_multisampled(&self, coords: Vec2u, sample_index: u32) -> Self::Output {
@@ -2316,7 +2631,9 @@ impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<f32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<f32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2u, i32>
+    for TextureMultisampled2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn load_multisampled(&self, coords: Vec2u, sample_index: i32) -> Self::Output {
@@ -2324,7 +2641,9 @@ impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<f32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<f32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, u32>
+    for TextureMultisampled2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn load_multisampled(&self, coords: Vec2i, sample_index: u32) -> Self::Output {
@@ -2334,7 +2653,9 @@ impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<f32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<f32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, i32>
+    for TextureMultisampled2D<f32, FILTERABLE>
+{
     type Output = Vec4f;
 
     fn load_multisampled(&self, coords: Vec2i, sample_index: i32) -> Self::Output {
@@ -2344,7 +2665,9 @@ impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<f32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<i32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2u, u32>
+    for TextureMultisampled2D<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn load_multisampled(&self, coords: Vec2u, sample_index: u32) -> Self::Output {
@@ -2355,7 +2678,9 @@ impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<i32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<i32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2u, i32>
+    for TextureMultisampled2D<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn load_multisampled(&self, coords: Vec2u, sample_index: i32) -> Self::Output {
@@ -2363,7 +2688,9 @@ impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<i32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<i32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, u32>
+    for TextureMultisampled2D<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn load_multisampled(&self, coords: Vec2i, sample_index: u32) -> Self::Output {
@@ -2373,7 +2700,9 @@ impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<i32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<i32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, i32>
+    for TextureMultisampled2D<i32, FILTERABLE>
+{
     type Output = Vec4i;
 
     fn load_multisampled(&self, coords: Vec2i, sample_index: i32) -> Self::Output {
@@ -2383,7 +2712,9 @@ impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<i32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<u32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2u, u32>
+    for TextureMultisampled2D<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn load_multisampled(&self, coords: Vec2u, sample_index: u32) -> Self::Output {
@@ -2394,7 +2725,9 @@ impl TextureLoadMultisampled<Vec2u, u32> for TextureMultisampled2D<u32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<u32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2u, i32>
+    for TextureMultisampled2D<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn load_multisampled(&self, coords: Vec2u, sample_index: i32) -> Self::Output {
@@ -2402,7 +2735,9 @@ impl TextureLoadMultisampled<Vec2u, i32> for TextureMultisampled2D<u32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<u32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, u32>
+    for TextureMultisampled2D<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn load_multisampled(&self, coords: Vec2i, sample_index: u32) -> Self::Output {
@@ -2412,7 +2747,9 @@ impl TextureLoadMultisampled<Vec2i, u32> for TextureMultisampled2D<u32> {
     }
 }
 
-impl TextureLoadMultisampled<Vec2i, i32> for TextureMultisampled2D<u32> {
+impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, i32>
+    for TextureMultisampled2D<u32, FILTERABLE>
+{
     type Output = Vec4u;
 
     fn load_multisampled(&self, coords: Vec2i, sample_index: i32) -> Self::Output {
@@ -2620,8 +2957,10 @@ impl TextureSampleCompareLevelOffset<Vec2f, f32, Vec2i> for TextureDepth2D {
     }
 }
 
-impl TextureGatherDepth<Vec2f> for TextureDepth2D {
-    fn gather_depth(&self, sampler: &Sampler, coords: Vec2f) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepth<Vec2f, SAMPLER_FILTERABLE>
+    for TextureDepth2D
+{
+    fn gather_depth(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Vec2f) -> Vec4f {
         let sampler_state = sampler.get();
         let data = self.get();
         let texels = gather_4_depth_texels(&data, &sampler_state, coords.x(), coords.y());
@@ -2629,8 +2968,15 @@ impl TextureGatherDepth<Vec2f> for TextureDepth2D {
     }
 }
 
-impl TextureGatherDepthOffset<Vec2f, Vec2i> for TextureDepth2D {
-    fn gather_depth_offset(&self, sampler: &Sampler, coords: Vec2f, offset: Vec2i) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepthOffset<Vec2f, Vec2i, SAMPLER_FILTERABLE>
+    for TextureDepth2D
+{
+    fn gather_depth_offset(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        offset: Vec2i,
+    ) -> Vec4f {
         let data = self.get();
         let (w, h) = data.dimensions(0);
         let u = coords.x() + offset.x() as f32 / w.max(1) as f32;
@@ -2962,8 +3308,15 @@ impl TextureGatherCompareArrayOffset<Vec2f, i32, f32, Vec2i> for TextureDepth2DA
     }
 }
 
-impl TextureGatherDepthArray<Vec2f, u32> for TextureDepth2DArray {
-    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec2f, array_index: u32) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepthArray<Vec2f, u32, SAMPLER_FILTERABLE>
+    for TextureDepth2DArray
+{
+    fn gather_depth_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        array_index: u32,
+    ) -> Vec4f {
         let sampler_state = sampler.get();
         let data = self.get();
         let layer = array_index.min(data.num_layers().saturating_sub(1));
@@ -2976,16 +3329,25 @@ impl TextureGatherDepthArray<Vec2f, u32> for TextureDepth2DArray {
     }
 }
 
-impl TextureGatherDepthArray<Vec2f, i32> for TextureDepth2DArray {
-    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec2f, array_index: i32) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepthArray<Vec2f, i32, SAMPLER_FILTERABLE>
+    for TextureDepth2DArray
+{
+    fn gather_depth_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec2f,
+        array_index: i32,
+    ) -> Vec4f {
         self.gather_depth_array(sampler, coords, array_index.max(0) as u32)
     }
 }
 
-impl TextureGatherDepthArrayOffset<Vec2f, u32, Vec2i> for TextureDepth2DArray {
+impl<const SAMPLER_FILTERABLE: bool>
+    TextureGatherDepthArrayOffset<Vec2f, u32, Vec2i, SAMPLER_FILTERABLE> for TextureDepth2DArray
+{
     fn gather_depth_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: u32,
         offset: Vec2i,
@@ -3005,10 +3367,12 @@ impl TextureGatherDepthArrayOffset<Vec2f, u32, Vec2i> for TextureDepth2DArray {
     }
 }
 
-impl TextureGatherDepthArrayOffset<Vec2f, i32, Vec2i> for TextureDepth2DArray {
+impl<const SAMPLER_FILTERABLE: bool>
+    TextureGatherDepthArrayOffset<Vec2f, i32, Vec2i, SAMPLER_FILTERABLE> for TextureDepth2DArray
+{
     fn gather_depth_array_offset(
         &self,
-        sampler: &Sampler,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
         coords: Vec2f,
         array_index: i32,
         offset: Vec2i,
@@ -3178,8 +3542,10 @@ impl TextureNumLevelsQuery for TextureDepthCubeArray {
     }
 }
 
-impl TextureGatherDepth<Vec3f> for TextureDepthCube {
-    fn gather_depth(&self, sampler: &Sampler, coords: Vec3f) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepth<Vec3f, SAMPLER_FILTERABLE>
+    for TextureDepthCube
+{
+    fn gather_depth(&self, sampler: &Sampler<SAMPLER_FILTERABLE>, coords: Vec3f) -> Vec4f {
         let sampler_state = sampler.get();
         let data = self.get();
         let texels =
@@ -3188,8 +3554,15 @@ impl TextureGatherDepth<Vec3f> for TextureDepthCube {
     }
 }
 
-impl TextureGatherDepthArray<Vec3f, u32> for TextureDepthCubeArray {
-    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec3f, array_index: u32) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepthArray<Vec3f, u32, SAMPLER_FILTERABLE>
+    for TextureDepthCubeArray
+{
+    fn gather_depth_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        array_index: u32,
+    ) -> Vec4f {
         let sampler_state = sampler.get();
         let data = self.get();
         let texels = gather_depth_texture_cube_array(
@@ -3204,8 +3577,15 @@ impl TextureGatherDepthArray<Vec3f, u32> for TextureDepthCubeArray {
     }
 }
 
-impl TextureGatherDepthArray<Vec3f, i32> for TextureDepthCubeArray {
-    fn gather_depth_array(&self, sampler: &Sampler, coords: Vec3f, array_index: i32) -> Vec4f {
+impl<const SAMPLER_FILTERABLE: bool> TextureGatherDepthArray<Vec3f, i32, SAMPLER_FILTERABLE>
+    for TextureDepthCubeArray
+{
+    fn gather_depth_array(
+        &self,
+        sampler: &Sampler<SAMPLER_FILTERABLE>,
+        coords: Vec3f,
+        array_index: i32,
+    ) -> Vec4f {
         self.gather_depth_array(sampler, coords, array_index.max(0) as u32)
     }
 }
@@ -4097,6 +4477,39 @@ mod tests {
     }
 
     #[test]
+    fn test_const_generic_filterability_cpu_builtins() {
+        assert_eq!(
+            <Texture2D<f32, false> as Wgsl>::to_ir(),
+            <Texture2D<f32, true> as Wgsl>::to_ir()
+        );
+        assert_eq!(
+            <Sampler<false> as Wgsl>::to_ir(),
+            <Sampler<true> as Wgsl>::to_ir()
+        );
+
+        let unfilterable: Texture2D<f32, false> = Texture2D::new(0, 0);
+        unfilterable.init(2, 2);
+        unfilterable.set_pixel(0, 0, [0.75, 0.5, 0.25, 1.0]);
+
+        let sampler: Sampler<false> = Sampler::new(0, 0);
+        sampler.init();
+
+        let loaded = texture_load(&unfilterable, vec2u(0, 0), 0u32);
+        assert!((loaded.x() - 0.75).abs() < 0.001);
+        let sampled = texture_sample(&unfilterable, &sampler, vec2f(0.25, 0.25));
+        assert!((sampled.x() - 0.75).abs() < 0.001);
+        let level = texture_sample_level(&unfilterable, &sampler, vec2f(0.25, 0.25), 0.0f32);
+        assert!((level.x() - 0.75).abs() < 0.001);
+
+        // Non-filtering samplers are also valid with filterable textures.
+        let filterable: Texture2D<f32> = Texture2D::new(0, 0);
+        filterable.init(2, 2);
+        filterable.set_pixel(0, 0, [0.125, 0.0, 0.0, 1.0]);
+        let sampled = texture_sample(&filterable, &sampler, vec2f(0.25, 0.25));
+        assert!((sampled.x() - 0.125).abs() < 0.001);
+    }
+
+    #[test]
     fn test_texture_depth_2d_load() {
         let tex: TextureDepth2D = TextureDepth2D::new(0, 0);
         tex.init(4, 4);
@@ -4772,7 +5185,7 @@ mod tests {
         tex.data.write().set_pixel(2, 0, [0.0, 0.0, 1.0, 1.0]);
         tex.data.write().set_pixel(3, 0, [1.0, 1.0, 0.0, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Nearest filtering: 0.125 maps to texel 0 (red)
@@ -4791,7 +5204,7 @@ mod tests {
         tex.init(4);
         tex.data.write().set_pixel(1, 0, [0.5, 0.25, 0.125, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let color = texture_sample_level(&tex, &sampler, 0.375f32, 0.0f32);
@@ -4833,7 +5246,7 @@ mod tests {
         tex.set_pixel(0, 1, 1, [0.5, 0.5, 0.5, 1.0]); // gray
         tex.set_pixel(1, 1, 1, [1.0, 1.0, 1.0, 1.0]); // white
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init(); // Nearest filtering
 
         // 0.25 maps to texel 0, 0.75 maps to texel 1
@@ -4857,7 +5270,7 @@ mod tests {
         tex.init(2, 2, 2);
         tex.set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let color = texture_sample_level(&tex, &sampler, vec3f(0.25, 0.25, 0.25), 0.0f32);
@@ -4877,7 +5290,7 @@ mod tests {
         tex.init(2, 2, 2);
         tex.set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.set(SamplerState::linear());
 
         let color = texture_sample(&tex, &sampler, vec3f(0.0, 0.0, 0.0));
@@ -4949,7 +5362,7 @@ mod tests {
             tex.data.write().faces[face].set_pixel(0, 0, 0, color);
         }
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init(); // Nearest
 
         for (dir, face) in cases {
@@ -4981,7 +5394,7 @@ mod tests {
         tex.init(4);
         tex.data.write().faces[0].set_pixel(2, 2, 0, [0.5, 0.5, 0.5, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let color = texture_sample(&tex, &sampler, vec3f(0.0, 0.0, 0.0));
@@ -5000,7 +5413,7 @@ mod tests {
         // Direction (1, 1, 1) selects +X face, u=0, v=0 -> texel (0, 0)
         tex.data.write().faces[0].set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let color = texture_sample_level(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0.0f32);
@@ -5017,7 +5430,7 @@ mod tests {
         // Layer 1, +X face, texel (0, 0) = green
         tex.data.write().cubes[1].faces[0].set_pixel(0, 0, 0, [0.0, 1.0, 0.0, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Direction (1, 1, 1) selects +X face at (0, 0)
@@ -5034,7 +5447,7 @@ mod tests {
         tex.init(2, 2);
         tex.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [0.3, 0.6, 0.9, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let color = texture_sample_level_array(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0u32, 0.0f32);
@@ -5057,7 +5470,7 @@ mod tests {
         tex.data.write().faces[0].set_pixel(0, 1, 0, [0.0, 0.0, 1.0, 1.0]); // blue
         tex.data.write().faces[0].set_pixel(1, 1, 0, [1.0, 1.0, 0.0, 1.0]); // yellow
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Direction (1, 0, 0) selects the +X face at its center.
@@ -5101,7 +5514,7 @@ mod tests {
         tex_u.data.write().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
         tex_u.data.write().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let g = texture_gather(0u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0));
@@ -5128,7 +5541,7 @@ mod tests {
             }
         }
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let g = texture_gather(0u32, &tex, &sampler, vec3f(0.0, 0.0, 0.0));
@@ -5156,7 +5569,7 @@ mod tests {
             }
         }
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // u32 array index selects the layer.
@@ -5205,7 +5618,7 @@ mod tests {
         tex_u.data.write().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
         tex_u.data.write().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let g = texture_gather_array(0u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
@@ -5233,7 +5646,7 @@ mod tests {
         tex_u.set_pixel(0, 1, [30, 0, 0, 100]);
         tex_u.set_pixel(1, 1, [40, 0, 0, 100]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Gathering at the center of a 2x2 texture covers the whole texture
@@ -5263,7 +5676,7 @@ mod tests {
         tex_i.set_pixel(1, 1, [35, 0, 0, 100]);
         tex_i.set_pixel(2, 1, [45, 0, 0, 100]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Gathers at (0.25, 0.25) with offset (1, 0) shift the 2x2 gather
@@ -5307,7 +5720,7 @@ mod tests {
             }
         }
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Gathering at the center of a 2x2 layer covers the whole layer in
@@ -5363,7 +5776,7 @@ mod tests {
         tex_u.data.write().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
         tex_u.data.write().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         let g = texture_gather_array(0u32, &tex_i, &sampler, vec2f(0.5, 0.5), 0u32);
@@ -5384,7 +5797,7 @@ mod tests {
         tex.data.write().layers[1].set_pixel(1, 1, 0, [0.35, 0.0, 0.0, 1.0]);
         tex.data.write().layers[1].set_pixel(2, 1, 0, [0.45, 0.0, 0.0, 1.0]);
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Gather at (0.25, 0.25) with offset (1, 0) shifts the 2x2 gather
@@ -5441,7 +5854,7 @@ mod tests {
             guard.layers[1].mips[0][1][2] = 0.45;
         }
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Gather at (0.5, 0.25) lands on the (1,0)-based window:
@@ -5533,7 +5946,7 @@ mod tests {
         tex.data.write().faces[2].mips[0][1][0] = 0.7;
         tex.data.write().faces[2].mips[0][1][1] = 0.8;
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // Direction (1, 0, 0) selects face 0 at its center; the gather
@@ -5573,7 +5986,7 @@ mod tests {
             guard.cubes[layer].faces[0].mips[0][1][1] = vals[3];
         }
 
-        let sampler = Sampler::new(0, 0);
+        let sampler: Sampler = Sampler::new(0, 0);
         sampler.init();
 
         // u32 array index selects the cube layer.

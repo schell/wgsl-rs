@@ -4,7 +4,7 @@ use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
 use crate::parse::{
-    ItemTexture, ScalarType, StorageTextureAccess, TexelFormat, TextureDepthKind, TextureKind,
+    ItemTexture, StorageTextureAccess, TexelFormat, TextureDepthKind, TextureKind,
     TextureStorageKind, Type,
 };
 
@@ -14,6 +14,7 @@ pub fn texture(input: TokenStream) -> TokenStream {
         binding,
         name,
         ty,
+        rust_ty,
         ..
     } = parse_macro_input!(input as ItemTexture);
 
@@ -26,16 +27,13 @@ pub fn texture(input: TokenStream) -> TokenStream {
     // Generate the Rust-side type and wgpu types based on the texture type
     // TODO(schell): expand the linkage generated
     let expanded = match &ty {
-        Type::Texture {
-            kind, sampled_type, ..
-        } => {
+        Type::Texture { kind, .. } => {
             let rust_type = texture_kind_to_rust_type(*kind);
-            let sample_type = scalar_type_to_token(*sampled_type);
 
             quote! {
                 #[doc(hidden)]
-                static #inner_name: #rust_type<#sample_type> = #rust_type::new(#group, #binding);
-                pub const #name: &'static #rust_type<#sample_type> = &#inner_name;
+                static #inner_name: #rust_ty = #rust_type::new(#group, #binding);
+                pub const #name: &'static #rust_ty = &#inner_name;
             }
         }
         Type::TextureDepth { kind, .. } => {
@@ -161,16 +159,6 @@ fn storage_access_to_rust_type(access: StorageTextureAccess) -> proc_macro2::Tok
         StorageTextureAccess::Read => quote! { Read },
         StorageTextureAccess::Write => quote! { Write },
         StorageTextureAccess::ReadWrite => quote! { ReadWrite },
-    }
-}
-
-/// Convert a ScalarType to the corresponding Rust type token.
-fn scalar_type_to_token(ty: ScalarType) -> proc_macro2::TokenStream {
-    match ty {
-        ScalarType::F32 => quote! { f32 },
-        ScalarType::I32 => quote! { i32 },
-        ScalarType::U32 => quote! { u32 },
-        ScalarType::Bool => quote! { bool },
     }
 }
 

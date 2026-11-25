@@ -92,7 +92,7 @@ pub mod tex2d_gather_integer_variants {
     // Integer textures are non-filterable; the `unfilterable` sampler
     // modifier produces a NonFiltering bind-group layout entry on the GPU
     // side (WGSL output is unchanged).
-    sampler!(group(0), binding(2), S: Sampler, unfilterable);
+    sampler!(group(0), binding(2), S: Sampler<false>);
 
     pub struct FragInput {
         #[builtin(position)]

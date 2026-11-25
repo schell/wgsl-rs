@@ -227,6 +227,18 @@ fn bool_const_generics_compile() {
 }
 
 #[test]
+fn type_level_filterability_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/type_level_filterability.rs");
+}
+
+#[test]
+fn filterability_param_type_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/filterability_param_type_collision.rs");
+}
+
+#[test]
 fn const_param_unsupported_type_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/const_param_unsupported_type.rs");

@@ -63,15 +63,59 @@ pub mod dual_compute {
 pub mod binding_filterability {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32>, unfilterable);
+    texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32, false>);
     texture!(group(0), binding(1), FILTERABLE_TEX: Texture2D<f32>);
-    sampler!(group(0), binding(2), UNFILTERABLE_SMP: Sampler, unfilterable);
+    sampler!(group(0), binding(2), UNFILTERABLE_SMP: Sampler<false>);
     sampler!(group(0), binding(3), FILTERABLE_SMP: Sampler);
     sampler!(group(0), binding(4), CMP_SMP: SamplerComparison);
 
     #[compute]
     #[workgroup_size(1)]
     pub fn main() {}
+}
+
+/// A texture and sampler share one binding-owned module const. Both entry
+/// points consume both bindings, pinning the pipeline-scope ownership model.
+#[wgsl(validate_with_instantiation_types(FILTERABLE_TRUE))]
+pub mod binding_filterability_template {
+    use wgsl_rs::std::*;
+
+    const FILTERABLE_TRUE: bool = true;
+
+    texture!(group(0), binding(0), TEX: Texture2D<f32, FILTERABLE>);
+    sampler!(group(0), binding(1), SMP: Sampler<FILTERABLE>);
+
+    #[vertex]
+    pub fn vtx_main() -> Vec4f {
+        texture_sample_level(TEX, SMP, vec2f(0.0, 0.0), 0.0)
+    }
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        texture_sample(TEX, SMP, vec2f(0.0, 0.0))
+    }
+}
+
+/// Independent binding flags follow existing type-linkage slots and precede
+/// entry-point parameters in the generated instantiate signature.
+#[wgsl(skip_validation)]
+pub mod binding_filterability_order {
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+    texture!(group(0), binding(1), TEX: Texture2D<f32, TEX_FILTERABLE>);
+    sampler!(group(0), binding(2), SMP: Sampler<SMP_FILTERABLE>);
+
+    #[fragment]
+    pub fn main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
+        let sampled = texture_sample(TEX, SMP, vec2f(0.0, 0.0));
+        vec4f(
+            sampled.x() + f32(get!(FRAME, T)),
+            sampled.y(),
+            sampled.z(),
+            sampled.w(),
+        )
+    }
 }
 
 /// A struct used as a uniform's element type, to exercise WGSL §14.4.1
@@ -757,7 +801,7 @@ fn analyze_texture_and_sampler_bindings() {
                     kind: TextureKind::Texture2D,
                     sampled_type: ir::ScalarType::F32,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -767,7 +811,7 @@ fn analyze_texture_and_sampler_bindings() {
                 ty: ir::Type::TextureDepth {
                     kind: TextureDepthKind::Depth2D,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -775,7 +819,7 @@ fn analyze_texture_and_sampler_bindings() {
                 binding: 2,
                 name: "SAMP".to_string(),
                 ty: ir::Type::Sampler,
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
@@ -783,7 +827,7 @@ fn analyze_texture_and_sampler_bindings() {
                 binding: 3,
                 name: "CSAMP".to_string(),
                 ty: ir::Type::SamplerComparison,
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
         ],
@@ -805,7 +849,30 @@ fn analyze_texture_and_sampler_bindings() {
     ));
 }
 
-/// The `, unfilterable` modifier lowers to
+/// An unresolved binding-owned const must not silently select a concrete
+/// wgpu layout when a caller analyzes hand-assembled IR directly.
+#[test]
+#[should_panic(expected = "unresolved filterability parameter")]
+fn analyze_rejects_unresolved_filterability() {
+    let ir_module = ir::Module {
+        name: "unresolved_filterability",
+        items: vec![ir::Item::Texture(ir::ItemTexture {
+            group: 0,
+            binding: 0,
+            name: "TEX".to_string(),
+            ty: ir::Type::Texture {
+                kind: TextureKind::Texture2D,
+                sampled_type: ir::ScalarType::F32,
+            },
+            filterable: ir::Filterability::Param("FILTERABLE".into()),
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    };
+    let _ = ir_module.generate_linkage();
+}
+
+/// The type-level `false` argument lowers to
 /// `TextureSampleType::Float { filterable: false }` for textures and
 /// `SamplerBindingType::NonFiltering` for samplers, while plain
 /// bindings keep their filterable defaults (wgsl-rs#171, wgsl-rs#201).
@@ -823,7 +890,7 @@ fn analyze_binding_filterability_flags() {
                 ..
             }
         ),
-        "expected `filterable: false` for the `, unfilterable` texture, got {:?}",
+        "expected `filterable: false` for the type-level `false` texture, got {:?}",
         bg.entries[0].ty
     );
     assert!(
@@ -842,7 +909,7 @@ fn analyze_binding_filterability_flags() {
             bg.entries[2].ty,
             wg::wgpu::BindingType::Sampler(wg::wgpu::SamplerBindingType::NonFiltering)
         ),
-        "expected `NonFiltering` for the `, unfilterable` sampler, got {:?}",
+        "expected `NonFiltering` for the `Sampler<false>` sampler, got {:?}",
         bg.entries[2].ty
     );
     assert!(
@@ -864,6 +931,85 @@ fn analyze_binding_filterability_flags() {
 }
 
 #[test]
+fn analyze_template_binding_filterability() {
+    use binding_filterability_template as template;
+
+    assert_eq!(template::WGSL_SOURCE.module_type_params, &["FILTERABLE"]);
+    let true_ir = template::instantiate::<true>();
+    let false_ir = template::instantiate::<false>();
+    assert_eq!(ir::render_module(&true_ir), ir::render_module(&false_ir));
+
+    for (module, expected) in [(true_ir, true), (false_ir, false)] {
+        let texture = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                ir::Item::Texture(texture) => Some(texture),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(texture.filterable.concrete(), Some(expected));
+        let sampler = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                ir::Item::Sampler(sampler) => Some(sampler),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(sampler.filterable.concrete(), Some(expected));
+
+        let linkage = wg::analyze_ir_module(module);
+        let bg = linkage.bind_group(0).unwrap();
+        assert!(matches!(
+            bg.entries[0].ty,
+            wg::wgpu::BindingType::Texture {
+                sample_type: wg::wgpu::TextureSampleType::Float { filterable },
+                ..
+            } if filterable == expected
+        ));
+        let expected_sampler = if expected {
+            wg::wgpu::SamplerBindingType::Filtering
+        } else {
+            wg::wgpu::SamplerBindingType::NonFiltering
+        };
+        assert!(matches!(
+            bg.entries[1].ty,
+            wg::wgpu::BindingType::Sampler(sampler) if sampler == expected_sampler
+        ));
+    }
+}
+
+#[test]
+fn binding_filterability_params_have_stable_order() {
+    use binding_filterability_order as template;
+
+    assert_eq!(
+        template::WGSL_SOURCE.module_type_params,
+        &["FRAME", "TEX_FILTERABLE", "SMP_FILTERABLE", "main_0"]
+    );
+    let module = template::instantiate::<f32, false, true, f32>();
+    let texture = module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ir::Item::Texture(texture) => Some(texture),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(texture.filterable.concrete(), Some(false));
+    let sampler = module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ir::Item::Sampler(sampler) => Some(sampler),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(sampler.filterable.concrete(), Some(true));
+}
+
+#[test]
 fn analyze_storage_texture_bindings() {
     use wgsl_rs::ir::{StorageTextureAccess, TexelFormat, TextureStorageKind};
 
@@ -879,7 +1025,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8unorm,
                     access: StorageTextureAccess::Write,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -891,7 +1037,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::Rgba8uint,
                     access: StorageTextureAccess::Read,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
@@ -903,7 +1049,7 @@ fn analyze_storage_texture_bindings() {
                     format: TexelFormat::R32float,
                     access: StorageTextureAccess::ReadWrite,
                 },
-                filterable: true,
+                filterable: true.into(),
                 attrs: vec![],
             }),
         ],

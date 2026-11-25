@@ -229,29 +229,26 @@ impl From<parse::Error> for WgslGenError {
     }
 }
 
-/// Collect the encoded names of all module-level type parameters in the
-/// parsed module, in the order they should appear in the generated
-/// `WGSL_SOURCE.module_type_params` slice.
+/// Collect the encoded names of all module-level parameters in the order they
+/// appear in `Source::module_type_params` and the generated `instantiate`.
 ///
-/// Two sources contribute, both encoded so that no two distinct
-/// declarations can share an IR name:
+/// Three sources contribute:
 ///
-/// 1. Linkage variables declared with `impl Trait` syntax. Each one contributes
-///    a single name equal to the variable's identifier (e.g. `"FRAME"` for
-///    `uniform!(..., FRAME: impl Convert<f32>)`).
-/// 2. Type parameters of shader entry points (`#[vertex]`, `#[fragment]`,
-///    `#[compute]`). Each one contributes a positional name of the form
-///    `"<fn_name>_<index>"` (e.g. `"frag_main_0"`, `"frag_main_1"`).
-///    Source-level names like `T` and `S` are intentionally not used so that
-///    two entry points using the same letter don't collide.
+/// 1. Linkage variables declared with `impl Trait` syntax.
+/// 2. Binding-owned filterability const parameters. Repeated names share one
+///    slot, so a texture and its sampler can use the same flag.
+/// 3. Entry-point type and const parameters, encoded positionally.
 ///
-/// Order: linkage variables in declaration order, followed by entry
-/// point parameters in declaration order, in turn following each entry
-/// point's parameter list left-to-right.
-fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> {
+/// Order follows those groups: generic type linkages in declaration order,
+/// binding consts in first-occurrence declaration order, then entry-point
+/// parameters in their existing order.
+fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, WgslGenError> {
     use parse::{FnAttrs, Item};
+    use std::collections::HashSet;
+
     let mut params: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
+    let mut type_slots = HashSet::new();
 
     // Pass 1: linkage variables declared with `impl Trait`.
     for item in &wgsl_module.content {
@@ -261,12 +258,33 @@ fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> 
             Item::Workgroup(w) if w.impl_bounds.is_some() => w.name.to_string(),
             _ => continue,
         };
+        type_slots.insert(name.clone());
         if seen.insert(name.clone()) {
             params.push(name);
         }
     }
 
-    // Pass 2: entry point type parameters, encoded positionally.
+    // Pass 2: binding-owned filterability consts. A name may repeat only
+    // because another binding intentionally shares the same const.
+    let mut binding_slots = HashSet::new();
+    for (name, span) in parse::binding_filterability_params(wgsl_module) {
+        if type_slots.contains(&name) {
+            return Err(parse::Error::unsupported(
+                span,
+                format!(
+                    "binding filterability parameter `{name}` collides with the `impl Trait` type \
+                     linkage slot of the same name; use distinct names"
+                ),
+            )
+            .into());
+        }
+        binding_slots.insert(name.clone());
+        if seen.insert(name.clone()) {
+            params.push(name);
+        }
+    }
+
+    // Pass 3: entry point parameters, encoded positionally.
     for item in &wgsl_module.content {
         let Item::Fn(f) = item else { continue };
         if matches!(f.fn_attrs, FnAttrs::None) {
@@ -275,9 +293,18 @@ fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> 
         let fn_name = f.ident.to_string();
         for (i, _tp) in f.type_params.iter().enumerate() {
             // Entry-point slot encoding `{fn}_{i}` is intentionally not
-            // run through `wgsl_rs_ir::mangle`; see comment in
-            // `parse.rs` near the matching site and issue #112.
+            // run through `wgsl_rs_ir::mangle`; see issue #112.
             let encoded = format!("{fn_name}_{i}");
+            if binding_slots.contains(&encoded) {
+                return Err(parse::Error::unsupported(
+                    f.ident.span(),
+                    format!(
+                        "binding filterability parameter `{encoded}` collides with an entry-point \
+                         parameter; rename the binding parameter"
+                    ),
+                )
+                .into());
+            }
             if seen.insert(encoded.clone()) {
                 params.push(encoded);
             }
@@ -285,24 +312,32 @@ fn collect_entry_point_type_params(wgsl_module: &parse::ItemMod) -> Vec<String> 
         // Entry-point const params use a separate `{fn}_c{i}` namespace.
         for (i, _cp) in f.const_params.iter().enumerate() {
             let encoded = format!("{fn_name}_c{i}");
+            if binding_slots.contains(&encoded) {
+                return Err(parse::Error::unsupported(
+                    f.ident.span(),
+                    format!(
+                        "binding filterability parameter `{encoded}` collides with an entry-point \
+                         parameter; rename the binding parameter"
+                    ),
+                )
+                .into());
+            }
             if seen.insert(encoded.clone()) {
                 params.push(encoded);
             }
         }
     }
 
-    params
+    Ok(params)
 }
 
-/// Replace any `uniform!`/`storage!`/`workgroup!` macro item in the input
-/// Rust module whose declared type is a *type parameter* of one of the
-/// module's entry points with the pre-expanded "type-erased" form
-/// (e.g. `pub static FRAME: Uniform = Uniform::new(0, 0);`).
+/// Rewrite generic linkage declarations in the input Rust module to CPU-side
+/// types that compile without module generics.
 ///
-/// The default of `Uniform` / `Storage` / `Workgroup` is `WgslTypeVariable`,
-/// which keeps a runtime `TypeId`-keyed map of values; `get!(VAR, T)` /
-/// `get_mut!(VAR, T)` then read/write a value of the requested concrete
-/// type.
+/// `impl Trait` uniform/storage/workgroup declarations become type-erased
+/// statics. Texture/sampler declarations with binding-owned filterability
+/// parameters instead retain their macro shape but substitute `true` for the
+/// unresolved const. The parsed IR is not modified.
 fn rewrite_generic_linkages(
     input_mod: &mut syn::ItemMod,
     wgsl_module: &parse::ItemMod,
@@ -321,6 +356,11 @@ fn rewrite_generic_linkages(
         (syn::LitInt, syn::LitInt, parse::StorageAccess),
     > = Default::default();
     let mut generic_workgroups: std::collections::BTreeSet<String> = Default::default();
+    type GenericFilterability = (syn::LitInt, syn::LitInt, syn::Type);
+    let mut generic_textures: std::collections::BTreeMap<String, GenericFilterability> =
+        Default::default();
+    let mut generic_samplers: std::collections::BTreeMap<String, GenericFilterability> =
+        Default::default();
 
     for item in &wgsl_module.content {
         match item {
@@ -336,11 +376,52 @@ fn rewrite_generic_linkages(
             Item::Workgroup(w) if w.impl_bounds.is_some() => {
                 generic_workgroups.insert(w.name.to_string());
             }
+            Item::Texture(t)
+                if matches!(
+                    &t.ty,
+                    parse::Type::Texture {
+                        filterable: wgsl_rs_ir::Filterability::Param(_),
+                        ..
+                    }
+                ) =>
+            {
+                generic_textures.insert(
+                    t.name.to_string(),
+                    (
+                        t.group.clone(),
+                        t.binding.clone(),
+                        with_default_filterability(&t.rust_ty),
+                    ),
+                );
+            }
+            Item::Sampler(s)
+                if matches!(
+                    &s.ty,
+                    parse::Type::Sampler {
+                        filterable: wgsl_rs_ir::Filterability::Param(_),
+                        ..
+                    }
+                ) =>
+            {
+                generic_samplers.insert(
+                    s.name.to_string(),
+                    (
+                        s.group.clone(),
+                        s.binding.clone(),
+                        with_default_filterability(&s.rust_ty),
+                    ),
+                );
+            }
             _ => {}
         }
     }
 
-    if generic_uniforms.is_empty() && generic_storages.is_empty() && generic_workgroups.is_empty() {
+    if generic_uniforms.is_empty()
+        && generic_storages.is_empty()
+        && generic_workgroups.is_empty()
+        && generic_textures.is_empty()
+        && generic_samplers.is_empty()
+    {
         return Ok(());
     }
 
@@ -360,7 +441,7 @@ fn rewrite_generic_linkages(
         // Find the variable name that this macro declares (the bare ident
         // after the last `,` and before the `:`).
         let var_name = match macro_name.as_str() {
-            "uniform" | "storage" | "workgroup" => {
+            "uniform" | "storage" | "workgroup" | "texture" | "sampler" => {
                 extract_linkage_var_name(item_macro.mac.tokens.clone())
             }
             _ => None,
@@ -368,6 +449,23 @@ fn rewrite_generic_linkages(
         let Some(var_name) = var_name else {
             continue;
         };
+
+        // Const-generic filterability is not in scope for the CPU static.
+        // Rewrite only the Rust-side macro input to the default `true`; the
+        // already-parsed IR retains the parameter for template substitution.
+        if matches!(macro_name.as_str(), "texture" | "sampler") {
+            let generic = if macro_name == "texture" {
+                generic_textures.get(&var_name)
+            } else {
+                generic_samplers.get(&var_name)
+            };
+            if let Some((group, binding, default_ty)) = generic {
+                let name = quote::format_ident!("{}", var_name);
+                item_macro.mac.tokens =
+                    quote!(group(#group), binding(#binding), #name: #default_ty);
+            }
+            continue;
+        }
 
         let replacement: Option<proc_macro2::TokenStream> = match macro_name.as_str() {
             "uniform" => generic_uniforms.get(&var_name).map(|(group, binding)| {
@@ -410,9 +508,35 @@ fn rewrite_generic_linkages(
     Ok(())
 }
 
-/// Extracts the variable name from a `uniform!` / `storage!` / `workgroup!`
-/// macro token stream. Returns `None` if the tokens don't match the
-/// expected form.
+/// Replace a binding-owned filterability parameter with `true` in the Rust
+/// type used for its CPU static. The WGSL-facing parse tree is not modified.
+fn with_default_filterability(ty: &syn::Type) -> syn::Type {
+    let mut default_ty = ty.clone();
+    let syn::Type::Path(type_path) = &mut default_ty else {
+        unreachable!("filterability parsing requires a path type")
+    };
+    let segment = type_path
+        .path
+        .segments
+        .iter_mut()
+        .next()
+        .expect("filterability types have one segment");
+    let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments else {
+        unreachable!("a filterability parameter has angle-bracketed arguments")
+    };
+    let name = segment.ident.to_string();
+    let index = if name == "Sampler" { 0 } else { 1 };
+    let arg = args
+        .args
+        .iter_mut()
+        .nth(index)
+        .expect("the unresolved filterability argument is present");
+    *arg = syn::parse_quote!(true);
+    default_ty
+}
+
+/// Extracts the variable name from a binding macro's token stream. Returns
+/// `None` if the tokens do not contain the expected `NAME:` separator.
 fn extract_linkage_var_name(tokens: proc_macro2::TokenStream) -> Option<String> {
     use proc_macro2::TokenTree;
     let mut last_ident: Option<String> = None;
@@ -1003,18 +1127,14 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         named_exports,
     } = wgsl_module.imports_and_reexports(&crate_path);
 
-    // Rewrite any `uniform!`/`storage!`/`workgroup!` declarations in the
-    // input Rust module that have a generic type (e.g.
-    // `uniform!(group(0), binding(0), FRAME: impl Convert<f32>)`). The
-    // generated `pub static` for such a declaration must use the
-    // type-erased default (`Uniform<WgslTypeVariable>`, i.e. just
-    // `Uniform`) because the concrete type is not known at module level.
+    // Rewrite generic linkage declarations to CPU-compilable types. The
+    // parsed WGSL-facing module retains all placeholders for instantiation.
     rewrite_generic_linkages(&mut input_mod, &wgsl_module, &crate_path)?;
 
-    // Compute the union of type parameters across all entry points in this
-    // module. These become the module-level type parameters for the generated
-    // `Module::module_type_params` field.
-    let module_type_params: Vec<String> = collect_entry_point_type_params(&wgsl_module);
+    // Compute module-level parameters from generic type linkages,
+    // binding-owned filterability consts, and entry points. This same order
+    // drives `Source::module_type_params` and generated `instantiate`.
+    let module_type_params: Vec<String> = collect_module_params(&wgsl_module)?;
 
     let module_fragment = gen_wgsl_module(
         &wgsl_module.ident,
@@ -1843,8 +1963,9 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// # Syntax
 /// ```ignore
 /// sampler!(group(G), binding(B), NAME: Sampler);
+/// sampler!(group(G), binding(B), NAME: Sampler<false>);
+/// sampler!(group(G), binding(B), NAME: Sampler<FILTERABLE>);
 /// sampler!(group(G), binding(B), NAME: SamplerComparison);
-/// sampler!(group(G), binding(B), NAME: Sampler, unfilterable);
 /// ```
 ///
 /// # Description
@@ -1858,10 +1979,16 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison
 ///   samplers
 ///
-/// The `unfilterable` modifier does not change the WGSL output. It only
-/// sets `SamplerBindingType::NonFiltering` on the generated wgpu bind
-/// group layout entry, so the sampler can pair with unfilterable texture
-/// bindings (e.g. `R32Float` textures).
+/// `Sampler<false>` does not change the WGSL output. It selects
+/// `SamplerBindingType::NonFiltering` on the generated wgpu bind group layout
+/// entry, so the sampler can pair with unfilterable texture bindings such as
+/// `R32Float`. The const defaults to `true`. Inside `#[wgsl]`, a bare
+/// identifier such as `Sampler<FILTERABLE>` introduces a binding-owned module
+/// const parameter resolved by `instantiate::<bool>()`. Reusing the identifier
+/// on multiple bindings shares the same argument.
+///
+/// The older trailing `, unfilterable` modifier remains accepted temporarily
+/// as a compatibility alias for `Sampler<false>`.
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:
@@ -1908,7 +2035,10 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// texture!(group(G), binding(B), NAME: TextureCube<i32>);
 ///
 /// // Unfilterable f32-sampled textures (non-filterable formats, e.g. R32Float)
-/// texture!(group(G), binding(B), NAME: Texture2D<f32>, unfilterable);
+/// texture!(group(G), binding(B), NAME: Texture2D<f32, false>);
+///
+/// // Binding-owned template filterability inside `#[wgsl]`
+/// texture!(group(G), binding(B), NAME: Texture2D<f32, FILTERABLE>);
 ///
 /// // Depth textures (no type parameter)
 /// texture!(group(G), binding(B), NAME: TextureDepth2D);
@@ -1930,7 +2060,9 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// - `TextureCubeArray<T>` - Cube texture array
 /// - `TextureMultisampled2D<T>` - Multisampled 2D texture
 ///
-/// Where `T` is one of `f32`, `i32`, or `u32`.
+/// Where `T` is one of `f32`, `i32`, or `u32`. F32-sampled textures accept an
+/// optional second bool const for host-side filterability, defaulting to
+/// `true`. Integer-sampled textures have no filterability parameter.
 ///
 /// ## Depth Textures
 /// - `TextureDepth2D` - 2D depth texture
@@ -1957,9 +2089,15 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// - `@group(G) @binding(B) var NAME: texture_storage_2d<rgba8unorm, write>;`
 ///   for storage textures
 ///
-/// The `unfilterable` modifier does not change the WGSL output. It only sets
-/// `filterable: false` on the generated wgpu bind group layout entry, for
-/// textures backed by non-filterable formats (e.g. `R32Float`).
+/// A `false` filterability const does not change the WGSL output. It only sets
+/// `filterable: false` on the generated wgpu bind group layout entry for
+/// textures backed by non-filterable formats such as `R32Float`. A bare
+/// identifier inside `#[wgsl]` introduces a binding-owned module const
+/// parameter resolved by `instantiate::<bool>()`. Reusing an identifier on
+/// multiple bindings shares one argument.
+///
+/// The older trailing `, unfilterable` modifier remains accepted temporarily
+/// as a compatibility alias for `Texture2D<f32, false>` and its equivalents.
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:

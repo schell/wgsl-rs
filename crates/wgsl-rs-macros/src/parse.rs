@@ -1000,6 +1000,75 @@ fn extract_type_ident(arg: &syn::GenericArgument) -> Result<String, Error> {
     }
 }
 
+/// Parse the host-only bool const argument on a sampled texture or sampler.
+/// Bare identifiers remain unresolved until template instantiation.
+fn parse_filterability_arg(
+    arg: &syn::GenericArgument,
+    ctx: &ParseContext,
+) -> Result<ir::Filterability, Error> {
+    match arg {
+        syn::GenericArgument::Const(syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(value),
+            ..
+        })) => Ok(ir::Filterability::Concrete(value.value)),
+        syn::GenericArgument::Type(syn::Type::Path(path)) if path.qself.is_none() => {
+            let Some(ident) = path.path.get_ident() else {
+                return UnsupportedSnafu {
+                    span: path.span(),
+                    note: "filterability must be `true`, `false`, or a bare bool const parameter",
+                }
+                .fail();
+            };
+            Ok(ir::Filterability::Param(
+                ctx.encode_const_param(&ident.to_string()),
+            ))
+        }
+        syn::GenericArgument::Const(syn::Expr::Path(path)) if path.qself.is_none() => {
+            let Some(ident) = path.path.get_ident() else {
+                return UnsupportedSnafu {
+                    span: path.span(),
+                    note: "filterability must be `true`, `false`, or a bare bool const parameter",
+                }
+                .fail();
+            };
+            Ok(ir::Filterability::Param(
+                ctx.encode_const_param(&ident.to_string()),
+            ))
+        }
+        other => UnsupportedSnafu {
+            span: other.span(),
+            note: format!(
+                "filterability must be `true`, `false`, or a bare bool const parameter; got '{}'",
+                other.into_token_stream()
+            ),
+        }
+        .fail(),
+    }
+}
+
+/// Whether a binding's Rust type explicitly specifies filterability. Used to
+/// reject combining that spelling with the legacy `, unfilterable` modifier.
+fn has_explicit_filterability_arg(ty: &syn::Type) -> bool {
+    let syn::Type::Path(type_path) = ty else {
+        return false;
+    };
+    if type_path.qself.is_some() || type_path.path.segments.len() != 1 {
+        return false;
+    }
+    let segment = type_path.path.segments.first().expect("one segment");
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    let name = segment.ident.to_string();
+    if name == "Sampler" {
+        !args.args.is_empty()
+    } else if TextureKind::from_rust_name(&name).is_some() {
+        args.args.len() > 1
+    } else {
+        false
+    }
+}
+
 impl Parse for PtrMacroArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         Ok(PtrMacroArgs {
@@ -1104,7 +1173,11 @@ pub enum Type {
     /// Used for texture sampling operations.
     /// This is a handle to a GPU sampler object that controls how textures are
     /// sampled.
-    Sampler { ident: Ident },
+    Sampler {
+        ident: Ident,
+        /// Host-side layout filterability. This is erased from the WGSL type.
+        filterable: ir::Filterability,
+    },
 
     /// Comparison sampler type: sampler_comparison
     /// Used for depth texture comparison sampling operations.
@@ -1117,6 +1190,8 @@ pub enum Type {
         kind: TextureKind,
         sampled_type: ScalarType,
         ident: Ident,
+        /// Host-side layout filterability. This is erased from the WGSL type.
+        filterable: ir::Filterability,
     },
 
     /// Depth texture types: texture_depth_2d, etc.
@@ -1382,6 +1457,7 @@ impl Type {
                         // Sampler types
                         "Sampler" => Type::Sampler {
                             ident: ident.clone(),
+                            filterable: ir::Filterability::Concrete(true),
                         },
                         "SamplerComparison" => Type::SamplerComparison {
                             ident: ident.clone(),
@@ -1489,6 +1565,31 @@ impl Type {
                 }) => {
                     let ident_str = ident.to_string();
 
+                    if ident_str == "Sampler" {
+                        snafu::ensure!(
+                            args.len() == 1,
+                            UnsupportedSnafu {
+                                span: args.span(),
+                                note: "Sampler takes exactly one optional bool const argument, \
+                                       for example Sampler<false>",
+                            }
+                        );
+                        let filterable =
+                            parse_filterability_arg(args.first().expect("checked len == 1"), ctx)?;
+                        return Ok(Type::Sampler {
+                            ident: ident.clone(),
+                            filterable,
+                        });
+                    }
+                    if ident_str == "SamplerComparison" {
+                        return UnsupportedSnafu {
+                            span: args.span(),
+                            note: "SamplerComparison has no filterability parameter; comparison \
+                                   layouts always use SamplerBindingType::Comparison",
+                        }
+                        .fail();
+                    }
+
                     // Storage textures take two type arguments (format +
                     // access), so they're handled before the one-arg
                     // builtin-generic check below.
@@ -1540,6 +1641,7 @@ impl Type {
 
                     // Check for known builtin generic types first (these all
                     // take exactly one type argument).
+                    let is_texture = TextureKind::from_rust_name(&ident_str).is_some();
                     let is_builtin_generic = matches!(
                         ident_str.as_str(),
                         "Vec2"
@@ -1550,14 +1652,20 @@ impl Type {
                             | "Mat4"
                             | "RuntimeArray"
                             | "Atomic"
-                    ) || TextureKind::from_rust_name(&ident_str).is_some();
+                    ) || is_texture;
 
                     if is_builtin_generic {
+                        let valid_arity = args.len() == 1 || (is_texture && args.len() == 2);
                         snafu::ensure!(
-                            args.len() == 1,
+                            valid_arity,
                             UnsupportedSnafu {
                                 span: args.span(),
-                                note: "Built-in generic types take exactly one type argument"
+                                note: if is_texture {
+                                    "Sampled textures take a sample type and an optional bool \
+                                     filterability argument, for example Texture2D<f32, false>"
+                                } else {
+                                    "Built-in generic types take exactly one type argument"
+                                },
                             }
                         );
 
@@ -1628,10 +1736,31 @@ impl Type {
                                                 | ScalarType::U32),
                                             ..
                                         } => {
+                                            let filterable = args
+                                                .get(1)
+                                                .map(|arg| parse_filterability_arg(arg, ctx))
+                                                .transpose()?;
+                                            if *sampled_type != ScalarType::F32
+                                                && filterable.is_some()
+                                            {
+                                                return UnsupportedSnafu {
+                                                    span: args
+                                                        .get(1)
+                                                        .expect("filterability is present")
+                                                        .span(),
+                                                    note: "filterability is only available on \
+                                                           f32-sampled textures; integer textures \
+                                                           use Sint/Uint layouts without a \
+                                                           filterable flag",
+                                                }
+                                                .fail();
+                                            }
                                             return Ok(Type::Texture {
                                                 kind: texture_kind,
                                                 sampled_type: *sampled_type,
                                                 ident: ident.clone(),
+                                                filterable: filterable
+                                                    .unwrap_or(ir::Filterability::Concrete(true)),
                                             });
                                         }
                                         _ => {
@@ -3198,7 +3327,7 @@ impl Expr {
                     Type::Atomic { ident, .. } => ident.span(),
                     Type::Struct { ident, .. } => ident.span(),
                     Type::Ptr { span, .. } => *span,
-                    Type::Sampler { ident } => ident.span(),
+                    Type::Sampler { ident, .. } => ident.span(),
                     Type::SamplerComparison { ident } => ident.span(),
                     Type::Texture { ident, .. } => ident.span(),
                     Type::TextureDepth { ident, .. } => ident.span(),
@@ -5836,6 +5965,36 @@ pub struct ItemMod {
     pub attrs: Vec<ir::Attribute>,
 }
 
+/// Binding-owned filterability parameters in declaration order, including
+/// duplicates. The paired span identifies the binding for diagnostics.
+pub(crate) fn binding_filterability_params(module: &ItemMod) -> Vec<(String, Span)> {
+    module
+        .content
+        .iter()
+        .filter_map(|item| {
+            let (filterable, span) = match item {
+                Item::Texture(texture) => {
+                    let Type::Texture { filterable, .. } = &texture.ty else {
+                        return None;
+                    };
+                    (filterable, texture.name.span())
+                }
+                Item::Sampler(sampler) => {
+                    let Type::Sampler { filterable, .. } = &sampler.ty else {
+                        return None;
+                    };
+                    (filterable, sampler.name.span())
+                }
+                _ => return None,
+            };
+            let ir::Filterability::Param(name) = filterable else {
+                return None;
+            };
+            Some((name.clone(), span))
+        })
+        .collect()
+}
+
 impl TryFrom<&syn::ItemMod> for ItemMod {
     type Error = Error;
 
@@ -6513,8 +6672,7 @@ pub(crate) struct ItemSampler {
     pub colon_token: Token![:],
     pub ty: Type,
 
-    // We keep the Rust type around
-    #[expect(dead_code, reason = "Will be used eventually")]
+    // We keep the Rust type around for concrete const-generic code generation.
     pub rust_ty: syn::Type,
     /// Whether the trailing `, unfilterable` modifier was present. Only
     /// valid on plain `Sampler` declarations; lowers to `filterable:
@@ -6582,6 +6740,13 @@ impl syn::parse::Parse for ItemSampler {
                     ));
                 }
                 _ => unreachable!("sampler! validated the type above"),
+            }
+            if has_explicit_filterability_arg(&rust_ty) {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "cannot combine an explicit Sampler filterability argument with `, \
+                     unfilterable`; use only `Sampler<false>`",
+                ));
             }
             unfilterable = true;
         }
@@ -6660,8 +6825,7 @@ pub(crate) struct ItemTexture {
     pub colon_token: Token![:],
     pub ty: Type,
 
-    // We keep the Rust type around
-    #[expect(dead_code, reason = "Might be used later")]
+    // We keep the Rust type around for concrete const-generic code generation.
     pub rust_ty: syn::Type,
     /// Whether the trailing `, unfilterable` modifier was present. Only
     /// valid on f32-sampled textures; lowers to `filterable: false` in the
@@ -6733,6 +6897,13 @@ impl syn::parse::Parse for ItemTexture {
                          filterable layout flag",
                     ));
                 }
+            }
+            if has_explicit_filterability_arg(&rust_ty) {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "cannot combine an explicit texture filterability argument with `, \
+                     unfilterable`; use only `Texture2D<f32, false>`",
+                ));
             }
             unfilterable = true;
         }
@@ -10949,6 +11120,39 @@ mod test {
     }
 
     #[test]
+    fn parse_sampler_type_level_filterability() {
+        for (ty, expected) in [
+            ("Sampler", true),
+            ("Sampler<true>", true),
+            ("Sampler<false>", false),
+        ] {
+            let source = format!("group(0), binding(1), SMP: {ty}");
+            let sampler: ItemSampler = syn::parse_str(&source).unwrap();
+            let Type::Sampler { filterable, .. } = &sampler.ty else {
+                unreachable!()
+            };
+            assert_eq!(filterable.concrete(), Some(expected));
+            assert!(sampler.to_wgsl().contains(": sampler;"));
+        }
+    }
+
+    #[test]
+    fn parse_sampler_comparison_rejects_filterability() {
+        let result =
+            syn::parse_str::<ItemSampler>("group(0), binding(1), CMP: SamplerComparison<false>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_sampler_rejects_mixed_filterability_spellings() {
+        for ty in ["Sampler<true>", "Sampler<false>"] {
+            let source = format!("group(0), binding(1), SMP: {ty}, unfilterable");
+            let result = syn::parse_str::<ItemSampler>(&source);
+            assert!(result.is_err(), "mixed spellings should conflict: {source}");
+        }
+    }
+
+    #[test]
     fn parse_sampler_comparison() {
         let sampler: ItemSampler =
             syn::parse_str("group(0), binding(2), SHADOW_SAMPLER: SamplerComparison").unwrap();
@@ -11268,6 +11472,60 @@ mod test {
             syn::parse_str("group(0), binding(1), DIFFUSE_TEX: Texture2D<f32>").unwrap();
         assert_eq!("DIFFUSE_TEX", texture.name.to_string());
         assert!(matches!(texture.ty, Type::Texture { .. }));
+    }
+
+    #[test]
+    fn parse_texture_item_type_level_filterability() {
+        for (ty, expected) in [
+            ("Texture2D<f32>", true),
+            ("Texture2D<f32, true>", true),
+            ("Texture2D<f32, false>", false),
+        ] {
+            let source = format!("group(0), binding(0), TEX: {ty}");
+            let texture: ItemTexture = syn::parse_str(&source).unwrap();
+            let Type::Texture { filterable, .. } = &texture.ty else {
+                unreachable!()
+            };
+            assert_eq!(filterable.concrete(), Some(expected));
+            assert!(texture.to_wgsl().contains(": texture_2d<f32>;"));
+        }
+    }
+
+    #[test]
+    fn parse_all_sampled_texture_kinds_accept_unfilterable() {
+        for ty in [
+            "Texture1D",
+            "Texture2D",
+            "Texture2DArray",
+            "Texture3D",
+            "TextureCube",
+            "TextureCubeArray",
+            "TextureMultisampled2D",
+        ] {
+            let source = format!("group(0), binding(0), TEX: {ty}<f32, false>");
+            let texture: ItemTexture = syn::parse_str(&source).unwrap();
+            let Type::Texture { filterable, .. } = &texture.ty else {
+                unreachable!()
+            };
+            assert_eq!(filterable.concrete(), Some(false));
+        }
+    }
+
+    #[test]
+    fn parse_texture_item_rejects_integer_filterability() {
+        for value in ["true", "false"] {
+            let source = format!("group(0), binding(0), TEX: Texture2D<i32, {value}>");
+            assert!(syn::parse_str::<ItemTexture>(&source).is_err());
+        }
+    }
+
+    #[test]
+    fn parse_texture_item_rejects_mixed_filterability_spellings() {
+        for value in ["true", "false"] {
+            let source =
+                format!("group(0), binding(0), TEX: Texture2D<f32, {value}>, unfilterable");
+            assert!(syn::parse_str::<ItemTexture>(&source).is_err());
+        }
     }
 
     #[test]

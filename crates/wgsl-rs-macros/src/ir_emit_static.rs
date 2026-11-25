@@ -919,11 +919,22 @@ fn static_item_workgroup(p: &TokenStream, w: &ir::ItemWorkgroup) -> TokenStream 
     }
 }
 
+fn static_filterability(p: &TokenStream, filterable: &ir::Filterability) -> TokenStream {
+    match filterable {
+        ir::Filterability::Concrete(value) => quote! {
+            #p::static_ir::StaticFilterability::Concrete(#value)
+        },
+        ir::Filterability::Param(name) => quote! {
+            #p::static_ir::StaticFilterability::Param(#name)
+        },
+    }
+}
+
 fn static_item_sampler(p: &TokenStream, s: &ir::ItemSampler) -> TokenStream {
     let group = s.group;
     let binding = s.binding;
     let name = &s.name;
-    let filterable = s.filterable;
+    let filterable = static_filterability(p, &s.filterable);
     let t = static_type(p, &s.ty);
     let attrs = static_attrs(p, &s.attrs);
     quote! {
@@ -942,7 +953,7 @@ fn static_item_texture(p: &TokenStream, t: &ir::ItemTexture) -> TokenStream {
     let group = t.group;
     let binding = t.binding;
     let name = &t.name;
-    let filterable = t.filterable;
+    let filterable = static_filterability(p, &t.filterable);
     let ty = static_type(p, &t.ty);
     let attrs = static_attrs(p, &t.attrs);
     quote! {

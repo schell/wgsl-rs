@@ -2332,3 +2332,57 @@ entries are identical, the fixture that previously needed
 grouped-glob fixture covers the exact renderling shape
 (`use super::{a::*, b::*};`) with a cross-module instantiation
 resolving through it.
+
+### 2026-11-25: Filterability is a binding-owned const generic
+
+**Problem.** The trailing `, unfilterable` token expresses only one concrete
+layout choice. A template module could not reuse the same texture and sampler
+bindings with filtering enabled in one pipeline and disabled in another. Moving
+filterability into the texture or sampler type makes it a bool const parameter,
+but it still must not change WGSL: neither `texture_2d<f32>` nor `sampler` has a
+filterable type variant.
+
+**Decision.** Sampled textures and plain samplers now accept a defaulted bool
+const, so `Texture2D<f32, false>` and `Sampler<false>` are the canonical
+concrete spellings and the omitted argument remains `true`. Inside `#[wgsl]`, a
+bare identifier introduces a binding-owned module parameter, allowing
+`instantiate::<false>()` to specialize the host layout. Repeated identifiers
+share one argument; distinct identifiers produce separate arguments.
+Instantiation order is existing `impl Trait` type linkages first, binding-owned
+consts in first-occurrence declaration order, then entry-point parameters.
+
+The IR stores `Filterability::{Concrete, Param}` on `ItemTexture` and
+`ItemSampler`, including the static mirror. `substitute_consts` resolves only
+`ConstValue::Bool`; wgpu layout analysis rejects unresolved parameters instead
+of silently defaulting them. `ir::Type` and rendered WGSL remain unchanged.
+The trailing `, unfilterable` token stays temporarily as a compatibility alias,
+but combining it with an explicit const is an error. First-party code and the
+manual use the type-level spelling.
+
+**Why the binding owns the parameter.** There are three independent reasons:
+
+1. Rust scoping: a module-scope binding macro cannot reference an entry
+   point's function-local generic parameter in the Rust AST.
+2. wgpu semantics: a bind group layout belongs to the pipeline and is shared
+   by every entry point using the binding, so assigning its layout to one entry
+   point's const would be incoherent.
+3. Existing template structure: `impl Trait` linkage declarations already
+   introduce module-level parameters in declaration order. Binding-owned bool
+   consts are the const-valued counterpart, not a new entry-point coupling.
+
+**CPU trait tradeoffs.** All sampled-texture inherent, query, load, sample, and
+gather impls propagate the texture const. Plain-sampler traits instead add a
+defaulted trait-level `SAMPLER_FILTERABLE` const, and their methods accept
+`Sampler<SAMPLER_FILTERABLE>`. The default preserves existing
+`TextureSample<C>`-style bounds and custom default-sampler impls, while a
+method-level generic would force every custom impl to change and sacrifice dyn
+compatibility. Texture and sampler consts are independent because a
+non-filtering sampler may sample a filterable texture. Compile-time pairing
+validation is intentionally out of scope; invalid unfilterable/filtering pairs
+retain the existing wgpu validation behavior.
+
+One Rust inference limitation is documented at `Sampler::new`: default consts
+are not inferred for an otherwise unconstrained bare `Sampler::new()` call.
+Direct CPU callers annotate `Sampler` or write `Sampler::<true>::new()`;
+macro-generated statics always have explicit types. This does not affect the
+binding declaration syntax.

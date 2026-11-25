@@ -63,6 +63,15 @@ struct LinkageSlot {
     encoded_name: String,
 }
 
+/// A binding-owned bool const parameter, introduced by type-level
+/// filterability on a texture or sampler.
+struct LinkageConstSlot {
+    /// The const parameter ident used on `instantiate`.
+    name: syn::Ident,
+    /// The substitution key stored in `Source::module_type_params`.
+    encoded_name: String,
+}
+
 /// An entry-point type-parameter slot. Each type parameter of each entry
 /// point function becomes a generic type parameter on `instantiate`.
 #[allow(dead_code)]
@@ -113,6 +122,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     let linkage_p = quote! { #crate_path::linkage };
 
     let mut linkage_slots: Vec<LinkageSlot> = Vec::new();
+    let mut linkage_const_slots: Vec<LinkageConstSlot> = Vec::new();
     let mut ep_slots: Vec<EntryPointSlot> = Vec::new();
     let mut ep_const_slots: Vec<EntryPointConstSlot> = Vec::new();
 
@@ -129,6 +139,19 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             name: name.clone(),
             bounds: bounds.clone(),
             encoded_name: name.to_string(),
+        });
+    }
+
+    // Collect binding-owned bool consts in first-occurrence declaration order.
+    // Repeated names intentionally share one slot.
+    let mut seen_const_slots = std::collections::HashSet::new();
+    for (name, _span) in parse::binding_filterability_params(wgsl_module) {
+        if !seen_const_slots.insert(name.clone()) {
+            continue;
+        }
+        linkage_const_slots.push(LinkageConstSlot {
+            name: format_ident!("{name}"),
+            encoded_name: name,
         });
     }
 
@@ -196,7 +219,11 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         }
     }
 
-    if linkage_slots.is_empty() && ep_slots.is_empty() && ep_const_slots.is_empty() {
+    if linkage_slots.is_empty()
+        && linkage_const_slots.is_empty()
+        && ep_slots.is_empty()
+        && ep_const_slots.is_empty()
+    {
         return quote! {};
     }
 
@@ -220,6 +247,19 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         tp.bounds = slot.bounds.clone();
         push_wgsl_if_missing(&mut tp.bounds, &wgsl_bound);
         generic_params.push(syn::GenericParam::Type(tp));
+    }
+
+    // Add binding-owned bool consts before all entry-point parameters.
+    for slot in &linkage_const_slots {
+        generic_params.push(syn::GenericParam::Const(syn::ConstParam {
+            attrs: Vec::new(),
+            const_token: syn::Token![const](proc_macro2::Span::call_site()),
+            ident: slot.name.clone(),
+            colon_token: syn::Token![:](proc_macro2::Span::call_site()),
+            ty: syn::parse_quote!(bool),
+            eq_token: None,
+            default: None,
+        }));
     }
 
     // Add entry-point type parameter generic params (e.g. <T>).
@@ -328,6 +368,13 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     // integer types, `Bool` for `bool`); no trait dispatch is needed
     // (unlike the type-param case which uses `<T as Wgsl>::to_ir()`).
     let mut const_subst_entries: Vec<TokenStream> = Vec::new();
+    for slot in &linkage_const_slots {
+        let name = &slot.name;
+        let encoded_name_str = &slot.encoded_name;
+        const_subst_entries.push(quote! {
+            (::std::string::String::from(#encoded_name_str), #ir_p::ConstValue::Bool(#name))
+        });
+    }
     for slot in &ep_const_slots {
         let name = &slot.name;
         let encoded_name_str = &slot.encoded_name;
@@ -369,7 +416,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         /// The `where` clause enforces at compile time that every linkage
         /// variable's concrete type is consistent across all entry points
         /// that use it via [`wgsl_rs::linkage::Type`] constraints.
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, non_upper_case_globals)]
         pub fn instantiate #impl_generics () -> #ir_p::Module
         #split_where_clause
         {

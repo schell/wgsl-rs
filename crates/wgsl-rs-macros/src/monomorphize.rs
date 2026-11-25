@@ -2321,7 +2321,7 @@ fn self_ty_base_ident_string(ty: &Type) -> Option<String> {
 fn type_to_ident(ty: &Type, span: Span) -> Ident {
     match ty {
         Type::Struct { ident, .. } => return ident.clone(),
-        Type::Sampler { ident } => return ident.clone(),
+        Type::Sampler { ident, .. } => return ident.clone(),
         Type::SamplerComparison { ident } => return ident.clone(),
         Type::Texture { ident, .. } => return ident.clone(),
         Type::TextureDepth { ident, .. } => return ident.clone(),

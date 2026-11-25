@@ -795,6 +795,24 @@ impl<'a> From<&StaticItemWorkgroup<'a>> for ItemWorkgroup {
     }
 }
 
+/// Borrowed mirror of [`Filterability`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StaticFilterability<'a> {
+    /// A concrete binding-layout value.
+    Concrete(bool),
+    /// A binding-owned const parameter to resolve during instantiation.
+    Param(&'a str),
+}
+
+impl From<StaticFilterability<'_>> for Filterability {
+    fn from(value: StaticFilterability<'_>) -> Self {
+        match value {
+            StaticFilterability::Concrete(value) => Self::Concrete(value),
+            StaticFilterability::Param(name) => Self::Param(name.to_string()),
+        }
+    }
+}
+
 /// Borrowed mirror of [`ItemSampler`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticItemSampler<'a> {
@@ -802,7 +820,7 @@ pub struct StaticItemSampler<'a> {
     pub binding: u32,
     pub name: &'a str,
     pub ty: StaticType<'a>,
-    pub filterable: bool,
+    pub filterable: StaticFilterability<'a>,
     pub attrs: &'a [StaticAttribute<'a>],
 }
 
@@ -814,7 +832,7 @@ impl<'a> From<&StaticItemSampler<'a>> for ItemSampler {
             binding: s.binding,
             name: s.name.to_string(),
             ty: Type::from(&s.ty),
-            filterable: s.filterable,
+            filterable: Filterability::from(s.filterable),
             attrs: conv(s.attrs),
         }
     }
@@ -827,7 +845,7 @@ pub struct StaticItemTexture<'a> {
     pub binding: u32,
     pub name: &'a str,
     pub ty: StaticType<'a>,
-    pub filterable: bool,
+    pub filterable: StaticFilterability<'a>,
     pub attrs: &'a [StaticAttribute<'a>],
 }
 
@@ -839,7 +857,7 @@ impl<'a> From<&StaticItemTexture<'a>> for ItemTexture {
             binding: s.binding,
             name: s.name.to_string(),
             ty: Type::from(&s.ty),
-            filterable: s.filterable,
+            filterable: Filterability::from(s.filterable),
             attrs: conv(s.attrs),
         }
     }
@@ -1335,7 +1353,7 @@ mod tests {
                     binding: 4,
                     name: "SMP".into(),
                     ty: Type::Sampler,
-                    filterable: false,
+                    filterable: false.into(),
                     attrs: vec![],
                 }),
                 Item::Texture(ItemTexture {
@@ -1346,7 +1364,7 @@ mod tests {
                         kind: TextureKind::Texture2D,
                         sampled_type: ScalarType::F32,
                     },
-                    filterable: true,
+                    filterable: true.into(),
                     attrs: vec![],
                 }),
                 Item::Fn(kitchen_fn()),
@@ -1985,13 +2003,20 @@ mod tests {
         }
     }
 
+    fn to_static_filterability(filterable: &Filterability) -> StaticFilterability<'static> {
+        match filterable {
+            Filterability::Concrete(value) => StaticFilterability::Concrete(*value),
+            Filterability::Param(name) => StaticFilterability::Param(leak_str(name)),
+        }
+    }
+
     fn to_static_item_sampler(s: &ItemSampler) -> StaticItemSampler<'static> {
         StaticItemSampler {
             group: s.group,
             binding: s.binding,
             name: leak_str(&s.name),
             ty: to_static_type(&s.ty),
-            filterable: s.filterable,
+            filterable: to_static_filterability(&s.filterable),
             attrs: leak_slice(s.attrs.iter().map(to_static_attribute).collect()),
         }
     }
@@ -2002,7 +2027,7 @@ mod tests {
             binding: t.binding,
             name: leak_str(&t.name),
             ty: to_static_type(&t.ty),
-            filterable: t.filterable,
+            filterable: to_static_filterability(&t.filterable),
             attrs: leak_slice(t.attrs.iter().map(to_static_attribute).collect()),
         }
     }
@@ -2445,5 +2470,13 @@ mod tests {
             [Stmt::Return(Some(Expr::Ident(name)))] => assert_eq!(name, "x"),
             other => panic!("unexpected block: {other:?}"),
         }
+    }
+
+    #[test]
+    fn filterability_param_round_trips() {
+        let owned = Filterability::Param("FILTERABLE".into());
+        let borrowed = to_static_filterability(&owned);
+        assert_eq!(borrowed, StaticFilterability::Param("FILTERABLE"));
+        assert_eq!(Filterability::from(borrowed), owned);
     }
 }

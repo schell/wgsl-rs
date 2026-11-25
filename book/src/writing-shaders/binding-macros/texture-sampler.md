@@ -6,7 +6,7 @@ Declare texture and sampler bindings.
 
 ```rust
 texture!(group(N), binding(M), NAME: TextureKind<SampleType>);
-texture!(group(N), binding(M), NAME: Texture2D<f32>, unfilterable);
+texture!(group(N), binding(M), NAME: Texture2D<f32, false>);
 ```
 
 Generates:
@@ -31,23 +31,25 @@ The sample type for color textures is typically `<f32>`. Depth textures need no 
 
 ### Unfilterable Textures
 
-Some texture formats are not filterable on the GPU — `R32Float`, `Rg32Float`, and other 32-bit float formats. Bind group layouts must declare this, or binding such a texture fails wgpu validation. Declare it with the `unfilterable` modifier:
+Some texture formats are not filterable on the GPU, including `R32Float`, `Rg32Float`, and other 32-bit float formats. Bind group layouts must declare this, or binding such a texture fails wgpu validation. Use the texture's second const parameter:
 
 ```rust
-texture!(group(0), binding(0), HEIGHTS: Texture2D<f32>, unfilterable);
+texture!(group(0), binding(0), HEIGHTS: Texture2D<f32, false>);
 ```
 
-The modifier is only valid on `<f32>`-sampled textures; integer-sampled, depth, and storage textures reject it with a compile error, since their layouts have no filtering flag.
+The filterability parameter is available on all sampled texture kinds, but only for `f32` sample types. It defaults to `true`, so existing declarations such as `Texture2D<f32>` are unchanged. Integer-sampled, depth, and storage textures do not accept the parameter.
 
-The WGSL output is unchanged — WGSL has no unfilterable variant of `texture_2d<f32>`. The modifier only sets `filterable: false` on the generated wgpu bind group layout entry, so binding a non-filterable format (e.g. `R32Float`) passes validation.
+The WGSL output is unchanged because WGSL has no unfilterable variant of `texture_2d<f32>`. The parameter only sets `filterable: false` on the generated wgpu bind group layout entry, so binding a non-filterable format such as `R32Float` passes validation.
 
-Read texels with `texture_load`, or sample through a non-filtering sampler declared with the same modifier:
+Read texels with `texture_load`, or sample through a non-filtering sampler:
 
 ```rust
-sampler!(group(0), binding(1), HEIGHTS_SMP: Sampler, unfilterable);
+sampler!(group(0), binding(1), HEIGHTS_SMP: Sampler<false>);
 ```
 
-The bound wgpu sampler must use `FilterMode::Nearest` for all filters — a non-filtering layout slot rejects filtering samplers. WGSL output is unchanged: `sampler` has no non-filtering variant, so the modifier only sets `SamplerBindingType::NonFiltering` on the generated bind group layout entry.
+The bound wgpu sampler must use `FilterMode::Nearest` for all filters because a non-filtering layout slot rejects filtering samplers. WGSL output is still `sampler`; the const only selects `SamplerBindingType::NonFiltering` on the generated bind group layout entry.
+
+A bare identifier instead of a bool literal introduces a binding-owned template parameter. See [texture and sampler template parameters](../../generics/templates.md#const-parameters-on-texture-and-sampler-bindings). The older trailing `unfilterable` modifier remains accepted temporarily as a compatibility alias for `false`, but new code should use the const parameter.
 
 ### Storage Textures
 
@@ -91,8 +93,8 @@ Access mode markers:
 
 ```rust
 sampler!(group(N), binding(M), NAME: Sampler);
+sampler!(group(N), binding(M), NAME: Sampler<false>);
 sampler!(group(N), binding(M), NAME: SamplerComparison);
-sampler!(group(N), binding(M), NAME: Sampler, unfilterable);
 ```
 
 Generates:
@@ -102,9 +104,10 @@ Generates:
 @group(N) @binding(M) var NAME: sampler_comparison;
 ```
 
-The `unfilterable` modifier does not change the WGSL output; it sets
+`Sampler<false>` does not change the WGSL output. It sets
 `SamplerBindingType::NonFiltering` on the generated wgpu bind group layout
-entry (see [Unfilterable Textures](#unfilterable-textures)).
+entry (see [Unfilterable Textures](#unfilterable-textures)). The const defaults
+to `true`; `SamplerComparison` has no filterability parameter.
 
 ## Two-Level Binding
 

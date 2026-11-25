@@ -41,7 +41,7 @@ pub mod texture_load_2d {
     }
 }
 
-/// Like `texture_load_2d`, but the texture is declared `, unfilterable`
+/// Like `texture_load_2d`, but with `Texture2D<f32, false>`
 /// and bound to a non-filterable R32Float texture on the GPU
 /// (wgsl-rs#171): the generated bind group layout must declare
 /// `filterable: false` or bind group creation fails wgpu validation.

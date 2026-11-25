@@ -11,6 +11,7 @@ A module becomes a template when **any** of the following appear:
 - An entry-point function with type parameters.
 - An entry-point function with const parameters (`const N: usize`, `const N: u32`, `const N: i32`, or `const B: bool`).
 - A linkage macro (`uniform!`, `storage!`, ...) whose declared type uses `impl Trait`.
+- A sampled texture or plain sampler binding with a bare bool filterability parameter, such as `Texture2D<f32, FILTERABLE>` or `Sampler<FILTERABLE>`.
 - A `get!(VAR, T)` accessor that introduces a fresh type variable bound to a linkage variable.
 
 ## Defining a Template Module
@@ -98,6 +99,35 @@ If you omit both, the template is never validated by `cargo test`.
 ## Multiple Type Parameters & Transitive Use
 
 Templates support multiple type parameters and transitive generic calls just like monomorphized generics. Each `instantiate` call substitutes the full tuple of type arguments through the module's IR; the runtime performs deduplication of any shared monomorphized pieces inside the resulting module.
+
+## Const Parameters on Texture and Sampler Bindings
+
+An f32-sampled texture or plain sampler can defer its host-side filterability to instantiation time. Put a bare identifier in the bool const position instead of writing `true` or `false`:
+
+```rust
+#[wgsl(skip_validation)]
+pub mod heightmap {
+    use wgsl_rs::std::*;
+
+    texture!(group(0), binding(0), HEIGHTS: Texture2D<f32, FILTERABLE>);
+    sampler!(group(0), binding(1), HEIGHTS_SMP: Sampler<FILTERABLE>);
+
+    #[fragment]
+    pub fn main() -> Vec4f {
+        texture_sample(HEIGHTS, HEIGHTS_SMP, vec2f(0.0, 0.0))
+    }
+}
+
+let module = heightmap::instantiate::<false>();
+```
+
+Each distinct identifier introduces one binding-owned `const ...: bool` module parameter. Repeating `FILTERABLE` on the texture and sampler intentionally shares one argument. Use different identifiers when independent values are needed.
+
+These parameters belong to the binding, not to an entry point. A bind group layout is shared by every pipeline entry point that uses the binding, and module-scope Rust macros cannot reference a function's generic parameters. This is the const-valued counterpart of `impl Trait` on a linkage binding.
+
+Filterability changes only the generated host layout. The rendered WGSL is identical for `true` and `false`. To generate wgpu linkage, pass the instantiated IR to `analyze_ir_module` or call `generate_linkage` as described in [Template Linkage](../linkage/template-linkage.md).
+
+Parameter order is deterministic: `impl Trait` type linkages come first, binding-owned filterability consts follow in first-occurrence declaration order, and entry-point parameters come last in their existing order.
 
 ## Const Parameters on Entry Points
 

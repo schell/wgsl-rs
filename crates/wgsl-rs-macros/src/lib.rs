@@ -1963,8 +1963,9 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// # Syntax
 /// ```ignore
 /// sampler!(group(G), binding(B), NAME: Sampler);
+/// sampler!(group(G), binding(B), NAME: Sampler<false>);
+/// sampler!(group(G), binding(B), NAME: Sampler<FILTERABLE>);
 /// sampler!(group(G), binding(B), NAME: SamplerComparison);
-/// sampler!(group(G), binding(B), NAME: Sampler, unfilterable);
 /// ```
 ///
 /// # Description
@@ -1978,10 +1979,16 @@ pub fn storage(input: TokenStream) -> TokenStream {
 /// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison
 ///   samplers
 ///
-/// The `unfilterable` modifier does not change the WGSL output. It only
-/// sets `SamplerBindingType::NonFiltering` on the generated wgpu bind
-/// group layout entry, so the sampler can pair with unfilterable texture
-/// bindings (e.g. `R32Float` textures).
+/// `Sampler<false>` does not change the WGSL output. It selects
+/// `SamplerBindingType::NonFiltering` on the generated wgpu bind group layout
+/// entry, so the sampler can pair with unfilterable texture bindings such as
+/// `R32Float`. The const defaults to `true`. Inside `#[wgsl]`, a bare
+/// identifier such as `Sampler<FILTERABLE>` introduces a binding-owned module
+/// const parameter resolved by `instantiate::<bool>()`. Reusing the identifier
+/// on multiple bindings shares the same argument.
+///
+/// The older trailing `, unfilterable` modifier remains accepted temporarily
+/// as a compatibility alias for `Sampler<false>`.
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:
@@ -2028,7 +2035,10 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// texture!(group(G), binding(B), NAME: TextureCube<i32>);
 ///
 /// // Unfilterable f32-sampled textures (non-filterable formats, e.g. R32Float)
-/// texture!(group(G), binding(B), NAME: Texture2D<f32>, unfilterable);
+/// texture!(group(G), binding(B), NAME: Texture2D<f32, false>);
+///
+/// // Binding-owned template filterability inside `#[wgsl]`
+/// texture!(group(G), binding(B), NAME: Texture2D<f32, FILTERABLE>);
 ///
 /// // Depth textures (no type parameter)
 /// texture!(group(G), binding(B), NAME: TextureDepth2D);
@@ -2050,7 +2060,9 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// - `TextureCubeArray<T>` - Cube texture array
 /// - `TextureMultisampled2D<T>` - Multisampled 2D texture
 ///
-/// Where `T` is one of `f32`, `i32`, or `u32`.
+/// Where `T` is one of `f32`, `i32`, or `u32`. F32-sampled textures accept an
+/// optional second bool const for host-side filterability, defaulting to
+/// `true`. Integer-sampled textures have no filterability parameter.
 ///
 /// ## Depth Textures
 /// - `TextureDepth2D` - 2D depth texture
@@ -2077,9 +2089,15 @@ pub fn sampler(input: TokenStream) -> TokenStream {
 /// - `@group(G) @binding(B) var NAME: texture_storage_2d<rgba8unorm, write>;`
 ///   for storage textures
 ///
-/// The `unfilterable` modifier does not change the WGSL output. It only sets
-/// `filterable: false` on the generated wgpu bind group layout entry, for
-/// textures backed by non-filterable formats (e.g. `R32Float`).
+/// A `false` filterability const does not change the WGSL output. It only sets
+/// `filterable: false` on the generated wgpu bind group layout entry for
+/// textures backed by non-filterable formats such as `R32Float`. A bare
+/// identifier inside `#[wgsl]` introduces a binding-owned module const
+/// parameter resolved by `instantiate::<bool>()`. Reusing an identifier on
+/// multiple bindings shares one argument.
+///
+/// The older trailing `, unfilterable` modifier remains accepted temporarily
+/// as a compatibility alias for `Texture2D<f32, false>` and its equivalents.
 ///
 /// # Rust Expansion
 /// On the Rust side, the macro generates:

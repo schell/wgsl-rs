@@ -966,9 +966,9 @@ pub struct ItemSampler {
     /// has no non-filtering variant of `sampler`, but a wgpu bind group
     /// layout can declare `SamplerBindingType::NonFiltering`, which is
     /// required to sample unfilterable f32 textures (see
-    /// `ItemTexture::filterable`). Defaults to `true`; the `sampler!`
-    /// macro's `unfilterable` token sets it to `false`. Meaningless for
-    /// comparison samplers, whose layout is always
+    /// `ItemTexture::filterable`). Defaults to `true`; `Sampler<false>` or the
+    /// legacy `sampler!` macro's `unfilterable` token sets it to `false`.
+    /// Meaningless for comparison samplers, whose layout is always
     /// `SamplerBindingType::Comparison`.
     pub filterable: Filterability,
     /// Attributes preserved from Rust source.
@@ -986,8 +986,8 @@ pub struct ItemTexture {
     /// only: WGSL has no unfilterable variant of `texture_2d<f32>`, but a
     /// wgpu bind group layout must declare `TextureSampleType::Float {
     /// filterable: false }` for textures backed by non-filterable formats
-    /// (e.g. `R32Float`). Defaults to `true`; the `texture!` macro's
-    /// `unfilterable` token sets it to `false`.
+    /// (e.g. `R32Float`). Defaults to `true`; `Texture2D<f32, false>` or the
+    /// legacy `texture!` macro's `unfilterable` token sets it to `false`.
     pub filterable: Filterability,
     /// Attributes preserved from Rust source.
     pub attrs: Vec<Attribute>,

@@ -72,9 +72,9 @@ pub mod tinted_output {
     }
 }
 
-// In application code: one type argument per module parameter, in
-// `module_type_params` order — linkage variables first, then entry
-// point parameters. Here: TINT, then fs's `T`, both f32.
+// In application code: arguments follow `module_type_params` order. Type
+// linkage variables come first, then any binding-owned filterability consts,
+// then entry point parameters. Here: TINT, then fs's `T`, both f32.
 use wgsl_rs_linkage_wgpu::IrModuleExt;
 
 let mut linkage = tinted_output::instantiate::<f32, f32>().generate_linkage();
@@ -82,6 +82,16 @@ let shader = linkage.shader_module(&device);
 let layout = linkage.pipeline_layout(&device, Some("tint"));
 // ... build pipeline as usual
 ```
+
+## Binding-owned filterability
+
+A texture or sampler with a bare filterability identifier uses this same instantiate-then-analyze flow:
+
+```rust
+let linkage = heightmap::instantiate::<false>().generate_linkage();
+```
+
+The bool resolves both the texture's `TextureSampleType::Float { filterable }` and the sampler's `SamplerBindingType`. It does not change the rendered WGSL. Repeated identifiers on multiple bindings share one argument; distinct identifiers add separate arguments in declaration order. See [texture and sampler template parameters](../generics/templates.md#const-parameters-on-texture-and-sampler-bindings).
 
 ## Summary
 

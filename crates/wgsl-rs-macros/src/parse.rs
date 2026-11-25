@@ -5965,6 +5965,36 @@ pub struct ItemMod {
     pub attrs: Vec<ir::Attribute>,
 }
 
+/// Binding-owned filterability parameters in declaration order, including
+/// duplicates. The paired span identifies the binding for diagnostics.
+pub(crate) fn binding_filterability_params(module: &ItemMod) -> Vec<(String, Span)> {
+    module
+        .content
+        .iter()
+        .filter_map(|item| {
+            let (filterable, span) = match item {
+                Item::Texture(texture) => {
+                    let Type::Texture { filterable, .. } = &texture.ty else {
+                        return None;
+                    };
+                    (filterable, texture.name.span())
+                }
+                Item::Sampler(sampler) => {
+                    let Type::Sampler { filterable, .. } = &sampler.ty else {
+                        return None;
+                    };
+                    (filterable, sampler.name.span())
+                }
+                _ => return None,
+            };
+            let ir::Filterability::Param(name) = filterable else {
+                return None;
+            };
+            Some((name.clone(), span))
+        })
+        .collect()
+}
+
 impl TryFrom<&syn::ItemMod> for ItemMod {
     type Error = Error;
 

@@ -74,6 +74,50 @@ pub mod binding_filterability {
     pub fn main() {}
 }
 
+/// A texture and sampler share one binding-owned module const. Both entry
+/// points consume both bindings, pinning the pipeline-scope ownership model.
+#[wgsl(validate_with_instantiation_types(FILTERABLE_TRUE))]
+pub mod binding_filterability_template {
+    use wgsl_rs::std::*;
+
+    const FILTERABLE_TRUE: bool = true;
+
+    texture!(group(0), binding(0), TEX: Texture2D<f32, FILTERABLE>);
+    sampler!(group(0), binding(1), SMP: Sampler<FILTERABLE>);
+
+    #[vertex]
+    pub fn vtx_main() -> Vec4f {
+        texture_sample_level(TEX, SMP, vec2f(0.0, 0.0), 0.0)
+    }
+
+    #[fragment]
+    pub fn frag_main() -> Vec4f {
+        texture_sample(TEX, SMP, vec2f(0.0, 0.0))
+    }
+}
+
+/// Independent binding flags follow existing type-linkage slots and precede
+/// entry-point parameters in the generated instantiate signature.
+#[wgsl(skip_validation)]
+pub mod binding_filterability_order {
+    use wgsl_rs::std::*;
+
+    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+    texture!(group(0), binding(1), TEX: Texture2D<f32, TEX_FILTERABLE>);
+    sampler!(group(0), binding(2), SMP: Sampler<SMP_FILTERABLE>);
+
+    #[fragment]
+    pub fn main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
+        let sampled = texture_sample(TEX, SMP, vec2f(0.0, 0.0));
+        vec4f(
+            sampled.x() + f32(get!(FRAME, T)),
+            sampled.y(),
+            sampled.z(),
+            sampled.w(),
+        )
+    }
+}
+
 /// A struct used as a uniform's element type, to exercise WGSL §14.4.1
 /// struct layout.
 #[wgsl]
@@ -884,6 +928,85 @@ fn analyze_binding_filterability_flags() {
         "expected `Comparison` unchanged, got {:?}",
         bg.entries[4].ty
     );
+}
+
+#[test]
+fn analyze_template_binding_filterability() {
+    use binding_filterability_template as template;
+
+    assert_eq!(template::WGSL_SOURCE.module_type_params, &["FILTERABLE"]);
+    let true_ir = template::instantiate::<true>();
+    let false_ir = template::instantiate::<false>();
+    assert_eq!(ir::render_module(&true_ir), ir::render_module(&false_ir));
+
+    for (module, expected) in [(true_ir, true), (false_ir, false)] {
+        let texture = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                ir::Item::Texture(texture) => Some(texture),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(texture.filterable.concrete(), Some(expected));
+        let sampler = module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                ir::Item::Sampler(sampler) => Some(sampler),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(sampler.filterable.concrete(), Some(expected));
+
+        let linkage = wg::analyze_ir_module(module);
+        let bg = linkage.bind_group(0).unwrap();
+        assert!(matches!(
+            bg.entries[0].ty,
+            wg::wgpu::BindingType::Texture {
+                sample_type: wg::wgpu::TextureSampleType::Float { filterable },
+                ..
+            } if filterable == expected
+        ));
+        let expected_sampler = if expected {
+            wg::wgpu::SamplerBindingType::Filtering
+        } else {
+            wg::wgpu::SamplerBindingType::NonFiltering
+        };
+        assert!(matches!(
+            bg.entries[1].ty,
+            wg::wgpu::BindingType::Sampler(sampler) if sampler == expected_sampler
+        ));
+    }
+}
+
+#[test]
+fn binding_filterability_params_have_stable_order() {
+    use binding_filterability_order as template;
+
+    assert_eq!(
+        template::WGSL_SOURCE.module_type_params,
+        &["FRAME", "TEX_FILTERABLE", "SMP_FILTERABLE", "main_0"]
+    );
+    let module = template::instantiate::<f32, false, true, f32>();
+    let texture = module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ir::Item::Texture(texture) => Some(texture),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(texture.filterable.concrete(), Some(false));
+    let sampler = module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ir::Item::Sampler(sampler) => Some(sampler),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(sampler.filterable.concrete(), Some(true));
 }
 
 #[test]

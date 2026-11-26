@@ -100,6 +100,7 @@ pub mod logical_operations;
 pub mod matrix_operations;
 pub mod modf_frexp_ldexp;
 pub mod packing;
+pub mod resource_packs;
 pub mod rounding;
 pub mod select_operations;
 pub mod signed_const_generics;
@@ -119,6 +120,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(trig::TrigTest),
         Box::new(exponential::ExponentialTest),
         Box::new(rounding::RoundingTest),
+        Box::new(resource_packs::ResourcePackTest),
         Box::new(clamping::ClampingTest),
         Box::new(geometric::GeometricTest),
         Box::new(glm_vector_helpers::GlmVectorHelpersTest),

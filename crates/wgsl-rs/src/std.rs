@@ -946,6 +946,12 @@ impl<T> ArrayLength for &RuntimeArray<T> {
     }
 }
 
+impl<T: Wgsl, A: AccessMode> ArrayLength for &Storage<RuntimeArray<T>, A> {
+    fn array_length(self) -> u32 {
+        self.get().len()
+    }
+}
+
 /// Returns the number of elements in a runtime-sized array.
 ///
 /// This is the Rust-side equivalent of the WGSL `arrayLength` builtin function.

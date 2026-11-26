@@ -126,7 +126,7 @@ fn separate_packs_have_independent_slots_even_with_matching_param_names() {
     assert_eq!(independent::vertex::<1>(&a), vec4f(1.0, 0.0, 0.0, 1.0));
     assert_eq!(independent::fragment::<2>(&b), vec4f(2.0, 0.0, 0.0, 1.0));
 
-    let collision = std::panic::catch_unwind(|| independent::instantiate::<1, 1>())
+    let collision = std::panic::catch_unwind(independent::instantiate::<1, 1>)
         .expect_err("instantiation must recheck addresses after substitution");
     let message = collision
         .downcast_ref::<String>()

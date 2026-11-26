@@ -1022,6 +1022,29 @@ impl BodyLowerer<'_> {
 impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
     fn visit_expr(&mut self, expr: &mut parse::Expr) -> parse::Result<()> {
         if let parse::Expr::FnCall { path, params, .. } = expr {
+            // WGSL arrayLength is the one supported builtin here that needs
+            // a pointer to the global storage value rather than its value.
+            if matches!(path, parse::FnPath::Ident(ident) if ident == "array_length") {
+                for param_expr in params.iter_mut() {
+                    let parse::Expr::Reference { expr: inner, .. } = param_expr else {
+                        continue;
+                    };
+                    let parse::Expr::FieldAccess { base, field, .. } = inner.as_ref() else {
+                        continue;
+                    };
+                    let parse::Expr::Ident(base) = base.as_ref() else {
+                        continue;
+                    };
+                    let Some(param) = self.parameters.get(&base.to_string()) else {
+                        continue;
+                    };
+                    let Some(resource) = param.pack.fields.iter().find(|item| item.ident == *field)
+                    else {
+                        continue;
+                    };
+                    **inner = parse::Expr::Ident(resource.ident.clone());
+                }
+            }
             self.lower_call(path, params)?;
         }
 

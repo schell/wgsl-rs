@@ -112,6 +112,7 @@ fn constructed_texture_pack_works_with_cpu_builtins() {
     });
     buffers.config.set(vec4f(4.0, 3.0, 2.0, 1.0));
     assert_eq!(buffers.slab.get().data.len(), 1);
+    assert_eq!(array_length(&buffers.slab), 1);
     assert_eq!(*buffers.config.get(), vec4f(4.0, 3.0, 2.0, 1.0));
 }
 

@@ -127,7 +127,32 @@ These parameters belong to the binding, not to an entry point. A bind group layo
 
 Filterability changes only the generated host layout. The rendered WGSL is identical for `true` and `false`. To generate wgpu linkage, pass the instantiated IR to `analyze_ir_module` or call `generate_linkage` as described in [Template Linkage](../linkage/template-linkage.md).
 
-Parameter order is deterministic: `impl Trait` type linkages come first, binding-owned filterability consts follow in first-occurrence declaration order, and entry-point parameters come last in their existing order.
+Parameter order is deterministic: `impl Trait` type linkages come first, binding-owned consts follow in first-occurrence declaration order, and entry-point parameters that do not alias a resource pack come last in their existing order. Binding-owned consts include standalone filterability and pack-owned group, binding, and filterability values. The authoritative order is also available as `WGSL_SOURCE.module_type_params`.
+
+
+## Const Parameters on Resource Packs
+
+[Resource pack structs](../writing-shaders/resource-packs.md) can parameterize
+binding addresses and filterability in their field annotations. Every distinct
+pack const receives a pack-owned module slot named `PackType_PARAM`. This
+namespacing keeps separate packs independent even when both declare `GROUP` or
+`FILTERABLE`.
+
+An entry-point const used as `&Pack<...>` becomes an alias of the pack slot.
+It does not add a second module argument, and its body uses the same value as
+the generated layout. All entry points sharing one pack therefore receive one
+coherent set of layout values. Entry-point-only consts that are not tied to a
+pack remain independent and retain their normal positional slots.
+
+Matching concrete uses, such as two `&Pack<false>` parameters, specialize the
+IR directly and need no generic argument. Different concrete values, or a
+mixture of concrete and generic uses of one pack const, are compile-time
+layout conflicts. Resource names and `(group, binding)` addresses are validated
+again after generic substitution, so instantiated conflicts are rejected too.
+
+Pack-owned binding consts appear in first-occurrence field declaration order,
+before non-aliased entry-point parameters. Separate packs can be selected
+independently by supplying their respective slots.
 
 ## Const Parameters on Entry Points
 

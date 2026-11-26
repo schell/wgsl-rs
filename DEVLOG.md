@@ -2386,3 +2386,51 @@ are not inferred for an otherwise unconstrained bare `Sampler::new()` call.
 Direct CPU callers annotate `Sampler` or write `Sampler::<true>::new()`;
 macro-generated statics always have explicit types. This does not affect the
 binding declaration syntax.
+
+### 2026-11-26: Resource packs use annotated ordinary Rust structs
+
+**Problem.** Related resources need a Rust-level container that can be passed
+through entry points and helpers, but WGSL has no resource structs or resource
+references. The CPU side still needs real resource values and addresses, and
+the GPU side needs global bindings with coherent generic layouts. An earlier
+wrapper-based direction would have split those responsibilities across
+`Binding<B, T>`, a `#[bindings]` marker, and an `import()` API.
+
+**Decision.** Any public struct with `#[texture]`, `#[sampler]`, `#[storage]`,
+or `#[uniform]` fields is registered as a resource pack. No marker on the
+struct or parameter is needed. The emitted Rust keeps an ordinary struct and a
+generated `new()` constructs its resources from the annotated addresses.
+Storage and uniform declarations name their inner value types, while their
+Rust fields use the existing runtime `Storage` and `Uniform` resources. The
+WGSL-facing parse keeps no struct item: each field becomes a global IR resource
+named after the field.
+
+Entry points and helpers explicitly accept `&Pack<...>`. WGSL lowering removes
+those parameters and their call arguments. The only resource-access form is a
+direct field borrow such as `&pack.field`; it resolves to the global resource.
+This deliberately rejects destructuring and local aliases rather than growing
+a second alias-resolution system. Existing receiver rules remain unchanged,
+including associated functions with an explicit pack parameter but no new
+`self` support.
+
+Each pack const has a deterministic pack-owned module slot. Entry-point consts
+used in its type are aliases, so every stage sharing a pack receives one value
+for body code and layout metadata. Separate packs namespace their slots and
+remain independent. Matching concrete uses specialize immediately; conflicting
+concrete or concrete/generic uses are errors. Address and name validation runs
+again after substitution, including u32 range checks for group and binding.
+
+**Why the exclusions.** `Binding<B, T>` and `import()` introduce a second
+resource declaration model even though field annotations already carry the
+same information as the existing IO model. Destructuring would require local
+resource aliases and statement removal, which are separable from the core
+lowering. Combined builtin/resource structs would obscure WGSL's strict split
+between invocation IO and global resources. V1 keeps both kinds of struct
+annotation-driven without making only resources type-driven.
+
+**Future direction.** A later phase may make resource packs and interstage IO
+structs type-driven together. That is a broader, coherent design change;
+changing only bindings would create two incompatible ways to describe shader
+data. The current direct-field-borrow boundary leaves that future work open
+without committing to wrappers, `import()`, destructuring, or receiver
+lowering.

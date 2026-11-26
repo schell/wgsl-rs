@@ -1494,7 +1494,7 @@ fn array_indexing_base_gets_element_expectation() {
 
 #[test]
 fn linkage_variables_anchor_assignment_targets() {
-    // `storage!(…, read_write, OUTPUT: [u32; 1])` +
+    // A read-write storage declaration `OUTPUT: [u32; 1]` ++
     // `get_mut!(OUTPUT)[0] = select(0, 1, cond);` — linkage declarations
     // are in the type environment (uses lower to `Expr::Ident`), so the
     // element assignment anchors the select.
@@ -2211,7 +2211,7 @@ fn output_consumer() -> Module {
 
 #[test]
 fn type_imports_seed_imported_linkage_globals() {
-    // Source A declares `storage!(…, OUTPUT: [u32; 1])`; source B does
+    // Source A declares a storage binding `OUTPUT: [u32; 1]`; source B does
     // `get_mut!(OUTPUT)[0] = select(0, 1, cond);`. The consumer has no
     // declaration of its own (uses lower to `Expr::Ident`), so without
     // imported types the select stays bare; seeded with A's harvested

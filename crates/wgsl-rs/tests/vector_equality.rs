@@ -156,13 +156,16 @@ mod infer_gaps {
         Helpers::make(a) == Helpers::make(b)
     }
 
-    // Linkage values are inferable from the module's `storage!`
-    // declarations (a plain comment: macro invocations cannot carry doc
+    // Pack-field values are inferable from the module's resource-pack
+    // declaration (a plain comment: macro invocations cannot carry doc
     // comments without an unused-doc-comment warning).
-    storage!(group(0), binding(0), INPUT: [Vec2f; 2]);
+    pub struct GapsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec2f; 2]>,
+    }
 
-    pub fn linkage_eq() -> bool {
-        let input = get!(INPUT);
+    pub fn linkage_eq(pack: &GapsPack) -> bool {
+        let input = get!(pack.input);
         input[0] == input[1]
     }
 
@@ -412,10 +415,14 @@ fn cpu_vector_eq_values() {
     assert!(g::method_call_eq(v, v));
     assert!(!g::method_call_eq(v, w));
     assert!(g::shadowed_eq());
-    g::INPUT.set([vec2f(1.0, 2.0), vec2f(1.0, 2.0)]);
-    assert!(g::linkage_eq());
-    g::INPUT.set([vec2f(1.0, 2.0), vec2f(3.0, 4.0)]);
-    assert!(!g::linkage_eq());
+    let equal_gaps = infer_gaps::GapsPack {
+        input: Storage::new([vec2f(1.0, 2.0), vec2f(1.0, 2.0)]),
+    };
+    assert!(g::linkage_eq(&equal_gaps));
+    let unequal_gaps = infer_gaps::GapsPack {
+        input: Storage::new([vec2f(1.0, 2.0), vec2f(3.0, 4.0)]),
+    };
+    assert!(!g::linkage_eq(&unequal_gaps));
     assert!(!g::zero_one_eq());
     assert!(g::origin_eq(vec2f(0.0, 0.0)));
     assert!(!g::origin_eq(vec2f(1.0, 1.0)));

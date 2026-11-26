@@ -1342,14 +1342,15 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
         // `*get!(pack.field)` / `*get_mut!(pack.field) = value`: elide the
         // deref by replacing the unary with its access operand; the
         // LinkageAccess arm below resolves it, and WGSL reads and assigns
-        // storage and workgroup values directly.
+        // storage and workgroup values directly. Parenthesized operands
+        // peel the same way.
         if let parse::Expr::Unary {
             op: parse::UnOp::Deref(_),
             expr: inner,
             ..
         } = expr
             && matches!(
-                inner.as_ref(),
+                inner.peel_parens(),
                 parse::Expr::LinkageAccess {
                     pack_field: Some(_),
                     ..

@@ -11,7 +11,7 @@
 //! mangling (for example to `main_true`), un-mangled linkage lookups
 //! would silently break, and this fails first.
 
-use wgsl_rs::wgsl;
+use wgsl_rs::{std::Storage, wgsl};
 
 #[wgsl(validate_with_instantiation_types(APPLY_TRUE))]
 mod flag_entry {
@@ -19,15 +19,18 @@ mod flag_entry {
 
     const APPLY_TRUE: bool = true;
 
-    storage!(group(0), binding(0), read_write, OUTPUT: [u32; 1]);
+    pub struct FlagPack {
+        #[storage(group(0), binding(0), read_write)]
+        pub output: Storage<[u32; 1]>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
-    pub fn main<const APPLY_FOG: bool>() {
+    pub fn main<const APPLY_FOG: bool>(pack: &FlagPack) {
         if APPLY_FOG {
-            get_mut!(OUTPUT)[0] = 1u32;
+            get_mut!(pack.output)[0] = 1u32;
         } else {
-            get_mut!(OUTPUT)[0] = 0u32;
+            get_mut!(pack.output)[0] = 0u32;
         }
     }
 }
@@ -80,11 +83,15 @@ fn instantiated_entry_point_keeps_unmangled_name() {
     // The CPU world evaluates the same branches at compile time: running
     // both instantiations through the Rust fn must not panic, and the
     // flag must actually change the result.
-    flag_entry::OUTPUT.set([0u32; 1]);
-    flag_entry::main::<true>();
-    assert_eq!(flag_entry::OUTPUT.get()[0], 1, "CPU true-branch");
+    let on_pack = flag_entry::FlagPack {
+        output: Storage::new([0u32; 1]),
+    };
+    flag_entry::main::<true>(&on_pack);
+    assert_eq!(on_pack.output.get()[0], 1, "CPU true-branch");
 
-    flag_entry::OUTPUT.set([0u32; 1]);
-    flag_entry::main::<false>();
-    assert_eq!(flag_entry::OUTPUT.get()[0], 0, "CPU false-branch");
+    let off_pack = flag_entry::FlagPack {
+        output: Storage::new([0u32; 1]),
+    };
+    flag_entry::main::<false>(&off_pack);
+    assert_eq!(off_pack.output.get()[0], 0, "CPU false-branch");
 }

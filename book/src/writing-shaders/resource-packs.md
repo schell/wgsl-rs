@@ -194,11 +194,35 @@ inconsistent instantiation. Helpers may use a bare type parameter in the
 pack parameter only; it reads the pack slot directly, mirroring const
 aliasing, and may not appear in any other parameter or return position.
 
+## Workgroup fields
+
+Workgroup variables join packs with the `#[workgroup]` annotation and the
+`Workgroup<T>` wrapper. They carry no group or binding — `#[workgroup]` takes
+no arguments — and render as `var<workgroup> packlower__field: T;`:
+
+```rust
+pub struct WorkgroupData<T> {
+    #[workgroup]
+    pub accumulator: Workgroup<T>,
+}
+
+#[compute]
+#[workgroup_size(4)]
+pub fn accumulate(wg: &WorkgroupData<i32>) {
+    let current = load!(wg.accumulator);
+    *get_mut!(wg.accumulator) = current + 1;
+}
+```
+
+Hosts seed the value at construction:
+`WorkgroupData::<i32> { accumulator: Workgroup::new(0) }`. Workgroup fields may
+mix with binding fields in one pack.
+
 ## V1 boundaries
 
 - Every pack field must have exactly one `#[texture]`, `#[sampler]`,
-  `#[storage]`, or `#[uniform]` annotation. Non-resource and workgroup fields
-  are rejected.
+  `#[storage]`, `#[uniform]`, or `#[workgroup]` annotation. Non-resource
+  fields are rejected.
 - Builtins and interstage IO stay in separate IO structs. Mixing binding and IO
   annotations is an error.
 - Resource access uses direct field borrows such as `&pack.field`.

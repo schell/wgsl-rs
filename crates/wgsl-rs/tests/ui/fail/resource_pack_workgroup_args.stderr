@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       `#[workgroup]` takes no arguments; workgroup variables have no group or binding.'
+ --> tests/ui/fail/resource_pack_workgroup_args.rs:8:9
+  |
+8 |         #[workgroup(group(0))]
+  |         ^

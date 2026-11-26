@@ -18,6 +18,7 @@ pub(crate) enum ResourceKind {
     Storage,
     Sampler,
     Texture,
+    Workgroup,
 }
 
 impl ResourceKind {
@@ -28,6 +29,7 @@ impl ResourceKind {
             "storage" => Some(Self::Storage),
             "sampler" => Some(Self::Sampler),
             "texture" => Some(Self::Texture),
+            "workgroup" => Some(Self::Workgroup),
             _ => None,
         }
     }
@@ -38,6 +40,7 @@ impl ResourceKind {
             Self::Storage => "storage",
             Self::Sampler => "sampler",
             Self::Texture => "texture",
+            Self::Workgroup => "workgroup",
         }
     }
 }
@@ -468,24 +471,38 @@ fn parse_field(
                  annotations; move builtin or location data into a separate IO struct",
             ));
         }
-        if attr.path().is_ident("workgroup") {
-            return Err(parse::Error::unsupported(
-                attr.span(),
-                "workgroup values are not supported in resource packs",
-            ));
-        }
     }
 
     let kind = ResourceKind::from_attr(first).expect("resource attribute was selected above");
-    let args = parse_binding_args(first, kind, const_params)?;
+    // `#[workgroup]` takes no arguments: workgroup variables have no group or
+    // binding. The dummy addresses below never reach the IR or the WGSL; the
+    // Workgroup arm of the IR conversion ignores them.
+    let args = match kind {
+        ResourceKind::Workgroup => {
+            if !matches!(first.meta, syn::Meta::Path(_)) {
+                return Err(parse::Error::unsupported(
+                    first.span(),
+                    "`#[workgroup]` takes no arguments; workgroup variables have no group or \
+                     binding",
+                ));
+            }
+            BindingArgs {
+                group: AddressValue::Literal(syn::LitInt::new("0", Span::call_site())),
+                binding: AddressValue::Literal(syn::LitInt::new("0", Span::call_site())),
+                access: None,
+            }
+        }
+        _ => parse_binding_args(first, kind, const_params)?,
+    };
 
-    // Uniform and storage fields declare the runtime wrapper types
-    // (`Uniform<T>`, `Storage<T, AM>`); the WGSL inner type is extracted
-    // from the wrapper's first generic argument. Textures and samplers are
-    // their own runtime types and pass through unchanged.
+    // Uniform, storage, and workgroup fields declare the runtime wrapper
+    // types (`Uniform<T>`, `Storage<T, AM>`, `Workgroup<T>`); the WGSL inner
+    // type is extracted from the wrapper's first generic argument. Textures
+    // and samplers are their own runtime types and pass through unchanged.
     let (inner_ty, marker_access) = match kind {
         ResourceKind::Uniform => extract_wrapper(field, kind, "Uniform", false)?,
         ResourceKind::Storage => extract_wrapper(field, kind, "Storage", true)?,
+        ResourceKind::Workgroup => extract_wrapper(field, kind, "Workgroup", false)?,
         ResourceKind::Texture | ResourceKind::Sampler => (field.ty.clone(), None),
     };
     let ty = Type::parse(&inner_ty, ctx)?;
@@ -716,7 +733,7 @@ fn validate_resource_type(field: &syn::Field, kind: ResourceKind, ty: &Type) -> 
         ResourceKind::Sampler => {
             matches!(ty, Type::Sampler { .. } | Type::SamplerComparison { .. })
         }
-        ResourceKind::Uniform | ResourceKind::Storage => !matches!(
+        ResourceKind::Uniform | ResourceKind::Storage | ResourceKind::Workgroup => !matches!(
             ty,
             Type::Sampler { .. }
                 | Type::SamplerComparison { .. }
@@ -812,13 +829,20 @@ pub(crate) fn validate_resources(module: &parse::ItemMod) -> parse::Result<()> {
             )?,
             parse::Item::ResourcePack(pack) => {
                 for field in &pack.fields {
-                    let group = match &field.group {
-                        AddressValue::Literal(lit) => literal(lit),
-                        AddressValue::Param(_) => None,
-                    };
-                    let binding = match &field.binding {
-                        AddressValue::Literal(lit) => literal(lit),
-                        AddressValue::Param(_) => None,
+                    // Workgroup fields carry no addresses; their dummy
+                    // literals must not collide with real bindings.
+                    let (group, binding) = if matches!(field.kind, ResourceKind::Workgroup) {
+                        (None, None)
+                    } else {
+                        let group = match &field.group {
+                            AddressValue::Literal(lit) => literal(lit),
+                            AddressValue::Param(_) => None,
+                        };
+                        let binding = match &field.binding {
+                            AddressValue::Literal(lit) => literal(lit),
+                            AddressValue::Param(_) => None,
+                        };
+                        (group, binding)
                     };
                     let name = Ident::new(
                         &mangle_resource_name(&pack.ident, &field.ident),
@@ -1315,6 +1339,26 @@ impl BodyLowerer<'_> {
 
 impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
     fn visit_expr(&mut self, expr: &mut parse::Expr) -> parse::Result<()> {
+        // `*get!(pack.field)` / `*get_mut!(pack.field) = value`: elide the
+        // deref by replacing the unary with its access operand; the
+        // LinkageAccess arm below resolves it, and WGSL reads and assigns
+        // storage and workgroup values directly.
+        if let parse::Expr::Unary {
+            op: parse::UnOp::Deref(_),
+            expr: inner,
+            ..
+        } = expr
+            && matches!(
+                inner.as_ref(),
+                parse::Expr::LinkageAccess {
+                    pack_field: Some(_),
+                    ..
+                }
+            )
+        {
+            *expr = (**inner).clone();
+        }
+
         // `get!`/`get_mut!`/`load!` on a pack field borrow resolve to the
         // mangled global resource, with the access checked against the
         // field's kind and storage access.
@@ -1371,6 +1415,7 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
                         ));
                     }
                 }
+                ResourceKind::Workgroup => {}
             }
             if type_arg.is_some() {
                 return Err(parse::Error::unsupported(

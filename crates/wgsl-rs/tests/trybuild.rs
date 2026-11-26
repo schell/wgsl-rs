@@ -317,6 +317,18 @@ fn resource_pack_access_mismatch_is_rejected() {
 }
 
 #[test]
+fn resource_pack_workgroup_args_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_workgroup_args.rs");
+}
+
+#[test]
+fn resource_pack_workgroup_wrapper_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_workgroup_wrapper.rs");
+}
+
+#[test]
 fn resource_pack_get_mut_on_uniform_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_get_mut_uniform.rs");

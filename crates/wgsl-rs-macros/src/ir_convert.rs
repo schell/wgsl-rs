@@ -303,6 +303,11 @@ fn resource_field(pack: &syn::Ident, field: &crate::resource::ResourceField) -> 
                 attrs: vec![],
             })
         }
+        ResourceKind::Workgroup => ir::Item::Workgroup(ir::ItemWorkgroup {
+            name,
+            ty,
+            attrs: vec![],
+        }),
         ResourceKind::Texture => {
             let filterable = match &field.ty {
                 parse::Type::Texture { filterable, .. } => filterable.clone(),

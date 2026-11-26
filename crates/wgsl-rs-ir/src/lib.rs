@@ -39,6 +39,7 @@ pub use render::{
 pub use substitute::{
     UnresolvedTemplateRef, find_unresolved_template_refs, rename_items, substitute_consts,
     substitute_consts_in_items, substitute_items, substitute_types, type_to_ident,
+    validate_binding_addresses,
 };
 pub use suffix::{
     FnSig, TypeImports, fn_signatures, fn_signatures_in_items, suffix_items,

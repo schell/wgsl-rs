@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       duplicate resource name `resource`; every field or declaration must have a unique global resource name.'
+  --> tests/ui/fail/resource_pack_duplicate_name.rs:14:13
+   |
+14 |         pub resource: Sampler,
+   |             ^^^^^^^^

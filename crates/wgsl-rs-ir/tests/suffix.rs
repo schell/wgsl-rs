@@ -1500,8 +1500,8 @@ fn linkage_variables_anchor_assignment_targets() {
     // element assignment anchors the select.
     let mut m = module(vec![
         Item::Storage(ItemStorage {
-            group: 0,
-            binding: 0,
+            group: 0.into(),
+            binding: 0.into(),
             access: StorageAccess::ReadWrite,
             name: "OUTPUT".to_string(),
             ty: array_ty(u32_ty(), 1),
@@ -1995,8 +1995,8 @@ fn reference_valued_local_anchors_deref_assignments() {
     // assignment target resolves the element type.
     let mut m = module(vec![
         Item::Storage(ItemStorage {
-            group: 0,
-            binding: 0,
+            group: 0.into(),
+            binding: 0.into(),
             access: StorageAccess::ReadWrite,
             name: "OUTPUT".to_string(),
             ty: array_ty(u32_ty(), 1),
@@ -2218,8 +2218,8 @@ fn type_imports_seed_imported_linkage_globals() {
     // type imports it anchors from the imported storage's element
     // type — the cross-source form of the linkage test above.
     let producer = module(vec![Item::Storage(ItemStorage {
-        group: 0,
-        binding: 0,
+        group: 0.into(),
+        binding: 0.into(),
         access: StorageAccess::ReadWrite,
         name: "OUTPUT".to_string(),
         ty: array_ty(u32_ty(), 1),

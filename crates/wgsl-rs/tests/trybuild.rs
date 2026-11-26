@@ -279,3 +279,27 @@ fn resource_pack_multiple_bindings_are_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_multiple_bindings.rs");
 }
+
+#[test]
+fn resource_pack_builtin_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_builtin.rs");
+}
+
+#[test]
+fn resource_pack_duplicate_address_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_duplicate_address.rs");
+}
+
+#[test]
+fn resource_pack_duplicate_name_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_duplicate_name.rs");
+}
+
+#[test]
+fn resource_pack_missing_group_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_missing_group.rs");
+}

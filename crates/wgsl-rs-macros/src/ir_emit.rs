@@ -62,6 +62,18 @@ fn emit_filterability(p: &TokenStream, filterable: &ir::Filterability) -> TokenS
     }
 }
 
+/// Emit an expression that constructs a concrete or parameterized address.
+fn emit_binding_address(p: &TokenStream, address: &ir::BindingAddress) -> TokenStream {
+    match address {
+        ir::BindingAddress::Concrete(value) => {
+            quote!(#p::BindingAddress::Concrete(#value))
+        }
+        ir::BindingAddress::Param(name) => quote! {
+            #p::BindingAddress::Param(::std::string::String::from(#name))
+        },
+    }
+}
+
 // ===== Items =====
 
 pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
@@ -71,8 +83,8 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             quote! { #p::Item::Const(#inner) }
         }
         ir::Item::Uniform(u) => {
-            let group = u.group;
-            let binding = u.binding;
+            let group = emit_binding_address(p, &u.group);
+            let binding = emit_binding_address(p, &u.binding);
             let n = &u.name;
             let t = ty(p, &u.ty);
             let attrs = emit_attrs(p, &u.attrs);
@@ -87,8 +99,8 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             }
         }
         ir::Item::Storage(s) => {
-            let group = s.group;
-            let binding = s.binding;
+            let group = emit_binding_address(p, &s.group);
+            let binding = emit_binding_address(p, &s.binding);
             let acc = match s.access {
                 ir::StorageAccess::Read => quote! { #p::StorageAccess::Read },
                 ir::StorageAccess::ReadWrite => quote! { #p::StorageAccess::ReadWrite },
@@ -120,8 +132,8 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             }
         }
         ir::Item::Sampler(s) => {
-            let group = s.group;
-            let binding = s.binding;
+            let group = emit_binding_address(p, &s.group);
+            let binding = emit_binding_address(p, &s.binding);
             let n = &s.name;
             let t = ty(p, &s.ty);
             let filterable = emit_filterability(p, &s.filterable);
@@ -138,8 +150,8 @@ pub fn emit_item(p: &TokenStream, i: &ir::Item) -> TokenStream {
             }
         }
         ir::Item::Texture(t_) => {
-            let group = t_.group;
-            let binding = t_.binding;
+            let group = emit_binding_address(p, &t_.group);
+            let binding = emit_binding_address(p, &t_.binding);
             let n = &t_.name;
             let t = ty(p, &t_.ty);
             let filterable = emit_filterability(p, &t_.filterable);

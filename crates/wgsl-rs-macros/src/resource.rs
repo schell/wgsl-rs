@@ -4,7 +4,7 @@
 //! struct remains an ordinary Rust value, while its fields describe global
 //! WGSL resources for later lowering passes.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{Ident, Token, spanned::Spanned};
 
@@ -122,7 +122,6 @@ pub(crate) struct ResourceField {
     pub(crate) group: AddressValue,
     pub(crate) binding: AddressValue,
     pub(crate) access: StorageAccess,
-    #[allow(dead_code)] // consumed by IR resource generation in the next lowering stage
     pub(crate) ty: Type,
     pub(crate) rust_ty: syn::Type,
 }
@@ -131,8 +130,7 @@ pub(crate) struct ResourceField {
 #[derive(Clone)]
 pub(crate) struct ItemResourcePack {
     pub(crate) ident: Ident,
-    #[allow(dead_code)] // consumed by parameterized IR addresses in the next lowering stage
-    pub(crate) const_params: Vec<Ident>,
+    pub(crate) const_params: Vec<(Ident, syn::Type)>,
     pub(crate) fields: Vec<ResourceField>,
 }
 
@@ -166,7 +164,7 @@ pub(crate) fn parse_resource_pack(item: &syn::ItemStruct) -> parse::Result<ItemR
     for param in &item.generics.params {
         match param {
             syn::GenericParam::Const(param) => {
-                const_params.push(param.ident.clone());
+                const_params.push((param.ident.clone(), param.ty.clone()));
                 const_param_types.insert(param.ident.to_string(), param.ty.clone());
             }
             syn::GenericParam::Type(param) => {
@@ -183,7 +181,10 @@ pub(crate) fn parse_resource_pack(item: &syn::ItemStruct) -> parse::Result<ItemR
             }
         }
     }
-    let ctx = ParseContext::from_params(std::iter::empty::<Ident>(), const_params.clone());
+    let ctx = ParseContext::from_params(
+        std::iter::empty::<Ident>(),
+        const_params.iter().map(|(ident, _)| ident.clone()),
+    );
 
     let mut parsed_fields = Vec::with_capacity(fields.named.len());
     for field in &fields.named {
@@ -392,6 +393,94 @@ fn validate_resource_type(field: &syn::Field, kind: ResourceKind, ty: &Type) -> 
             ),
         ))
     }
+}
+
+/// Validate source-local resource names and concrete addresses, including
+/// collisions between standalone declarations and pack fields.
+pub(crate) fn validate_resources(module: &parse::ItemMod) -> parse::Result<()> {
+    let mut names = std::collections::HashMap::<String, Span>::new();
+    let mut addresses = std::collections::HashMap::<(u32, u32), Span>::new();
+
+    fn record(
+        ident: &Ident,
+        group: Option<u32>,
+        binding: Option<u32>,
+        names: &mut std::collections::HashMap<String, Span>,
+        addresses: &mut std::collections::HashMap<(u32, u32), Span>,
+    ) -> parse::Result<()> {
+        if names.insert(ident.to_string(), ident.span()).is_some() {
+            return Err(parse::Error::unsupported(
+                ident.span(),
+                format!(
+                    "duplicate resource name `{ident}`; every field or declaration must have a \
+                     unique global resource name"
+                ),
+            ));
+        }
+        if let (Some(group), Some(binding)) = (group, binding)
+            && addresses.insert((group, binding), ident.span()).is_some()
+        {
+            return Err(parse::Error::unsupported(
+                ident.span(),
+                format!(
+                    "duplicate resource address @group({group}) @binding({binding}) on `{ident}`"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn literal(lit: &syn::LitInt) -> Option<u32> {
+        lit.base10_parse::<u32>().ok()
+    }
+
+    for item in &module.content {
+        match item {
+            parse::Item::Uniform(item) => record(
+                &item.name,
+                literal(&item.group),
+                literal(&item.binding),
+                &mut names,
+                &mut addresses,
+            )?,
+            parse::Item::Storage(item) => record(
+                &item.name,
+                literal(&item.group),
+                literal(&item.binding),
+                &mut names,
+                &mut addresses,
+            )?,
+            parse::Item::Sampler(item) => record(
+                &item.name,
+                literal(&item.group),
+                literal(&item.binding),
+                &mut names,
+                &mut addresses,
+            )?,
+            parse::Item::Texture(item) => record(
+                &item.name,
+                literal(&item.group),
+                literal(&item.binding),
+                &mut names,
+                &mut addresses,
+            )?,
+            parse::Item::ResourcePack(pack) => {
+                for field in &pack.fields {
+                    let group = match &field.group {
+                        AddressValue::Literal(lit) => literal(lit),
+                        AddressValue::Param(_) => None,
+                    };
+                    let binding = match &field.binding {
+                        AddressValue::Literal(lit) => literal(lit),
+                        AddressValue::Param(_) => None,
+                    };
+                    record(&field.ident, group, binding, &mut names, &mut addresses)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Rewrite resource packs in the emitted Rust module and append their CPU-only

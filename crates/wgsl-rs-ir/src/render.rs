@@ -1592,8 +1592,8 @@ mod tests {
         let module = Module {
             name: "test",
             items: vec![Item::Texture(ItemTexture {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "TEX".to_string(),
                 ty: Type::TextureStorage {
                     kind: TextureStorageKind::Storage2D,
@@ -1620,8 +1620,8 @@ mod tests {
         let module = Module {
             name: "test",
             items: vec![Item::Texture(ItemTexture {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "TEX".to_string(),
                 ty: Type::TextureStorage {
                     kind: TextureStorageKind::Storage2D,

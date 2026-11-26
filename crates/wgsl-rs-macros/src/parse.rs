@@ -6027,34 +6027,58 @@ pub struct ItemMod {
     pub attrs: Vec<ir::Attribute>,
 }
 
-/// Binding-owned filterability parameters in declaration order, including
-/// duplicates. The paired span identifies the binding for diagnostics.
-pub(crate) fn binding_filterability_params(module: &ItemMod) -> Vec<(String, Span)> {
-    module
-        .content
-        .iter()
-        .filter_map(|item| {
-            let (filterable, span) = match item {
-                Item::Texture(texture) => {
-                    let Type::Texture { filterable, .. } = &texture.ty else {
-                        return None;
-                    };
-                    (filterable, texture.name.span())
+/// Binding-owned const parameters in declaration order, including duplicates.
+/// Each entry carries its Rust const type and the binding span for diagnostics.
+/// Pack fields contribute group, binding, then filterability in field order.
+pub(crate) fn binding_const_params(module: &ItemMod) -> Vec<(String, syn::Type, Span)> {
+    fn push_filterability(
+        out: &mut Vec<(String, syn::Type, Span)>,
+        filterable: &ir::Filterability,
+        span: Span,
+    ) {
+        if let ir::Filterability::Param(name) = filterable {
+            out.push((name.clone(), syn::parse_quote!(bool), span));
+        }
+    }
+
+    let mut out = Vec::new();
+    for item in &module.content {
+        match item {
+            Item::Texture(texture) => {
+                if let Type::Texture { filterable, .. } = &texture.ty {
+                    push_filterability(&mut out, filterable, texture.name.span());
                 }
-                Item::Sampler(sampler) => {
-                    let Type::Sampler { filterable, .. } = &sampler.ty else {
-                        return None;
-                    };
-                    (filterable, sampler.name.span())
+            }
+            Item::Sampler(sampler) => {
+                if let Type::Sampler { filterable, .. } = &sampler.ty {
+                    push_filterability(&mut out, filterable, sampler.name.span());
                 }
-                _ => return None,
-            };
-            let ir::Filterability::Param(name) = filterable else {
-                return None;
-            };
-            Some((name.clone(), span))
-        })
-        .collect()
+            }
+            Item::ResourcePack(pack) => {
+                for field in &pack.fields {
+                    for address in [&field.group, &field.binding] {
+                        if let crate::resource::AddressValue::Param(name) = address {
+                            let ty = pack
+                                .const_params
+                                .iter()
+                                .find(|(ident, _)| ident == name)
+                                .map(|(_, ty)| ty.clone())
+                                .expect("resource address parameters are validated on the pack");
+                            out.push((name.to_string(), ty, field.ident.span()));
+                        }
+                    }
+                    match &field.ty {
+                        Type::Texture { filterable, .. } | Type::Sampler { filterable, .. } => {
+                            push_filterability(&mut out, filterable, field.ident.span());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 impl TryFrom<&syn::ItemMod> for ItemMod {
@@ -6089,11 +6113,13 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
             };
             content.push(parsed);
         }
-        Ok(ItemMod {
+        let module = ItemMod {
             ident,
             content,
             attrs: syn_attrs_to_ir(&item_mod.attrs),
-        })
+        };
+        crate::resource::validate_resources(&module)?;
+        Ok(module)
     }
 }
 

@@ -271,8 +271,8 @@ fn module_with_filterability_params() -> Module {
         name: "filterability",
         items: vec![
             Item::Texture(ItemTexture {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "TEX".into(),
                 ty: Type::Texture {
                     kind: TextureKind::Texture2D,
@@ -282,8 +282,8 @@ fn module_with_filterability_params() -> Module {
                 attrs: vec![],
             }),
             Item::Sampler(ItemSampler {
-                group: 0,
-                binding: 1,
+                group: 0.into(),
+                binding: 1.into(),
                 name: "SMP".into(),
                 ty: Type::Sampler,
                 filterable: Filterability::Param("SMP_FILTERABLE".into()),
@@ -336,4 +336,64 @@ fn filterability_params_remain_unresolved_without_a_substitution() {
 fn integer_const_does_not_coerce_to_filterability() {
     let mut module = module_with_filterability_params();
     substitute_consts(&mut module, &consts_of(&[("TEX_FILTERABLE", 1)]));
+}
+
+fn module_with_address_params() -> Module {
+    Module {
+        name: "addresses",
+        items: vec![Item::Texture(ItemTexture {
+            group: BindingAddress::Param("GROUP".into()),
+            binding: BindingAddress::Param("BINDING".into()),
+            name: "TEX".into(),
+            ty: Type::Texture {
+                kind: TextureKind::Texture2D,
+                sampled_type: ScalarType::F32,
+            },
+            filterable: true.into(),
+            attrs: vec![],
+        })],
+        attrs: vec![],
+    }
+}
+
+#[test]
+fn integer_consts_resolve_binding_addresses() {
+    let mut module = module_with_address_params();
+    substitute_consts(&mut module, &consts_of(&[("GROUP", 3), ("BINDING", 7)]));
+    let Item::Texture(texture) = &module.items[0] else {
+        unreachable!()
+    };
+    assert_eq!(texture.group, BindingAddress::Concrete(3));
+    assert_eq!(texture.binding, BindingAddress::Concrete(7));
+    assert!(render_module(&module).contains("@group(3) @binding(7) var TEX"));
+}
+
+#[test]
+#[should_panic(expected = "outside the u32 address range")]
+fn binding_address_substitution_rejects_out_of_range_values() {
+    let mut module = module_with_address_params();
+    substitute_consts(&mut module, &consts_of(&[("GROUP", u32::MAX as i64 + 1)]));
+}
+
+#[test]
+#[should_panic(expected = "addresses require integers")]
+fn binding_address_substitution_rejects_bool_values() {
+    let mut module = module_with_address_params();
+    substitute_consts(&mut module, &bool_consts_of(&[("GROUP", true)]));
+}
+
+#[test]
+fn duplicate_addresses_are_rejected_after_substitution() {
+    let mut module = module_with_address_params();
+    module.items.push(Item::Sampler(ItemSampler {
+        group: BindingAddress::Param("GROUP".into()),
+        binding: BindingAddress::Param("BINDING".into()),
+        name: "SMP".into(),
+        ty: Type::Sampler,
+        filterable: true.into(),
+        attrs: vec![],
+    }));
+    substitute_consts(&mut module, &consts_of(&[("GROUP", 1), ("BINDING", 2)]));
+    let error = validate_binding_addresses(&module).unwrap_err();
+    assert!(error.contains("TEX") && error.contains("SMP"), "{error}");
 }

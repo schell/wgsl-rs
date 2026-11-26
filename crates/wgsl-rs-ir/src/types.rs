@@ -498,6 +498,53 @@ pub enum ConstValue {
     Bool(bool),
 }
 
+/// A binding address component, either concrete or deferred to a module const
+/// parameter. Parameters are resolved by [`crate::substitute_consts`] before
+/// WGSL validation or wgpu layout analysis.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BindingAddress {
+    Concrete(u32),
+    Param(String),
+}
+
+impl BindingAddress {
+    /// Return the concrete address, or `None` while parameterized.
+    pub fn concrete(&self) -> Option<u32> {
+        match self {
+            Self::Concrete(value) => Some(*value),
+            Self::Param(_) => None,
+        }
+    }
+
+    /// Return a concrete address or produce a targeted template-use error.
+    pub fn expect_concrete(&self, resource_name: &str, component: &str) -> u32 {
+        self.concrete().unwrap_or_else(|| {
+            let Self::Param(name) = self else {
+                unreachable!("concrete() returns None only for parameters")
+            };
+            panic!(
+                "binding {resource_name:?} has unresolved {component} parameter {name:?}; \
+                 instantiate the template module before analyzing or rendering its resources"
+            )
+        })
+    }
+}
+
+impl From<u32> for BindingAddress {
+    fn from(value: u32) -> Self {
+        Self::Concrete(value)
+    }
+}
+
+impl std::fmt::Display for BindingAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Concrete(value) => value.fmt(f),
+            Self::Param(name) => name.fmt(f),
+        }
+    }
+}
+
 /// Host-side filterability for a texture or sampler binding.
 ///
 /// Filterability is not part of the WGSL type. A template binding may defer
@@ -926,8 +973,8 @@ pub struct ItemConst {
 /// A `@group(N) @binding(M) var<uniform>` linkage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemUniform {
-    pub group: u32,
-    pub binding: u32,
+    pub group: BindingAddress,
+    pub binding: BindingAddress,
     pub name: String,
     pub ty: Type,
     /// Attributes preserved from Rust source.
@@ -937,8 +984,8 @@ pub struct ItemUniform {
 /// A `@group(N) @binding(M) var<storage, ...>` linkage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemStorage {
-    pub group: u32,
-    pub binding: u32,
+    pub group: BindingAddress,
+    pub binding: BindingAddress,
     pub access: StorageAccess,
     pub name: String,
     pub ty: Type,
@@ -958,8 +1005,8 @@ pub struct ItemWorkgroup {
 /// A `@group(N) @binding(M) var ... : sampler[_comparison]` linkage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemSampler {
-    pub group: u32,
-    pub binding: u32,
+    pub group: BindingAddress,
+    pub binding: BindingAddress,
     pub name: String,
     pub ty: Type,
     /// Whether the sampler can perform filtering. Host-side only: WGSL
@@ -978,8 +1025,8 @@ pub struct ItemSampler {
 /// A `@group(N) @binding(M) var ... : texture_*` linkage.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemTexture {
-    pub group: u32,
-    pub binding: u32,
+    pub group: BindingAddress,
+    pub binding: BindingAddress,
     pub name: String,
     pub ty: Type,
     /// Whether the texture's f32 sample type allows filtering. Host-side

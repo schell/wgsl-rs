@@ -718,7 +718,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
             ir::Item::Uniform(u) => {
                 let size = type_byte_size(&u.ty, &linkage.ir);
                 let entry = wgpu::BindGroupLayoutEntry {
-                    binding: u.binding,
+                    binding: u.binding.expect_concrete(&u.name, "binding"),
                     visibility: visibility_for(&referenced, &u.name),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -729,29 +729,29 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 };
                 linkage
                     .bind_groups
-                    .entry(u.group)
+                    .entry(u.group.expect_concrete(&u.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: u.group,
+                        group: u.group.expect_concrete(&u.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, u.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, u.group.expect_concrete(&u.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&u.group)
+                    .get_mut(&u.group.expect_concrete(&u.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: u.name.clone(),
-                        binding: u.binding,
+                        binding: u.binding.expect_concrete(&u.name, "binding"),
                         kind: BindingKind::Uniform,
                     });
                 linkage.buffers.push(BufferDescriptorInfo {
                     binding_name: u.name.clone(),
-                    group: u.group,
-                    binding: u.binding,
+                    group: u.group.expect_concrete(&u.name, "group"),
+                    binding: u.binding.expect_concrete(&u.name, "binding"),
                     kind: BufferKind::Uniform,
                     size,
                     usage: wgpu::BufferUsages::UNIFORM
@@ -764,7 +764,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 let read_only = matches!(s.access, ir::StorageAccess::Read);
                 let size = type_byte_size(&s.ty, &linkage.ir);
                 let entry = wgpu::BindGroupLayoutEntry {
-                    binding: s.binding,
+                    binding: s.binding.expect_concrete(&s.name, "binding"),
                     visibility: visibility_for(&referenced, &s.name),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only },
@@ -775,29 +775,29 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 };
                 linkage
                     .bind_groups
-                    .entry(s.group)
+                    .entry(s.group.expect_concrete(&s.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: s.group,
+                        group: s.group.expect_concrete(&s.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, s.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, s.group.expect_concrete(&s.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&s.group)
+                    .get_mut(&s.group.expect_concrete(&s.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: s.name.clone(),
-                        binding: s.binding,
+                        binding: s.binding.expect_concrete(&s.name, "binding"),
                         kind: BindingKind::Storage { read_only },
                     });
                 linkage.buffers.push(BufferDescriptorInfo {
                     binding_name: s.name.clone(),
-                    group: s.group,
-                    binding: s.binding,
+                    group: s.group.expect_concrete(&s.name, "group"),
+                    binding: s.binding.expect_concrete(&s.name, "binding"),
                     kind: BufferKind::Storage { read_only },
                     size,
                     usage: wgpu::BufferUsages::STORAGE
@@ -816,30 +816,30 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                     wgpu::SamplerBindingType::Filtering
                 };
                 let entry = wgpu::BindGroupLayoutEntry {
-                    binding: s.binding,
+                    binding: s.binding.expect_concrete(&s.name, "binding"),
                     visibility: visibility_for(&referenced, &s.name),
                     ty: wgpu::BindingType::Sampler(sampler_ty),
                     count: None,
                 };
                 linkage
                     .bind_groups
-                    .entry(s.group)
+                    .entry(s.group.expect_concrete(&s.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: s.group,
+                        group: s.group.expect_concrete(&s.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, s.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, s.group.expect_concrete(&s.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&s.group)
+                    .get_mut(&s.group.expect_concrete(&s.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: s.name.clone(),
-                        binding: s.binding,
+                        binding: s.binding.expect_concrete(&s.name, "binding"),
                         kind: BindingKind::Sampler { comparison },
                     });
             }
@@ -848,23 +848,23 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 entry.visibility = visibility_for(&referenced, &t.name);
                 linkage
                     .bind_groups
-                    .entry(t.group)
+                    .entry(t.group.expect_concrete(&t.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: t.group,
+                        group: t.group.expect_concrete(&t.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, t.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, t.group.expect_concrete(&t.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&t.group)
+                    .get_mut(&t.group.expect_concrete(&t.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: t.name.clone(),
-                        binding: t.binding,
+                        binding: t.binding.expect_concrete(&t.name, "binding"),
                         kind,
                     });
             }
@@ -1012,7 +1012,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
             };
             (
                 wgpu::BindGroupLayoutEntry {
-                    binding: item.binding,
+                    binding: item.binding.expect_concrete(&item.name, "binding"),
                     visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Texture {
                         sample_type: sample,
@@ -1026,7 +1026,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
         }
         ir::Type::TextureDepth { .. } => (
             wgpu::BindGroupLayoutEntry {
-                binding: item.binding,
+                binding: item.binding.expect_concrete(&item.name, "binding"),
                 visibility: wgpu::ShaderStages::all(),
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Depth,
@@ -1047,7 +1047,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
             let read_write = matches!(access, ir::StorageTextureAccess::ReadWrite);
             (
                 wgpu::BindGroupLayoutEntry {
-                    binding: item.binding,
+                    binding: item.binding.expect_concrete(&item.name, "binding"),
                     visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu_access,
@@ -1164,8 +1164,8 @@ mod binding_visibility {
 
     fn uniform(name: &str, group: u32, binding: u32) -> ir::Item {
         ir::Item::Uniform(ir::ItemUniform {
-            group,
-            binding,
+            group: group.into(),
+            binding: binding.into(),
             name: name.to_string(),
             ty: f32_ty(),
             attrs: Vec::new(),

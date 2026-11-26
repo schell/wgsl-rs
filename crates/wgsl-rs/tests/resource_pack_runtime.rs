@@ -6,19 +6,19 @@ use wgsl_rs::{std::*, wgsl};
 mod packs {
     use wgsl_rs::std::*;
 
-    pub struct TexturePack<const GROUP: u32, const FILTERABLE: bool> {
-        #[texture(group(GROUP), binding(4))]
+    pub struct TexturePack<const TEXTURE_GROUP: u32, const FILTERABLE: bool> {
+        #[texture(group(TEXTURE_GROUP), binding(4))]
         pub heights: Texture2D<f32, FILTERABLE>,
 
-        #[sampler(binding(5), group(GROUP))]
+        #[sampler(binding(5), group(TEXTURE_GROUP))]
         pub heights_smp: Sampler<FILTERABLE>,
     }
 
-    pub struct BufferPack<const GROUP: usize> {
-        #[storage(group(GROUP), binding(2), read_write)]
+    pub struct BufferPack<const BUFFER_GROUP: usize> {
+        #[storage(group(BUFFER_GROUP), binding(2), read_write)]
         pub slab: RuntimeArray<Vec4f>,
 
-        #[uniform(group(GROUP), binding(3))]
+        #[uniform(group(BUFFER_GROUP), binding(3))]
         pub config: Vec4f,
     }
 
@@ -26,6 +26,55 @@ mod packs {
         #[storage(group(1), binding(7))]
         pub values: [u32; 4],
     }
+}
+
+#[wgsl(skip_validation)]
+mod invalid_after_instantiation {
+    use wgsl_rs::std::*;
+
+    #[allow(dead_code)]
+    pub struct DuplicateAddress<const GROUP: u32> {
+        #[sampler(group(GROUP), binding(0))]
+        pub first: Sampler,
+        #[sampler(group(GROUP), binding(0))]
+        pub second: Sampler,
+    }
+
+    #[allow(dead_code)]
+    pub struct OutOfRange<const OUT_OF_RANGE_GROUP: usize> {
+        #[sampler(group(OUT_OF_RANGE_GROUP), binding(0))]
+        pub sampler: Sampler,
+    }
+}
+
+#[test]
+fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
+    let duplicate = std::panic::catch_unwind(|| {
+        invalid_after_instantiation::DuplicateAddress::<1>::new();
+        invalid_after_instantiation::instantiate::<1, 0>()
+    })
+    .expect_err("two resources must not share an instantiated address");
+    let message = duplicate
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| duplicate.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic");
+    assert!(message.contains("duplicate resource address"), "{message}");
+
+    let invalid = std::panic::catch_unwind(|| {
+        invalid_after_instantiation::OutOfRange::<{ u32::MAX as usize + 1 }>::new();
+        invalid_after_instantiation::instantiate::<0, { u32::MAX as usize + 1 }>()
+    })
+    .expect_err("usize addresses must fit in WGSL's u32 address representation");
+    let message = invalid
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| invalid.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic");
+    assert!(
+        message.contains("outside the u32 address range"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -68,8 +117,21 @@ fn constructed_texture_pack_works_with_cpu_builtins() {
 
 #[test]
 fn packs_are_not_emitted_as_wgsl_structs() {
-    let source = packs::WGSL_SOURCE.wgsl_source().unwrap();
-    assert!(!source.contains("TexturePack"));
-    assert!(!source.contains("BufferPack"));
-    assert!(!source.contains("ReadPack"));
+    assert_eq!(
+        packs::WGSL_SOURCE.module_type_params,
+        &["TEXTURE_GROUP", "FILTERABLE", "BUFFER_GROUP"]
+    );
+    let module = packs::instantiate::<2, false, 3>();
+    let source = module.wgsl_source();
+    assert!(source.contains("@group(2) @binding(4) var heights: texture_2d<f32>;"));
+    assert!(source.contains("@group(2) @binding(5) var heights_smp: sampler;"));
+    assert!(
+        source.contains("@group(3) @binding(2) var<storage, read_write> slab: array<vec4f>;"),
+        "{source}"
+    );
+    assert!(source.contains("@group(3) @binding(3) var<uniform> config: vec4f;"));
+    assert!(source.contains("@group(1) @binding(7) var<storage, read> values: array<u32, 4>;"));
+    assert!(!source.contains("struct TexturePack"));
+    assert!(!source.contains("struct BufferPack"));
+    assert!(!source.contains("struct ReadPack"));
 }

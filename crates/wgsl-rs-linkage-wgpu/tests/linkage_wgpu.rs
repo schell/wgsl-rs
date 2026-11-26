@@ -752,22 +752,22 @@ fn bind_group_entries_sorted_by_binding_number() {
         name: "out_of_order",
         items: vec![
             ir::Item::Uniform(ir::ItemUniform {
-                group: 0,
-                binding: 5,
+                group: 0.into(),
+                binding: 5.into(),
                 name: "FIVE".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::F32),
                 attrs: vec![],
             }),
             ir::Item::Uniform(ir::ItemUniform {
-                group: 0,
-                binding: 1,
+                group: 0.into(),
+                binding: 1.into(),
                 name: "ONE".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::F32),
                 attrs: vec![],
             }),
             ir::Item::Uniform(ir::ItemUniform {
-                group: 0,
-                binding: 3,
+                group: 0.into(),
+                binding: 3.into(),
                 name: "THREE".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::F32),
                 attrs: vec![],
@@ -794,8 +794,8 @@ fn analyze_texture_and_sampler_bindings() {
         name: "tex",
         items: vec![
             ir::Item::Texture(ir::ItemTexture {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "TEX".to_string(),
                 ty: ir::Type::Texture {
                     kind: TextureKind::Texture2D,
@@ -805,8 +805,8 @@ fn analyze_texture_and_sampler_bindings() {
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
-                group: 0,
-                binding: 1,
+                group: 0.into(),
+                binding: 1.into(),
                 name: "SHADOW".to_string(),
                 ty: ir::Type::TextureDepth {
                     kind: TextureDepthKind::Depth2D,
@@ -815,16 +815,16 @@ fn analyze_texture_and_sampler_bindings() {
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
-                group: 0,
-                binding: 2,
+                group: 0.into(),
+                binding: 2.into(),
                 name: "SAMP".to_string(),
                 ty: ir::Type::Sampler,
                 filterable: true.into(),
                 attrs: vec![],
             }),
             ir::Item::Sampler(ir::ItemSampler {
-                group: 0,
-                binding: 3,
+                group: 0.into(),
+                binding: 3.into(),
                 name: "CSAMP".to_string(),
                 ty: ir::Type::SamplerComparison,
                 filterable: true.into(),
@@ -857,8 +857,8 @@ fn analyze_rejects_unresolved_filterability() {
     let ir_module = ir::Module {
         name: "unresolved_filterability",
         items: vec![ir::Item::Texture(ir::ItemTexture {
-            group: 0,
-            binding: 0,
+            group: 0.into(),
+            binding: 0.into(),
             name: "TEX".to_string(),
             ty: ir::Type::Texture {
                 kind: TextureKind::Texture2D,
@@ -1017,8 +1017,8 @@ fn analyze_storage_texture_bindings() {
         name: "storage_tex",
         items: vec![
             ir::Item::Texture(ir::ItemTexture {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "OUT_TEX".to_string(),
                 ty: ir::Type::TextureStorage {
                     kind: TextureStorageKind::Storage2D,
@@ -1029,8 +1029,8 @@ fn analyze_storage_texture_bindings() {
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
-                group: 0,
-                binding: 1,
+                group: 0.into(),
+                binding: 1.into(),
                 name: "IN_TEX".to_string(),
                 ty: ir::Type::TextureStorage {
                     kind: TextureStorageKind::Storage2D,
@@ -1041,8 +1041,8 @@ fn analyze_storage_texture_bindings() {
                 attrs: vec![],
             }),
             ir::Item::Texture(ir::ItemTexture {
-                group: 0,
-                binding: 2,
+                group: 0.into(),
+                binding: 2.into(),
                 name: "RW_TEX".to_string(),
                 ty: ir::Type::TextureStorage {
                     kind: TextureStorageKind::Storage2D,
@@ -1080,8 +1080,8 @@ fn storage_read_only_flag_matches_ir() {
     let ir_module = ir::Module {
         name: "ro",
         items: vec![ir::Item::Storage(ir::ItemStorage {
-            group: 0,
-            binding: 0,
+            group: 0.into(),
+            binding: 0.into(),
             access: StorageAccess::Read,
             name: "INPUT".to_string(),
             ty: ir::Type::Scalar(ir::ScalarType::F32),
@@ -1099,8 +1099,8 @@ fn storage_read_only_flag_matches_ir() {
     let ir_rw = ir::Module {
         name: "rw",
         items: vec![ir::Item::Storage(ir::ItemStorage {
-            group: 0,
-            binding: 0,
+            group: 0.into(),
+            binding: 0.into(),
             access: StorageAccess::ReadWrite,
             name: "OUTPUT".to_string(),
             ty: ir::Type::Scalar(ir::ScalarType::F32),
@@ -1175,15 +1175,15 @@ fn linkage_with_two_uniforms() -> wg::WgpuLinkage {
         name: "two_uni",
         items: vec![
             ir::Item::Uniform(ir::ItemUniform {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "A".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::U32),
                 attrs: vec![],
             }),
             ir::Item::Uniform(ir::ItemUniform {
-                group: 0,
-                binding: 1,
+                group: 0.into(),
+                binding: 1.into(),
                 name: "B".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::U32),
                 attrs: vec![],
@@ -1331,15 +1331,15 @@ fn linkage_with_two_groups() -> wg::WgpuLinkage {
         name: "two_groups",
         items: vec![
             ir::Item::Uniform(ir::ItemUniform {
-                group: 0,
-                binding: 0,
+                group: 0.into(),
+                binding: 0.into(),
                 name: "A".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::U32),
                 attrs: vec![],
             }),
             ir::Item::Uniform(ir::ItemUniform {
-                group: 1,
-                binding: 0,
+                group: 1.into(),
+                binding: 0.into(),
                 name: "B".to_string(),
                 ty: ir::Type::Scalar(ir::ScalarType::U32),
                 attrs: vec![],

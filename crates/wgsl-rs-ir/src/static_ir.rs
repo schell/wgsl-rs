@@ -731,8 +731,8 @@ impl<'a> From<&StaticItemConst<'a>> for ItemConst {
 /// Borrowed mirror of [`ItemUniform`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticItemUniform<'a> {
-    pub group: u32,
-    pub binding: u32,
+    pub group: StaticBindingAddress<'a>,
+    pub binding: StaticBindingAddress<'a>,
     pub name: &'a str,
     pub ty: StaticType<'a>,
     pub attrs: &'a [StaticAttribute<'a>],
@@ -742,8 +742,8 @@ pub struct StaticItemUniform<'a> {
 impl<'a> From<&StaticItemUniform<'a>> for ItemUniform {
     fn from(s: &StaticItemUniform<'a>) -> Self {
         ItemUniform {
-            group: s.group,
-            binding: s.binding,
+            group: BindingAddress::from(s.group),
+            binding: BindingAddress::from(s.binding),
             name: s.name.to_string(),
             ty: Type::from(&s.ty),
             attrs: conv(s.attrs),
@@ -754,8 +754,8 @@ impl<'a> From<&StaticItemUniform<'a>> for ItemUniform {
 /// Borrowed mirror of [`ItemStorage`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticItemStorage<'a> {
-    pub group: u32,
-    pub binding: u32,
+    pub group: StaticBindingAddress<'a>,
+    pub binding: StaticBindingAddress<'a>,
     pub access: StorageAccess,
     pub name: &'a str,
     pub ty: StaticType<'a>,
@@ -766,8 +766,8 @@ pub struct StaticItemStorage<'a> {
 impl<'a> From<&StaticItemStorage<'a>> for ItemStorage {
     fn from(s: &StaticItemStorage<'a>) -> Self {
         ItemStorage {
-            group: s.group,
-            binding: s.binding,
+            group: BindingAddress::from(s.group),
+            binding: BindingAddress::from(s.binding),
             access: s.access,
             name: s.name.to_string(),
             ty: Type::from(&s.ty),
@@ -795,6 +795,22 @@ impl<'a> From<&StaticItemWorkgroup<'a>> for ItemWorkgroup {
     }
 }
 
+/// Borrowed mirror of [`BindingAddress`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StaticBindingAddress<'a> {
+    Concrete(u32),
+    Param(&'a str),
+}
+
+impl From<StaticBindingAddress<'_>> for BindingAddress {
+    fn from(value: StaticBindingAddress<'_>) -> Self {
+        match value {
+            StaticBindingAddress::Concrete(value) => Self::Concrete(value),
+            StaticBindingAddress::Param(name) => Self::Param(name.to_string()),
+        }
+    }
+}
+
 /// Borrowed mirror of [`Filterability`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StaticFilterability<'a> {
@@ -816,8 +832,8 @@ impl From<StaticFilterability<'_>> for Filterability {
 /// Borrowed mirror of [`ItemSampler`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticItemSampler<'a> {
-    pub group: u32,
-    pub binding: u32,
+    pub group: StaticBindingAddress<'a>,
+    pub binding: StaticBindingAddress<'a>,
     pub name: &'a str,
     pub ty: StaticType<'a>,
     pub filterable: StaticFilterability<'a>,
@@ -828,8 +844,8 @@ pub struct StaticItemSampler<'a> {
 impl<'a> From<&StaticItemSampler<'a>> for ItemSampler {
     fn from(s: &StaticItemSampler<'a>) -> Self {
         ItemSampler {
-            group: s.group,
-            binding: s.binding,
+            group: BindingAddress::from(s.group),
+            binding: BindingAddress::from(s.binding),
             name: s.name.to_string(),
             ty: Type::from(&s.ty),
             filterable: Filterability::from(s.filterable),
@@ -841,8 +857,8 @@ impl<'a> From<&StaticItemSampler<'a>> for ItemSampler {
 /// Borrowed mirror of [`ItemTexture`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StaticItemTexture<'a> {
-    pub group: u32,
-    pub binding: u32,
+    pub group: StaticBindingAddress<'a>,
+    pub binding: StaticBindingAddress<'a>,
     pub name: &'a str,
     pub ty: StaticType<'a>,
     pub filterable: StaticFilterability<'a>,
@@ -853,8 +869,8 @@ pub struct StaticItemTexture<'a> {
 impl<'a> From<&StaticItemTexture<'a>> for ItemTexture {
     fn from(s: &StaticItemTexture<'a>) -> Self {
         ItemTexture {
-            group: s.group,
-            binding: s.binding,
+            group: BindingAddress::from(s.group),
+            binding: BindingAddress::from(s.binding),
             name: s.name.to_string(),
             ty: Type::from(&s.ty),
             filterable: Filterability::from(s.filterable),
@@ -1311,8 +1327,8 @@ mod tests {
                     attrs: vec![attr("cfg", &["test"])],
                 }),
                 Item::Uniform(ItemUniform {
-                    group: 0,
-                    binding: 1,
+                    group: BindingAddress::Param("FRAME_GROUP".into()),
+                    binding: 1.into(),
                     name: "FRAME".into(),
                     ty: Type::Struct {
                         name: "Frame".into(),
@@ -1321,8 +1337,8 @@ mod tests {
                     attrs: vec![],
                 }),
                 Item::Storage(ItemStorage {
-                    group: 0,
-                    binding: 2,
+                    group: 0.into(),
+                    binding: BindingAddress::Param("RO_BINDING".into()),
                     access: StorageAccess::Read,
                     name: "RO_BINS".into(),
                     ty: Type::RuntimeArray {
@@ -1331,8 +1347,8 @@ mod tests {
                     attrs: vec![],
                 }),
                 Item::Storage(ItemStorage {
-                    group: 0,
-                    binding: 3,
+                    group: 0.into(),
+                    binding: 3.into(),
                     access: StorageAccess::ReadWrite,
                     name: "RW_BINS".into(),
                     ty: Type::RuntimeArray {
@@ -1349,16 +1365,16 @@ mod tests {
                     attrs: vec![],
                 }),
                 Item::Sampler(ItemSampler {
-                    group: 0,
-                    binding: 4,
+                    group: 0.into(),
+                    binding: 4.into(),
                     name: "SMP".into(),
                     ty: Type::Sampler,
                     filterable: false.into(),
                     attrs: vec![],
                 }),
                 Item::Texture(ItemTexture {
-                    group: 0,
-                    binding: 5,
+                    group: 0.into(),
+                    binding: 5.into(),
                     name: "TEX".into(),
                     ty: Type::Texture {
                         kind: TextureKind::Texture2D,
@@ -1974,10 +1990,17 @@ mod tests {
         }
     }
 
+    fn to_static_binding_address(address: &BindingAddress) -> StaticBindingAddress<'static> {
+        match address {
+            BindingAddress::Concrete(value) => StaticBindingAddress::Concrete(*value),
+            BindingAddress::Param(name) => StaticBindingAddress::Param(leak_str(name)),
+        }
+    }
+
     fn to_static_item_uniform(u: &ItemUniform) -> StaticItemUniform<'static> {
         StaticItemUniform {
-            group: u.group,
-            binding: u.binding,
+            group: to_static_binding_address(&u.group),
+            binding: to_static_binding_address(&u.binding),
             name: leak_str(&u.name),
             ty: to_static_type(&u.ty),
             attrs: leak_slice(u.attrs.iter().map(to_static_attribute).collect()),
@@ -1986,8 +2009,8 @@ mod tests {
 
     fn to_static_item_storage(s: &ItemStorage) -> StaticItemStorage<'static> {
         StaticItemStorage {
-            group: s.group,
-            binding: s.binding,
+            group: to_static_binding_address(&s.group),
+            binding: to_static_binding_address(&s.binding),
             access: s.access,
             name: leak_str(&s.name),
             ty: to_static_type(&s.ty),
@@ -2012,8 +2035,8 @@ mod tests {
 
     fn to_static_item_sampler(s: &ItemSampler) -> StaticItemSampler<'static> {
         StaticItemSampler {
-            group: s.group,
-            binding: s.binding,
+            group: to_static_binding_address(&s.group),
+            binding: to_static_binding_address(&s.binding),
             name: leak_str(&s.name),
             ty: to_static_type(&s.ty),
             filterable: to_static_filterability(&s.filterable),
@@ -2023,8 +2046,8 @@ mod tests {
 
     fn to_static_item_texture(t: &ItemTexture) -> StaticItemTexture<'static> {
         StaticItemTexture {
-            group: t.group,
-            binding: t.binding,
+            group: to_static_binding_address(&t.group),
+            binding: to_static_binding_address(&t.binding),
             name: leak_str(&t.name),
             ty: to_static_type(&t.ty),
             filterable: to_static_filterability(&t.filterable),

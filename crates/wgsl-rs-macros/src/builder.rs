@@ -63,13 +63,14 @@ struct LinkageSlot {
     encoded_name: String,
 }
 
-/// A binding-owned bool const parameter, introduced by type-level
-/// filterability on a texture or sampler.
+/// A binding-owned const parameter used by an address or filterability value.
 struct LinkageConstSlot {
     /// The const parameter ident used on `instantiate`.
     name: syn::Ident,
     /// The substitution key stored in `Source::module_type_params`.
     encoded_name: String,
+    /// The declared const type (`bool`, `u32`, or `usize`).
+    ty: syn::Type,
 }
 
 /// An entry-point type-parameter slot. Each type parameter of each entry
@@ -142,16 +143,17 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         });
     }
 
-    // Collect binding-owned bool consts in first-occurrence declaration order.
-    // Repeated names intentionally share one slot.
+    // Collect binding-owned consts in first-occurrence declaration order.
+    // Repeated standalone filterability names intentionally share one slot.
     let mut seen_const_slots = std::collections::HashSet::new();
-    for (name, _span) in parse::binding_filterability_params(wgsl_module) {
+    for (name, ty, _span) in parse::binding_const_params(wgsl_module) {
         if !seen_const_slots.insert(name.clone()) {
             continue;
         }
         linkage_const_slots.push(LinkageConstSlot {
             name: format_ident!("{name}"),
             encoded_name: name,
+            ty,
         });
     }
 
@@ -256,7 +258,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             const_token: syn::Token![const](proc_macro2::Span::call_site()),
             ident: slot.name.clone(),
             colon_token: syn::Token![:](proc_macro2::Span::call_site()),
-            ty: syn::parse_quote!(bool),
+            ty: slot.ty.clone(),
             eq_token: None,
             default: None,
         }));
@@ -371,8 +373,13 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     for slot in &linkage_const_slots {
         let name = &slot.name;
         let encoded_name_str = &slot.encoded_name;
+        let value = if matches!(&slot.ty, syn::Type::Path(path) if path.path.is_ident("bool")) {
+            quote! { #ir_p::ConstValue::Bool(#name) }
+        } else {
+            quote! { #ir_p::ConstValue::Int(#name as i64) }
+        };
         const_subst_entries.push(quote! {
-            (::std::string::String::from(#encoded_name_str), #ir_p::ConstValue::Bool(#name))
+            (::std::string::String::from(#encoded_name_str), #value)
         });
     }
     for slot in &ep_const_slots {
@@ -410,6 +417,16 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     };
     let (impl_generics, _type_generics, split_where_clause) = generics.split_for_impl();
 
+    let validate_pack_bindings = if wgsl_module.resource_packs().next().is_some() {
+        quote! {
+            if let Err(error) = #ir_p::validate_binding_addresses(&__ir_module) {
+                panic!("{error}");
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         /// Instantiate this module's generic type parameters with concrete types.
         ///
@@ -431,6 +448,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
                 #(#const_subst_entries),*
             ].into_iter().collect();
             #ir_p::substitute_consts(&mut __ir_module, &__const_subst);
+            #validate_pack_bindings
             #ir_p::suffix_module(&mut __ir_module);
             __ir_module
         }

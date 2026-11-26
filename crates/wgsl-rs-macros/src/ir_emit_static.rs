@@ -870,9 +870,21 @@ fn static_item_const(p: &TokenStream, c: &ir::ItemConst) -> TokenStream {
     }
 }
 
+/// Emit a borrowed concrete or parameterized binding address.
+fn static_binding_address(p: &TokenStream, address: &ir::BindingAddress) -> TokenStream {
+    match address {
+        ir::BindingAddress::Concrete(value) => {
+            quote!(#p::static_ir::StaticBindingAddress::Concrete(#value))
+        }
+        ir::BindingAddress::Param(name) => {
+            quote!(#p::static_ir::StaticBindingAddress::Param(#name))
+        }
+    }
+}
+
 fn static_item_uniform(p: &TokenStream, u: &ir::ItemUniform) -> TokenStream {
-    let group = u.group;
-    let binding = u.binding;
+    let group = static_binding_address(p, &u.group);
+    let binding = static_binding_address(p, &u.binding);
     let name = &u.name;
     let t = static_type(p, &u.ty);
     let attrs = static_attrs(p, &u.attrs);
@@ -888,8 +900,8 @@ fn static_item_uniform(p: &TokenStream, u: &ir::ItemUniform) -> TokenStream {
 }
 
 fn static_item_storage(p: &TokenStream, s: &ir::ItemStorage) -> TokenStream {
-    let group = s.group;
-    let binding = s.binding;
+    let group = static_binding_address(p, &s.group);
+    let binding = static_binding_address(p, &s.binding);
     let name = &s.name;
     let a = static_storage_access(p, s.access);
     let t = static_type(p, &s.ty);
@@ -931,8 +943,8 @@ fn static_filterability(p: &TokenStream, filterable: &ir::Filterability) -> Toke
 }
 
 fn static_item_sampler(p: &TokenStream, s: &ir::ItemSampler) -> TokenStream {
-    let group = s.group;
-    let binding = s.binding;
+    let group = static_binding_address(p, &s.group);
+    let binding = static_binding_address(p, &s.binding);
     let name = &s.name;
     let filterable = static_filterability(p, &s.filterable);
     let t = static_type(p, &s.ty);
@@ -950,8 +962,8 @@ fn static_item_sampler(p: &TokenStream, s: &ir::ItemSampler) -> TokenStream {
 }
 
 fn static_item_texture(p: &TokenStream, t: &ir::ItemTexture) -> TokenStream {
-    let group = t.group;
-    let binding = t.binding;
+    let group = static_binding_address(p, &t.group);
+    let binding = static_binding_address(p, &t.binding);
     let name = &t.name;
     let filterable = static_filterability(p, &t.filterable);
     let ty = static_type(p, &t.ty);

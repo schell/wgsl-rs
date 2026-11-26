@@ -277,10 +277,10 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
         }
     }
 
-    // Pass 2: binding-owned filterability consts. A name may repeat only
-    // because another binding intentionally shares the same const.
+    // Pass 2: binding-owned address and filterability consts. Repeated
+    // standalone filterability names intentionally share the same const.
     let mut binding_slots = HashSet::new();
-    for (name, span) in parse::binding_filterability_params(wgsl_module) {
+    for (name, _ty, span) in parse::binding_const_params(wgsl_module) {
         if type_slots.contains(&name) {
             return Err(parse::Error::unsupported(
                 span,

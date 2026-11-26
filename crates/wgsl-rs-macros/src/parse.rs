@@ -155,8 +155,11 @@ pub struct ParseContext {
     /// mapped name instead (e.g. `"main_c0"`). Empty by default, which
     /// preserves source-level names (the non-entry-point path).
     pub const_param_renames: HashMap<String, String>,
-    /// Resource-pack type names visible in this module.
-    resource_packs: HashSet<String>,
+    /// Resource-pack types visible in this module, mapped to their declared
+    /// generic parameter kinds in declaration order. Function signatures
+    /// parse pack arguments positionally against these kinds so const and
+    /// type arguments interleave exactly as the pack declares them.
+    resource_packs: HashMap<String, Vec<PackParamKind>>,
     /// Whether `PhantomData<T>` is accepted as a type in this position.
     /// Only true when parsing a struct field's type — `PhantomData` is
     /// a marker, not a WGSL type, and is rejected everywhere else
@@ -176,7 +179,7 @@ impl ParseContext {
             const_params: HashSet::new(),
             type_param_renames: HashMap::new(),
             const_param_renames: HashMap::new(),
-            resource_packs: HashSet::new(),
+            resource_packs: HashMap::new(),
             allow_phantom: false,
         }
     }
@@ -193,7 +196,7 @@ impl ParseContext {
             const_params: const_iter.into_iter().map(|id| id.to_string()).collect(),
             type_param_renames: HashMap::new(),
             const_param_renames: HashMap::new(),
-            resource_packs: HashSet::new(),
+            resource_packs: HashMap::new(),
             allow_phantom: false,
         }
     }
@@ -221,7 +224,7 @@ impl ParseContext {
             const_params: HashSet::new(),
             type_param_renames: renames,
             const_param_renames: HashMap::new(),
-            resource_packs: HashSet::new(),
+            resource_packs: HashMap::new(),
             allow_phantom: false,
         }
     }
@@ -267,9 +270,14 @@ impl ParseContext {
             .unwrap_or_else(|| name.to_string())
     }
 
-    /// Register resource-pack type names for parsing function signatures.
-    fn with_resource_packs<I: IntoIterator<Item = String>>(mut self, names: I) -> Self {
-        self.resource_packs = names.into_iter().collect();
+    /// Register resource-pack types for parsing function signatures. Each
+    /// entry pairs the pack's type name with its declared generic parameter
+    /// kinds in order.
+    fn with_resource_packs<I>(mut self, packs: I) -> Self
+    where
+        I: IntoIterator<Item = (String, Vec<PackParamKind>)>,
+    {
+        self.resource_packs = packs.into_iter().collect();
         self
     }
 
@@ -1099,6 +1107,36 @@ pub enum PackConstArg {
     Param(Ident),
 }
 
+/// A type argument to a resource-pack type. Bare function type parameters are
+/// kept by identifier so lowering can tie them to the pack's module-level
+/// slot; every other type expression is retained verbatim for the generated
+/// `instantiate` constraints.
+#[derive(Clone, Debug)]
+pub enum PackTypeArg {
+    Param(Ident),
+    Concrete(Box<syn::Type>),
+}
+
+/// The declared kind of one resource-pack generic parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackParamKind {
+    Const,
+    Type,
+}
+
+impl PackParamKind {
+    /// Classify one declared generic parameter. Lifetime parameters are
+    /// rejected elsewhere; they report `None` here and never reach pack
+    /// argument parsing.
+    pub fn from_param(param: &syn::GenericParam) -> Option<Self> {
+        match param {
+            syn::GenericParam::Const(_) => Some(Self::Const),
+            syn::GenericParam::Type(_) => Some(Self::Type),
+            syn::GenericParam::Lifetime(_) => None,
+        }
+    }
+}
+
 /// Types.
 #[derive(Clone)]
 #[allow(clippy::enum_variant_names)]
@@ -1236,6 +1274,7 @@ pub enum Type {
     ResourcePack {
         ident: Ident,
         const_args: Vec<PackConstArg>,
+        type_args: Vec<PackTypeArg>,
         reference: bool,
     },
 
@@ -1453,14 +1492,12 @@ impl Type {
                 note: "Unexpected type path",
             })?;
             let ident = &segment.ident;
-            if ctx.resource_packs.contains(&ident.to_string()) {
-                let const_args = match &segment.arguments {
-                    syn::PathArguments::None => Vec::new(),
-                    syn::PathArguments::AngleBracketed(args) => args
-                        .args
-                        .iter()
-                        .map(|arg| parse_pack_const_arg(arg, ctx))
-                        .collect::<Result<Vec<_>, Error>>()?,
+            if let Some(param_kinds) = ctx.resource_packs.get(&ident.to_string()) {
+                let mut const_args = Vec::new();
+                let mut type_args = Vec::new();
+                let supplied = match &segment.arguments {
+                    syn::PathArguments::None => 0,
+                    syn::PathArguments::AngleBracketed(args) => args.args.len(),
                     other => {
                         return UnsupportedSnafu {
                             span: other.span(),
@@ -1469,9 +1506,32 @@ impl Type {
                         .fail();
                     }
                 };
+                if supplied != param_kinds.len() {
+                    return UnsupportedSnafu {
+                        span: segment.arguments.span(),
+                        note: format!(
+                            "resource pack `{ident}` expects {} generic arguments, but {} were \
+                             supplied",
+                            param_kinds.len(),
+                            supplied
+                        ),
+                    }
+                    .fail();
+                }
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    for (arg, kind) in args.args.iter().zip(param_kinds) {
+                        match kind {
+                            PackParamKind::Const => {
+                                const_args.push(parse_pack_const_arg(arg, ctx)?)
+                            }
+                            PackParamKind::Type => type_args.push(parse_pack_type_arg(arg, ctx)?),
+                        }
+                    }
+                }
                 return Ok(Type::ResourcePack {
                     ident: ident.clone(),
                     const_args,
+                    type_args,
                     reference: false,
                 });
             }
@@ -1980,10 +2040,12 @@ impl Type {
                 Type::ResourcePack {
                     ident,
                     const_args,
+                    type_args,
                     reference: _,
                 } => Ok(Type::ResourcePack {
                     ident,
                     const_args,
+                    type_args,
                     reference: true,
                 }),
                 _ => UnsupportedSnafu {
@@ -5750,6 +5812,34 @@ fn parse_pack_const_arg(
     .fail()
 }
 
+/// Parse one type argument of a resource-pack reference. A bare identifier
+/// naming a function type parameter is recorded by identifier so lowering
+/// can tie it to the pack's module-level slot; any other type expression is
+/// kept verbatim for the generated `instantiate` constraints.
+fn parse_pack_type_arg(
+    arg: &syn::GenericArgument,
+    ctx: &ParseContext,
+) -> Result<PackTypeArg, Error> {
+    let syn::GenericArgument::Type(ty) = arg else {
+        return UnsupportedSnafu {
+            span: arg.span(),
+            note: "resource-pack type arguments must be types",
+        }
+        .fail();
+    };
+    if let syn::Type::Path(path) = ty
+        && path.qself.is_none()
+        && path.path.segments.len() == 1
+        && path.path.segments[0].arguments.is_empty()
+    {
+        let ident = &path.path.segments[0].ident;
+        if ctx.type_params.contains(&ident.to_string()) {
+            return Ok(PackTypeArg::Param(ident.clone()));
+        }
+    }
+    Ok(PackTypeArg::Concrete(Box::new(ty.clone())))
+}
+
 /// Check whether `expr` is a bare identifier naming a const parameter in
 /// scope (e.g. `N` from `const N: u32`). Used to treat const-param
 /// references as literal in contexts (like for-loop bounds) where the
@@ -6205,7 +6295,7 @@ pub(crate) fn binding_const_params(
                                 .map(|(_, ty)| ty.clone())
                                 .expect("resource address parameters are validated on the pack");
                             out.push((
-                                crate::resource::pack_const_slot_name(&pack.ident, name),
+                                crate::resource::pack_slot_name(&pack.ident, name),
                                 ty,
                                 field.ident.span(),
                                 Some(pack.ident.to_string()),
@@ -6248,14 +6338,19 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
 
         // First pass: collect module-level type parameters from entry points.
         let module_type_params = collect_module_type_params(items)?;
-        let resource_pack_names = items.iter().filter_map(|item| match item {
-            syn::Item::Struct(item) if crate::resource::is_resource_pack(item) => {
-                Some(item.ident.to_string())
-            }
+        let resource_packs = items.iter().filter_map(|item| match item {
+            syn::Item::Struct(item) if crate::resource::is_resource_pack(item) => Some((
+                item.ident.to_string(),
+                item.generics
+                    .params
+                    .iter()
+                    .filter_map(PackParamKind::from_param)
+                    .collect::<Vec<_>>(),
+            )),
             _ => None,
         });
         let module_ctx = ParseContext::from_type_params(module_type_params.iter().cloned())
-            .with_resource_packs(resource_pack_names);
+            .with_resource_packs(resource_packs);
 
         // Second pass: parse each item, re-resolving linkage types using the
         // module-level context so type params are recognized.
@@ -6277,7 +6372,7 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
             resource_pack_uses: Vec::new(),
         };
         crate::resource::validate_resources(&module)?;
-        crate::resource::validate_pack_const_slots(&module)?;
+        crate::resource::validate_pack_param_slots(&module)?;
         Ok(module)
     }
 }

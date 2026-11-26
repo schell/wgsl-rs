@@ -357,3 +357,21 @@ fn resource_pack_slot_collision_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_slot_collision.rs");
 }
+
+#[test]
+fn resource_pack_unused_type_param_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_unused_type_param.rs");
+}
+
+#[test]
+fn resource_pack_tied_type_param_misuse_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_tied_type_param_misuse.rs");
+}
+
+#[test]
+fn resource_pack_type_arg_count_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_type_arg_count.rs");
+}

@@ -255,7 +255,7 @@ fn resource_address(
             Ok(ir::BindingAddress::Concrete(lit_int_to_u32(lit)?))
         }
         crate::resource::AddressValue::Param(ident) => Ok(ir::BindingAddress::Param(
-            crate::resource::pack_const_slot_name(pack, ident),
+            crate::resource::pack_slot_name(pack, ident),
         )),
     }
 }
@@ -331,7 +331,7 @@ fn namespace_pack_filterability(
     match filterable {
         ir::Filterability::Concrete(value) => ir::Filterability::Concrete(value),
         ir::Filterability::Param(name) => ir::Filterability::Param(
-            crate::resource::pack_const_slot_name(pack, &syn::Ident::new(&name, Span::call_site())),
+            crate::resource::pack_slot_name(pack, &syn::Ident::new(&name, Span::call_site())),
         ),
     }
 }

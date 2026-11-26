@@ -278,9 +278,35 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
         }
     }
 
+    let mut binding_slots = HashSet::new();
+
+    // Pass 1.5: resource-pack type parameters. Each pack-owned slot is a
+    // module-level type parameter, in pack declaration order then parameter
+    // declaration order, before every binding const.
+    let mut pack_type_slots = HashSet::new();
+    for pack in wgsl_module.resource_packs() {
+        for param in &pack.type_params {
+            let encoded = resource::pack_slot_name(&pack.ident, &param.ident);
+            if type_slots.contains(&encoded) {
+                return Err(parse::Error::unsupported(
+                    param.ident.span(),
+                    format!(
+                        "resource-pack type slot `{encoded}` collides with the `impl Trait` type \
+                         linkage slot of the same name; use distinct names"
+                    ),
+                )
+                .into());
+            }
+            pack_type_slots.insert(encoded.clone());
+            binding_slots.insert(encoded.clone());
+            if seen.insert(encoded.clone()) {
+                params.push(encoded);
+            }
+        }
+    }
+
     // Pass 2: binding-owned address and filterability consts. Repeated
     // standalone filterability names intentionally share the same const.
-    let mut binding_slots = HashSet::new();
     for (name, _ty, span, pack) in parse::binding_const_params(wgsl_module) {
         let fixed = pack.as_ref().is_some_and(|pack_name| {
             pack_plans.iter().any(|plan| {
@@ -298,6 +324,16 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
                 format!(
                     "binding filterability parameter `{name}` collides with the `impl Trait` type \
                      linkage slot of the same name; use distinct names"
+                ),
+            )
+            .into());
+        }
+        if pack_type_slots.contains(&name) {
+            return Err(parse::Error::unsupported(
+                span,
+                format!(
+                    "binding const parameter `{name}` collides with a resource-pack type slot of \
+                     the same name; use distinct names"
                 ),
             )
             .into());

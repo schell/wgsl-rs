@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       helper type parameter `T` is tied to a resource pack but also used in another parameter or return position; pack-tied type parameters must appear only in the pack parameter.'
+  --> tests/ui/fail/resource_pack_tied_type_param_misuse.rs:12:22
+   |
+12 |     pub fn helper<T>(values: T, pack: &DataPack<T>) {}
+   |                      ^^^^^^

@@ -73,6 +73,19 @@ struct LinkageConstSlot {
     ty: syn::Type,
 }
 
+/// A resource-pack type-parameter slot. Each type parameter of each
+/// registered pack becomes one generic type parameter on `instantiate`,
+/// substituted into the pack's field types by the type substitution map.
+/// Entry-point type arguments tie their concrete types to the slot through
+/// `linkage::Type<Is = ...>` constraints, mirroring `get!`/`get_mut!`.
+struct PackTypeSlot {
+    /// The pack-owned slot ident (e.g. `FramePack_T`).
+    name: syn::Ident,
+    /// The bounds from the pack struct's declaration, replayed on
+    /// `instantiate`.
+    bounds: syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+}
+
 /// An entry-point type-parameter slot. Each type parameter of each entry
 /// point function becomes a generic type parameter on `instantiate`.
 #[allow(dead_code)]
@@ -124,6 +137,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
 
     let mut linkage_slots: Vec<LinkageSlot> = Vec::new();
     let mut linkage_const_slots: Vec<LinkageConstSlot> = Vec::new();
+    let mut pack_type_slots: Vec<PackTypeSlot> = Vec::new();
     let mut ep_slots: Vec<EntryPointSlot> = Vec::new();
     let mut ep_const_slots: Vec<EntryPointConstSlot> = Vec::new();
 
@@ -141,6 +155,21 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             bounds: bounds.clone(),
             encoded_name: name.to_string(),
         });
+    }
+
+    // Collect resource-pack type-parameter slots in pack declaration order,
+    // then parameter declaration order. Every type parameter of a
+    // registered pack becomes one module-level generic; `parse_resource_pack`
+    // guarantees each is referenced by a field, so the slot always carries a
+    // substitution through the field's type.
+    for pack in wgsl_module.resource_packs() {
+        for param in &pack.type_params {
+            let slot = crate::resource::pack_slot_name(&pack.ident, &param.ident);
+            pack_type_slots.push(PackTypeSlot {
+                name: syn::Ident::new(&slot, param.ident.span()),
+                bounds: param.bounds.clone(),
+            });
+        }
     }
 
     // Collect binding-owned consts in first-occurrence declaration order.
@@ -234,14 +263,17 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
 
     if linkage_slots.is_empty()
         && linkage_const_slots.is_empty()
+        && pack_type_slots.is_empty()
         && ep_slots.is_empty()
         && ep_const_slots.is_empty()
     {
         return quote! {};
     }
 
-    // Collect linkage constraints from get!/get_mut! calls.
-    let constraints = collect_linkage_constraints(wgsl_module);
+    // Collect linkage constraints from get!/get_mut! calls and from the
+    // type arguments of entry-point pack parameters.
+    let mut constraints = collect_linkage_constraints(wgsl_module);
+    constraints.extend(collect_pack_type_constraints(wgsl_module));
 
     // Build the generic params and where clause.
     let mut generic_params: Vec<syn::GenericParam> = Vec::new();
@@ -256,6 +288,15 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
 
     // Add linkage variable generic params (e.g. <FRAME>).
     for slot in &linkage_slots {
+        let mut tp: syn::TypeParam = syn::TypeParam::from(slot.name.clone());
+        tp.bounds = slot.bounds.clone();
+        push_wgsl_if_missing(&mut tp.bounds, &wgsl_bound);
+        generic_params.push(syn::GenericParam::Type(tp));
+    }
+
+    // Add resource-pack type parameter generic params (e.g.
+    // `<FramePack_T: Convert<f32>>`), replaying the pack struct's bounds.
+    for slot in &pack_type_slots {
         let mut tp: syn::TypeParam = syn::TypeParam::from(slot.name.clone());
         tp.bounds = slot.bounds.clone();
         push_wgsl_if_missing(&mut tp.bounds, &wgsl_bound);
@@ -370,6 +411,14 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         });
     }
 
+    for slot in &pack_type_slots {
+        let name = &slot.name;
+        let encoded_name_str = name.to_string();
+        subst_entries.push(quote! {
+            (::std::string::String::from(#encoded_name_str), <#name as #std_p::Wgsl>::to_ir())
+        });
+    }
+
     for slot in &ep_slots {
         let name = &slot.name;
         let encoded_name_str = &slot.encoded_name;
@@ -474,6 +523,34 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
             __ir_module
         }
     }
+}
+
+/// Collect the `Type<Is = ...>` constraints contributed by entry-point pack
+/// type arguments. Each type argument of each resource-pack parameter ties
+/// the pack's module-level slot to the concrete type used at that entry
+/// point; the builder renames the argument's function type parameters to
+/// their entry-point slot idents when emitting the predicate.
+fn collect_pack_type_constraints(wgsl_module: &parse::ItemMod) -> Vec<LinkageConstraint> {
+    let mut constraints = Vec::new();
+    for usage in &wgsl_module.resource_pack_uses {
+        let Some(pack) = wgsl_module.resource_pack(&usage.pack) else {
+            continue;
+        };
+        for (param, arg) in pack.type_params.iter().zip(&usage.type_args) {
+            let type_expr = match arg {
+                parse::PackTypeArg::Param(ident) => syn::parse_quote!(#ident),
+                parse::PackTypeArg::Concrete(ty) => ty.as_ref().clone(),
+            };
+            constraints.push(LinkageConstraint {
+                linkage_name: crate::resource::pack_slot_name(&pack.ident, &param.ident),
+                type_expr,
+                fn_name: usage.fn_name.clone(),
+                is_entry_point: true,
+                fn_type_params: Vec::new(),
+            });
+        }
+    }
+    constraints
 }
 
 /// Collect all `get!(VAR, TYPE)` / `get_mut!(VAR, TYPE)` constraints from

@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       resource-pack type parameter `T` is not used by any field type; remove it or reference it from an annotated field.'
+ --> tests/ui/fail/resource_pack_unused_type_param.rs:7:40
+  |
+7 |     pub struct PackA<const GROUP: u32, T> {
+  |                                        ^

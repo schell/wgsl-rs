@@ -89,6 +89,7 @@ pub mod bool_vector_types;
 pub mod clamping;
 pub mod derivative_operations;
 pub mod exponential;
+pub mod generic_pack;
 pub mod geometric;
 pub mod glm_matrix_helpers;
 pub mod glm_quat_helpers;
@@ -121,6 +122,7 @@ pub fn all_tests() -> Vec<Box<dyn RoundtripTest>> {
         Box::new(exponential::ExponentialTest),
         Box::new(rounding::RoundingTest),
         Box::new(resource_packs::ResourcePackTest),
+        Box::new(generic_pack::GenericPackTest),
         Box::new(clamping::ClampingTest),
         Box::new(geometric::GeometricTest),
         Box::new(glm_vector_helpers::GlmVectorHelpersTest),

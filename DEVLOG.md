@@ -2462,3 +2462,36 @@ entry-point positional keys) were already rejected in
 colliding with a user-authored module const of the same name remains
 unchecked; that edge predates packs and is inherited from the standalone
 declaration world.
+
+### 2026-11-26: Type-generic resource packs substitute through pack-owned slots
+
+**Problem.** Resource packs are becoming the canonical binding model, but
+packs rejected type parameters while the legacy `impl Trait` linkage style
+provided generic bindings. Rust struct fields cannot use `impl Trait`, so
+the generic form of the pack model needed pack type parameters.
+
+**Decision.** `parse_resource_pack` accepts type parameters and renames them
+to pack-owned slots (`Pack_T`) at field parse time, exactly the namespacing
+const parameters use. Every type parameter of a pack becomes one
+module-level generic: a pack declaring `DataPack<T>` is a template by
+declaration, with no concrete-use specialization. Entry-point type arguments
+generate `linkage::Type<Is = ...>` constraints — the same machinery as
+`get!(VAR, T)` — so rustc rejects inconsistent instantiations; helpers with
+a type parameter used only in the pack parameter read the slot directly
+(the type-parameter mirror of const aliasing) and may not use it in other
+parameter or return positions. The generated CPU constructor replays the
+struct's declared bounds plus `Wgsl` on every type parameter.
+
+**Why.** A type slot cannot mirror the const Fixed/Shared split: one
+parameterized binding used as several concrete types across entry points is
+the legacy linkage pattern (`generic_linkage_specialization`), and
+Fixed-style rejection would break it. Always-generic slots plus constraints
+preserve that behavior with the pack spelling. The bare-or-nested-element
+field-type restriction follows the IR: composite field types like `Vec4<T>`
+have no TypeParam-bearing representation, matching the `impl Trait` world,
+while `RuntimeArray<T>` and other nested `Type` positions carry the slot
+through.
+
+**Slot encoding note.** Type and const parameters share the `{pack}_{param}`
+encoding and one namespace; `validate_pack_param_slots` rejects collisions
+across both kinds together.

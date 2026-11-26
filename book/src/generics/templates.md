@@ -127,7 +127,7 @@ These parameters belong to the binding, not to an entry point. A bind group layo
 
 Filterability changes only the generated host layout. The rendered WGSL is identical for `true` and `false`. To generate wgpu linkage, pass the instantiated IR to `analyze_ir_module` or call `generate_linkage` as described in [Template Linkage](../linkage/template-linkage.md).
 
-Parameter order is deterministic: `impl Trait` type linkages come first, binding-owned consts follow in first-occurrence declaration order, and entry-point parameters that do not alias a resource pack come last in their existing order. Binding-owned consts include standalone filterability and pack-owned group, binding, and filterability values. The authoritative order is also available as `WGSL_SOURCE.module_type_params`.
+Parameter order is deterministic: `impl Trait` type linkages come first, resource-pack type parameters follow in pack declaration order, binding-owned consts come next in first-occurrence declaration order, and entry-point parameters that do not alias a resource pack come last in their existing order. Binding-owned consts include standalone filterability and pack-owned group, binding, and filterability values. The authoritative order is also available as `WGSL_SOURCE.module_type_params`.
 
 
 ## Const Parameters on Resource Packs
@@ -153,6 +153,37 @@ again after generic substitution, so instantiated conflicts are rejected too.
 Pack-owned binding consts appear in first-occurrence field declaration order,
 before non-aliased entry-point parameters. Separate packs can be selected
 independently by supplying their respective slots.
+
+## Type Parameters on Resource Packs
+
+[Resource pack structs](../writing-shaders/resource-packs.md) may declare type
+parameters that their field types reference. Each pack type parameter
+introduces one module-level type slot named `PackType_PARAM`, listed before
+the pack's const slots. Unlike a pack const, a type slot is always generic:
+declaring `DataPack<T>` makes the module a template, and the concrete type
+is chosen at instantiation.
+
+```rust
+pub struct DataPack<T> {
+    #[storage(group(0), binding(0), read_only)]
+    pub data: RuntimeArray<T>,
+}
+
+#[fragment]
+pub fn fragment<T: Wgsl>(position: Vec4f, pack: &DataPack<T>) -> Vec4f { /* ... */ }
+
+// One argument for the pack slot, one for the entry point's `T`.
+let module = shader::instantiate::<Vec4f, Vec4f>();
+```
+
+Type arguments at entry points tie to the pack slot through generated
+`linkage::Type<Is = ...>` constraints, the same mechanism `get!(VAR, T)`
+uses on an `impl Trait` linkage, so rustc rejects inconsistent instantiation.
+Writing the concrete type in the entry point signature
+(`&DataPack<Vec4f>`) keeps the entry-point slot out of the argument list.
+Helpers may use a bare type parameter in the pack parameter only; it reads
+the pack slot directly, mirroring the const aliasing, and may not appear in
+any other parameter or return position.
 
 ## Const Parameters on Entry Points
 

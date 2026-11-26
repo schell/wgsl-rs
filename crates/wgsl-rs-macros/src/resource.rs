@@ -134,11 +134,14 @@ pub(crate) struct ResourceField {
 }
 
 /// One entry-point use of a resource-pack type. Const arguments have already
-/// been positionally encoded by the entry-point parser.
+/// been positionally encoded by the entry-point parser; type arguments are
+/// retained verbatim for the generated `instantiate` constraints.
 #[derive(Clone)]
 pub(crate) struct ResourcePackUse {
     pub(crate) pack: Ident,
     pub(crate) const_args: Vec<parse::PackConstArg>,
+    pub(crate) type_args: Vec<parse::PackTypeArg>,
+    pub(crate) fn_name: String,
     pub(crate) span: Span,
 }
 
@@ -146,13 +149,15 @@ pub(crate) struct ResourcePackUse {
 #[derive(Clone)]
 pub(crate) struct ItemResourcePack {
     pub(crate) ident: Ident,
+    pub(crate) type_params: Vec<syn::TypeParam>,
     pub(crate) const_params: Vec<(Ident, syn::Type)>,
     pub(crate) fields: Vec<ResourceField>,
 }
 
-/// Deterministic module slot for one const parameter of one pack type.
-/// Namespacing by pack keeps identically named consts independent.
-pub(crate) fn pack_const_slot_name(pack: &Ident, param: &Ident) -> String {
+/// Deterministic module slot for one generic parameter of one pack type,
+/// shared by const and type parameters alike. Namespacing by pack keeps
+/// identically named parameters of different packs independent.
+pub(crate) fn pack_slot_name(pack: &Ident, param: &Ident) -> String {
     format!("{pack}_{param}")
 }
 
@@ -202,7 +207,7 @@ pub(crate) fn pack_const_plans(module: &parse::ItemMod) -> parse::Result<Vec<Pac
             .join(", ");
         for ((declared, _), actual) in pack.const_params.iter().zip(&usage.const_args) {
             let pack_name = pack.ident.to_string();
-            let source = pack_const_slot_name(&pack.ident, declared);
+            let source = pack_slot_name(&pack.ident, declared);
             let index = plans
                 .iter()
                 .position(|plan| plan.pack == pack_name && plan.source == source)
@@ -325,19 +330,15 @@ pub(crate) fn parse_resource_pack(item: &syn::ItemStruct) -> parse::Result<ItemR
         ));
     };
 
+    let mut type_params = Vec::new();
     let mut const_params = Vec::new();
     let mut const_param_types = std::collections::HashMap::new();
     for param in &item.generics.params {
         match param {
+            syn::GenericParam::Type(param) => type_params.push(param.clone()),
             syn::GenericParam::Const(param) => {
                 const_params.push((param.ident.clone(), param.ty.clone()));
                 const_param_types.insert(param.ident.to_string(), param.ty.clone());
-            }
-            syn::GenericParam::Type(param) => {
-                return Err(parse::Error::unsupported(
-                    param.span(),
-                    "resource packs support const generic parameters, not type parameters",
-                ));
             }
             syn::GenericParam::Lifetime(param) => {
                 return Err(parse::Error::unsupported(
@@ -347,20 +348,76 @@ pub(crate) fn parse_resource_pack(item: &syn::ItemStruct) -> parse::Result<ItemR
             }
         }
     }
-    let ctx = ParseContext::from_params(
-        std::iter::empty::<Ident>(),
-        const_params.iter().map(|(ident, _)| ident.clone()),
+    // Field types parse under renamed type parameters: a parameter `T`
+    // becomes the pack-owned slot `Pack_T`, the same namespacing const
+    // parameters use, so one module-level generic substitutes every use
+    // of one pack layout. Const parameters keep their source names here;
+    // their slots are applied when addresses are lowered.
+    let ctx = ParseContext::from_renamed_type_params_with_consts(
+        type_params.iter().map(|param| {
+            (
+                param.ident.to_string(),
+                pack_slot_name(&item.ident, &param.ident),
+            )
+        }),
+        const_params
+            .iter()
+            .map(|(ident, _)| (ident.to_string(), ident.to_string())),
     );
 
     let mut parsed_fields = Vec::with_capacity(fields.named.len());
     for field in &fields.named {
         parsed_fields.push(parse_field(field, &ctx, &const_param_types)?);
     }
+    for param in &type_params {
+        let slot = pack_slot_name(&item.ident, &param.ident);
+        let used = parsed_fields
+            .iter()
+            .any(|field| type_references_param(&field.ty, &slot));
+        if !used {
+            return Err(parse::Error::unsupported(
+                param.span(),
+                format!(
+                    "resource-pack type parameter `{}` is not used by any field type; remove it \
+                     or reference it from an annotated field",
+                    param.ident
+                ),
+            ));
+        }
+    }
     Ok(ItemResourcePack {
         ident: item.ident.clone(),
+        type_params,
         const_params,
         fields: parsed_fields,
     })
+}
+
+/// Whether `ty` contains a `Type::TypeParam` named `name`, reaching through
+/// every type that nests other types. Used to require that each pack type
+/// parameter is referenced by at least one annotated field, and to keep tied
+/// helper parameters out of non-pack positions.
+fn type_references_param(ty: &Type, name: &str) -> bool {
+    match ty {
+        Type::TypeParam { ident } => ident == name,
+        Type::Array { elem, .. } | Type::RuntimeArray { elem, .. } | Type::Atomic { elem, .. } => {
+            type_references_param(elem, name)
+        }
+        Type::Struct { type_args, .. } => {
+            type_args.iter().any(|ty| type_references_param(ty, name))
+        }
+        Type::Ptr { elem, .. } | Type::Phantom { elem, .. } => type_references_param(elem, name),
+        Type::AssocType { ty, .. } => type_references_param(ty, name),
+        Type::Scalar { .. }
+        | Type::Vector { .. }
+        | Type::Matrix { .. }
+        | Type::Sampler { .. }
+        | Type::SamplerComparison { .. }
+        | Type::Texture { .. }
+        | Type::TextureDepth { .. }
+        | Type::TextureStorage { .. }
+        | Type::ResourcePack { .. } => false,
+    }
 }
 
 /// Parse one field and reject mixed IO/resource annotations and malformed
@@ -649,30 +706,36 @@ pub(crate) fn validate_resources(module: &parse::ItemMod) -> parse::Result<()> {
     Ok(())
 }
 
-/// Validate that pack-owned const slots are unambiguous across the module.
+/// Validate that pack-owned parameter slots are unambiguous across the module.
 ///
-/// [`pack_const_slot_name`] encodes `(pack, param)` as `{pack}_{param}`,
-/// which is not injective: `PackA_B::<const C>` and `PackA::<const B_C>`
-/// both produce `PackA_B_C`. Distinct packs sharing a slot key would
-/// collapse to a single substitution entry in the generated `instantiate`,
-/// silently pointing one pack's addresses or filterability at the other
-/// pack's values. Re-encoding for injectivity would give up the readable,
-/// user-facing slot names (surfaced through `Source::module_type_params`),
-/// so the collision is rejected at the second pack instead.
-pub(crate) fn validate_pack_const_slots(module: &parse::ItemMod) -> parse::Result<()> {
+/// [`pack_slot_name`] encodes `(pack, param)` as `{pack}_{param}`, which is
+/// not injective: `PackA_B::<const C>` and `PackA::<const B_C>` both produce
+/// `PackA_B_C`. Distinct packs sharing a slot key would collapse to a
+/// single substitution entry in the generated `instantiate`, silently
+/// pointing one pack's addresses, filterability, or field types at the
+/// other pack's values. Re-encoding for injectivity would give up the
+/// readable, user-facing slot names (surfaced through
+/// `Source::module_type_params`), so the collision is rejected at the second
+/// pack instead.
+pub(crate) fn validate_pack_param_slots(module: &parse::ItemMod) -> parse::Result<()> {
     let mut slots = std::collections::HashMap::<String, (&Ident, &Ident)>::new();
     for pack in module.resource_packs() {
-        for (param, _) in &pack.const_params {
-            let slot = pack_const_slot_name(&pack.ident, param);
+        let params = pack
+            .type_params
+            .iter()
+            .map(|param| &param.ident)
+            .chain(pack.const_params.iter().map(|(param, _)| param));
+        for param in params {
+            let slot = pack_slot_name(&pack.ident, param);
             if let Some((other_pack, other_param)) =
                 slots.insert(slot.clone(), (&pack.ident, param))
             {
                 return Err(parse::Error::unsupported(
                     param.span(),
                     format!(
-                        "resource-pack const slot `{slot}` is generated by both \
-                         `{other_pack}::<const {other_param}>` and `{}::<const {param}>`; rename \
-                         one pack or its const parameter so each slot stays unique",
+                        "resource-pack slot `{slot}` is generated by both \
+                         `{other_pack}::<{other_param}>` and `{}::<{param}>`; rename one pack or \
+                         parameter so each slot stays unique",
                         pack.ident
                     ),
                 ));
@@ -776,7 +839,27 @@ fn generate_constructor(
     crate_path: &syn::Path,
 ) -> syn::ItemImpl {
     let ident = &item_struct.ident;
-    let (impl_generics, ty_generics, where_clause) = item_struct.generics.split_for_impl();
+    // The constructor impl replays the struct's declared generics plus a
+    // `Wgsl` bound on every type parameter: the resource constructors it
+    // calls hold values that must be renderable to WGSL, the same bound the
+    // generated `instantiate` enforces on module-level slots.
+    let mut generics = item_struct.generics.clone();
+    for param in &mut generics.params {
+        let syn::GenericParam::Type(param) = param else {
+            continue;
+        };
+        let has_wgsl = param.bounds.iter().any(|bound| {
+            matches!(
+                bound,
+                syn::TypeParamBound::Trait(trait_bound)
+                    if trait_bound.path.segments.last().is_some_and(|segment| segment.ident == "Wgsl")
+            )
+        });
+        if !has_wgsl {
+            param.bounds.push(syn::parse_quote!(#crate_path::std::Wgsl));
+        }
+    }
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let initializers = pack.fields.iter().map(|field| {
         let name = &field.ident;
         let group = field.group.constructor_value();
@@ -820,6 +903,7 @@ struct PackParameter {
     param: Ident,
     pack: ItemResourcePack,
     const_args: Vec<parse::PackConstArg>,
+    type_args: Vec<parse::PackTypeArg>,
     input_index: usize,
 }
 
@@ -828,6 +912,7 @@ struct FnResourceSignature {
     input_count: usize,
     packs: Vec<PackParameter>,
     const_renames: Vec<(Ident, Ident)>,
+    type_renames: Vec<(Ident, Ident)>,
 }
 
 impl FnResourceSignature {
@@ -910,6 +995,7 @@ fn lower_fn_signature(
         let Type::ResourcePack {
             ident,
             const_args,
+            type_args,
             reference,
         } = &arg.ty
         else {
@@ -937,14 +1023,14 @@ fn lower_fn_signature(
                 ),
             ));
         }
-        if const_args.len() != pack.const_params.len() {
+        if const_args.len() + type_args.len() != pack.const_params.len() + pack.type_params.len() {
             return Err(parse::Error::unsupported(
                 ident.span(),
                 format!(
-                    "resource pack `{ident}` expects {} const arguments, but `{}` supplies {}",
-                    pack.const_params.len(),
+                    "resource pack `{ident}` expects {} generic arguments, but `{}` supplies {}",
+                    pack.const_params.len() + pack.type_params.len(),
                     arg.ident,
-                    const_args.len()
+                    const_args.len() + type_args.len()
                 ),
             ));
         }
@@ -952,6 +1038,8 @@ fn lower_fn_signature(
             uses.push(ResourcePackUse {
                 pack: ident.clone(),
                 const_args: const_args.clone(),
+                type_args: type_args.clone(),
+                fn_name: f.ident.to_string(),
                 span: arg.ident.span(),
             });
         }
@@ -959,6 +1047,7 @@ fn lower_fn_signature(
             param: arg.ident.clone(),
             pack,
             const_args: const_args.clone(),
+            type_args: type_args.clone(),
             input_index,
         });
     }
@@ -992,7 +1081,7 @@ fn lower_fn_signature(
                         signature.const_renames.push((
                             local.clone(),
                             Ident::new(
-                                &pack_const_slot_name(&param.pack.ident, declared),
+                                &pack_slot_name(&param.pack.ident, declared),
                                 declared.span(),
                             ),
                         ));
@@ -1002,6 +1091,87 @@ fn lower_fn_signature(
             }
         }
         f.const_params.retain(|param| !tied.contains(param));
+
+        // A helper's type parameter tied only to a pack parameter becomes a
+        // reference to the pack declaration's module-level slot, mirroring
+        // the const treatment above. A tied type parameter must not appear
+        // in any other parameter or return position: those flow through
+        // same-module monomorphization and would conflate the per-call-site
+        // generic with the module-level slot.
+        let mut tied_types = std::collections::HashSet::new();
+        for param in &signature.packs {
+            for (declared, actual) in param.pack.type_params.iter().zip(&param.type_args) {
+                let parse::PackTypeArg::Param(local) = actual else {
+                    continue;
+                };
+                if !f.type_params.contains(local) {
+                    continue;
+                }
+                if let Some((_, previous)) = signature
+                    .type_renames
+                    .iter()
+                    .find(|(source, _)| source == local)
+                {
+                    if previous != &declared.ident {
+                        return Err(parse::Error::unsupported(
+                            local.span(),
+                            format!(
+                                "type parameter `{local}` cannot simultaneously drive \
+                                 `{previous}` and `{}`",
+                                declared.ident
+                            ),
+                        ));
+                    }
+                } else {
+                    signature.type_renames.push((
+                        local.clone(),
+                        Ident::new(
+                            &pack_slot_name(&param.pack.ident, &declared.ident),
+                            declared.ident.span(),
+                        ),
+                    ));
+                }
+                tied_types.insert(local.clone());
+            }
+        }
+        if !tied_types.is_empty() {
+            let pack_indices: std::collections::HashSet<usize> = signature
+                .packs
+                .iter()
+                .map(|param| param.input_index)
+                .collect();
+            let offense = f
+                .inputs
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !pack_indices.contains(index))
+                .find_map(|(_, arg)| {
+                    tied_types
+                        .iter()
+                        .find(|local| type_references_param(&arg.ty, &local.to_string()))
+                        .map(|local| (local.clone(), arg.ident.span()))
+                })
+                .or_else(|| {
+                    let parse::ReturnType::Type { ty, .. } = &f.return_type else {
+                        return None;
+                    };
+                    tied_types
+                        .iter()
+                        .find(|local| type_references_param(ty, &local.to_string()))
+                        .map(|local| (local.clone(), local.span()))
+                });
+            if let Some((local, span)) = offense {
+                return Err(parse::Error::unsupported(
+                    span,
+                    format!(
+                        "helper type parameter `{local}` is tied to a resource pack but also used \
+                         in another parameter or return position; pack-tied type parameters must \
+                         appear only in the pack parameter"
+                    ),
+                ));
+            }
+            f.type_params.retain(|param| !tied_types.contains(param));
+        }
     }
 
     let removed: std::collections::HashSet<usize> = signature
@@ -1037,6 +1207,7 @@ fn lower_fn_body(
     let mut lowerer = BodyLowerer {
         parameters: signature.parameters(),
         const_renames: &signature.const_renames,
+        type_renames: &signature.type_renames,
         signatures,
         function: &f.ident,
     };
@@ -1049,6 +1220,7 @@ fn lower_fn_body(
 struct BodyLowerer<'a> {
     parameters: std::collections::HashMap<String, PackParameter>,
     const_renames: &'a [(Ident, Ident)],
+    type_renames: &'a [(Ident, Ident)],
     signatures: &'a std::collections::HashMap<String, FnResourceSignature>,
     function: &'a Ident,
 }
@@ -1193,6 +1365,15 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
                 "resource-pack types are supported only as borrowed function parameters; return \
                  values, locals, and aliases are not WGSL resources",
             ));
+        }
+        // A helper's pack-tied type parameter reads the pack declaration's
+        // module-level slot, the same rename the const treatment applies to
+        // identifiers.
+        if let Type::TypeParam { ident } = ty
+            && let Some((_, replacement)) =
+                self.type_renames.iter().find(|(source, _)| source == ident)
+        {
+            *ident = replacement.clone();
         }
         crate::parse_visitor::walk_type(self, ty)
     }

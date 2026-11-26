@@ -136,6 +136,55 @@ compile-time errors. Duplicate names and addresses are checked again after
 instantiation. See [Template Modules & Instantiation](../generics/templates.md)
 for the full ordering rules.
 
+## Type parameters on packs
+
+Packs may declare type parameters alongside their consts. A type parameter
+must be used by at least one annotated field, either as the bare field type
+or as an element type such as `RuntimeArray<T>`:
+
+```rust
+#[wgsl(skip_validation)]
+pub mod generic {
+    use wgsl_rs::std::*;
+
+    pub struct DataPack<const GROUP: u32, T> {
+        #[storage(group(GROUP), binding(0), read_only)]
+        pub data: RuntimeArray<T>,
+    }
+
+    pub fn count<const GROUP: u32, T: Wgsl>(pack: &DataPack<GROUP, T>) -> u32 {
+        array_length(&pack.data)
+    }
+
+    #[vertex]
+    pub fn vertex<const GROUP: u32>(
+        #[builtin(vertex_index)] vertex_index: u32,
+        pack: &DataPack<GROUP, Vec4f>,
+    ) -> Vec4f {
+        let count = count(pack);
+        let x = f32((vertex_index & 1u32) * 2u32) * 2.0 - 1.0;
+        let y = f32((vertex_index >> 1u32) * 2u32) * 2.0 - 1.0;
+        vec4f(x + count as f32 * 0.0, y, 0.0, 1.0)
+    }
+}
+```
+
+Each pack type parameter owns one module-level slot named `DataPack_T`,
+listed before the pack's const slots:
+
+```rust
+let module = generic::instantiate::<Vec4f, 1>();
+```
+
+Entry points supply type arguments either concretely
+(`&DataPack<GROUP, Vec4f>`) or through their own generic parameters, which
+tie to the pack slot through generated constraints so rustc rejects
+inconsistent instantiation. Helpers may use a bare type parameter in the
+pack parameter only; it reads the pack slot directly, mirroring const
+aliasing, and may not appear in any other parameter or return position.
+The generated constructor adds a `Wgsl` bound to every pack type parameter,
+so CPU code constructs `DataPack::<1, Vec4f>::new()` without extra bounds.
+
 ## V1 boundaries
 
 - Every pack field must have exactly one `#[texture]`, `#[sampler]`,

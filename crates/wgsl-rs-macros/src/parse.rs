@@ -155,6 +155,8 @@ pub struct ParseContext {
     /// mapped name instead (e.g. `"main_c0"`). Empty by default, which
     /// preserves source-level names (the non-entry-point path).
     pub const_param_renames: HashMap<String, String>,
+    /// Resource-pack type names visible in this module.
+    resource_packs: HashSet<String>,
     /// Whether `PhantomData<T>` is accepted as a type in this position.
     /// Only true when parsing a struct field's type — `PhantomData` is
     /// a marker, not a WGSL type, and is rejected everywhere else
@@ -174,6 +176,7 @@ impl ParseContext {
             const_params: HashSet::new(),
             type_param_renames: HashMap::new(),
             const_param_renames: HashMap::new(),
+            resource_packs: HashSet::new(),
             allow_phantom: false,
         }
     }
@@ -190,6 +193,7 @@ impl ParseContext {
             const_params: const_iter.into_iter().map(|id| id.to_string()).collect(),
             type_param_renames: HashMap::new(),
             const_param_renames: HashMap::new(),
+            resource_packs: HashSet::new(),
             allow_phantom: false,
         }
     }
@@ -217,6 +221,7 @@ impl ParseContext {
             const_params: HashSet::new(),
             type_param_renames: renames,
             const_param_renames: HashMap::new(),
+            resource_packs: HashSet::new(),
             allow_phantom: false,
         }
     }
@@ -260,6 +265,12 @@ impl ParseContext {
             .get(name)
             .cloned()
             .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Register resource-pack type names for parsing function signatures.
+    fn with_resource_packs<I: IntoIterator<Item = String>>(mut self, names: I) -> Self {
+        self.resource_packs = names.into_iter().collect();
+        self
     }
 
     /// Returns a copy of this context with `PhantomData<T>` accepted as
@@ -1081,6 +1092,13 @@ impl Parse for PtrMacroArgs {
     }
 }
 
+/// A const argument to a resource-pack type.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PackConstArg {
+    Value(ir::ConstValue),
+    Param(Ident),
+}
+
 /// Types.
 #[derive(Clone)]
 #[allow(clippy::enum_variant_names)]
@@ -1210,6 +1228,15 @@ pub enum Type {
         format: TexelFormat,
         access: StorageTextureAccess,
         ident: Ident,
+    },
+
+    /// A registered Rust-only resource pack. Function lowering removes this
+    /// before IR conversion. `reference` distinguishes `&Pack` from by-value
+    /// uses so the lowering pass can reject the latter.
+    ResourcePack {
+        ident: Ident,
+        const_args: Vec<PackConstArg>,
+        reference: bool,
     },
 
     /// An unresolved type parameter (e.g., `T`) inside a generic function.
@@ -1426,6 +1453,28 @@ impl Type {
                 note: "Unexpected type path",
             })?;
             let ident = &segment.ident;
+            if ctx.resource_packs.contains(&ident.to_string()) {
+                let const_args = match &segment.arguments {
+                    syn::PathArguments::None => Vec::new(),
+                    syn::PathArguments::AngleBracketed(args) => args
+                        .args
+                        .iter()
+                        .map(|arg| parse_pack_const_arg(arg, ctx))
+                        .collect::<Result<Vec<_>, Error>>()?,
+                    other => {
+                        return UnsupportedSnafu {
+                            span: other.span(),
+                            note: "unsupported resource-pack generic arguments",
+                        }
+                        .fail();
+                    }
+                };
+                return Ok(Type::ResourcePack {
+                    ident: ident.clone(),
+                    const_args,
+                    reference: false,
+                });
+            }
             match &segment.arguments {
                 syn::PathArguments::None => {
                     let ident_str = ident.to_string();
@@ -1915,6 +1964,32 @@ impl Type {
                 other => UnsupportedSnafu {
                     span: other.span(),
                     note: "Unsupported type",
+                }
+                .fail(),
+            }
+        } else if let syn::Type::Reference(reference) = ty {
+            if reference.mutability.is_some() || reference.lifetime.is_some() {
+                return UnsupportedSnafu {
+                    span: reference.span(),
+                    note: "resource packs accept only plain shared references such as `&Pack`",
+                }
+                .fail();
+            }
+            let elem = Type::parse(&reference.elem, ctx)?;
+            match elem {
+                Type::ResourcePack {
+                    ident,
+                    const_args,
+                    reference: _,
+                } => Ok(Type::ResourcePack {
+                    ident,
+                    const_args,
+                    reference: true,
+                }),
+                _ => UnsupportedSnafu {
+                    span: reference.elem.span(),
+                    note: "references in function parameters are supported only for registered \
+                           resource-pack types",
                 }
                 .fail(),
             }
@@ -3334,6 +3409,7 @@ impl Expr {
                     Type::Texture { ident, .. } => ident.span(),
                     Type::TextureDepth { ident, .. } => ident.span(),
                     Type::TextureStorage { ident, .. } => ident.span(),
+                    Type::ResourcePack { ident, .. } => ident.span(),
                     Type::TypeParam { ident } => ident.span(),
                     Type::Phantom { ident, .. } => ident.span(),
                     Type::AssocType { colon2_token, .. } => colon2_token.spans[0],
@@ -5269,6 +5345,16 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
     type Error = Error;
 
     fn try_from(value: &syn::ItemFn) -> Result<Self, Self::Error> {
+        Self::parse_with_module(value, &ParseContext::default())
+    }
+}
+
+impl ItemFn {
+    /// Parse a free function with module-level resource-pack registrations.
+    pub fn parse_with_module(
+        value: &syn::ItemFn,
+        module_ctx: &ParseContext,
+    ) -> Result<Self, Error> {
         let syn::ItemFn {
             attrs,
             vis,
@@ -5334,7 +5420,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
         // they go through same-module monomorphization, not module-level
         // instantiation.
 
-        let ctx = if matches!(fn_attrs, FnAttrs::None) {
+        let mut ctx = if matches!(fn_attrs, FnAttrs::None) {
             ParseContext::from_params(type_params.iter().cloned(), const_params.iter().cloned())
         } else {
             let fn_name = sig.ident.to_string();
@@ -5365,6 +5451,7 @@ impl TryFrom<&syn::ItemFn> for ItemFn {
                 const_renamed.iter().cloned(),
             )
         };
+        ctx.resource_packs = module_ctx.resource_packs.clone();
 
         let mut inputs = syn::punctuated::Punctuated::new();
         for pair in sig.inputs.pairs() {
@@ -5617,6 +5704,50 @@ fn eval_const_arg(expr: &syn::Expr) -> Result<ir::ConstValue, Error> {
         }
         .fail(),
     }
+}
+
+fn parse_pack_const_arg(
+    arg: &syn::GenericArgument,
+    ctx: &ParseContext,
+) -> Result<PackConstArg, Error> {
+    let path = match arg {
+        syn::GenericArgument::Type(syn::Type::Path(path))
+            if path.qself.is_none() && path.path.segments.len() == 1 =>
+        {
+            &path.path
+        }
+        syn::GenericArgument::Const(syn::Expr::Path(path))
+            if path.qself.is_none() && path.path.segments.len() == 1 =>
+        {
+            &path.path
+        }
+        syn::GenericArgument::Const(expr) => {
+            return eval_const_arg(expr).map(PackConstArg::Value);
+        }
+        other => {
+            return UnsupportedSnafu {
+                span: other.span(),
+                note: "resource-pack arguments must be integer/bool literals or bare const \
+                       parameters",
+            }
+            .fail();
+        }
+    };
+    let ident = &path.segments[0].ident;
+    let source = ident.to_string();
+    if let Some(encoded) = ctx.const_param_renames.get(&source) {
+        return Ok(PackConstArg::Param(Ident::new(encoded, ident.span())));
+    }
+    if ctx.const_params.contains(&source) {
+        return Ok(PackConstArg::Param(ident.clone()));
+    }
+    UnsupportedSnafu {
+        span: ident.span(),
+        note: format!(
+            "resource-pack const argument `{ident}` is not a const parameter in this function"
+        ),
+    }
+    .fail()
 }
 
 /// Check whether `expr` is a bare identifier naming a const parameter in
@@ -6023,21 +6154,26 @@ pub struct ItemMod {
     #[allow(dead_code)]
     pub ident: Ident,
     pub content: Vec<Item>,
-    /// Attributes preserved from the Rust source module.
+    /// Attributes preserved from Rust source module.
     pub attrs: Vec<ir::Attribute>,
+    /// Entry-point resource-pack uses used to tie layout and body consts.
+    pub resource_pack_uses: Vec<crate::resource::ResourcePackUse>,
 }
 
 /// Binding-owned const parameters in declaration order, including duplicates.
 /// Each entry carries its Rust const type and the binding span for diagnostics.
 /// Pack fields contribute group, binding, then filterability in field order.
-pub(crate) fn binding_const_params(module: &ItemMod) -> Vec<(String, syn::Type, Span)> {
+pub(crate) fn binding_const_params(
+    module: &ItemMod,
+) -> Vec<(String, syn::Type, Span, Option<String>)> {
     fn push_filterability(
-        out: &mut Vec<(String, syn::Type, Span)>,
+        out: &mut Vec<(String, syn::Type, Span, Option<String>)>,
         filterable: &ir::Filterability,
         span: Span,
+        pack: Option<String>,
     ) {
         if let ir::Filterability::Param(name) = filterable {
-            out.push((name.clone(), syn::parse_quote!(bool), span));
+            out.push((name.clone(), syn::parse_quote!(bool), span, pack));
         }
     }
 
@@ -6046,12 +6182,12 @@ pub(crate) fn binding_const_params(module: &ItemMod) -> Vec<(String, syn::Type, 
         match item {
             Item::Texture(texture) => {
                 if let Type::Texture { filterable, .. } = &texture.ty {
-                    push_filterability(&mut out, filterable, texture.name.span());
+                    push_filterability(&mut out, filterable, texture.name.span(), None);
                 }
             }
             Item::Sampler(sampler) => {
                 if let Type::Sampler { filterable, .. } = &sampler.ty {
-                    push_filterability(&mut out, filterable, sampler.name.span());
+                    push_filterability(&mut out, filterable, sampler.name.span(), None);
                 }
             }
             Item::ResourcePack(pack) => {
@@ -6064,12 +6200,22 @@ pub(crate) fn binding_const_params(module: &ItemMod) -> Vec<(String, syn::Type, 
                                 .find(|(ident, _)| ident == name)
                                 .map(|(_, ty)| ty.clone())
                                 .expect("resource address parameters are validated on the pack");
-                            out.push((name.to_string(), ty, field.ident.span()));
+                            out.push((
+                                name.to_string(),
+                                ty,
+                                field.ident.span(),
+                                Some(pack.ident.to_string()),
+                            ));
                         }
                     }
                     match &field.ty {
                         Type::Texture { filterable, .. } | Type::Sampler { filterable, .. } => {
-                            push_filterability(&mut out, filterable, field.ident.span());
+                            push_filterability(
+                                &mut out,
+                                filterable,
+                                field.ident.span(),
+                                Some(pack.ident.to_string()),
+                            );
                         }
                         _ => {}
                     }
@@ -6098,13 +6244,20 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
 
         // First pass: collect module-level type parameters from entry points.
         let module_type_params = collect_module_type_params(items)?;
-        let module_ctx = ParseContext::from_type_params(module_type_params.iter().cloned());
+        let resource_pack_names = items.iter().filter_map(|item| match item {
+            syn::Item::Struct(item) if crate::resource::is_resource_pack(item) => {
+                Some(item.ident.to_string())
+            }
+            _ => None,
+        });
+        let module_ctx = ParseContext::from_type_params(module_type_params.iter().cloned())
+            .with_resource_packs(resource_pack_names);
 
         // Second pass: parse each item, re-resolving linkage types using the
         // module-level context so type params are recognized.
         let mut content = Vec::new();
         for item in items {
-            let parsed = Item::try_from(item)?;
+            let parsed = Item::parse_with_module(item, &module_ctx)?;
             let parsed = match parsed {
                 Item::Uniform(u) => Item::Uniform(Box::new((*u).with_context(&module_ctx)?)),
                 Item::Storage(s) => Item::Storage(Box::new((*s).with_context(&module_ctx)?)),
@@ -6117,6 +6270,7 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
             ident,
             content,
             attrs: syn_attrs_to_ir(&item_mod.attrs),
+            resource_pack_uses: Vec::new(),
         };
         crate::resource::validate_resources(&module)?;
         Ok(module)
@@ -7561,6 +7715,13 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
     type Error = Error;
 
     fn try_from(value: &syn::ItemImpl) -> Result<Self, Self::Error> {
+        Self::parse_with_module(value, &ParseContext::default())
+    }
+}
+
+impl ItemImpl {
+    /// Parse an impl block with module-level resource-pack registrations.
+    fn parse_with_module(value: &syn::ItemImpl, module_ctx: &ParseContext) -> Result<Self, Error> {
         let syn::ItemImpl {
             attrs,
             defaultness,
@@ -7620,8 +7781,9 @@ impl TryFrom<&syn::ItemImpl> for ItemImpl {
         // Build parse context with type and const params so method bodies
         // and signatures can reference them. Generic impls go through
         // same-module monomorphization and keep source-level names.
-        let ctx =
+        let mut ctx =
             ParseContext::from_params(type_params.iter().cloned(), const_params.iter().cloned());
+        ctx.resource_packs = module_ctx.resource_packs.clone();
 
         // Parse the self type. This reuses the general `Type::parse` machinery,
         // which handles simple idents (`Light`, `f32`), fully-applied generic
@@ -7857,6 +8019,7 @@ fn resolve_self_in_type(r: &SelfResolution, ty: &mut Type) {
         | Type::Texture { .. }
         | Type::TextureDepth { .. }
         | Type::TextureStorage { .. }
+        | Type::ResourcePack { .. }
         | Type::TypeParam { .. } => {}
     }
 }
@@ -8039,6 +8202,13 @@ impl TryFrom<&syn::Item> for Item {
     type Error = Error;
 
     fn try_from(value: &syn::Item) -> Result<Self, Self::Error> {
+        Self::parse_with_module(value, &ParseContext::default())
+    }
+}
+
+impl Item {
+    /// Parse an item with resource-pack names visible to function signatures.
+    fn parse_with_module(value: &syn::Item, module_ctx: &ParseContext) -> Result<Self, Error> {
         if ItemMod::syn_item_has_wgsl_ignore_attribute(value) {
             return Ok(Self::Ignored);
         }
@@ -8078,7 +8248,9 @@ impl TryFrom<&syn::Item> for Item {
             syn::Item::Const(item_const) => {
                 Ok(Item::Const(Box::new(ItemConst::try_from(item_const)?)))
             }
-            syn::Item::Fn(item_fn) => Ok(Item::Fn(Box::new(item_fn.try_into()?))),
+            syn::Item::Fn(item_fn) => Ok(Item::Fn(Box::new(ItemFn::parse_with_module(
+                item_fn, module_ctx,
+            )?))),
             syn::Item::Use(syn::ItemUse {
                 attrs: _,
                 vis,
@@ -8119,7 +8291,9 @@ impl TryFrom<&syn::Item> for Item {
                 // Trait impl methods generate the same Type_method WGSL
                 // functions as inherent impl methods. The trait
                 // name is ignored.
-                Ok(Item::Impl(ItemImpl::try_from(item_impl)?))
+                Ok(Item::Impl(ItemImpl::parse_with_module(
+                    item_impl, module_ctx,
+                )?))
             }
             syn::Item::Enum(item_enum) => Ok(Item::Enum(ItemEnum::try_from(item_enum)?)),
             syn::Item::Trait(item_trait) => {

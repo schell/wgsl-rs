@@ -303,3 +303,33 @@ fn resource_pack_missing_group_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_missing_group.rs");
 }
+
+#[test]
+fn resource_pack_duplicate_parameter_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_duplicate_parameter.rs");
+}
+
+#[test]
+fn resource_pack_local_alias_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_local_alias.rs");
+}
+
+#[test]
+fn resource_pack_mismatched_call_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_mismatched_call.rs");
+}
+
+#[test]
+fn resource_pack_by_value_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_by_value.rs");
+}
+
+#[test]
+fn resource_pack_unknown_reference_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_unknown_reference.rs");
+}

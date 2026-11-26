@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       duplicate resource-pack parameter of type `Pack` in function `helper`.'
+  --> tests/ui/fail/resource_pack_duplicate_parameter.rs:12:33
+   |
+12 |     pub fn helper(first: &Pack, second: &Pack) {}
+   |                                 ^^^^^^

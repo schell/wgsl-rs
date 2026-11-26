@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       resource-pack parameter `pack` must be borrowed as `&Pack`.'
+  --> tests/ui/fail/resource_pack_by_value.rs:12:19
+   |
+12 |     pub fn helper(pack: Pack) {}
+   |                   ^^^^

@@ -259,6 +259,7 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     use parse::{FnAttrs, Item};
     use std::collections::HashSet;
 
+    let pack_aliases = resource::pack_const_aliases(wgsl_module)?;
     let mut params: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     let mut type_slots = HashSet::new();
@@ -280,7 +281,14 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     // Pass 2: binding-owned address and filterability consts. Repeated
     // standalone filterability names intentionally share the same const.
     let mut binding_slots = HashSet::new();
-    for (name, _ty, span) in parse::binding_const_params(wgsl_module) {
+    for (name, _ty, span, pack) in parse::binding_const_params(wgsl_module) {
+        if pack.as_ref().is_some_and(|pack_name| {
+            pack_aliases
+                .iter()
+                .any(|alias| alias.pack == *pack_name && alias.source == name)
+        }) {
+            continue;
+        }
         if type_slots.contains(&name) {
             return Err(parse::Error::unsupported(
                 span,
@@ -1098,6 +1106,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let crate_path = attrs.crate_path();
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    resource::lower_module(&mut wgsl_module)?;
     // `WGSL_SOURCE` and `instantiate` are the macro-emitted items; a
     // user item with either name collides with them and would fail
     // with a duplicate-definition error deep in the consumer crate.
@@ -1796,7 +1805,10 @@ pub fn vertex(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
                 if let Some(ident) = attr.path().get_ident() {
-                    !matches!(ident.to_string().as_str(), "builtin")
+                    !matches!(
+                        ident.to_string().as_str(),
+                        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+                    )
                 } else {
                     true
                 }
@@ -1824,7 +1836,10 @@ pub fn fragment(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
                 if let Some(ident) = attr.path().get_ident() {
-                    !matches!(ident.to_string().as_str(), "builtin")
+                    !matches!(
+                        ident.to_string().as_str(),
+                        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+                    )
                 } else {
                     true
                 }
@@ -1849,7 +1864,10 @@ pub fn compute(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
                 if let Some(ident) = attr.path().get_ident() {
-                    !matches!(ident.to_string().as_str(), "builtin")
+                    !matches!(
+                        ident.to_string().as_str(),
+                        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+                    )
                 } else {
                     true
                 }

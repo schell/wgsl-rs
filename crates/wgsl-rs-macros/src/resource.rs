@@ -7,6 +7,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{Ident, Token, spanned::Spanned};
+use wgsl_rs_ir as ir;
 
 use crate::parse::{self, InterStageIo, ParseContext, StorageAccess, Type};
 
@@ -126,12 +127,98 @@ pub(crate) struct ResourceField {
     pub(crate) rust_ty: syn::Type,
 }
 
+/// One entry-point use of a resource-pack type. Const arguments have already
+/// been positionally encoded by the entry-point parser.
+#[derive(Clone)]
+pub(crate) struct ResourcePackUse {
+    pub(crate) pack: Ident,
+    pub(crate) const_args: Vec<parse::PackConstArg>,
+    pub(crate) span: Span,
+}
+
 /// A registered resource-pack struct.
 #[derive(Clone)]
 pub(crate) struct ItemResourcePack {
     pub(crate) ident: Ident,
     pub(crate) const_params: Vec<(Ident, syn::Type)>,
     pub(crate) fields: Vec<ResourceField>,
+}
+
+/// A pack declaration const that is supplied by an entry-point const.
+pub(crate) struct PackConstAlias {
+    pub(crate) pack: String,
+    pub(crate) source: String,
+    pub(crate) target: Ident,
+    pub(crate) ty: syn::Type,
+}
+
+/// Collect entry-point-to-pack const aliases in deterministic use order.
+/// Concrete conflicts are diagnosed at the second use. Distinct parameter
+/// aliases are unified by the template pass in the next stage.
+pub(crate) fn pack_const_aliases(module: &parse::ItemMod) -> parse::Result<Vec<PackConstAlias>> {
+    let mut aliases = Vec::<PackConstAlias>::new();
+    let mut concrete_values = std::collections::HashMap::<(String, String), ir::ConstValue>::new();
+    for usage in &module.resource_pack_uses {
+        let pack = module
+            .resource_pack(&usage.pack)
+            .expect("lowering registers the pack used by every entry point");
+        for ((declared, ty), actual) in pack.const_params.iter().zip(&usage.const_args) {
+            let key = (pack.ident.to_string(), declared.to_string());
+            match actual {
+                parse::PackConstArg::Param(target) => {
+                    if let Some(value) = concrete_values.get(&key) {
+                        return Err(parse::Error::unsupported(
+                            usage.span,
+                            format!(
+                                "conflicting values for `{}` in resource pack `{}`: const \
+                                 parameter `{target}` versus concrete `{value:?}`",
+                                declared, pack.ident
+                            ),
+                        ));
+                    }
+                    if !aliases
+                        .iter()
+                        .any(|alias| alias.pack == key.0 && alias.source == key.1)
+                    {
+                        aliases.push(PackConstAlias {
+                            pack: key.0,
+                            source: key.1,
+                            target: target.clone(),
+                            ty: ty.clone(),
+                        });
+                    }
+                }
+                parse::PackConstArg::Value(value) => {
+                    if let Some(previous) = concrete_values.insert(key.clone(), *value)
+                        && previous != *value
+                    {
+                        return Err(parse::Error::unsupported(
+                            usage.span,
+                            format!(
+                                "conflicting values for `{}` in resource pack `{}`: \
+                                 `{previous:?}` versus `{value:?}`",
+                                declared, pack.ident
+                            ),
+                        ));
+                    }
+                    if aliases
+                        .iter()
+                        .any(|alias| alias.pack == key.0 && alias.source == key.1)
+                    {
+                        return Err(parse::Error::unsupported(
+                            usage.span,
+                            format!(
+                                "resource pack `{}` mixes a generic alias and concrete \
+                                 `{value:?}` for `{declared}`",
+                                pack.ident
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(aliases)
 }
 
 /// Returns true when any field identifies this struct as a resource pack.
@@ -580,5 +667,363 @@ fn generate_constructor(
                 }
             }
         }
+    }
+}
+
+// ===== Function and expression lowering =====
+
+#[derive(Clone)]
+struct PackParameter {
+    param: Ident,
+    pack: ItemResourcePack,
+    const_args: Vec<parse::PackConstArg>,
+    input_index: usize,
+}
+
+#[derive(Clone, Default)]
+struct FnResourceSignature {
+    input_count: usize,
+    packs: Vec<PackParameter>,
+    const_renames: Vec<(Ident, Ident)>,
+}
+
+impl FnResourceSignature {
+    fn parameters(&self) -> std::collections::HashMap<String, PackParameter> {
+        self.packs
+            .iter()
+            .map(|param| (param.param.to_string(), param.clone()))
+            .collect()
+    }
+}
+
+/// Remove pack parameters and lower their direct field borrows to globals.
+pub(crate) fn lower_module(module: &mut parse::ItemMod) -> parse::Result<()> {
+    let registry: std::collections::HashMap<String, ItemResourcePack> = module
+        .resource_packs()
+        .map(|pack| (pack.ident.to_string(), pack.clone()))
+        .collect();
+    let mut signatures = std::collections::HashMap::<String, FnResourceSignature>::new();
+
+    // First collect every signature, so calls can be lowered independently of
+    // function declaration order.
+    for item in &mut module.content {
+        match item {
+            parse::Item::Fn(f) => {
+                let signature = lower_fn_signature(f, &registry, &mut module.resource_pack_uses)?;
+                signatures.insert(f.ident.to_string(), signature);
+            }
+            parse::Item::Impl(implementation) => {
+                for item in &mut implementation.items {
+                    let parse::ImplItem::Fn(f) = item else {
+                        continue;
+                    };
+                    let key = impl_fn_key(&implementation.self_ty, &f.ident)?;
+                    let signature =
+                        lower_fn_signature(f, &registry, &mut module.resource_pack_uses)?;
+                    signatures.insert(key, signature);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for item in &mut module.content {
+        match item {
+            parse::Item::Fn(f) => lower_fn_body(f, &signatures, &f.ident.to_string())?,
+            parse::Item::Impl(implementation) => {
+                for item in &mut implementation.items {
+                    let parse::ImplItem::Fn(f) = item else {
+                        continue;
+                    };
+                    let key = impl_fn_key(&implementation.self_ty, &f.ident)?;
+                    lower_fn_body(f, &signatures, &key)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn impl_fn_key(self_ty: &Type, method: &Ident) -> parse::Result<String> {
+    let base = crate::monomorphize::mangle_type(self_ty)?;
+    Ok(format!("{base}::{method}"))
+}
+
+/// Recognize and remove a function's pack parameters, retaining their original
+/// positions for call-argument removal.
+fn lower_fn_signature(
+    f: &mut parse::ItemFn,
+    registry: &std::collections::HashMap<String, ItemResourcePack>,
+    uses: &mut Vec<ResourcePackUse>,
+) -> parse::Result<FnResourceSignature> {
+    let mut signature = FnResourceSignature {
+        input_count: f.inputs.len(),
+        ..FnResourceSignature::default()
+    };
+    let mut seen_packs = std::collections::HashSet::new();
+
+    for (input_index, arg) in f.inputs.iter().enumerate() {
+        let Type::ResourcePack {
+            ident,
+            const_args,
+            reference,
+        } = &arg.ty
+        else {
+            continue;
+        };
+        if !reference {
+            return Err(parse::Error::unsupported(
+                arg.ident.span(),
+                format!(
+                    "resource-pack parameter `{}` must be borrowed as `&{ident}`",
+                    arg.ident
+                ),
+            ));
+        }
+        let pack = registry
+            .get(&ident.to_string())
+            .expect("the parser only creates ResourcePack for registered structs")
+            .clone();
+        if !seen_packs.insert(ident.to_string()) {
+            return Err(parse::Error::unsupported(
+                arg.ident.span(),
+                format!(
+                    "duplicate resource-pack parameter of type `{ident}` in function `{}`",
+                    f.ident
+                ),
+            ));
+        }
+        if const_args.len() != pack.const_params.len() {
+            return Err(parse::Error::unsupported(
+                ident.span(),
+                format!(
+                    "resource pack `{ident}` expects {} const arguments, but `{}` supplies {}",
+                    pack.const_params.len(),
+                    arg.ident,
+                    const_args.len()
+                ),
+            ));
+        }
+        if !matches!(f.fn_attrs, parse::FnAttrs::None) {
+            uses.push(ResourcePackUse {
+                pack: ident.clone(),
+                const_args: const_args.clone(),
+                span: arg.ident.span(),
+            });
+        }
+        signature.packs.push(PackParameter {
+            param: arg.ident.clone(),
+            pack,
+            const_args: const_args.clone(),
+            input_index,
+        });
+    }
+
+    // A helper's const parameter tied only to a pack becomes a reference to
+    // the pack declaration's module-level slot. This avoids manufacturing a
+    // generic helper instantiation after its pack argument has disappeared.
+    if matches!(f.fn_attrs, parse::FnAttrs::None) {
+        let mut tied = std::collections::HashSet::new();
+        for param in &signature.packs {
+            for ((declared, _), actual) in param.pack.const_params.iter().zip(&param.const_args) {
+                let parse::PackConstArg::Param(local) = actual else {
+                    continue;
+                };
+                if f.const_params.contains(local) {
+                    if let Some((_, previous)) = signature
+                        .const_renames
+                        .iter()
+                        .find(|(source, _)| source == local)
+                    {
+                        if previous != declared {
+                            return Err(parse::Error::unsupported(
+                                local.span(),
+                                format!(
+                                    "const parameter `{local}` cannot simultaneously drive \
+                                     `{previous}` and `{declared}`"
+                                ),
+                            ));
+                        }
+                    } else {
+                        signature
+                            .const_renames
+                            .push((local.clone(), declared.clone()));
+                    }
+                    tied.insert(local.clone());
+                }
+            }
+        }
+        f.const_params.retain(|param| !tied.contains(param));
+    }
+
+    let removed: std::collections::HashSet<usize> = signature
+        .packs
+        .iter()
+        .map(|param| param.input_index)
+        .collect();
+    let old_inputs = f.inputs.clone();
+    let mut inputs = syn::punctuated::Punctuated::new();
+    for (index, pair) in old_inputs.pairs().enumerate() {
+        if removed.contains(&index) {
+            continue;
+        }
+        inputs.push_value((*pair.value()).clone());
+        if let Some(comma) = pair.punct() {
+            inputs.push_punct(**comma);
+        }
+    }
+    f.inputs = inputs;
+    Ok(signature)
+}
+
+fn lower_fn_body(
+    f: &mut parse::ItemFn,
+    signatures: &std::collections::HashMap<String, FnResourceSignature>,
+    key: &str,
+) -> parse::Result<()> {
+    use crate::parse_visitor::ParseVisitorMut;
+
+    let signature = signatures
+        .get(key)
+        .expect("every parsed function received a resource signature");
+    let mut lowerer = BodyLowerer {
+        parameters: signature.parameters(),
+        const_renames: &signature.const_renames,
+        signatures,
+        function: &f.ident,
+    };
+    if let parse::ReturnType::Type { ty, .. } = &mut f.return_type {
+        lowerer.visit_type(ty)?;
+    }
+    lowerer.visit_block(&mut f.block)
+}
+
+struct BodyLowerer<'a> {
+    parameters: std::collections::HashMap<String, PackParameter>,
+    const_renames: &'a [(Ident, Ident)],
+    signatures: &'a std::collections::HashMap<String, FnResourceSignature>,
+    function: &'a Ident,
+}
+
+impl BodyLowerer<'_> {
+    fn lower_call(
+        &self,
+        path: &parse::FnPath,
+        params: &mut syn::punctuated::Punctuated<parse::Expr, Token![,]>,
+    ) -> parse::Result<()> {
+        let (key, span) = match path {
+            parse::FnPath::Ident(ident) => (ident.to_string(), ident.span()),
+            parse::FnPath::TypeMethod { ty, method, .. } => {
+                (format!("{ty}::{method}"), method.span())
+            }
+        };
+        let Some(signature) = self.signatures.get(&key) else {
+            return Ok(());
+        };
+        if signature.packs.is_empty() {
+            return Ok(());
+        }
+        if params.len() != signature.input_count {
+            return Err(parse::Error::unsupported(
+                span,
+                format!(
+                    "call in `{}` supplies {} arguments, but its resource-aware signature expects \
+                     {}",
+                    self.function,
+                    params.len(),
+                    signature.input_count
+                ),
+            ));
+        }
+        let removed: std::collections::HashSet<usize> = signature
+            .packs
+            .iter()
+            .map(|param| param.input_index)
+            .collect();
+        let old = params.clone();
+        let mut lowered = syn::punctuated::Punctuated::new();
+        for (index, pair) in old.pairs().enumerate() {
+            if removed.contains(&index) {
+                continue;
+            }
+            lowered.push_value((*pair.value()).clone());
+            if let Some(comma) = pair.punct() {
+                lowered.push_punct(**comma);
+            }
+        }
+        *params = lowered;
+        Ok(())
+    }
+}
+
+impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
+    fn visit_expr(&mut self, expr: &mut parse::Expr) -> parse::Result<()> {
+        if let parse::Expr::FnCall { path, params, .. } = expr {
+            self.lower_call(path, params)?;
+        }
+
+        // The complete `&pack.field` expression is replaced, not merely its
+        // base. This leaves the global resource identifier expected by WGSL.
+        if let parse::Expr::Reference { expr: inner, .. } = expr
+            && let parse::Expr::FieldAccess { base, field, .. } = inner.as_ref()
+            && let parse::Expr::Ident(base) = base.as_ref()
+            && let Some(param) = self.parameters.get(&base.to_string())
+        {
+            let Some(resource) = param.pack.fields.iter().find(|item| item.ident == *field) else {
+                return Err(parse::Error::unsupported(
+                    field.span(),
+                    format!(
+                        "resource pack `{}` has no field `{field}`",
+                        param.pack.ident
+                    ),
+                ));
+            };
+            *expr = parse::Expr::Ident(resource.ident.clone());
+            return Ok(());
+        }
+
+        if let parse::Expr::FieldAccess { base, field, .. } = expr
+            && let parse::Expr::Ident(base) = base.as_ref()
+            && self.parameters.contains_key(&base.to_string())
+        {
+            return Err(parse::Error::unsupported(
+                field.span(),
+                "resource-pack fields must be used as direct borrows such as `&pack.field`",
+            ));
+        }
+
+        if let parse::Expr::Ident(ident) = expr {
+            if self.parameters.contains_key(&ident.to_string()) {
+                return Err(parse::Error::unsupported(
+                    ident.span(),
+                    format!(
+                        "resource-pack parameter `{ident}` in `{}` can only be passed to a \
+                         registered helper or used as `&{ident}.field`; destructuring and local \
+                         aliases are not supported",
+                        self.function
+                    ),
+                ));
+            }
+            if let Some((_, replacement)) = self
+                .const_renames
+                .iter()
+                .find(|(source, _)| source == ident)
+            {
+                *ident = replacement.clone();
+            }
+        }
+        crate::parse_visitor::walk_expr(self, expr)
+    }
+
+    fn visit_type(&mut self, ty: &mut Type) -> parse::Result<()> {
+        if let Type::ResourcePack { ident, .. } = ty {
+            return Err(parse::Error::unsupported(
+                ident.span(),
+                "resource-pack types are supported only as borrowed function parameters; return \
+                 values, locals, and aliases are not WGSL resources",
+            ));
+        }
+        crate::parse_visitor::walk_type(self, ty)
     }
 }

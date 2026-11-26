@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       resource-pack parameter `pack` in `helper` can only be passed to a registered helper or used as `&pack.field`; destructuring and local aliases are not supported.'
+  --> tests/ui/fail/resource_pack_local_alias.rs:13:21
+   |
+13 |         let alias = pack;
+   |                     ^^^^

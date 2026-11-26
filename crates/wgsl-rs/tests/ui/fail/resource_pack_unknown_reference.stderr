@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       references in function parameters are supported only for registered resource-pack types.'
+ --> tests/ui/fail/resource_pack_unknown_reference.rs:9:27
+  |
+9 |     pub fn helper(value: &NotAPack) {}
+  |                           ^^^^^^^^

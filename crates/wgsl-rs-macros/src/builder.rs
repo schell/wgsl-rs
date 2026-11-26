@@ -145,8 +145,17 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
 
     // Collect binding-owned consts in first-occurrence declaration order.
     // Repeated standalone filterability names intentionally share one slot.
+    let pack_aliases = crate::resource::pack_const_aliases(wgsl_module)
+        .expect("resource-pack const uses were validated during lowering");
     let mut seen_const_slots = std::collections::HashSet::new();
-    for (name, ty, _span) in parse::binding_const_params(wgsl_module) {
+    for (name, ty, _span, pack) in parse::binding_const_params(wgsl_module) {
+        if pack.as_ref().is_some_and(|pack_name| {
+            pack_aliases
+                .iter()
+                .any(|alias| alias.pack == *pack_name && alias.source == name)
+        }) {
+            continue;
+        }
         if !seen_const_slots.insert(name.clone()) {
             continue;
         }
@@ -396,6 +405,27 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         };
         const_subst_entries.push(quote! {
             (::std::string::String::from(#encoded_name_str), #value)
+        });
+    }
+
+    // Bind pack declaration consts to the entry-point values selected by
+    // their resource-pack types. The aliased declaration does not receive a
+    // separate instantiation slot.
+    for alias in &pack_aliases {
+        let target_name = alias.target.to_string();
+        let target = ep_const_slots
+            .iter()
+            .find(|slot| slot.encoded_name == target_name)
+            .map(|slot| slot.name.clone())
+            .unwrap_or_else(|| format_ident!("{target_name}"));
+        let value = if matches!(&alias.ty, syn::Type::Path(path) if path.path.is_ident("bool")) {
+            quote! { #ir_p::ConstValue::Bool(#target) }
+        } else {
+            quote! { #ir_p::ConstValue::Int(#target as i64) }
+        };
+        let source = &alias.source;
+        const_subst_entries.push(quote! {
+            (::std::string::String::from(#source), #value)
         });
     }
 

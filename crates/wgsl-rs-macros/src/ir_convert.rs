@@ -807,6 +807,14 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
             format: format.to_ir(),
             access: storage_access_from_parse(*access),
         },
+        parse::Type::ResourcePack { ident, .. } => {
+            return Err(ConvertError::Unsupported {
+                span: ident.span(),
+                note: "resource-pack types must be removed by resource lowering before IR \
+                       conversion"
+                    .to_string(),
+            });
+        }
         parse::Type::TypeParam { ident } => ir::Type::TypeParam {
             name: ident.to_string(),
         },

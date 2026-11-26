@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       call in `caller` supplies 1 arguments, but its resource-aware signature expects 2.'
+  --> tests/ui/fail/resource_pack_mismatched_call.rs:15:9
+   |
+15 |         callee(pack);
+   |         ^^^^^^

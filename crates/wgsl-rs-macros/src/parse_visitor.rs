@@ -397,6 +397,7 @@ pub(crate) fn walk_type<V: ParseVisitorMut + ?Sized>(v: &mut V, t: &mut Type) ->
         | Type::Texture { .. }
         | Type::TextureDepth { .. }
         | Type::TextureStorage { .. }
+        | Type::ResourcePack { .. }
         | Type::TypeParam { .. } => {}
     }
     Ok(())

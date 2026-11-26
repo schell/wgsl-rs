@@ -13,10 +13,11 @@
 //!
 //! in a template module (const-parameter entry point, validated via
 //! `validate_with_instantiation_types`). The deshadow pass handles this
-//! shape and the canonical render route (`instantiate::<T>().wgsl_source()`)
-//! renames the local - but the generated `__validate_wgsl_instantiated_N`
-//! test renders via the raw `render_module`, bypassing deshadow, so naga
-//! rejects `var input = input;` as a redefinition.
+//! shape and both render routes rename the local. Historically the
+//! generated `__validate_wgsl_instantiated_N` test rendered via the raw
+//! `render_module`, which skips deshadow, so naga rejected
+//! `var input = input;` as a redefinition while the runtime rendered
+//! correctly - this test pins that both routes deshadow identically.
 //!
 //! The free-function shape is covered by `instantiate_wgsl_source_deshadows`
 //! in `linkage_wgpu.rs`.
@@ -60,6 +61,7 @@ pub mod impl_param_shadowing {
 
 /// The canonical instantiate route deshadows the impl-method param
 /// shadowing: rename applied and naga validation green.
+#[cfg(feature = "validation")]
 #[test]
 fn impl_param_shadowing_deshadows_on_the_instantiate_route() {
     let via_instantiate = impl_param_shadowing::instantiate::<true>().wgsl_source();
@@ -72,8 +74,8 @@ fn impl_param_shadowing_deshadows_on_the_instantiate_route() {
 }
 
 // NOTE: the generated `impl_param_shadowing::__validate_wgsl_instantiated_0`
-// test (from `validate_with_instantiation_types(IS_TRUE)`) is the failing
-// half of this regression: it renders via the raw `render_module` and
-// rejects the un-deshadowed redefinition. It goes green once the macro
-// routes it through `Module::wgsl_source()`, like the concrete-module
-// validation test does.
+// test (from `validate_with_instantiation_types(IS_TRUE)`) is the other
+// half of this regression. Before the fix it rendered via the raw
+// `render_module` - skipping deshadow and rejecting the shadowing - and
+// failed; both routes now render through `Module::wgsl_source()` and
+// stay green together.

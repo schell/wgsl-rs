@@ -333,3 +333,9 @@ fn resource_pack_unknown_reference_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_unknown_reference.rs");
 }
+
+#[test]
+fn resource_pack_conflicting_consts_are_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_conflicting_consts.rs");
+}

@@ -30,7 +30,11 @@ mod packs {
 fn pack_addresses_and_filterability_reach_wgpu_layouts() {
     assert_eq!(
         packs::WGSL_SOURCE.module_type_params,
-        &["GROUP", "BINDING", "FILTERABLE"]
+        &[
+            "TexturePack_GROUP",
+            "TexturePack_BINDING",
+            "TexturePack_FILTERABLE"
+        ]
     );
 
     let cpu = packs::TexturePack::<4, false, 7>::new();

@@ -259,7 +259,7 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     use parse::{FnAttrs, Item};
     use std::collections::HashSet;
 
-    let pack_aliases = resource::pack_const_aliases(wgsl_module)?;
+    let pack_plans = resource::pack_const_plans(wgsl_module)?;
     let mut params: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     let mut type_slots = HashSet::new();
@@ -282,11 +282,14 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     // standalone filterability names intentionally share the same const.
     let mut binding_slots = HashSet::new();
     for (name, _ty, span, pack) in parse::binding_const_params(wgsl_module) {
-        if pack.as_ref().is_some_and(|pack_name| {
-            pack_aliases
-                .iter()
-                .any(|alias| alias.pack == *pack_name && alias.source == name)
-        }) {
+        let fixed = pack.as_ref().is_some_and(|pack_name| {
+            pack_plans.iter().any(|plan| {
+                plan.pack == *pack_name
+                    && plan.source == name
+                    && matches!(plan.kind, resource::PackConstKind::Fixed(_))
+            })
+        });
+        if fixed {
             continue;
         }
         if type_slots.contains(&name) {
@@ -333,6 +336,9 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
         // Entry-point const params use a separate `{fn}_c{i}` namespace.
         for (i, _cp) in f.const_params.iter().enumerate() {
             let encoded = format!("{fn_name}_c{i}");
+            if resource::is_shared_pack_alias(&pack_plans, &encoded) {
+                continue;
+            }
             if binding_slots.contains(&encoded) {
                 return Err(parse::Error::unsupported(
                     f.ident.span(),
@@ -612,11 +618,34 @@ fn gen_wgsl_module(
 
     // Convert the parse module's items to IR items once; both emission
     // paths consume the same owned IR.
-    let ir_items = ir_convert::items_from_parse(&wgsl_module.content).map_err(|e| {
+    let mut ir_items = ir_convert::items_from_parse(&wgsl_module.content).map_err(|e| {
         WgslGenError::WgslParse {
             source: e.into_parse(),
         }
     })?;
+    let pack_plans = resource::pack_const_plans(wgsl_module)?;
+    let fixed_consts: std::collections::HashMap<String, wgsl_rs_ir::ConstValue> = pack_plans
+        .iter()
+        .filter_map(|plan| match plan.kind {
+            resource::PackConstKind::Fixed(value) => Some((plan.source.clone(), value)),
+            resource::PackConstKind::Shared => None,
+        })
+        .collect();
+    if !fixed_consts.is_empty() {
+        wgsl_rs_ir::substitute_consts_in_items(&mut ir_items, &fixed_consts);
+        let module = wgsl_rs_ir::Module {
+            name: "resource-pack-validation",
+            items: ir_items.clone(),
+            attrs: Vec::new(),
+        };
+        if let Err(error) = wgsl_rs_ir::validate_binding_addresses(&module) {
+            let span = pack_plans
+                .first()
+                .map(|plan| plan.span)
+                .unwrap_or_else(proc_macro2::Span::call_site);
+            return Err(parse::Error::unsupported(span, error).into());
+        }
+    }
 
     let module_ctor_ident = quote::format_ident!("__wgsl_module_ctor");
 

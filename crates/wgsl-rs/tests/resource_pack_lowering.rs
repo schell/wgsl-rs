@@ -43,7 +43,10 @@ fn helper_and_entry_point_run_on_cpu_with_a_constructed_pack() {
 
 #[test]
 fn pack_parameters_and_calls_disappear_from_wgsl() {
-    assert_eq!(shader::WGSL_SOURCE.module_type_params, &["fragment_c0"]);
+    assert_eq!(
+        shader::WGSL_SOURCE.module_type_params,
+        &["TextureBindGroup_FILTERABLE"]
+    );
     for filterable in [false, true] {
         let module = if filterable {
             shader::instantiate::<true>()

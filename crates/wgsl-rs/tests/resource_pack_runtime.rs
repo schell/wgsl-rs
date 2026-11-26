@@ -119,7 +119,11 @@ fn constructed_texture_pack_works_with_cpu_builtins() {
 fn packs_are_not_emitted_as_wgsl_structs() {
     assert_eq!(
         packs::WGSL_SOURCE.module_type_params,
-        &["TEXTURE_GROUP", "FILTERABLE", "BUFFER_GROUP"]
+        &[
+            "TexturePack_TEXTURE_GROUP",
+            "TexturePack_FILTERABLE",
+            "BufferPack_BUFFER_GROUP"
+        ]
     );
     let module = packs::instantiate::<2, false, 3>();
     let source = module.wgsl_source();

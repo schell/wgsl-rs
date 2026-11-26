@@ -6173,7 +6173,11 @@ pub(crate) fn binding_const_params(
         pack: Option<String>,
     ) {
         if let ir::Filterability::Param(name) = filterable {
-            out.push((name.clone(), syn::parse_quote!(bool), span, pack));
+            let name = pack
+                .as_ref()
+                .map(|pack| format!("{pack}_{name}"))
+                .unwrap_or_else(|| name.clone());
+            out.push((name, syn::parse_quote!(bool), span, pack));
         }
     }
 
@@ -6201,7 +6205,7 @@ pub(crate) fn binding_const_params(
                                 .map(|(_, ty)| ty.clone())
                                 .expect("resource address parameters are validated on the pack");
                             out.push((
-                                name.to_string(),
+                                crate::resource::pack_const_slot_name(&pack.ident, name),
                                 ty,
                                 field.ident.span(),
                                 Some(pack.ident.to_string()),

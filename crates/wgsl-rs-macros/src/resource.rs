@@ -144,81 +144,139 @@ pub(crate) struct ItemResourcePack {
     pub(crate) fields: Vec<ResourceField>,
 }
 
-/// A pack declaration const that is supplied by an entry-point const.
-pub(crate) struct PackConstAlias {
-    pub(crate) pack: String,
-    pub(crate) source: String,
-    pub(crate) target: Ident,
-    pub(crate) ty: syn::Type,
+/// Deterministic module slot for one const parameter of one pack type.
+/// Namespacing by pack keeps identically named consts independent.
+pub(crate) fn pack_const_slot_name(pack: &Ident, param: &Ident) -> String {
+    format!("{pack}_{param}")
 }
 
-/// Collect entry-point-to-pack const aliases in deterministic use order.
-/// Concrete conflicts are diagnosed at the second use. Distinct parameter
-/// aliases are unified by the template pass in the next stage.
-pub(crate) fn pack_const_aliases(module: &parse::ItemMod) -> parse::Result<Vec<PackConstAlias>> {
-    let mut aliases = Vec::<PackConstAlias>::new();
-    let mut concrete_values = std::collections::HashMap::<(String, String), ir::ConstValue>::new();
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PackConstKind {
+    Shared,
+    Fixed(ir::ConstValue),
+}
+
+/// The unified instantiation plan for one pack declaration const.
+pub(crate) struct PackConstPlan {
+    pub(crate) pack: String,
+    /// Namespaced key stored in binding IR and `Source::module_type_params`.
+    pub(crate) source: String,
+    pub(crate) kind: PackConstKind,
+    pub(crate) span: Span,
+    /// Positional entry-point const keys that read the shared value.
+    pub(crate) aliases: Vec<Ident>,
+}
+
+/// Unify all entry-point uses of each pack const. A fixed/generic mixture or
+/// two different concrete values is a layout conflict at the second use.
+pub(crate) fn pack_const_plans(module: &parse::ItemMod) -> parse::Result<Vec<PackConstPlan>> {
+    enum PartialKind {
+        Shared,
+        Fixed(ir::ConstValue),
+    }
+    struct Partial {
+        pack: String,
+        source: String,
+        kind: Option<PartialKind>,
+        span: Span,
+        aliases: Vec<Ident>,
+        resources: String,
+    }
+
+    let mut plans = Vec::<Partial>::new();
     for usage in &module.resource_pack_uses {
         let pack = module
             .resource_pack(&usage.pack)
             .expect("lowering registers the pack used by every entry point");
-        for ((declared, ty), actual) in pack.const_params.iter().zip(&usage.const_args) {
-            let key = (pack.ident.to_string(), declared.to_string());
+        let resources = pack
+            .fields
+            .iter()
+            .map(|field| field.ident.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        for ((declared, _), actual) in pack.const_params.iter().zip(&usage.const_args) {
+            let pack_name = pack.ident.to_string();
+            let source = pack_const_slot_name(&pack.ident, declared);
+            let index = plans
+                .iter()
+                .position(|plan| plan.pack == pack_name && plan.source == source)
+                .unwrap_or_else(|| {
+                    plans.push(Partial {
+                        pack: pack_name.clone(),
+                        source: source.clone(),
+                        kind: None,
+                        span: usage.span,
+                        aliases: Vec::new(),
+                        resources: resources.clone(),
+                    });
+                    plans.len() - 1
+                });
+            let plan = &mut plans[index];
+            let conflict = |kind: &str, value: &str| {
+                parse::Error::unsupported(
+                    usage.span,
+                    format!(
+                        "conflicting const values for `{declared}` in resource pack `{}`: {kind} \
+                         `{value}`; affected resources: {}. All uses of one pack layout must \
+                         share compatible values",
+                        pack.ident, plan.resources
+                    ),
+                )
+            };
             match actual {
-                parse::PackConstArg::Param(target) => {
-                    if let Some(value) = concrete_values.get(&key) {
-                        return Err(parse::Error::unsupported(
-                            usage.span,
-                            format!(
-                                "conflicting values for `{}` in resource pack `{}`: const \
-                                 parameter `{target}` versus concrete `{value:?}`",
-                                declared, pack.ident
-                            ),
+                parse::PackConstArg::Param(target) => match &plan.kind {
+                    Some(PartialKind::Fixed(value)) => {
+                        return Err(conflict(
+                            "generic value versus concrete",
+                            &format!("{value:?}"),
                         ));
                     }
-                    if !aliases
-                        .iter()
-                        .any(|alias| alias.pack == key.0 && alias.source == key.1)
-                    {
-                        aliases.push(PackConstAlias {
-                            pack: key.0,
-                            source: key.1,
-                            target: target.clone(),
-                            ty: ty.clone(),
-                        });
+                    _ => {
+                        plan.kind = Some(PartialKind::Shared);
+                        if !plan.aliases.contains(target) {
+                            plan.aliases.push(target.clone());
+                        }
                     }
-                }
-                parse::PackConstArg::Value(value) => {
-                    if let Some(previous) = concrete_values.insert(key.clone(), *value)
-                        && previous != *value
-                    {
-                        return Err(parse::Error::unsupported(
-                            usage.span,
-                            format!(
-                                "conflicting values for `{}` in resource pack `{}`: \
-                                 `{previous:?}` versus `{value:?}`",
-                                declared, pack.ident
-                            ),
+                },
+                parse::PackConstArg::Value(value) => match &plan.kind {
+                    Some(PartialKind::Shared) => {
+                        return Err(conflict(
+                            "concrete value versus generic",
+                            &format!("{value:?}"),
                         ));
                     }
-                    if aliases
-                        .iter()
-                        .any(|alias| alias.pack == key.0 && alias.source == key.1)
-                    {
-                        return Err(parse::Error::unsupported(
-                            usage.span,
-                            format!(
-                                "resource pack `{}` mixes a generic alias and concrete \
-                                 `{value:?}` for `{declared}`",
-                                pack.ident
-                            ),
+                    Some(PartialKind::Fixed(previous)) if previous != value => {
+                        return Err(conflict(
+                            "previous and new values",
+                            &format!("{previous:?} versus {value:?}"),
                         ));
                     }
-                }
+                    _ => plan.kind = Some(PartialKind::Fixed(*value)),
+                },
             }
         }
     }
-    Ok(aliases)
+    Ok(plans
+        .into_iter()
+        .map(|plan| PackConstPlan {
+            pack: plan.pack,
+            source: plan.source,
+            kind: match plan.kind.expect("every plan has at least one use") {
+                PartialKind::Shared => PackConstKind::Shared,
+                PartialKind::Fixed(value) => PackConstKind::Fixed(value),
+            },
+            aliases: plan.aliases,
+            span: plan.span,
+        })
+        .collect())
+}
+
+/// True when this positional entry-point const reads a shared pack slot.
+pub(crate) fn is_shared_pack_alias(plans: &[PackConstPlan], encoded: &str) -> bool {
+    plans.iter().any(|plan| {
+        matches!(plan.kind, PackConstKind::Shared)
+            && plan.aliases.iter().any(|alias| alias == encoded)
+    })
 }
 
 /// Returns true when any field identifies this struct as a resource pack.
@@ -846,9 +904,13 @@ fn lower_fn_signature(
                             ));
                         }
                     } else {
-                        signature
-                            .const_renames
-                            .push((local.clone(), declared.clone()));
+                        signature.const_renames.push((
+                            local.clone(),
+                            Ident::new(
+                                &pack_const_slot_name(&param.pack.ident, declared),
+                                declared.span(),
+                            ),
+                        ));
                     }
                     tied.insert(local.clone());
                 }

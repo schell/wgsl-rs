@@ -186,7 +186,7 @@ pub fn items_from_parse(items: &[parse::Item]) -> Result<Vec<ir::Item>> {
     for item in items {
         if let parse::Item::ResourcePack(pack) = item {
             for field in &pack.fields {
-                out.push(resource_field(field)?);
+                out.push(resource_field(&pack.ident, field)?);
             }
             continue;
         }
@@ -246,23 +246,26 @@ fn lit_int_to_u32(lit: &syn::LitInt) -> Result<u32> {
     })
 }
 
-fn resource_address(address: &crate::resource::AddressValue) -> Result<ir::BindingAddress> {
+fn resource_address(
+    pack: &syn::Ident,
+    address: &crate::resource::AddressValue,
+) -> Result<ir::BindingAddress> {
     match address {
         crate::resource::AddressValue::Literal(lit) => {
             Ok(ir::BindingAddress::Concrete(lit_int_to_u32(lit)?))
         }
-        crate::resource::AddressValue::Param(ident) => {
-            Ok(ir::BindingAddress::Param(ident.to_string()))
-        }
+        crate::resource::AddressValue::Param(ident) => Ok(ir::BindingAddress::Param(
+            crate::resource::pack_const_slot_name(pack, ident),
+        )),
     }
 }
 
 /// Lower one annotated pack field to its deterministic global resource name.
-fn resource_field(field: &crate::resource::ResourceField) -> Result<ir::Item> {
+fn resource_field(pack: &syn::Ident, field: &crate::resource::ResourceField) -> Result<ir::Item> {
     use crate::resource::ResourceKind;
 
-    let group = resource_address(&field.group)?;
-    let binding = resource_address(&field.binding)?;
+    let group = resource_address(pack, &field.group)?;
+    let binding = resource_address(pack, &field.binding)?;
     let name = field.ident.to_string();
     let ty = ty_from_parse(&field.ty)?;
     Ok(match field.kind {
@@ -290,6 +293,7 @@ fn resource_field(field: &crate::resource::ResourceField) -> Result<ir::Item> {
                 parse::Type::SamplerComparison { .. } => ir::Filterability::Concrete(true),
                 _ => unreachable!("resource-pack validation checked the sampler type"),
             };
+            let filterable = namespace_pack_filterability(pack, filterable);
             ir::Item::Sampler(ir::ItemSampler {
                 group,
                 binding,
@@ -307,6 +311,7 @@ fn resource_field(field: &crate::resource::ResourceField) -> Result<ir::Item> {
                 }
                 _ => unreachable!("resource-pack validation checked the texture type"),
             };
+            let filterable = namespace_pack_filterability(pack, filterable);
             ir::Item::Texture(ir::ItemTexture {
                 group,
                 binding,
@@ -317,6 +322,18 @@ fn resource_field(field: &crate::resource::ResourceField) -> Result<ir::Item> {
             })
         }
     })
+}
+
+fn namespace_pack_filterability(
+    pack: &syn::Ident,
+    filterable: ir::Filterability,
+) -> ir::Filterability {
+    match filterable {
+        ir::Filterability::Concrete(value) => ir::Filterability::Concrete(value),
+        ir::Filterability::Param(name) => ir::Filterability::Param(
+            crate::resource::pack_const_slot_name(pack, &syn::Ident::new(&name, Span::call_site())),
+        ),
+    }
 }
 
 fn item_uniform(u: &parse::ItemUniform) -> Result<ir::ItemUniform> {

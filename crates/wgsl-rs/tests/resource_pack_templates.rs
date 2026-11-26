@@ -58,8 +58,8 @@ fn entry_points_share_pack_values_while_unrelated_consts_stay_independent() {
     assert!(!source.contains("SharedPack<"), "{source}");
 
     let pack = shared::SharedPack::<3, false> {
-        texture: Texture2D::new(3, 0),
-        smp: Sampler::new(3, 1),
+        texture: Texture2D::new(),
+        smp: Sampler::new(),
     };
     pack.texture.init(1, 1);
     pack.texture.set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
@@ -124,12 +124,8 @@ fn separate_packs_have_independent_slots_even_with_matching_param_names() {
         "{source}"
     );
 
-    let a = independent::PackA::<1> {
-        a: Sampler::new(1, 0),
-    };
-    let b = independent::PackB::<2> {
-        b: Sampler::new(2, 0),
-    };
+    let a = independent::PackA::<1> { a: Sampler::new() };
+    let b = independent::PackB::<2> { b: Sampler::new() };
     assert_eq!(independent::vertex::<1>(&a), vec4f(1.0, 0.0, 0.0, 1.0));
     assert_eq!(independent::fragment::<2>(&b), vec4f(2.0, 0.0, 0.0, 1.0));
 
@@ -179,8 +175,8 @@ fn matching_concrete_uses_need_no_generic_slot() {
     wgsl_rs::validate_wgsl_source(&module.wgsl_source()).unwrap();
 
     let pack = fixed::FixedPack::<false> {
-        texture: Texture2D::new(0, 0),
-        smp: Sampler::new(0, 1),
+        texture: Texture2D::new(),
+        smp: Sampler::new(),
     };
     pack.texture.init(1, 1);
     pack.texture.set_pixel(0, 0, [0.0, 1.0, 0.0, 1.0]);

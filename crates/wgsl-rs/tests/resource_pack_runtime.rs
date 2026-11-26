@@ -74,37 +74,32 @@ fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
 }
 
 #[test]
-fn constructors_use_annotated_addresses_and_const_values() {
-    let textures = packs::TexturePack::<2, false> {
-        heights: Texture2D::new(2, 4),
-        heights_smp: Sampler::new(2, 5),
+fn packs_construct_by_hand_with_values() {
+    let _textures = packs::TexturePack::<2, false> {
+        heights: Texture2D::new(),
+        heights_smp: Sampler::new(),
     };
-    assert_eq!(textures.heights.group(), 2);
-    assert_eq!(textures.heights.binding(), 4);
-    assert_eq!(textures.heights_smp.group(), 2);
-    assert_eq!(textures.heights_smp.binding(), 5);
 
     let buffers = packs::BufferPack::<3> {
-        slab: Storage::new(3, 2),
-        config: Uniform::new(3, 3),
+        slab: Storage::new(RuntimeArray {
+            data: vec![vec4f(1.0, 2.0, 3.0, 4.0)],
+        }),
+        config: Uniform::new(vec4f(4.0, 3.0, 2.0, 1.0)),
     };
-    assert_eq!(buffers.slab.group(), 3);
-    assert_eq!(buffers.slab.binding(), 2);
-    assert_eq!(buffers.config.group, 3);
-    assert_eq!(buffers.config.binding, 3);
+    assert_eq!(array_length(&buffers.slab), 1);
+    assert_eq!(*buffers.config.get(), vec4f(4.0, 3.0, 2.0, 1.0));
 
     let read = packs::ReadPack {
-        values: Storage::new(1, 7),
+        values: Storage::new([9u32, 8, 7, 6]),
     };
-    assert_eq!(read.values.group(), 1);
-    assert_eq!(read.values.binding(), 7);
+    assert_eq!(*read.values.get(), [9u32, 8, 7, 6]);
 }
 
 #[test]
 fn constructed_texture_pack_works_with_cpu_builtins() {
     let textures = packs::TexturePack::<0, false> {
-        heights: Texture2D::new(0, 4),
-        heights_smp: Sampler::new(0, 5),
+        heights: Texture2D::new(),
+        heights_smp: Sampler::new(),
     };
     textures.heights.init(1, 1);
     textures.heights.set_pixel(0, 0, [0.25, 0.5, 0.75, 1.0]);
@@ -114,13 +109,11 @@ fn constructed_texture_pack_works_with_cpu_builtins() {
     assert_eq!(color, vec4f(0.25, 0.5, 0.75, 1.0));
 
     let buffers = packs::BufferPack::<0> {
-        slab: Storage::new(0, 2),
-        config: Uniform::new(0, 3),
+        slab: Storage::new(RuntimeArray {
+            data: vec![vec4f(1.0, 2.0, 3.0, 4.0)],
+        }),
+        config: Uniform::new(vec4f(4.0, 3.0, 2.0, 1.0)),
     };
-    buffers.slab.set(RuntimeArray {
-        data: vec![vec4f(1.0, 2.0, 3.0, 4.0)],
-    });
-    buffers.config.set(vec4f(4.0, 3.0, 2.0, 1.0));
     assert_eq!(buffers.slab.get().data.len(), 1);
     assert_eq!(array_length(&buffers.slab), 1);
     assert_eq!(*buffers.config.get(), vec4f(4.0, 3.0, 2.0, 1.0));

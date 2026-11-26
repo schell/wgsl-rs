@@ -18,7 +18,7 @@
 use crate::std::Wgsl;
 
 use super::{
-    Workgroup,
+    ModuleVar, Workgroup,
     atomic::{Atomic, atomic_load, atomic_load_i32},
 };
 
@@ -177,6 +177,34 @@ impl WorkgroupUniformLoad for Workgroup<Atomic<i32>> {
     }
 }
 
+/// Implementation for the statics bridge: `workgroup!` declarations expand
+/// to `ModuleVar` statics until the standalone declarations are removed.
+impl<T: Wgsl + Clone> WorkgroupUniformLoad for ModuleVar<T> {
+    type Output = T;
+
+    fn uniform_load(&self) -> T {
+        self.read().clone()
+    }
+}
+
+/// Statics-bridge implementation for `ModuleVar<Atomic<u32>>`.
+impl WorkgroupUniformLoad for ModuleVar<Atomic<u32>> {
+    type Output = u32;
+
+    fn uniform_load(&self) -> u32 {
+        atomic_load(&self.read())
+    }
+}
+
+/// Statics-bridge implementation for `ModuleVar<Atomic<i32>>`.
+impl WorkgroupUniformLoad for ModuleVar<Atomic<i32>> {
+    type Output = i32;
+
+    fn uniform_load(&self) -> i32 {
+        atomic_load_i32(&self.read())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,8 +228,7 @@ mod tests {
 
     #[test]
     fn test_workgroup_uniform_load_u32() {
-        let wg: Workgroup<u32> = Workgroup::new();
-        wg.set(42);
+        let wg: Workgroup<u32> = Workgroup::new(42);
         let value = workgroup_uniform_load(&wg);
         assert_eq!(value, 42u32);
     }
@@ -209,8 +236,7 @@ mod tests {
     #[test]
     #[allow(clippy::approx_constant)]
     fn test_workgroup_uniform_load_f32() {
-        let wg: Workgroup<f32> = Workgroup::new();
-        wg.set(3.14);
+        let wg: Workgroup<f32> = Workgroup::new(3.14);
         let value = workgroup_uniform_load(&wg);
         assert!((value - 3.14).abs() < f32::EPSILON);
     }
@@ -219,8 +245,7 @@ mod tests {
     fn test_workgroup_uniform_load_atomic_u32() {
         use crate::std::atomic::atomic_store;
 
-        let wg: Workgroup<Atomic<u32>> = Workgroup::new();
-        wg.set(Atomic::default());
+        let wg: Workgroup<Atomic<u32>> = Workgroup::new(Atomic::default());
         atomic_store(&wg.get(), 99);
         let value = workgroup_uniform_load(&wg);
         assert_eq!(value, 99u32);
@@ -230,8 +255,7 @@ mod tests {
     fn test_workgroup_uniform_load_atomic_i32() {
         use crate::std::atomic::atomic_store_i32;
 
-        let wg: Workgroup<Atomic<i32>> = Workgroup::new();
-        wg.set(Atomic::default());
+        let wg: Workgroup<Atomic<i32>> = Workgroup::new(Atomic::default());
         atomic_store_i32(&wg.get(), -42);
         let value = workgroup_uniform_load(&wg);
         assert_eq!(value, -42i32);

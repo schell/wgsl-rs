@@ -531,33 +531,25 @@ fn rewrite_generic_linkages(
         }
 
         let replacement: Option<proc_macro2::TokenStream> = match macro_name.as_str() {
-            "uniform" => generic_uniforms.get(&var_name).map(|(group, binding)| {
+            "uniform" => generic_uniforms.get(&var_name).map(|_| {
                 let name = quote::format_ident!("{}", var_name);
                 quote! {
-                    pub static #name: #crate_path::std::Uniform =
-                        #crate_path::std::Uniform::new(#group, #binding);
+                    pub static #name: #crate_path::std::ModuleVar =
+                        #crate_path::std::ModuleVar::new();
                 }
             }),
-            "storage" => generic_storages
-                .get(&var_name)
-                .map(|(group, binding, access)| {
-                    let name = quote::format_ident!("{}", var_name);
-                    let access_mode = match access {
-                        parse::StorageAccess::Read => quote!(#crate_path::std::Read),
-                        parse::StorageAccess::ReadWrite => quote!(#crate_path::std::ReadWrite),
-                    };
-                    quote! {
-                        pub static #name: #crate_path::std::Storage<
-                            #crate_path::std::WgslTypeVariable,
-                            #access_mode,
-                        > = #crate_path::std::Storage::new(#group, #binding);
-                    }
-                }),
+            "storage" => generic_storages.get(&var_name).map(|_| {
+                let name = quote::format_ident!("{}", var_name);
+                quote! {
+                    pub static #name: #crate_path::std::ModuleVar =
+                        #crate_path::std::ModuleVar::new();
+                }
+            }),
             "workgroup" => generic_workgroups.get(&var_name).map(|_| {
                 let name = quote::format_ident!("{}", var_name);
                 quote! {
-                    pub static #name: #crate_path::std::Workgroup =
-                        #crate_path::std::Workgroup::new();
+                    pub static #name: #crate_path::std::ModuleVar =
+                        #crate_path::std::ModuleVar::new();
                 }
             }),
             _ => None,

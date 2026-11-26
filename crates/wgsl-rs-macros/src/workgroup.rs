@@ -4,8 +4,9 @@
 //! between all invocations in a compute shader workgroup.
 //!
 //! In WGSL, workgroup variables are declared as `var<workgroup> NAME: TYPE;`.
-//! On the Rust side, they are backed by thread-safe shared state using
-//! `RwLock`.
+//! The Rust-side static is a lazily allocated `ModuleVar`: standalone
+//! declarations cannot take construction values, so they defer until the host
+//! calls `set`. Values-at-construction live in resource packs.
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse_macro_input;
@@ -15,14 +16,8 @@ use crate::parse::ItemWorkgroup;
 pub fn workgroup(input: TokenStream) -> TokenStream {
     let ItemWorkgroup { name, rust_ty, .. } = parse_macro_input!(input as ItemWorkgroup);
 
-    // On the Rust side, workgroup variables are simulated using thread-safe
-    // shared state. Since workgroup variables are shared across invocations
-    // in a workgroup, we use RwLock for synchronization.
-    //
-    // Note: The actual WGSL code generation happens in the `wgsl` macro,
-    // not here. This macro only generates the Rust-side binding.
     let expanded = quote! {
-        pub static #name: Workgroup<#rust_ty> = Workgroup::new();
+        pub static #name: ModuleVar<#rust_ty> = ModuleVar::new();
     };
 
     expanded.into()

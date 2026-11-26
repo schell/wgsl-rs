@@ -7,12 +7,7 @@ use crate::parse::{ItemSampler, Type};
 
 pub fn sampler(input: TokenStream) -> TokenStream {
     let ItemSampler {
-        group,
-        binding,
-        name,
-        ty,
-        rust_ty,
-        ..
+        name, ty, rust_ty, ..
     } = parse_macro_input!(input as ItemSampler);
 
     // Determine if this is a comparison sampler
@@ -38,7 +33,7 @@ pub fn sampler(input: TokenStream) -> TokenStream {
     // TODO(schell): expand the linkage generated
     let expanded = quote! {
         #[doc(hidden)]
-        static #inner_name: #sampler_type = #sampler_ctor::new(#group, #binding);
+        static #inner_name: #sampler_type = #sampler_ctor::new();
         pub const #name: &'static #sampler_type = &#inner_name;
     };
 

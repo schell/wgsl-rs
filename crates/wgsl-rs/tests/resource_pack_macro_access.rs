@@ -32,18 +32,16 @@ mod shader {
 #[test]
 fn macro_access_runs_on_cpu_with_a_constructed_pack() {
     let frame = shader::FramePack {
-        time: Uniform::new(0, 0),
+        time: Uniform::new(2.0),
     };
-    frame.time.set(2.0);
     assert_eq!(
         shader::scaled(vec4f(0.0, 0.0, 0.0, 1.0), &frame),
         vec4f(4.0, 0.0, 0.0, 1.0)
     );
 
     let bins = shader::BinPack {
-        bins: Storage::new(0, 1),
+        bins: Storage::new([0.0, 0.0, 0.0, 0.0]),
     };
-    bins.bins.set([0.0, 0.0, 0.0, 0.0]);
     shader::seed(&bins);
     assert_eq!(*bins.bins.get(), [0.0, 7.0, 3.0, 0.0]);
 }

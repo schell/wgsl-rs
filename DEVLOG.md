@@ -2519,3 +2519,30 @@ touches pack structs only for attribute stripping and marker insertion,
 restoring the strictly-additive charter (2025-12-08) for everything else.
 Hand construction also makes value-taking resource constructors natural:
 the host supplies values where it constructs.
+
+### 2026-11-26: Resource values are constructed, never deferred
+
+**Problem.** Pack `Uniform`/`Storage`/`Workgroup` fields wrapped the
+type-erased `ModuleVar` (`LazyLock<Arc<RwLock<TypeMap>>>`): reads panicked
+until the host called `set`, every access downcast, and CPU resource types
+carried address metadata that duplicated what annotations already state.
+
+**Decision (user, 2026-11-26).** The three wrappers hold `RwLock<T>` directly
+and take their value at construction (`Uniform::new(value)`,
+`Storage::new(value)`, `Workgroup::new(value)`); no `Default` bounds, no
+unset-read panics, and no address metadata on CPU resources (annotations are
+the single source of group/binding; `group()`/`binding()` accessors are
+deleted, as are their fields on texture and sampler types, whose
+constructors take no arguments).
+
+**Statics bridge.** Standalone declarations cannot take construction values
+(statics), which is exactly why `ModuleVar` exists. The declaration macros
+(`uniform!`, `storage!`, `workgroup!`) re-point their expansions to
+`ModuleVar` statics, whose accessors are renamed `get_typed`/`get_mut_typed`
+with `get`/`get_mut` aliases matching the access-macro surface; the
+`WorkgroupUniformLoad` CPU builtin gains `ModuleVar` impls so statics keep
+working through the same builtins. The bridge keeps the 359 unmigrated sites
+green until the removal pass deletes the declaration macros and the
+`ModuleVar` layer with them. Textures and samplers keep their lazy
+`ModuleVar` storage for now (their pixel data cannot be const-constructed in
+statics); their value-holding form is a decision for the removal pass.

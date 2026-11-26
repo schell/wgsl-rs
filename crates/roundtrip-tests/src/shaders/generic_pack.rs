@@ -43,20 +43,18 @@ fn cpu_run(element_count: u32, is_vec: bool) -> Vec<f32> {
 
     if is_vec {
         let pack = shader::DataPack::<Vec4f> {
-            data: Storage::new(0, 0),
+            data: Storage::new(RuntimeArray {
+                data: vec![vec4f(1.0, 2.0, 3.0, 4.0); element_count as usize],
+            }),
         };
-        pack.data.set(RuntimeArray {
-            data: vec![vec4f(1.0, 2.0, 3.0, 4.0); element_count as usize],
-        });
         let color = shader::fragment::<Vec4f>(vec4f(0.0, 0.0, 0.0, 1.0), &pack);
         vec![color.x, color.y, color.z, color.w]
     } else {
         let pack = shader::DataPack::<f32> {
-            data: Storage::new(0, 0),
+            data: Storage::new(RuntimeArray {
+                data: vec![7.0; element_count as usize],
+            }),
         };
-        pack.data.set(RuntimeArray {
-            data: vec![7.0; element_count as usize],
-        });
         let color = shader::fragment::<f32>(vec4f(0.0, 0.0, 0.0, 1.0), &pack);
         vec![color.x, color.y, color.z, color.w]
     }

@@ -122,15 +122,14 @@ fn cpu_run(filterable: bool, pixels: &[[u8; 4]]) -> Vec<f32> {
     use wgsl_rs::std::*;
 
     let storage = shader::SlabBindGroup::<1> {
-        slab: Storage::new(1, 0),
+        slab: Storage::new(RuntimeArray {
+            data: vec![
+                vec4f(1.0, 0.0, 0.0, 1.0),
+                vec4f(0.0, 1.0, 0.0, 1.0),
+                vec4f(0.0, 0.0, 1.0, 1.0),
+            ],
+        }),
     };
-    storage.slab.set(RuntimeArray {
-        data: vec![
-            vec4f(1.0, 0.0, 0.0, 1.0),
-            vec4f(0.0, 1.0, 0.0, 1.0),
-            vec4f(0.0, 0.0, 1.0, 1.0),
-        ],
-    });
     for index in 0..3 {
         let position = shader::vertex::<1>(index, &storage);
         assert!(position.x >= -1.0 && position.y >= -1.0);
@@ -180,14 +179,14 @@ fn cpu_run(filterable: bool, pixels: &[[u8; 4]]) -> Vec<f32> {
 
     if filterable {
         let texture = shader::TextureBindGroup::<0, true> {
-            heights: Texture2D::new(0, 0),
-            heights_smp: Sampler::new(0, 1),
+            heights: Texture2D::new(),
+            heights_smp: Sampler::new(),
         };
         run_texture(&texture, pixels)
     } else {
         let texture = shader::TextureBindGroup::<0, false> {
-            heights: Texture2D::new(0, 0),
-            heights_smp: Sampler::new(0, 1),
+            heights: Texture2D::new(),
+            heights_smp: Sampler::new(),
         };
         run_texture(&texture, pixels)
     }

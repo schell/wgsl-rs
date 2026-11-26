@@ -38,18 +38,15 @@ fn pack_addresses_and_filterability_reach_wgpu_layouts() {
     );
 
     let cpu = packs::TexturePack::<4, false, 7> {
-        texture: Texture2D::new(4, 7),
-        smp: Sampler::new(4, 8),
+        texture: Texture2D::new(),
+        smp: Sampler::new(),
     };
-    assert_eq!(cpu.texture.group(), 4);
-    assert_eq!(cpu.texture.binding(), 7);
-    assert_eq!(cpu.smp.group(), 4);
-    assert_eq!(cpu.smp.binding(), 8);
+    cpu.texture.init(1, 1);
+    cpu.smp.init();
     let buffers = packs::BufferPack {
-        input: Storage::new(2, 3),
+        input: Storage::new(RuntimeArray::new()),
     };
-    assert_eq!(buffers.input.group(), 2);
-    assert_eq!(buffers.input.binding(), 3);
+    assert_eq!(array_length(&buffers.input), 0);
 
     for filterable in [true, false] {
         let module = if filterable {

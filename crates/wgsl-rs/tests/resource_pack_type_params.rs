@@ -45,15 +45,14 @@ mod positions {
 #[test]
 fn generic_packs_run_on_cpu_with_constructed_packs() {
     let pack = positions::PositionPack::<1, Vec4f> {
-        data: Storage::new(1, 0),
+        data: Storage::new(RuntimeArray {
+            data: vec![
+                vec4f(1.0, 0.0, 0.0, 1.0),
+                vec4f(0.0, 1.0, 0.0, 1.0),
+                vec4f(0.0, 0.0, 1.0, 1.0),
+            ],
+        }),
     };
-    pack.data.set(RuntimeArray {
-        data: vec![
-            vec4f(1.0, 0.0, 0.0, 1.0),
-            vec4f(0.0, 1.0, 0.0, 1.0),
-            vec4f(0.0, 0.0, 1.0, 1.0),
-        ],
-    });
 
     let position = positions::vertex::<1>(0, &pack);
     assert_eq!(position, vec4f(-1.0, -1.0, 0.0, 1.0));
@@ -107,9 +106,8 @@ mod config {
 fn generic_uniform_fields_substitute_and_construct_on_cpu() {
     assert_eq!(config::WGSL_SOURCE.module_type_params, &["ConfigPack_T"]);
     let pack = config::ConfigPack::<Vec4f> {
-        value: Uniform::new(2, 0),
+        value: Uniform::new(vec4f(4.0, 3.0, 2.0, 1.0)),
     };
-    pack.value.set(vec4f(4.0, 3.0, 2.0, 1.0));
     assert_eq!(*pack.value.get(), vec4f(4.0, 3.0, 2.0, 1.0));
     assert_eq!(
         config::fragment(vec4f(0.0, 0.0, 0.0, 1.0), &pack),

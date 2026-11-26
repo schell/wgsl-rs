@@ -16,7 +16,7 @@ mod user_constructor {
     impl Pack {
         pub fn new() -> Self {
             Self {
-                smp: Sampler::new(0, 0),
+                smp: Sampler::new(),
             }
         }
     }

@@ -266,7 +266,7 @@ fn resource_field(pack: &syn::Ident, field: &crate::resource::ResourceField) -> 
 
     let group = resource_address(pack, &field.group)?;
     let binding = resource_address(pack, &field.binding)?;
-    let name = field.ident.to_string();
+    let name = crate::resource::mangle_resource_name(pack, &field.ident);
     let ty = ty_from_parse(&field.ty)?;
     Ok(match field.kind {
         ResourceKind::Uniform => ir::Item::Uniform(ir::ItemUniform {

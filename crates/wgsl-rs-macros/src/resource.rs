@@ -161,6 +161,15 @@ pub(crate) fn pack_slot_name(pack: &Ident, param: &Ident) -> String {
     format!("{pack}_{param}")
 }
 
+/// The generated WGSL global name for one pack field: the lowercased pack
+/// name joined to the field name with a double underscore. The loud
+/// separator marks the pack/field boundary for human readers; the encoding
+/// is not injective in pathological corners, so resource-name validation
+/// rejects collisions.
+pub(crate) fn mangle_resource_name(pack: &Ident, field: &Ident) -> String {
+    format!("{}__{}", pack.to_string().to_lowercase(), field)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PackConstKind {
     Shared,
@@ -323,6 +332,16 @@ pub(crate) fn parse_resource_pack(item: &syn::ItemStruct) -> parse::Result<ItemR
             "resource-pack structs must be public",
         ));
     }
+    if item.ident.to_string().to_lowercase().starts_with("__") {
+        return Err(parse::Error::unsupported(
+            item.ident.span(),
+            format!(
+                "resource-pack name `{}` mangles to a WGSL identifier starting with `__`, which \
+                 the WGSL spec reserves; rename the pack",
+                item.ident
+            ),
+        ));
+    }
     let syn::Fields::Named(fields) = &item.fields else {
         return Err(parse::Error::unsupported(
             item.fields.span(),
@@ -427,6 +446,13 @@ fn parse_field(
     ctx: &ParseContext,
     const_params: &std::collections::HashMap<String, syn::Type>,
 ) -> parse::Result<ResourceField> {
+    if matches!(field.vis, syn::Visibility::Inherited) {
+        return Err(parse::Error::unsupported(
+            field.span(),
+            "resource-pack fields must be `pub` or `pub(crate)` so hosts can construct packs by \
+             hand",
+        ));
+    }
     let resource_attrs: Vec<&syn::Attribute> = field
         .attrs
         .iter()
@@ -697,7 +723,11 @@ pub(crate) fn validate_resources(module: &parse::ItemMod) -> parse::Result<()> {
                         AddressValue::Literal(lit) => literal(lit),
                         AddressValue::Param(_) => None,
                     };
-                    record(&field.ident, group, binding, &mut names, &mut addresses)?;
+                    let name = Ident::new(
+                        &mangle_resource_name(&pack.ident, &field.ident),
+                        field.ident.span(),
+                    );
+                    record(&name, group, binding, &mut names, &mut addresses)?;
                 }
             }
             _ => {}
@@ -1278,6 +1308,97 @@ impl BodyLowerer<'_> {
 
 impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
     fn visit_expr(&mut self, expr: &mut parse::Expr) -> parse::Result<()> {
+        // `get!`/`get_mut!`/`load!` on a pack field borrow resolve to the
+        // mangled global resource, with the access checked against the
+        // field's kind and storage access.
+        if let parse::Expr::LinkageAccess {
+            kind,
+            pack_field: Some((pack_param, field)),
+            type_arg,
+            ..
+        } = expr
+        {
+            let Some(param) = self.parameters.get(&pack_param.to_string()) else {
+                return Err(parse::Error::unsupported(
+                    pack_param.span(),
+                    format!(
+                        "`{pack_param}` is not a resource-pack parameter of `{}`; \
+                         get!/get_mut!/load! targets must be a pack parameter's field",
+                        self.function
+                    ),
+                ));
+            };
+            let Some(resource) = param.pack.fields.iter().find(|item| item.ident == *field) else {
+                return Err(parse::Error::unsupported(
+                    field.span(),
+                    format!(
+                        "resource pack `{}` has no field `{field}`",
+                        param.pack.ident
+                    ),
+                ));
+            };
+            match resource.kind {
+                ResourceKind::Texture | ResourceKind::Sampler => {
+                    return Err(parse::Error::unsupported(
+                        field.span(),
+                        "textures and samplers are handles in WGSL, not loadable values; pass \
+                         them to the texture builtins as `&pack.field`",
+                    ));
+                }
+                ResourceKind::Uniform => {
+                    if matches!(kind, parse::LinkageKind::GetMut) {
+                        return Err(parse::Error::unsupported(
+                            field.span(),
+                            "uniform values are read-only from a shader; get_mut! requires a \
+                             read_write storage or workgroup field",
+                        ));
+                    }
+                }
+                ResourceKind::Storage => {
+                    if matches!(kind, parse::LinkageKind::GetMut)
+                        && matches!(resource.access, parse::StorageAccess::Read)
+                    {
+                        return Err(parse::Error::unsupported(
+                            field.span(),
+                            "get_mut! requires a read_write storage field; this field is read_only",
+                        ));
+                    }
+                }
+            }
+            if type_arg.is_some() {
+                return Err(parse::Error::unsupported(
+                    field.span(),
+                    "resource-pack fields hold concrete types at their declaration; the `, T` \
+                     form of get!/get_mut!/load! exists only for generic module statics",
+                ));
+            }
+            if matches!(kind, parse::LinkageKind::Load) {
+                match &resource.ty {
+                    parse::Type::Atomic { .. } => {
+                        return Err(parse::Error::unsupported(
+                            field.span(),
+                            "load! on an atomic field — atomics must be read with atomicLoad; \
+                             write atomic_load(&get!(...))",
+                        ));
+                    }
+                    parse::Type::RuntimeArray { .. } => {
+                        return Err(parse::Error::unsupported(
+                            field.span(),
+                            "load! on a runtime-sized array field — runtime-sized arrays are not \
+                             copyable WGSL values; index into get!(...) or copy elements with \
+                             slab_copy!",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            *expr = parse::Expr::Ident(Ident::new(
+                &mangle_resource_name(&param.pack.ident, &resource.ident),
+                resource.ident.span(),
+            ));
+            return Ok(());
+        }
+
         if let parse::Expr::FnCall { path, params, .. } = expr {
             // WGSL arrayLength is the one supported builtin here that needs
             // a pointer to the global storage value rather than its value.
@@ -1299,7 +1420,10 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
                     else {
                         continue;
                     };
-                    **inner = parse::Expr::Ident(resource.ident.clone());
+                    **inner = parse::Expr::Ident(Ident::new(
+                        &mangle_resource_name(&param.pack.ident, &resource.ident),
+                        resource.ident.span(),
+                    ));
                 }
             }
             self.lower_call(path, params)?;
@@ -1321,7 +1445,10 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
                     ),
                 ));
             };
-            *expr = parse::Expr::Ident(resource.ident.clone());
+            *expr = parse::Expr::Ident(Ident::new(
+                &mangle_resource_name(&param.pack.ident, &resource.ident),
+                resource.ident.span(),
+            ));
             return Ok(());
         }
 

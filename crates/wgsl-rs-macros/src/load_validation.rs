@@ -154,9 +154,10 @@ impl ParseVisitorMut for LoadVisitor<'_> {
             kind: LinkageKind::Load,
             ident,
             type_arg,
+            ..
         } = e
         {
-            self.check(ident, type_arg.as_ref())?;
+            self.check(ident, type_arg.as_deref())?;
         }
         walk_expr(self, e)
     }

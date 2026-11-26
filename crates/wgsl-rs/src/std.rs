@@ -613,6 +613,9 @@ macro_rules! get {
     ($var:ident) => {
         $var.get()
     };
+    (&$pack:ident . $field:ident) => {
+        (&$pack.$field).get()
+    };
     ($var:ident, $ty:ty) => {
         $var.get_typed::<$ty>()
     };
@@ -642,6 +645,9 @@ macro_rules! get {
 macro_rules! get_mut {
     ($var:ident) => {
         $var.get_mut()
+    };
+    (&$pack:ident . $field:ident) => {
+        (&$pack.$field).get_mut()
     };
     ($var:ident, $ty:ty) => {
         $var.get_mut_typed::<$ty>()
@@ -676,6 +682,10 @@ macro_rules! load {
         // The `let` binding forces the copy into an owned value; `*$var.get()`
         // alone would be a place expression that still borrows the guard.
         let v = *$var.get();
+        v
+    }};
+    (&$pack:ident . $field:ident) => {{
+        let v = *(&$pack.$field).get();
         v
     }};
     ($var:ident, $ty:ty) => {{

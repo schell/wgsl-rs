@@ -51,9 +51,15 @@ fn pack_addresses_and_filterability_reach_wgpu_layouts() {
             packs::instantiate::<4, 7, false>()
         };
         let source = module.wgsl_source();
-        assert!(source.contains("@group(4) @binding(7) var texture: texture_2d<f32>;"));
-        assert!(source.contains("@group(4) @binding(8) var smp: sampler;"));
-        assert!(source.contains("@group(2) @binding(3) var<storage, read> input: array<vec4f>;"));
+        assert!(
+            source.contains("@group(4) @binding(7) var texturepack__texture: texture_2d<f32>;")
+        );
+        assert!(source.contains("@group(4) @binding(8) var texturepack__smp: sampler;"));
+        assert!(
+            source.contains(
+                "@group(2) @binding(3) var<storage, read> bufferpack__input: array<vec4f>;"
+            )
+        );
         assert!(!source.contains("struct TexturePack"));
 
         let linkage = wg::analyze_ir_module(module);

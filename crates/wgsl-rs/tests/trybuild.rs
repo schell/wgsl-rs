@@ -293,9 +293,15 @@ fn resource_pack_duplicate_address_is_rejected() {
 }
 
 #[test]
-fn resource_pack_duplicate_name_is_rejected() {
+fn resource_pack_field_name_reuse_compiles() {
     let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/fail/resource_pack_duplicate_name.rs");
+    t.pass("tests/ui/pass/resource_pack_field_name_reuse.rs");
+}
+
+#[test]
+fn resource_pack_get_mut_on_uniform_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_get_mut_uniform.rs");
 }
 
 #[test]

@@ -139,14 +139,19 @@ fn packs_are_not_emitted_as_wgsl_structs() {
     );
     let module = packs::instantiate::<2, false, 3>();
     let source = module.wgsl_source();
-    assert!(source.contains("@group(2) @binding(4) var heights: texture_2d<f32>;"));
-    assert!(source.contains("@group(2) @binding(5) var heights_smp: sampler;"));
+    assert!(source.contains("@group(2) @binding(4) var texturepack__heights: texture_2d<f32>;"));
+    assert!(source.contains("@group(2) @binding(5) var texturepack__heights_smp: sampler;"));
     assert!(
-        source.contains("@group(3) @binding(2) var<storage, read_write> slab: array<vec4f>;"),
+        source.contains(
+            "@group(3) @binding(2) var<storage, read_write> bufferpack__slab: array<vec4f>;"
+        ),
         "{source}"
     );
-    assert!(source.contains("@group(3) @binding(3) var<uniform> config: vec4f;"));
-    assert!(source.contains("@group(1) @binding(7) var<storage, read> values: array<u32, 4>;"));
+    assert!(source.contains("@group(3) @binding(3) var<uniform> bufferpack__config: vec4f;"));
+    assert!(
+        source
+            .contains("@group(1) @binding(7) var<storage, read> readpack__values: array<u32, 4>;")
+    );
     assert!(!source.contains("struct TexturePack"));
     assert!(!source.contains("struct BufferPack"));
     assert!(!source.contains("struct ReadPack"));

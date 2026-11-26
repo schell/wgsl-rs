@@ -73,11 +73,15 @@ fn pack_type_slots_substitute_into_wgsl() {
     let source = module.wgsl_source();
     wgsl_rs::validate_wgsl_source(&source).unwrap();
     assert!(
-        source.contains("@group(1) @binding(0) var<storage, read> data: array<vec4f>;"),
+        source
+            .contains("@group(1) @binding(0) var<storage, read> positionpack__data: array<vec4f>;"),
         "{source}"
     );
     assert!(source.contains("fn count() -> u32"), "{source}");
-    assert!(source.contains("return arrayLength(&data);"), "{source}");
+    assert!(
+        source.contains("return arrayLength(&positionpack__data);"),
+        "{source}"
+    );
     assert!(!source.contains("PositionPack"), "{source}");
     assert!(!source.contains("Vec4f"), "{source}");
 }
@@ -112,7 +116,7 @@ fn generic_uniform_fields_substitute_and_construct_on_cpu() {
     let source = module.wgsl_source();
     wgsl_rs::validate_wgsl_source(&source).unwrap();
     assert!(
-        source.contains("@group(2) @binding(0) var<uniform> value: vec4f;"),
+        source.contains("@group(2) @binding(0) var<uniform> configpack__value: vec4f;"),
         "{source}"
     );
 }

@@ -70,9 +70,9 @@ fn gpu_run(device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8], is_vec: boo
     let source = module.wgsl_source();
     assert!(
         if is_vec {
-            source.contains("var<storage, read> data: array<vec4f>;")
+            source.contains("var<storage, read> datapack__data: array<vec4f>;")
         } else {
-            source.contains("var<storage, read> data: array<f32>;")
+            source.contains("var<storage, read> datapack__data: array<f32>;")
         },
         "{source}"
     );
@@ -87,7 +87,7 @@ fn gpu_run(device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8], is_vec: boo
     });
     queue.write_buffer(&buffer, 0, bytes);
     let bind_group = linkage
-        .create_bind_group_named(0, device, &[("data", buffer.as_entire_binding())])
+        .create_bind_group_named(0, device, &[("datapack__data", buffer.as_entire_binding())])
         .unwrap();
 
     let shader_module = linkage.shader_module(device);

@@ -69,7 +69,9 @@ pub mod render {
 ```
 
 The macro does not emit `SlabBindGroup` or `TextureBindGroup` as WGSL structs.
-Each field becomes one global resource named after the field. Pack parameters
+Each field becomes one global resource named `packlower__field` (the lowercased
+pack name, a double underscore, and the field name), so packs never collide on
+field names and the generated WGSL is attributable at a glance. Pack parameters
 are removed from WGSL function signatures, and their corresponding call
 arguments are removed. A direct borrow such as `&texture_bg.heights` resolves
 to the global `heights` resource. Storage access is explicit in the annotation;

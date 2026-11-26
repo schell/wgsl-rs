@@ -209,18 +209,21 @@ fn gpu_run(
     );
     let source = module.wgsl_source();
     assert!(
-        source.contains("@group(1) @binding(0) var<storage, read> slab"),
+        source.contains("@group(1) @binding(0) var<storage, read> slabbindgroup__slab"),
         "{source}"
     );
     assert!(
-        source.contains("@group(0) @binding(0) var heights"),
+        source.contains("@group(0) @binding(0) var texturebindgroup__heights"),
         "{source}"
     );
     assert!(
-        source.contains("@group(0) @binding(1) var heights_smp: sampler"),
+        source.contains("@group(0) @binding(1) var texturebindgroup__heights_smp: sampler"),
         "{source}"
     );
-    assert!(source.contains("arrayLength(&slab)"), "{source}");
+    assert!(
+        source.contains("arrayLength(&slabbindgroup__slab)"),
+        "{source}"
+    );
     assert!(!source.contains("SlabBindGroup"), "{source}");
     assert!(!source.contains("TextureBindGroup"), "{source}");
 
@@ -301,13 +304,23 @@ fn gpu_run(
             0,
             device,
             &[
-                ("heights", wgpu::BindingResource::TextureView(&source_view)),
-                ("heights_smp", wgpu::BindingResource::Sampler(&sampler)),
+                (
+                    "texturebindgroup__heights",
+                    wgpu::BindingResource::TextureView(&source_view),
+                ),
+                (
+                    "texturebindgroup__heights_smp",
+                    wgpu::BindingResource::Sampler(&sampler),
+                ),
             ],
         )
         .unwrap();
     let storage_group = linkage
-        .create_bind_group_named(1, device, &[("slab", storage_buffer.as_entire_binding())])
+        .create_bind_group_named(
+            1,
+            device,
+            &[("slabbindgroup__slab", storage_buffer.as_entire_binding())],
+        )
         .unwrap();
     let target =
         harness::create_rgba32float_render_target(device, WIDTH, HEIGHT, "resource_pack_target");

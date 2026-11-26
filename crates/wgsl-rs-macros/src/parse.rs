@@ -2655,16 +2655,24 @@ pub enum Expr {
     LinkageAccess {
         /// Whether this is `get!`, `get_mut!`, or `load!`.
         kind: LinkageKind,
-        /// The variable name (e.g., `FRAME`, `BINS`).
+        /// The variable name (e.g., `FRAME`, `BINS`), or the field name
+        /// when the target is a pack field borrow.
         ident: syn::Ident,
+        /// The `&pack.field` target: the pack parameter ident and the
+        /// field ident. `None` for bare-identifier targets (module
+        /// statics). Lowering resolves the pack and field against the
+        /// module's pack registry.
+        pack_field: Option<(syn::Ident, syn::Ident)>,
         /// The type argument for generic access (e.g., `Vec4<T>`, `f32`).
-        /// Stored as a `syn::Type` rather than a `parse::Type` because the
-        /// type argument is a Rust-side type expression used for code
+        /// Stored as a boxed `syn::Type` rather than a `parse::Type` because
+        /// the type argument is a Rust-side type expression used for code
         /// generation (the `instantiate` function's `where` clause), not a
         /// WGSL type. This allows arbitrary Rust type expressions like
-        /// `Vec4<T>` where `T` is a type parameter.
+        /// `Vec4<T>` where `T` is a type parameter. Boxed to keep the
+        /// variant from dwarfing the rest of the enum (clippy's
+        /// `large_enum_variant`).
         /// `None` for the one-argument form.
-        type_arg: Option<syn::Type>,
+        type_arg: Option<Box<syn::Type>>,
     },
 }
 
@@ -3351,31 +3359,51 @@ impl Expr {
                     if noop_macros.contains(&macro_ident_str.as_str()) {
                         struct GetArgs {
                             ident: Ident,
-                            type_arg: Option<syn::Type>,
+                            pack_field: Option<(Ident, Ident)>,
+                            type_arg: Option<Box<syn::Type>>,
                         }
                         impl syn::parse::Parse for GetArgs {
                             fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-                                let ident: Ident = input.parse()?;
+                                // Targets are either a bare identifier (a
+                                // module static) or `&pack.field` (a
+                                // resource-pack parameter's field).
+                                let (ident, pack_field) = if input.peek(syn::Token![&]) {
+                                    let _: syn::Token![&] = input.parse()?;
+                                    let pack: Ident = input.parse()?;
+                                    let _: syn::Token![.] = input.parse()?;
+                                    let field: Ident = input.parse()?;
+                                    (field.clone(), Some((pack, field)))
+                                } else {
+                                    let ident: Ident = input.parse()?;
+                                    (ident, None)
+                                };
                                 let type_arg = if input.peek(syn::Token![,]) {
                                     let _: syn::Token![,] = input.parse()?;
-                                    Some(input.parse()?)
+                                    Some(Box::new(input.parse()?))
                                 } else {
                                     None
                                 };
-                                Ok(GetArgs { ident, type_arg })
+                                Ok(GetArgs {
+                                    ident,
+                                    pack_field,
+                                    type_arg,
+                                })
                             }
                         }
-                        let GetArgs { ident, type_arg } =
-                            syn::parse2(mac.tokens.clone()).map_err(|e| {
-                                UnsupportedSnafu {
-                                    span: mac.path.span(),
-                                    note: format!(
-                                        "{macro_ident_str}! expects an identifier (optionally \
-                                         followed by `, T`), got: {e}"
-                                    ),
-                                }
-                                .build()
-                            })?;
+                        let GetArgs {
+                            ident,
+                            pack_field,
+                            type_arg,
+                        } = syn::parse2(mac.tokens.clone()).map_err(|e| {
+                            UnsupportedSnafu {
+                                span: mac.path.span(),
+                                note: format!(
+                                    "{macro_ident_str}! expects a variable identifier or \
+                                     `&pack.field` (optionally followed by `, T`), got: {e}"
+                                ),
+                            }
+                            .build()
+                        })?;
                         let kind = match macro_ident_str.as_str() {
                             "get_mut" => LinkageKind::GetMut,
                             "load" => LinkageKind::Load,
@@ -3394,6 +3422,7 @@ impl Expr {
                         Self::LinkageAccess {
                             kind,
                             ident,
+                            pack_field,
                             type_arg,
                         }
                     } else {

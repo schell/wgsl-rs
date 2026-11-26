@@ -113,11 +113,11 @@ fn separate_packs_have_independent_slots_even_with_matching_param_names() {
     let source = independent::instantiate::<1, 2>().wgsl_source();
     wgsl_rs::validate_wgsl_source(&source).unwrap();
     assert!(
-        source.contains("@group(1) @binding(0) var a: sampler;"),
+        source.contains("@group(1) @binding(0) var packa__a: sampler;"),
         "{source}"
     );
     assert!(
-        source.contains("@group(2) @binding(0) var b: sampler;"),
+        source.contains("@group(2) @binding(0) var packb__b: sampler;"),
         "{source}"
     );
 

@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       uniform values are read-only from a shader; get_mut! requires a read_write storage or workgroup field.'
+  --> tests/ui/fail/resource_pack_get_mut_uniform.rs:14:26
+   |
+14 |         *get_mut!(&frame.time) = 1.0;
+   |                          ^^^^

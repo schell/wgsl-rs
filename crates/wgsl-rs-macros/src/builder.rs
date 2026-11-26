@@ -879,7 +879,7 @@ fn walk_expr_for_constraints_recursive(
         } => {
             constraints.push(LinkageConstraint {
                 linkage_name: ident.to_string(),
-                type_expr: ty.clone(),
+                type_expr: ty.as_ref().clone(),
                 fn_name: fn_name.to_string(),
                 is_entry_point,
                 fn_type_params: fn_type_params.to_vec(),

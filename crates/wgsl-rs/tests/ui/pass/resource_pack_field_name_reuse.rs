@@ -1,7 +1,10 @@
+//! Two packs may reuse a field name: mangling namespaces each pack's
+//! globals (`firstpack__resource`, `secondpack__resource`).
+
 use wgsl_rs::wgsl;
 
 #[wgsl(skip_validation)]
-mod duplicate_name {
+mod field_name_reuse {
     use wgsl_rs::std::*;
 
     pub struct FirstPack {

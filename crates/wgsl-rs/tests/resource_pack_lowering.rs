@@ -56,10 +56,17 @@ fn pack_parameters_and_calls_disappear_from_wgsl() {
         let source = module.wgsl_source();
         wgsl_rs::validate_wgsl_source(&source).unwrap();
 
-        assert!(source.contains("@group(0) @binding(0) var heights: texture_2d<f32>;"));
-        assert!(source.contains("@group(0) @binding(1) var heights_smp: sampler;"));
+        assert!(
+            source
+                .contains("@group(0) @binding(0) var texturebindgroup__heights: texture_2d<f32>;")
+        );
+        assert!(
+            source.contains("@group(0) @binding(1) var texturebindgroup__heights_smp: sampler;")
+        );
         assert!(source.contains("fn shade(coords: vec2f) -> vec4f"));
-        assert!(source.contains("textureSample(heights, heights_smp, coords)"));
+        assert!(source.contains(
+            "textureSample(texturebindgroup__heights, texturebindgroup__heights_smp, coords)"
+        ));
         assert!(source.contains("return shade(clip_pos.xy);"), "{source}");
         assert!(!source.contains("TextureBindGroup"));
         assert!(!source.contains("texture_bg"));

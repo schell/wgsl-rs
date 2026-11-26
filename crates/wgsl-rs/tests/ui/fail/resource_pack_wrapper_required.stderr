@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       `#[uniform]` field types must use the `Uniform<T>` wrapper type; the WGSL type is extracted from its type argument, got `f32`.'
+ --> tests/ui/fail/resource_pack_wrapper_required.rs:9:19
+  |
+9 |         pub time: f32,
+  |                   ^^^

@@ -6880,7 +6880,7 @@ impl TryFrom<&syn::ItemMacro> for ItemUniform {
 }
 
 /// Access mode for storage buffers.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum StorageAccess {
     /// `var<storage, read>` - read-only (default when access mode is omitted)
     #[default]

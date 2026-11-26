@@ -15,7 +15,7 @@ pub mod resource_pack_render {
 
     pub struct SlabBindGroup<const GROUP: u32> {
         #[storage(group(GROUP), binding(0), read_only)]
-        pub slab: RuntimeArray<Vec4f>,
+        pub slab: Storage<RuntimeArray<Vec4f>, Read>,
     }
 
     pub struct TextureBindGroup<const GROUP: u32, const FILTERABLE: bool> {
@@ -121,7 +121,9 @@ fn cpu_run(filterable: bool, pixels: &[[u8; 4]]) -> Vec<f32> {
     use resource_pack_render as shader;
     use wgsl_rs::std::*;
 
-    let storage = shader::SlabBindGroup::<1>::new();
+    let storage = shader::SlabBindGroup::<1> {
+        slab: Storage::new(1, 0),
+    };
     storage.slab.set(RuntimeArray {
         data: vec![
             vec4f(1.0, 0.0, 0.0, 1.0),
@@ -177,10 +179,16 @@ fn cpu_run(filterable: bool, pixels: &[[u8; 4]]) -> Vec<f32> {
     }
 
     if filterable {
-        let texture = shader::TextureBindGroup::<0, true>::new();
+        let texture = shader::TextureBindGroup::<0, true> {
+            heights: Texture2D::new(0, 0),
+            heights_smp: Sampler::new(0, 1),
+        };
         run_texture(&texture, pixels)
     } else {
-        let texture = shader::TextureBindGroup::<0, false>::new();
+        let texture = shader::TextureBindGroup::<0, false> {
+            heights: Texture2D::new(0, 0),
+            heights_smp: Sampler::new(0, 1),
+        };
         run_texture(&texture, pixels)
     }
 }

@@ -1,6 +1,0 @@
-error: Parsing error: 'Encountered unsupported Rust syntax:
-       resource pack `Pack` already defines an inherent `new` function; the generated constructor would collide. Rename the existing function.'
-  --> tests/ui/fail/resource_pack_existing_new.rs:14:16
-   |
-14 |         pub fn new() -> f32 {
-   |                ^^^

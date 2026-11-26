@@ -1,7 +1,7 @@
 //! Parameterized resource-pack addresses in WGSL and wgpu layouts.
 #![cfg(feature = "v30")]
 
-use wgsl_rs::wgsl;
+use wgsl_rs::{std::*, wgsl};
 use wgsl_rs_linkage_wgpu::v30 as wg;
 
 #[wgsl(validate_with_instantiation_types(TEST_GROUP, TEST_BINDING, TEST_FILTERABLE))]
@@ -22,7 +22,7 @@ mod packs {
 
     pub struct BufferPack {
         #[storage(group(2), binding(3), read_only)]
-        pub input: RuntimeArray<Vec4f>,
+        pub input: Storage<RuntimeArray<Vec4f>, Read>,
     }
 }
 
@@ -37,12 +37,19 @@ fn pack_addresses_and_filterability_reach_wgpu_layouts() {
         ]
     );
 
-    let cpu = packs::TexturePack::<4, false, 7>::new();
+    let cpu = packs::TexturePack::<4, false, 7> {
+        texture: Texture2D::new(4, 7),
+        smp: Sampler::new(4, 8),
+    };
     assert_eq!(cpu.texture.group(), 4);
     assert_eq!(cpu.texture.binding(), 7);
     assert_eq!(cpu.smp.group(), 4);
     assert_eq!(cpu.smp.binding(), 8);
-    let _buffers = packs::BufferPack::new();
+    let buffers = packs::BufferPack {
+        input: Storage::new(2, 3),
+    };
+    assert_eq!(buffers.input.group(), 2);
+    assert_eq!(buffers.input.binding(), 3);
 
     for filterable in [true, false] {
         let module = if filterable {

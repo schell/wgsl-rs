@@ -16,15 +16,15 @@ mod packs {
 
     pub struct BufferPack<const BUFFER_GROUP: usize> {
         #[storage(group(BUFFER_GROUP), binding(2), read_write)]
-        pub slab: RuntimeArray<Vec4f>,
+        pub slab: Storage<RuntimeArray<Vec4f>>,
 
         #[uniform(group(BUFFER_GROUP), binding(3))]
-        pub config: Vec4f,
+        pub config: Uniform<Vec4f>,
     }
 
     pub struct ReadPack {
         #[storage(group(1), binding(7))]
-        pub values: [u32; 4],
+        pub values: Storage<[u32; 4], Read>,
     }
 }
 
@@ -49,11 +49,8 @@ mod invalid_after_instantiation {
 
 #[test]
 fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
-    let duplicate = std::panic::catch_unwind(|| {
-        invalid_after_instantiation::DuplicateAddress::<1>::new();
-        invalid_after_instantiation::instantiate::<1, 0>()
-    })
-    .expect_err("two resources must not share an instantiated address");
+    let duplicate = std::panic::catch_unwind(invalid_after_instantiation::instantiate::<1, 0>)
+        .expect_err("two resources must not share an instantiated address");
     let message = duplicate
         .downcast_ref::<String>()
         .map(String::as_str)
@@ -61,21 +58,9 @@ fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
         .unwrap_or("unknown panic");
     assert!(message.contains("duplicate resource address"), "{message}");
 
-    let constructor = std::panic::catch_unwind(|| {
-        invalid_after_instantiation::OutOfRange::<{ u32::MAX as usize + 1 }>::new()
-    })
-    .err()
-    .expect("CPU constructors must reject out-of-range usize addresses");
-    let message = constructor
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| constructor.downcast_ref::<&str>().copied())
-        .unwrap_or("unknown panic");
-    assert!(message.contains("must fit in a u32"), "{message}");
-
-    let invalid = std::panic::catch_unwind(|| {
-        invalid_after_instantiation::instantiate::<0, { u32::MAX as usize + 1 }>()
-    })
+    let invalid = std::panic::catch_unwind(
+        invalid_after_instantiation::instantiate::<0, { u32::MAX as usize + 1 }>,
+    )
     .expect_err("usize addresses must fit in WGSL's u32 address representation");
     let message = invalid
         .downcast_ref::<String>()
@@ -90,26 +75,37 @@ fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
 
 #[test]
 fn constructors_use_annotated_addresses_and_const_values() {
-    let textures = packs::TexturePack::<2, false>::new();
+    let textures = packs::TexturePack::<2, false> {
+        heights: Texture2D::new(2, 4),
+        heights_smp: Sampler::new(2, 5),
+    };
     assert_eq!(textures.heights.group(), 2);
     assert_eq!(textures.heights.binding(), 4);
     assert_eq!(textures.heights_smp.group(), 2);
     assert_eq!(textures.heights_smp.binding(), 5);
 
-    let buffers = packs::BufferPack::<3>::new();
+    let buffers = packs::BufferPack::<3> {
+        slab: Storage::new(3, 2),
+        config: Uniform::new(3, 3),
+    };
     assert_eq!(buffers.slab.group(), 3);
     assert_eq!(buffers.slab.binding(), 2);
     assert_eq!(buffers.config.group, 3);
     assert_eq!(buffers.config.binding, 3);
 
-    let read = packs::ReadPack::new();
+    let read = packs::ReadPack {
+        values: Storage::new(1, 7),
+    };
     assert_eq!(read.values.group(), 1);
     assert_eq!(read.values.binding(), 7);
 }
 
 #[test]
 fn constructed_texture_pack_works_with_cpu_builtins() {
-    let textures = packs::TexturePack::<0, false>::new();
+    let textures = packs::TexturePack::<0, false> {
+        heights: Texture2D::new(0, 4),
+        heights_smp: Sampler::new(0, 5),
+    };
     textures.heights.init(1, 1);
     textures.heights.set_pixel(0, 0, [0.25, 0.5, 0.75, 1.0]);
     textures.heights_smp.init();
@@ -117,7 +113,10 @@ fn constructed_texture_pack_works_with_cpu_builtins() {
     let color = texture_sample(&textures.heights, &textures.heights_smp, vec2f(0.0, 0.0));
     assert_eq!(color, vec4f(0.25, 0.5, 0.75, 1.0));
 
-    let buffers = packs::BufferPack::<0>::new();
+    let buffers = packs::BufferPack::<0> {
+        slab: Storage::new(0, 2),
+        config: Uniform::new(0, 3),
+    };
     buffers.slab.set(RuntimeArray {
         data: vec![vec4f(1.0, 2.0, 3.0, 4.0)],
     });

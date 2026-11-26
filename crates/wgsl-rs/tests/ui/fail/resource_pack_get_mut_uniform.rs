@@ -6,7 +6,7 @@ mod uniform_write {
 
     pub struct FramePack {
         #[uniform(group(0), binding(0))]
-        pub time: f32,
+        pub time: Uniform<f32>,
     }
 
     #[fragment]

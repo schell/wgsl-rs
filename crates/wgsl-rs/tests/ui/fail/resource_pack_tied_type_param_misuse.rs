@@ -6,7 +6,7 @@ mod tied_misuse {
 
     pub struct DataPack<T> {
         #[storage(group(0), binding(0))]
-        pub data: RuntimeArray<T>,
+        pub data: Storage<RuntimeArray<T>, Read>,
     }
 
     pub fn helper<T>(values: T, pack: &DataPack<T>) {}

@@ -299,6 +299,24 @@ fn resource_pack_field_name_reuse_compiles() {
 }
 
 #[test]
+fn resource_pack_user_constructor_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/resource_pack_user_constructor.rs");
+}
+
+#[test]
+fn resource_pack_wrapper_required_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_wrapper_required.rs");
+}
+
+#[test]
+fn resource_pack_access_mismatch_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_access_mismatch.rs");
+}
+
+#[test]
 fn resource_pack_get_mut_on_uniform_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_get_mut_uniform.rs");
@@ -350,12 +368,6 @@ fn resource_pack_conflicting_consts_are_rejected() {
 fn resource_pack_reused_const_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_reused_const.rs");
-}
-
-#[test]
-fn resource_pack_existing_new_is_rejected() {
-    let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/fail/resource_pack_existing_new.rs");
 }
 
 #[test]

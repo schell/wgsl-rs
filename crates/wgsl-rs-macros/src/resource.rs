@@ -4,8 +4,8 @@
 //! struct remains an ordinary Rust value, while its fields describe global
 //! WGSL resources for later lowering passes.
 
-use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, quote};
+use proc_macro2::Span;
+use quote::ToTokens;
 use syn::{Ident, Token, spanned::Spanned};
 use wgsl_rs_ir as ir;
 
@@ -105,20 +105,6 @@ impl AddressValue {
             )),
         }
     }
-
-    /// Emit the value passed to a runtime resource constructor.
-    fn constructor_value(&self) -> TokenStream {
-        match self {
-            Self::Literal(lit) => quote!(#lit),
-            Self::Param(ident) => quote! {
-                u32::try_from(#ident).expect(concat!(
-                    "resource address const parameter `",
-                    stringify!(#ident),
-                    "` must fit in a u32"
-                ))
-            },
-        }
-    }
 }
 
 /// One annotated resource field.
@@ -129,8 +115,10 @@ pub(crate) struct ResourceField {
     pub(crate) group: AddressValue,
     pub(crate) binding: AddressValue,
     pub(crate) access: StorageAccess,
+    /// True when the annotation named the access but the field type omitted
+    /// the marker; the emitted Rust field type gains the marker.
+    pub(crate) insert_marker: bool,
     pub(crate) ty: Type,
-    pub(crate) rust_ty: syn::Type,
 }
 
 /// One entry-point use of a resource-pack type. Const arguments have already
@@ -490,9 +478,44 @@ fn parse_field(
 
     let kind = ResourceKind::from_attr(first).expect("resource attribute was selected above");
     let args = parse_binding_args(first, kind, const_params)?;
-    let rust_ty = field.ty.clone();
-    let ty = Type::parse(&rust_ty, ctx)?;
+
+    // Uniform and storage fields declare the runtime wrapper types
+    // (`Uniform<T>`, `Storage<T, AM>`); the WGSL inner type is extracted
+    // from the wrapper's first generic argument. Textures and samplers are
+    // their own runtime types and pass through unchanged.
+    let (inner_ty, marker_access) = match kind {
+        ResourceKind::Uniform => extract_wrapper(field, kind, "Uniform", false)?,
+        ResourceKind::Storage => extract_wrapper(field, kind, "Storage", true)?,
+        ResourceKind::Texture | ResourceKind::Sampler => (field.ty.clone(), None),
+    };
+    let ty = Type::parse(&inner_ty, ctx)?;
     validate_resource_type(field, kind, &ty)?;
+
+    // Effective storage access: the annotation and the type marker must
+    // agree when both name one; otherwise whichever names one wins, with
+    // WGSL's `read` as the default. When the annotation names the access
+    // and the marker is absent, the emitted Rust field type gains the
+    // marker so CPU capability follows the annotation.
+    let (access, insert_marker) = match (args.access, marker_access) {
+        (Some(StorageAccess::Read), Some(StorageAccess::ReadWrite))
+        | (Some(StorageAccess::ReadWrite), Some(StorageAccess::Read)) => {
+            return Err(parse::Error::unsupported(
+                field.ty.span(),
+                format!(
+                    "storage access mismatch on `{}`: the annotation and the `Storage<T, _>` type \
+                     marker must agree; remove one or make them match",
+                    field
+                        .ident
+                        .as_ref()
+                        .expect("resource-pack parsing requires named fields"),
+                ),
+            ));
+        }
+        (Some(annotation), Some(_)) => (annotation, false),
+        (Some(annotation), None) => (annotation, true),
+        (None, Some(marker)) => (marker, false),
+        (None, None) => (StorageAccess::Read, false),
+    };
 
     Ok(ResourceField {
         ident: field
@@ -502,16 +525,90 @@ fn parse_field(
         kind,
         group: args.group,
         binding: args.binding,
-        access: args.access,
+        access,
+        insert_marker,
         ty,
-        rust_ty,
     })
+}
+
+/// Split a wrapper-typed field into its WGSL inner type and optional
+/// access marker. `Uniform<T>` takes exactly one type argument;
+/// `Storage<T, AM>` takes the inner type first and the access marker
+/// (`Read`/`ReadWrite`) second, optionally.
+fn extract_wrapper(
+    field: &syn::Field,
+    kind: ResourceKind,
+    wrapper: &str,
+    marker_allowed: bool,
+) -> parse::Result<(syn::Type, Option<StorageAccess>)> {
+    let wrong_shape = || {
+        parse::Error::unsupported(
+            field.ty.span(),
+            format!(
+                "`#[{}]` field types must use the `{wrapper}<T>` wrapper type; the WGSL type is \
+                 extracted from its type argument, got `{}`",
+                kind.as_str(),
+                field.ty.to_token_stream(),
+            ),
+        )
+    };
+    let syn::Type::Path(type_path) = &field.ty else {
+        return Err(wrong_shape());
+    };
+    if type_path.qself.is_some() || type_path.path.segments.len() != 1 {
+        return Err(wrong_shape());
+    }
+    let segment = type_path
+        .path
+        .segments
+        .first()
+        .expect("length checked above");
+    if segment.ident != wrapper {
+        return Err(wrong_shape());
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return Err(wrong_shape());
+    };
+    let max = if marker_allowed { 2 } else { 1 };
+    if args.args.is_empty() || args.args.len() > max {
+        return Err(wrong_shape());
+    }
+    let syn::GenericArgument::Type(inner) = args.args.first().expect("length checked above") else {
+        return Err(wrong_shape());
+    };
+    let inner = inner.clone();
+    let marker = if args.args.len() == 2 {
+        let syn::GenericArgument::Type(syn::Type::Path(path)) =
+            args.args.last().expect("length checked above")
+        else {
+            return Err(wrong_shape());
+        };
+        match path
+            .path
+            .get_ident()
+            .map(|ident| ident.to_string())
+            .as_deref()
+        {
+            Some("Read") => Some(StorageAccess::Read),
+            Some("ReadWrite") => Some(StorageAccess::ReadWrite),
+            _ => {
+                return Err(parse::Error::unsupported(
+                    field.ty.span(),
+                    "the `Storage<T, AM>` access marker must be `Read` or `ReadWrite`",
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    Ok((inner, marker))
 }
 
 struct BindingArgs {
     group: AddressValue,
     binding: AddressValue,
-    access: StorageAccess,
+    /// The annotation-named access mode, if present.
+    access: Option<StorageAccess>,
 }
 
 /// Parse `group(...)`, `binding(...)`, and storage access modifiers in any
@@ -523,8 +620,7 @@ fn parse_binding_args(
 ) -> parse::Result<BindingArgs> {
     let mut group = None;
     let mut binding = None;
-    let mut access = StorageAccess::Read;
-    let mut saw_access = false;
+    let mut access: Option<StorageAccess> = None;
 
     attr.parse_args_with(|input: syn::parse::ParseStream| {
         while !input.is_empty() {
@@ -552,18 +648,19 @@ fn parse_binding_args(
                     }
                 }
                 "read_only" | "read_write" if kind == ResourceKind::Storage => {
-                    if saw_access {
+                    if access.is_some() {
                         return Err(syn::Error::new(
                             ident.span(),
                             "duplicate storage access modifier",
                         ));
                     }
-                    saw_access = true;
-                    access = if ident == "read_write" {
-                        StorageAccess::ReadWrite
-                    } else {
-                        StorageAccess::Read
-                    };
+                    access = Some(
+                        if ident == "read_write" {
+                            StorageAccess::ReadWrite
+                        } else {
+                            StorageAccess::Read
+                        },
+                    );
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -775,155 +872,65 @@ pub(crate) fn validate_pack_param_slots(module: &parse::ItemMod) -> parse::Resul
     Ok(())
 }
 
-/// Rewrite resource packs in the emitted Rust module and append their CPU-only
-/// constructors. Constructors are added after parsing, so they cannot become
-/// WGSL functions or resource values.
+/// Strip binding attributes from emitted pack structs and insert access
+/// markers the annotation supplied but the field type omitted. Everything
+/// else about the user's struct is emitted verbatim: hosts construct packs
+/// by hand, so there are no generated constructors and no field-type
+/// rewrites.
 pub(crate) fn rewrite_rust_module(
     input_mod: &mut syn::ItemMod,
     module: &parse::ItemMod,
-    crate_path: &syn::Path,
 ) -> parse::Result<()> {
     let Some((_, items)) = input_mod.content.as_mut() else {
         return Ok(());
     };
-    for item in items.iter() {
-        let syn::Item::Impl(implementation) = item else {
-            continue;
-        };
-        if implementation.trait_.is_some() {
-            continue;
-        }
-        let syn::Type::Path(self_ty) = implementation.self_ty.as_ref() else {
-            continue;
-        };
-        let Some(ident) = self_ty.path.get_ident() else {
-            continue;
-        };
-        if module.resource_pack(ident).is_none() {
-            continue;
-        }
-        for impl_item in &implementation.items {
-            let syn::ImplItem::Fn(function) = impl_item else {
-                continue;
-            };
-            if function.sig.ident == "new" {
-                return Err(parse::Error::unsupported(
-                    function.sig.ident.span(),
-                    format!(
-                        "resource pack `{ident}` already defines an inherent `new` function; the \
-                         generated constructor would collide. Rename the existing function"
-                    ),
-                ));
-            }
-        }
-    }
-    let mut output = Vec::with_capacity(items.len() + module.resource_packs().count());
-    for mut item in items.drain(..) {
-        let syn::Item::Struct(item_struct) = &mut item else {
-            output.push(item);
+    for item in items.iter_mut() {
+        let syn::Item::Struct(item_struct) = item else {
             continue;
         };
         let Some(pack) = module.resource_pack(&item_struct.ident) else {
-            output.push(item);
             continue;
         };
-        if let syn::Fields::Named(fields) = &mut item_struct.fields {
-            for field in &mut fields.named {
-                field
-                    .attrs
-                    .retain(|attr| ResourceKind::from_attr(attr).is_none());
-                let resource = pack
-                    .fields
-                    .iter()
-                    .find(|resource| Some(&resource.ident) == field.ident.as_ref())
-                    .expect("resource-pack parse and Rust fields have the same order");
-                match resource.kind {
-                    ResourceKind::Uniform => {
-                        let inner = &resource.rust_ty;
-                        field.ty = syn::parse_quote!(#crate_path::std::Uniform<#inner>);
-                    }
-                    ResourceKind::Storage => {
-                        let inner = &resource.rust_ty;
-                        let access = match resource.access {
-                            StorageAccess::Read => quote!(#crate_path::std::Read),
-                            StorageAccess::ReadWrite => quote!(#crate_path::std::ReadWrite),
-                        };
-                        field.ty = syn::parse_quote!(#crate_path::std::Storage<#inner, #access>);
-                    }
-                    ResourceKind::Sampler | ResourceKind::Texture => {}
-                }
+        let syn::Fields::Named(fields) = &mut item_struct.fields else {
+            continue;
+        };
+        for field in &mut fields.named {
+            field
+                .attrs
+                .retain(|attr| ResourceKind::from_attr(attr).is_none());
+            let Some(resource) = pack
+                .fields
+                .iter()
+                .find(|resource| Some(&resource.ident) == field.ident.as_ref())
+            else {
+                continue;
+            };
+            if resource.insert_marker {
+                insert_access_marker(&mut field.ty, resource.access);
             }
         }
-        let constructor = generate_constructor(item_struct, pack, crate_path);
-        output.push(item);
-        output.push(syn::Item::Impl(constructor));
     }
-    *items = output;
     Ok(())
 }
 
-/// Generate `Pack::new()` using only annotation-owned addresses.
-fn generate_constructor(
-    item_struct: &syn::ItemStruct,
-    pack: &ItemResourcePack,
-    crate_path: &syn::Path,
-) -> syn::ItemImpl {
-    let ident = &item_struct.ident;
-    // The constructor impl replays the struct's declared generics plus a
-    // `Wgsl` bound on every type parameter: the resource constructors it
-    // calls hold values that must be renderable to WGSL, the same bound the
-    // generated `instantiate` enforces on module-level slots.
-    let mut generics = item_struct.generics.clone();
-    for param in &mut generics.params {
-        let syn::GenericParam::Type(param) = param else {
-            continue;
-        };
-        let has_wgsl = param.bounds.iter().any(|bound| {
-            matches!(
-                bound,
-                syn::TypeParamBound::Trait(trait_bound)
-                    if trait_bound.path.segments.last().is_some_and(|segment| segment.ident == "Wgsl")
-            )
-        });
-        if !has_wgsl {
-            param.bounds.push(syn::parse_quote!(#crate_path::std::Wgsl));
-        }
-    }
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let initializers = pack.fields.iter().map(|field| {
-        let name = &field.ident;
-        let group = field.group.constructor_value();
-        let binding = field.binding.constructor_value();
-        let value = match field.kind {
-            ResourceKind::Texture | ResourceKind::Sampler => {
-                let ty = &field.rust_ty;
-                quote!(<#ty>::new(#group, #binding))
-            }
-            ResourceKind::Uniform => {
-                let ty = &field.rust_ty;
-                quote!(<#crate_path::std::Uniform<#ty>>::new(#group, #binding))
-            }
-            ResourceKind::Storage => {
-                let ty = &field.rust_ty;
-                let access = match field.access {
-                    StorageAccess::Read => quote!(#crate_path::std::Read),
-                    StorageAccess::ReadWrite => quote!(#crate_path::std::ReadWrite),
-                };
-                quote!(<#crate_path::std::Storage<#ty, #access>>::new(#group, #binding))
-            }
-        };
-        quote!(#name: #value)
-    });
-    syn::parse_quote! {
-        impl #impl_generics #ident #ty_generics #where_clause {
-            /// Construct this resource pack from its annotated addresses.
-            pub fn new() -> Self {
-                Self {
-                    #(#initializers),*
-                }
-            }
-        }
-    }
+/// Append the access marker to a `Storage<T>` field type that omitted it,
+/// so CPU capability follows the annotation.
+fn insert_access_marker(ty: &mut syn::Type, access: StorageAccess) {
+    let syn::Type::Path(type_path) = ty else {
+        return;
+    };
+    let Some(segment) = type_path.path.segments.iter_mut().next() else {
+        return;
+    };
+    let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments else {
+        return;
+    };
+    let marker: syn::Type = match access {
+        StorageAccess::Read => syn::parse_quote!(Read),
+        StorageAccess::ReadWrite => syn::parse_quote!(ReadWrite),
+    };
+    args.args.push_punct(Default::default());
+    args.args.push(syn::GenericArgument::Type(marker));
 }
 
 // ===== Function and expression lowering =====

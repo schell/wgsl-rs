@@ -6,7 +6,7 @@ mod unused_type_param {
 
     pub struct PackA<const GROUP: u32, T> {
         #[uniform(group(GROUP), binding(0))]
-        pub data: Vec4f,
+        pub data: Uniform<Vec4f>,
     }
 }
 

@@ -166,7 +166,7 @@ is chosen at instantiation.
 ```rust
 pub struct DataPack<T> {
     #[storage(group(0), binding(0), read_only)]
-    pub data: RuntimeArray<T>,
+    pub data: Storage<RuntimeArray<T>, Read>,
 }
 
 #[fragment]

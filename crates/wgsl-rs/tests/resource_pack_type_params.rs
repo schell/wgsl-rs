@@ -9,7 +9,7 @@ mod positions {
 
     pub struct PositionPack<const GROUP: u32, T> {
         #[storage(group(GROUP), binding(0), read_only)]
-        pub data: RuntimeArray<T>,
+        pub data: Storage<RuntimeArray<T>, Read>,
     }
 
     /// A helper whose const and type parameters are both tied to the pack's
@@ -44,7 +44,9 @@ mod positions {
 
 #[test]
 fn generic_packs_run_on_cpu_with_constructed_packs() {
-    let pack = positions::PositionPack::<1, Vec4f>::new();
+    let pack = positions::PositionPack::<1, Vec4f> {
+        data: Storage::new(1, 0),
+    };
     pack.data.set(RuntimeArray {
         data: vec![
             vec4f(1.0, 0.0, 0.0, 1.0),
@@ -92,7 +94,7 @@ mod config {
 
     pub struct ConfigPack<T> {
         #[uniform(group(2), binding(0))]
-        pub value: T,
+        pub value: Uniform<T>,
     }
 
     #[fragment]
@@ -104,7 +106,9 @@ mod config {
 #[test]
 fn generic_uniform_fields_substitute_and_construct_on_cpu() {
     assert_eq!(config::WGSL_SOURCE.module_type_params, &["ConfigPack_T"]);
-    let pack = config::ConfigPack::<Vec4f>::new();
+    let pack = config::ConfigPack::<Vec4f> {
+        value: Uniform::new(2, 0),
+    };
     pack.value.set(vec4f(4.0, 3.0, 2.0, 1.0));
     assert_eq!(*pack.value.get(), vec4f(4.0, 3.0, 2.0, 1.0));
     assert_eq!(

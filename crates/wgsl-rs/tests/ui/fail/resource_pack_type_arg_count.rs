@@ -6,7 +6,7 @@ mod arg_count {
 
     pub struct PackA<const GROUP: u32, T> {
         #[storage(group(GROUP), binding(0))]
-        pub data: RuntimeArray<T>,
+        pub data: Storage<RuntimeArray<T>, Read>,
     }
 
     pub fn helper(pack: &PackA<0>) -> u32 {

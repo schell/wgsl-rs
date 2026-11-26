@@ -16,7 +16,7 @@ pub mod render {
 
     pub struct SlabBindGroup<const GROUP: u32> {
         #[storage(group(GROUP), binding(0), read_only)]
-        pub slab: RuntimeArray<Vec4f>,
+        pub slab: Storage<RuntimeArray<Vec4f>, Read>,
     }
 
     pub struct TextureBindGroup<const GROUP: u32, const FILTERABLE: bool> {
@@ -74,23 +74,28 @@ pack name, a double underscore, and the field name), so packs never collide on
 field names and the generated WGSL is attributable at a glance. Pack parameters
 are removed from WGSL function signatures, and their corresponding call
 arguments are removed. A direct borrow such as `&texture_bg.heights` resolves
-to the global `heights` resource. Storage access is explicit in the annotation;
-`read_only` is the default, and `read_write` selects read-write storage.
+to the global `heights` resource. Storage access comes from the annotation or
+the type marker; `read` is the default when neither names one.
 
 ## Constructing packs and making direct CPU calls
 
-`new()` constructs every field from its annotation. No addresses are repeated
-at the call site:
+No constructors are generated. Hosts construct packs by hand over `pub`
+fields, seeding values with `set` and textures with `init`:
 
 ```rust
 use wgsl_rs::std::*;
 
-let storage = render::SlabBindGroup::<1>::new();
+let storage = render::SlabBindGroup::<1> {
+    slab: Storage::new(1, 0),
+};
 storage.slab.set(RuntimeArray {
     data: vec![vec4f(0.0, 0.0, 0.0, 1.0)],
 });
 
-let textures = render::TextureBindGroup::<0, false>::new();
+let textures = render::TextureBindGroup::<0, false> {
+    heights: Texture2D::new(0, 0),
+    heights_smp: Sampler::new(0, 1),
+};
 textures.heights.init(1, 1);
 textures.heights.set_pixel(0, 0, [0.25, 0.5, 0.75, 1.0]);
 textures.heights_smp.init();
@@ -105,10 +110,13 @@ let color = render::fragment::<0, false>(
 assert_eq!(color, vec4f(0.25, 0.5, 0.75, 1.0));
 ```
 
-Texture and sampler fields retain their declared runtime types. Uniform and
-storage declarations name their inner value type, while the emitted Rust field
-uses the existing `Uniform<T>` or `Storage<T, A>` runtime resource. The
-constructor takes care of that distinction.
+Uniform and storage fields declare their runtime wrapper types
+(`Uniform<T>`, `Storage<T, A>`); the transpiler extracts the WGSL type from
+the wrapper's type argument. Storage access may come from the annotation
+(`read_only`/`read_write`), the type marker (`Read`/`ReadWrite`), or both;
+when both are present they must agree, and an annotation-named access whose
+marker is missing is inserted into the emitted Rust automatically. Texture
+and sampler fields are their own runtime types.
 
 ## Instantiating layouts
 
@@ -125,7 +133,8 @@ let linkage = module.generate_linkage();
 
 The argument order above is `SlabBindGroup_GROUP`, `TextureBindGroup_GROUP`,
 and `TextureBindGroup_FILTERABLE`, matching `WGSL_SOURCE.module_type_params`.
-Use the same values for constructed CPU packs and IR instantiation. For a
+The annotations, not the CPU-side constructor arguments, drive layout: pass
+the same values to `instantiate` that the annotations describe. For a
 non-filtering layout, use an all-Nearest sampler on the GPU. Filterability is
 host-only and never changes the WGSL texture or sampler type.
 
@@ -151,7 +160,7 @@ pub mod generic {
 
     pub struct DataPack<const GROUP: u32, T> {
         #[storage(group(GROUP), binding(0), read_only)]
-        pub data: RuntimeArray<T>,
+        pub data: Storage<RuntimeArray<T>, Read>,
     }
 
     pub fn count<const GROUP: u32, T: Wgsl>(pack: &DataPack<GROUP, T>) -> u32 {
@@ -184,8 +193,6 @@ tie to the pack slot through generated constraints so rustc rejects
 inconsistent instantiation. Helpers may use a bare type parameter in the
 pack parameter only; it reads the pack slot directly, mirroring const
 aliasing, and may not appear in any other parameter or return position.
-The generated constructor adds a `Wgsl` bound to every pack type parameter,
-so CPU code constructs `DataPack::<1, Vec4f>::new()` without extra bounds.
 
 ## V1 boundaries
 

@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       storage access mismatch on `bins`: the annotation and the `Storage<T, _>` type marker must agree; remove one or make them match.'
+ --> tests/ui/fail/resource_pack_access_mismatch.rs:9:19
+  |
+9 |         pub bins: Storage<[f32; 4], ReadWrite>,
+  |                   ^^^^^^^

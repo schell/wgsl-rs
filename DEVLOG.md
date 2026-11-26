@@ -2495,3 +2495,27 @@ through.
 **Slot encoding note.** Type and const parameters share the `{pack}_{param}`
 encoding and one namespace; `validate_pack_param_slots` rejects collisions
 across both kinds together.
+
+### 2026-11-26: Pack fields declare their runtime wrapper types
+
+**Problem.** Pack uniform/storage fields declared their WGSL inner types
+(`slab: RuntimeArray<Vec4f>`) and the macro rewrote the emitted Rust field
+types to `Storage<...>` wrappers and generated a `new()` constructor. The
+macro mutated user code, hid the CPU representation hosts reason about, and
+the `impl Trait` statics world still supplied the access story.
+
+**Decision (user, 2026-11-26).** Fields declare the runtime wrapper types
+(`Uniform<T>`, `Storage<T, AM>`); the transpiler extracts the WGSL inner type
+from the wrapper's first generic argument. No constructors are generated and
+the `new`-collision check is deleted: hosts construct packs by hand over
+non-private fields, and user-written constructors are free (typically
+`#[wgsl_ignore]`-ed inherent impls). Storage access may come from the
+annotation, the type marker, or both; when both are present they must agree,
+and an annotation-named access whose marker is absent is inserted into the
+emitted Rust so CPU capability follows the annotation.
+
+**Why.** The CPU side of a pack is now exactly what the user wrote; emission
+touches pack structs only for attribute stripping and marker insertion,
+restoring the strictly-additive charter (2025-12-08) for everything else.
+Hand construction also makes value-taking resource constructors natural:
+the host supplies values where it constructs.

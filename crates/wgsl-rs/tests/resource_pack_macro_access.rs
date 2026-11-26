@@ -8,12 +8,12 @@ mod shader {
 
     pub struct FramePack {
         #[uniform(group(0), binding(0))]
-        pub time: f32,
+        pub time: Uniform<f32>,
     }
 
     pub struct BinPack {
         #[storage(group(0), binding(1), read_write)]
-        pub bins: [f32; 4],
+        pub bins: Storage<[f32; 4]>,
     }
 
     #[fragment]
@@ -31,14 +31,18 @@ mod shader {
 
 #[test]
 fn macro_access_runs_on_cpu_with_a_constructed_pack() {
-    let frame = shader::FramePack::new();
+    let frame = shader::FramePack {
+        time: Uniform::new(0, 0),
+    };
     frame.time.set(2.0);
     assert_eq!(
         shader::scaled(vec4f(0.0, 0.0, 0.0, 1.0), &frame),
         vec4f(4.0, 0.0, 0.0, 1.0)
     );
 
-    let bins = shader::BinPack::new();
+    let bins = shader::BinPack {
+        bins: Storage::new(0, 1),
+    };
     bins.bins.set([0.0, 0.0, 0.0, 0.0]);
     shader::seed(&bins);
     assert_eq!(*bins.bins.get(), [0.0, 7.0, 3.0, 0.0]);

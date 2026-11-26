@@ -616,6 +616,9 @@ macro_rules! get {
     (&$pack:ident . $field:ident) => {
         (&$pack.$field).get()
     };
+    ($pack:ident . $field:ident) => {
+        $pack.$field.get()
+    };
     ($var:ident, $ty:ty) => {
         $var.get_typed::<$ty>()
     };
@@ -648,6 +651,9 @@ macro_rules! get_mut {
     };
     (&$pack:ident . $field:ident) => {
         (&$pack.$field).get_mut()
+    };
+    ($pack:ident . $field:ident) => {
+        $pack.$field.get_mut()
     };
     ($var:ident, $ty:ty) => {
         $var.get_mut_typed::<$ty>()
@@ -686,6 +692,10 @@ macro_rules! load {
     }};
     (&$pack:ident . $field:ident) => {{
         let v = *(&$pack.$field).get();
+        v
+    }};
+    ($pack:ident . $field:ident) => {{
+        let v = *$pack.$field.get();
         v
     }};
     ($var:ident, $ty:ty) => {{

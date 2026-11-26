@@ -3364,18 +3364,20 @@ impl Expr {
                         }
                         impl syn::parse::Parse for GetArgs {
                             fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-                                // Targets are either a bare identifier (a
-                                // module static) or `&pack.field` (a
-                                // resource-pack parameter's field).
-                                let (ident, pack_field) = if input.peek(syn::Token![&]) {
+                                // Targets are a bare identifier (a module
+                                // static), `pack.field`, or `&pack.field`:
+                                // a resource-pack parameter's field, with or
+                                // without the borrow ampersand.
+                                if input.peek(syn::Token![&]) {
                                     let _: syn::Token![&] = input.parse()?;
-                                    let pack: Ident = input.parse()?;
+                                }
+                                let first: Ident = input.parse()?;
+                                let (ident, pack_field) = if input.peek(syn::Token![.]) {
                                     let _: syn::Token![.] = input.parse()?;
                                     let field: Ident = input.parse()?;
-                                    (field.clone(), Some((pack, field)))
+                                    (field.clone(), Some((first, field)))
                                 } else {
-                                    let ident: Ident = input.parse()?;
-                                    (ident, None)
+                                    (first, None)
                                 };
                                 let type_arg = if input.peek(syn::Token![,]) {
                                     let _: syn::Token![,] = input.parse()?;
@@ -3399,7 +3401,7 @@ impl Expr {
                                 span: mac.path.span(),
                                 note: format!(
                                     "{macro_ident_str}! expects a variable identifier or \
-                                     `&pack.field` (optionally followed by `, T`), got: {e}"
+                                     `pack.field` (optionally followed by `, T`), got: {e}"
                                 ),
                             }
                             .build()

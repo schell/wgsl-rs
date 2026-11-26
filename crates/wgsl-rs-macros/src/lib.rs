@@ -1052,7 +1052,8 @@ fn gen_validation_test(module_ident: &syn::Ident) -> proc_macro2::TokenStream {
 ///
 /// Each occurrence of `validate_with_instantiation_types(T1, T2, ...)`
 /// produces a test that calls `instantiate::<T1, T2, ...>()`, renders the
-/// IR to WGSL, and validates the result with naga.
+/// IR to WGSL through the canonical deshadowing entry (`Module::wgsl_source`,
+/// matching the concrete-module route), and validates the result with naga.
 ///
 /// The tests are only generated when the `validation` feature is enabled.
 fn gen_instantiated_validation_tests(
@@ -1063,7 +1064,6 @@ fn gen_instantiated_validation_tests(
     if !cfg!(feature = "validation") {
         return quote! {};
     }
-    let ir_p = quote! { #crate_path::ir };
     let validate_fn = quote! { #crate_path::validate_wgsl_source };
     let tests: Vec<proc_macro2::TokenStream> = instantiations
         .iter()
@@ -1077,7 +1077,12 @@ fn gen_instantiated_validation_tests(
                 #[test]
                 fn #test_name() {
                     let __m = instantiate::<#(#types),*>();
-                    let __src = #ir_p::render_module(&__m);
+                    // Render through the canonical deshadowing entry, not
+                    // the raw renderer: the raw render skips deshadow, so
+                    // same-scope shadowing (legal Rust, invalid raw WGSL)
+                    // would fail validation here while rendering correctly
+                    // at runtime.
+                    let __src = __m.wgsl_source();
                     #validate_fn(&__src).expect(#error_msg);
                 }
             }

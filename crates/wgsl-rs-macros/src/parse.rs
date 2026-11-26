@@ -6277,6 +6277,7 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
             resource_pack_uses: Vec::new(),
         };
         crate::resource::validate_resources(&module)?;
+        crate::resource::validate_pack_const_slots(&module)?;
         Ok(module)
     }
 }

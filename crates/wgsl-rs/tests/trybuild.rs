@@ -351,3 +351,9 @@ fn resource_pack_existing_new_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_existing_new.rs");
 }
+
+#[test]
+fn resource_pack_slot_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_slot_collision.rs");
+}

@@ -2434,3 +2434,31 @@ changing only bindings would create two incompatible ways to describe shader
 data. The current direct-field-borrow boundary leaves that future work open
 without committing to wrappers, `import()`, destructuring, or receiver
 lowering.
+
+### 2026-11-26: Pack const slots reject collisions instead of re-encoding
+
+**Problem.** Pack-owned const slots are encoded as `{pack}_{param}`
+(`pack_const_slot_name`), which is not injective: `PackA_B::<const C>` and
+`PackA::<const B_C>` both produce `PackA_B_C`. Distinct packs sharing a slot
+key collapse to one entry in the generated `instantiate` const-substitution
+map, silently pointing one pack's addresses or filterability at the other
+pack's values, with no diagnostic anywhere.
+
+**Decision.** Reject the collision at the second pack's declaration
+(`validate_pack_const_slots`, run next to `validate_resources`) instead of
+re-encoding the key. The error names both producers and the shared slot and
+suggests a rename.
+
+**Why not an injective encoding.** No underscore-joining scheme can be
+unambiguous because `_` is legal inside Rust identifiers. Length-prefixed
+keys (e.g. `5_PackA_B_C`) are injective but stop being valid WGSL
+identifiers, and slot names are user-facing in rendered template source
+(`@group(SharedPack_GROUP)`) and in `Source::module_type_params`. Rejection
+keeps the readable encoding for every realistic module and costs only a
+targeted error in the pathological case. Collisions between pack slots and
+the other substitution-namespace members (`impl Trait` linkage slots,
+entry-point positional keys) were already rejected in
+`collect_module_params`; this closes the pack-vs-pack pair. A pack slot
+colliding with a user-authored module const of the same name remains
+unchecked; that edge predates packs and is inherited from the standalone
+declaration world.

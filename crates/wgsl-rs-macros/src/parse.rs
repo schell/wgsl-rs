@@ -4974,27 +4974,87 @@ impl FnArg {
                     let ir_attrs = syn_attrs_to_ir(attrs);
 
                     let mut inter_stage_io = vec![];
-                    let mut io_count = 0;
-                    let mut second_io_span = None;
+                    let mut has_binding = false;
+                    let mut has_location = false;
+                    let mut interpolate_span = None;
+                    let mut seen_io_kinds = Vec::new();
                     for attr in attrs.iter() {
                         if is_known_io_ident(attr) {
                             let isio = InterStageIo::try_from(attr)?;
-                            io_count += 1;
-                            if io_count == 2 {
-                                second_io_span = Some(attr.span());
+                            let kind = std::mem::discriminant(&isio);
+                            snafu::ensure!(
+                                !seen_io_kinds.contains(&kind),
+                                UnsupportedSnafu {
+                                    span: attr.span(),
+                                    note: concat!(
+                                        "Duplicate IO annotations of the same kind are not ",
+                                        "supported on function parameters."
+                                    )
+                                }
+                            );
+                            seen_io_kinds.push(kind);
+
+                            if matches!(
+                                &isio,
+                                InterStageIo::BuiltIn { .. } | InterStageIo::Location { .. }
+                            ) {
+                                snafu::ensure!(
+                                    !has_binding,
+                                    UnsupportedSnafu {
+                                        span: attr.span(),
+                                        note: concat!(
+                                            "Function parameters support at most one binding ",
+                                            "annotation: `#[builtin(...)]` or ",
+                                            "`#[location(...)]`."
+                                        )
+                                    }
+                                );
+                                has_binding = true;
+                            }
+
+                            match &isio {
+                                InterStageIo::Location { .. } => has_location = true,
+                                InterStageIo::Interpolate { .. } => {
+                                    interpolate_span = Some(attr.span());
+                                }
+                                InterStageIo::BlendSrc { .. } => {
+                                    return UnsupportedSnafu {
+                                        span: attr.span(),
+                                        note: concat!(
+                                            "#[blend_src(...)] is only valid on fragment ",
+                                            "outputs, not function parameters."
+                                        ),
+                                    }
+                                    .fail();
+                                }
+                                InterStageIo::Invariant(_) => {
+                                    return UnsupportedSnafu {
+                                        span: attr.span(),
+                                        note: concat!(
+                                            "#[invariant] is only valid on vertex position ",
+                                            "outputs, not function parameters."
+                                        ),
+                                    }
+                                    .fail();
+                                }
+                                _ => {}
                             }
                             inter_stage_io.push(isio);
                         }
                     }
 
-                    snafu::ensure!(
-                        io_count <= 1,
-                        UnsupportedSnafu {
-                            span: second_io_span.unwrap_or_else(|| attrs[0].span()),
-                            note: "WGSL only supports a single IO annotation on function \
-                                   parameters."
-                        }
-                    );
+                    if let Some(span) = interpolate_span {
+                        snafu::ensure!(
+                            has_location,
+                            UnsupportedSnafu {
+                                span,
+                                note: concat!(
+                                    "#[interpolate(...)] requires #[location(N)] on the same ",
+                                    "function parameter."
+                                )
+                            }
+                        );
+                    }
 
                     let ty = Type::parse(ty.as_ref(), ctx)?;
 
@@ -8073,6 +8133,79 @@ impl TryFrom<&syn::Item> for Item {
 mod test {
     use super::*;
     use crate::ir_convert;
+
+    /// Parses the sole argument of a test function with IO annotations.
+    fn parse_fn_arg(source: &str) -> Result<FnArg, Error> {
+        let function: syn::ItemFn = syn::parse_str(source).expect("test function parses");
+        let arg = function.sig.inputs.first().expect("one function argument");
+        FnArg::parse(arg, &ParseContext::default())
+    }
+
+    #[test]
+    fn fn_arg_allows_location_with_interpolation() {
+        let parsed = parse_fn_arg("fn f(#[location(0)] #[interpolate(flat)] value: u32) {}")
+            .expect("location plus interpolation is valid");
+        assert!(matches!(
+            parsed.inter_stage_io.as_slice(),
+            [
+                InterStageIo::Location { .. },
+                InterStageIo::Interpolate { .. }
+            ]
+        ));
+    }
+
+    #[test]
+    fn fn_arg_rejects_conflicting_binding_annotations() {
+        let error = parse_fn_arg("fn f(#[builtin(vertex_index)] #[location(0)] value: u32) {}")
+            .map(|_| ())
+            .expect_err("builtin plus location must be rejected");
+        assert!(
+            error.to_string().contains("at most one binding annotation"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn fn_arg_interpolate_requires_location() {
+        let error =
+            parse_fn_arg("fn f(#[builtin(vertex_index)] #[interpolate(flat)] value: u32) {}")
+                .map(|_| ())
+                .expect_err("interpolation without location must be rejected");
+        assert!(
+            error.to_string().contains("requires #[location(N)]"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn fn_arg_rejects_output_only_annotations() {
+        for (source, expected) in [
+            (
+                "fn f(#[location(0)] #[invariant] value: u32) {}",
+                "only valid on vertex position outputs",
+            ),
+            (
+                "fn f(#[location(0)] #[blend_src(0)] value: u32) {}",
+                "only valid on fragment outputs",
+            ),
+        ] {
+            let error = parse_fn_arg(source)
+                .map(|_| ())
+                .expect_err("output-only annotations must be rejected");
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected diagnostic: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn fn_arg_rejects_duplicate_io_annotations() {
+        let error = parse_fn_arg("fn f(#[location(0)] #[location(1)] value: u32) {}")
+            .map(|_| ())
+            .expect_err("duplicate locations must be rejected");
+        assert!(error.to_string().contains("Duplicate IO annotations"));
+    }
 
     /// Test-only helper: convert a parse-side AST node to its WGSL
     /// rendering by routing it through the IR pipeline. Provides a

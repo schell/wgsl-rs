@@ -61,20 +61,32 @@ fn strip_wgsl_allow_attrs(expr: &mut syn::Expr) {
 
 /// Visitor that strips inter-stage IO attributes (`#[builtin(...)]`,
 /// `#[location(N)]`, `#[interpolate(...)]`, `#[blend_src(N)]`, `#[invariant]`)
-/// from struct fields.
+/// from struct fields and function parameters.
 ///
-/// These attributes are read during WGSL parsing (in `Field::parse_with_ctx`),
-/// but they aren't valid Rust attributes on struct fields. The `#[wgsl]` macro
-/// strips them from the emitted Rust code so the struct compiles as plain
-/// Rust, while the IO information has already been captured for WGSL output.
+/// These attributes are read during WGSL parsing, but they aren't valid Rust
+/// attributes in the emitted code. The `#[wgsl]` macro strips them after
+/// parsing so the module compiles as plain Rust, while the IO information has
+/// already been captured for WGSL output.
 struct StripIoAttrs;
+
+impl StripIoAttrs {
+    /// Retains attributes that are not wgsl-rs inter-stage IO annotations.
+    fn strip(attrs: &mut Vec<syn::Attribute>) {
+        attrs.retain(|attr| InterStageIo::try_from(attr).is_err());
+    }
+}
 
 impl VisitMut for StripIoAttrs {
     fn visit_field_mut(&mut self, field: &mut syn::Field) {
-        field
-            .attrs
-            .retain(|attr| InterStageIo::try_from(attr).is_err());
+        Self::strip(&mut field.attrs);
         visit_mut::visit_field_mut(self, field);
+    }
+
+    fn visit_fn_arg_mut(&mut self, arg: &mut syn::FnArg) {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            Self::strip(&mut pat_type.attrs);
+        }
+        visit_mut::visit_fn_arg_mut(self, arg);
     }
 }
 
@@ -1264,8 +1276,8 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     StripWgslAllowAttrs.visit_item_mod_mut(&mut input_mod);
 
     // Strip inter-stage IO attributes (#[builtin], #[location], etc.) from
-    // struct fields. These aren't valid Rust attributes on fields, but they
-    // are read during WGSL parsing.
+    // struct fields and function parameters. They are read during WGSL parsing
+    // but aren't valid Rust attributes in the emitted module.
     StripIoAttrs.visit_item_mod_mut(&mut input_mod);
 
     Ok(input_mod.into_token_stream().into())

@@ -79,6 +79,21 @@ pub fn vs_main(
 }
 ```
 
+A location can be combined with an interpolation attribute on the same
+parameter. Both attributes are preserved in WGSL and stripped from the emitted
+Rust:
+
+```rust
+#[fragment]
+pub fn fs_main(
+    #[location(0)]
+    #[interpolate(flat)]
+    material_id: u32,
+) -> Vec4f {
+    vec4f(f32(material_id), 0.0, 0.0, 1.0)
+}
+```
+
 ## Pointer Parameters
 
 WGSL functions can take pointer arguments so the callee can mutate the caller's

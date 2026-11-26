@@ -22,6 +22,7 @@ mod monomorphize;
 mod parse;
 mod parse_visitor;
 mod ptr;
+mod resource;
 mod sampler;
 mod storage;
 mod swizzle;
@@ -1273,6 +1274,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     {
         content.push(item);
     }
+
+    // Resource packs stay ordinary Rust values. Rewrite storage/uniform fields
+    // to their runtime resource types and append annotation-driven constructors
+    // only after WGSL parsing, so these CPU-only functions are never emitted.
+    resource::rewrite_rust_module(&mut input_mod, &wgsl_module, &crate_path)?;
 
     // Strip #[wgsl_allow] attributes before emitting Rust code.
     // These attributes are used during parsing but must be removed from the

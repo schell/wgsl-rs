@@ -209,6 +209,7 @@ fn item_from_parse(item: &parse::Item) -> Result<Option<ir::Item>> {
         // Items that produce no WGSL output are skipped.
         parse::Item::Mod(_)
         | parse::Item::Use(_)
+        | parse::Item::ResourcePack(_)
         | parse::Item::MacroRules
         | parse::Item::Trait
         | parse::Item::Ignored => return Ok(None),

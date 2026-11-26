@@ -261,3 +261,21 @@ fn reserved_generated_names_are_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/reserved_generated_names.rs");
 }
+
+#[test]
+fn resource_pack_mixed_io_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_mixed_io.rs");
+}
+
+#[test]
+fn resource_pack_non_resource_field_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_non_resource_field.rs");
+}
+
+#[test]
+fn resource_pack_multiple_bindings_are_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_multiple_bindings.rs");
+}

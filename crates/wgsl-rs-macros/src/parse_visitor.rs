@@ -126,6 +126,7 @@ pub(crate) fn walk_item<V: ParseVisitorMut + ?Sized>(
         Item::Mod(_)
         | Item::Use(_)
         | Item::Enum(_)
+        | Item::ResourcePack(_)
         | Item::MacroRules
         | Item::Trait
         | Item::Ignored => Ok(()),

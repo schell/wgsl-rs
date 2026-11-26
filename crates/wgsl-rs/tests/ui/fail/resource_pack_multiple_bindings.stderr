@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       a resource-pack field cannot have multiple binding annotations.'
+ --> tests/ui/fail/resource_pack_multiple_bindings.rs:9:9
+  |
+9 |         #[sampler(group(0), binding(1))]
+  |         ^

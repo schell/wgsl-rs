@@ -71,7 +71,7 @@ fn attr_to_path_string(path: &syn::Path) -> String {
 /// Returns `true` if the attribute's path ident matches a known WGSL
 /// inter-stage IO attribute name (`builtin`, `location`, `blend_src`,
 /// `interpolate`, `invariant`).
-fn is_known_io_ident(attr: &syn::Attribute) -> bool {
+pub(crate) fn is_known_io_ident(attr: &syn::Attribute) -> bool {
     let Some(ident) = attr.path().get_ident() else {
         return false;
     };
@@ -292,6 +292,8 @@ impl ParseContext {
 pub fn collect_module_type_params(_items: &[syn::Item]) -> Result<Vec<Ident>, Error> {
     Ok(Vec::new())
 }
+
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -6115,6 +6117,24 @@ pub(crate) fn is_wgsl_std_import(wgsl_rs_crate_path: &syn::Path, path: &syn::Pat
 }
 
 impl ItemMod {
+    /// Iterate over registered resource-pack declarations in source order.
+    pub(crate) fn resource_packs(
+        &self,
+    ) -> impl Iterator<Item = &crate::resource::ItemResourcePack> {
+        self.content.iter().filter_map(|item| match item {
+            Item::ResourcePack(pack) => Some(pack),
+            _ => None,
+        })
+    }
+
+    /// Find a resource pack by its unqualified Rust type name.
+    pub(crate) fn resource_pack(
+        &self,
+        ident: &Ident,
+    ) -> Option<&crate::resource::ItemResourcePack> {
+        self.resource_packs().find(|pack| pack.ident == *ident)
+    }
+
     pub fn syn_item_has_wgsl_ignore_attribute(item: &syn::Item) -> bool {
         let attrs: &[_] = match item {
             syn::Item::Const(item_const) => &item_const.attrs,
@@ -6236,6 +6256,7 @@ impl ItemMod {
                 Item::Const(c) => (&c.ident, "const"),
                 Item::Fn(f) => (&f.ident, "fn"),
                 Item::Struct(s) => (&s.ident, "struct"),
+                Item::ResourcePack(p) => (&p.ident, "resource pack"),
                 Item::Enum(e) => (&e.ident, "enum"),
                 Item::Uniform(u) => (&u.name, "uniform"),
                 Item::Storage(s) => (&s.name, "storage"),
@@ -7977,6 +7998,7 @@ pub enum Item {
     Mod(ItemMod),
     Use(ItemUse),
     Struct(ItemStruct),
+    ResourcePack(crate::resource::ItemResourcePack),
     Impl(ItemImpl),
     Enum(ItemEnum),
     /// `macro_rules!` definitions are Rust-only and produce no WGSL output.
@@ -8062,6 +8084,9 @@ impl TryFrom<&syn::Item> for Item {
                 }
                 Ok(Item::Use(item_use))
             }
+            syn::Item::Struct(item_struct) if crate::resource::is_resource_pack(item_struct) => Ok(
+                Item::ResourcePack(crate::resource::parse_resource_pack(item_struct)?),
+            ),
             syn::Item::Struct(item_struct) => Ok(Item::Struct(ItemStruct::try_from(item_struct)?)),
             syn::Item::Impl(item_impl) => {
                 // Both inherent impl blocks and trait impl blocks are parsed.

@@ -110,7 +110,13 @@ impl AddressValue {
     fn constructor_value(&self) -> TokenStream {
         match self {
             Self::Literal(lit) => quote!(#lit),
-            Self::Param(ident) => quote!((#ident) as u32),
+            Self::Param(ident) => quote! {
+                u32::try_from(#ident).expect(concat!(
+                    "resource address const parameter `",
+                    stringify!(#ident),
+                    "` must fit in a u32"
+                ))
+            },
         }
     }
 }
@@ -211,6 +217,21 @@ pub(crate) fn pack_const_plans(module: &parse::ItemMod) -> parse::Result<Vec<Pac
                     });
                     plans.len() - 1
                 });
+            if let parse::PackConstArg::Param(target) = actual {
+                let reused = plans.iter().any(|other| {
+                    !(other.pack == pack_name && other.source == source)
+                        && other.aliases.contains(target)
+                });
+                if reused {
+                    return Err(parse::Error::unsupported(
+                        usage.span,
+                        format!(
+                            "entry-point const parameter `{target}` feeds multiple resource-pack \
+                             slots; use independent const parameters for each pack layout"
+                        ),
+                    ));
+                }
+            }
             let plan = &mut plans[index];
             let conflict = |kind: &str, value: &str| {
                 parse::Error::unsupported(
@@ -639,6 +660,37 @@ pub(crate) fn rewrite_rust_module(
     let Some((_, items)) = input_mod.content.as_mut() else {
         return Ok(());
     };
+    for item in items.iter() {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        if implementation.trait_.is_some() {
+            continue;
+        }
+        let syn::Type::Path(self_ty) = implementation.self_ty.as_ref() else {
+            continue;
+        };
+        let Some(ident) = self_ty.path.get_ident() else {
+            continue;
+        };
+        if module.resource_pack(ident).is_none() {
+            continue;
+        }
+        for impl_item in &implementation.items {
+            let syn::ImplItem::Fn(function) = impl_item else {
+                continue;
+            };
+            if function.sig.ident == "new" {
+                return Err(parse::Error::unsupported(
+                    function.sig.ident.span(),
+                    format!(
+                        "resource pack `{ident}` already defines an inherent `new` function; the \
+                         generated constructor would collide. Rename the existing function"
+                    ),
+                ));
+            }
+        }
+    }
     let mut output = Vec::with_capacity(items.len() + module.resource_packs().count());
     for mut item in items.drain(..) {
         let syn::Item::Struct(item_struct) = &mut item else {

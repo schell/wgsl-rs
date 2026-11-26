@@ -61,8 +61,19 @@ fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
         .unwrap_or("unknown panic");
     assert!(message.contains("duplicate resource address"), "{message}");
 
+    let constructor = std::panic::catch_unwind(|| {
+        invalid_after_instantiation::OutOfRange::<{ u32::MAX as usize + 1 }>::new()
+    })
+    .err()
+    .expect("CPU constructors must reject out-of-range usize addresses");
+    let message = constructor
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| constructor.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic");
+    assert!(message.contains("must fit in a u32"), "{message}");
+
     let invalid = std::panic::catch_unwind(|| {
-        invalid_after_instantiation::OutOfRange::<{ u32::MAX as usize + 1 }>::new();
         invalid_after_instantiation::instantiate::<0, { u32::MAX as usize + 1 }>()
     })
     .expect_err("usize addresses must fit in WGSL's u32 address representation");

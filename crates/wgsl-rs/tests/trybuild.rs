@@ -339,3 +339,15 @@ fn resource_pack_conflicting_consts_are_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_conflicting_consts.rs");
 }
+
+#[test]
+fn resource_pack_reused_const_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_reused_const.rs");
+}
+
+#[test]
+fn resource_pack_existing_new_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_existing_new.rs");
+}

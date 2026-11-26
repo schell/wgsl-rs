@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       entry-point const parameter `shared_c0` feeds multiple resource-pack slots; use independent const parameters for each pack layout.'
+  --> tests/ui/fail/resource_pack_reused_const.rs:18:55
+   |
+18 |     pub fn shared<const GROUP: u32>(a: &PackA<GROUP>, b: &PackB<GROUP>) -> Vec4f {
+   |                                                       ^

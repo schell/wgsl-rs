@@ -17,9 +17,12 @@ const LAYERS: u32 = 2;
 #[wgsl]
 pub mod tex2d_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2D<f32>);
-    sampler!(group(0), binding(1), S: Sampler);
+    pub struct Tex2dVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32>,
+        #[sampler(group(0), binding(1))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -34,8 +37,8 @@ pub mod tex2d_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &Tex2dVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
@@ -43,10 +46,10 @@ pub mod tex2d_variants {
         let ddx = vec2f(1.0 / dims.x() as f32, 0.0);
         let ddy = vec2f(0.0, 1.0 / dims.y() as f32);
 
-        let a = texture_sample_level(TEX, S, uv, 0.0);
-        let b = texture_sample_bias(TEX, S, uv, 0.0);
-        let c = texture_sample_grad(TEX, S, uv, ddx, ddy);
-        let d = texture_sample_level_offset(TEX, S, uv, 0.0, vec2i(1, 0));
+        let a = texture_sample_level(&pack.tex, &pack.s, uv, 0.0);
+        let b = texture_sample_bias(&pack.tex, &pack.s, uv, 0.0);
+        let c = texture_sample_grad(&pack.tex, &pack.s, uv, ddx, ddy);
+        let d = texture_sample_level_offset(&pack.tex, &pack.s, uv, 0.0, vec2i(1, 0));
         vec4f(a.x, b.y, c.z, d.w)
     }
 }
@@ -54,9 +57,12 @@ pub mod tex2d_variants {
 #[wgsl]
 pub mod tex2d_gather_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2D<f32>);
-    sampler!(group(0), binding(1), S: Sampler);
+    pub struct Tex2dGatherVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32>,
+        #[sampler(group(0), binding(1))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -71,14 +77,14 @@ pub mod tex2d_gather_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &Tex2dGatherVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
         );
-        let g0 = texture_gather(0u32, TEX, S, uv);
-        let g1 = texture_gather_offset(1u32, TEX, S, uv, vec2i(1, 0));
+        let g0 = texture_gather(0u32, &pack.tex, &pack.s, uv);
+        let g1 = texture_gather_offset(1u32, &pack.tex, &pack.s, uv, vec2i(1, 0));
         vec4f(g0.x, g0.y, g1.z, g1.w)
     }
 }
@@ -86,13 +92,18 @@ pub mod tex2d_gather_variants {
 #[wgsl]
 pub mod tex2d_gather_integer_variants {
     use wgsl_rs::std::*;
+    pub struct Tex2dGatherIntegerVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub tex_i: Texture2D<i32>,
+        #[texture(group(0), binding(1))]
+        pub tex_u: Texture2D<u32>,
+        #[sampler(group(0), binding(2))]
+        pub s: Sampler<false>,
+    }
 
-    texture!(group(0), binding(0), TEX_I: Texture2D<i32>);
-    texture!(group(0), binding(1), TEX_U: Texture2D<u32>);
     // Integer textures are non-filterable; the `unfilterable` sampler
     // modifier produces a NonFiltering bind-group layout entry on the GPU
     // side (WGSL output is unchanged).
-    sampler!(group(0), binding(2), S: Sampler<false>);
 
     pub struct FragInput {
         #[builtin(position)]
@@ -107,16 +118,16 @@ pub mod tex2d_gather_integer_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX_I);
+    pub fn frag_main(input: FragInput, pack: &Tex2dGatherIntegerVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex_i);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
         );
         // Integer sampled types per WGSL spec 17.7.2, plus the offset form.
-        let gi = texture_gather(0u32, TEX_I, S, uv);
-        let gu = texture_gather(1u32, TEX_U, S, uv);
-        let go = texture_gather_offset(2u32, TEX_U, S, uv, vec2i(1, 0));
+        let gi = texture_gather(0u32, &pack.tex_i, &pack.s, uv);
+        let gu = texture_gather(1u32, &pack.tex_u, &pack.s, uv);
+        let go = texture_gather_offset(2u32, &pack.tex_u, &pack.s, uv, vec2i(1, 0));
         vec4f(f32(gi.x), f32(gu.y), f32(go.z), f32(gi.w))
     }
 }
@@ -124,9 +135,12 @@ pub mod tex2d_gather_integer_variants {
 #[wgsl]
 pub mod tex2d_array_gather_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2DArray<f32>);
-    sampler!(group(0), binding(1), S: Sampler);
+    pub struct Tex2dArrayGatherVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2DArray<f32>,
+        #[sampler(group(0), binding(1))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -141,8 +155,8 @@ pub mod tex2d_array_gather_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &Tex2dArrayGatherVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
@@ -152,8 +166,8 @@ pub mod tex2d_array_gather_variants {
             layer = 1u32;
         }
         // 2D-array gathers with array index and array+offset forms.
-        let g0 = texture_gather_array(0u32, TEX, S, uv, layer);
-        let g1 = texture_gather_array_offset(2u32, TEX, S, uv, layer, vec2i(1, 0));
+        let g0 = texture_gather_array(0u32, &pack.tex, &pack.s, uv, layer);
+        let g1 = texture_gather_array_offset(2u32, &pack.tex, &pack.s, uv, layer, vec2i(1, 0));
         vec4f(g0.x, g0.y, g1.z, g1.w)
     }
 }
@@ -161,9 +175,12 @@ pub mod tex2d_array_gather_variants {
 #[wgsl]
 pub mod tex2d_array_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2DArray<f32>);
-    sampler!(group(0), binding(1), S: Sampler);
+    pub struct Tex2dArrayVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2DArray<f32>,
+        #[sampler(group(0), binding(1))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -178,8 +195,8 @@ pub mod tex2d_array_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &Tex2dArrayVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
@@ -191,10 +208,10 @@ pub mod tex2d_array_variants {
             layer = 1u32;
         }
 
-        let a = texture_sample_array(TEX, S, uv, layer);
-        let b = texture_sample_level_array(TEX, S, uv, layer, 0.0);
-        let c = texture_sample_grad_array(TEX, S, uv, layer, ddx, ddy);
-        let d = texture_sample_array_offset(TEX, S, uv, layer, vec2i(1, 0));
+        let a = texture_sample_array(&pack.tex, &pack.s, uv, layer);
+        let b = texture_sample_level_array(&pack.tex, &pack.s, uv, layer, 0.0);
+        let c = texture_sample_grad_array(&pack.tex, &pack.s, uv, layer, ddx, ddy);
+        let d = texture_sample_array_offset(&pack.tex, &pack.s, uv, layer, vec2i(1, 0));
         vec4f(a.x, b.y, c.z, d.w)
     }
 }
@@ -202,9 +219,12 @@ pub mod tex2d_array_variants {
 #[wgsl]
 pub mod tex_cube_gather_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), CUBE_TEX: TextureCube<f32>);
-    sampler!(group(0), binding(1), S: Sampler);
+    pub struct TexCubeGatherVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub cube_tex: TextureCube<f32>,
+        #[sampler(group(0), binding(1))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -219,7 +239,7 @@ pub mod tex_cube_gather_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
+    pub fn frag_main(input: FragInput, pack: &TexCubeGatherVariantsPack) -> Vec4f {
         // Map the 8x8 target onto the 6 cube faces: rows 0-5 select a face
         // band, columns sweep (a, b) across the non-major axes. Values stay
         // within (-0.6, 0.6) so the band axis is the strict major axis and
@@ -242,8 +262,8 @@ pub mod tex_cube_gather_variants {
         } else if band == 5u32 {
             dir = vec3f(a, b, -1.0);
         }
-        let g0 = texture_gather(0u32, CUBE_TEX, S, dir);
-        let g1 = texture_gather(2u32, CUBE_TEX, S, dir);
+        let g0 = texture_gather(0u32, &pack.cube_tex, &pack.s, dir);
+        let g1 = texture_gather(2u32, &pack.cube_tex, &pack.s, dir);
         vec4f(g0.x, g0.w, g1.y, g1.z)
     }
 }
@@ -251,9 +271,12 @@ pub mod tex_cube_gather_variants {
 #[wgsl]
 pub mod tex_cube_array_gather_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), CUBE_ARRAY_TEX: TextureCubeArray<f32>);
-    sampler!(group(0), binding(1), S: Sampler);
+    pub struct TexCubeArrayGatherVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub cube_array_tex: TextureCubeArray<f32>,
+        #[sampler(group(0), binding(1))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -268,7 +291,7 @@ pub mod tex_cube_array_gather_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
+    pub fn frag_main(input: FragInput, pack: &TexCubeArrayGatherVariantsPack) -> Vec4f {
         let a = (input.position.x - 4.0) / 6.0;
         let b = (input.position.y - 4.0) / 6.0;
         let band = u32(input.position.y) % 6u32;
@@ -288,8 +311,8 @@ pub mod tex_cube_array_gather_variants {
         // u32 and i32 array index overloads.
         let layer = u32(input.position.x) % 2u32;
         let layer_i = i32(layer);
-        let g0 = texture_gather_array(0u32, CUBE_ARRAY_TEX, S, dir, layer);
-        let g1 = texture_gather_array(3u32, CUBE_ARRAY_TEX, S, dir, layer_i);
+        let g0 = texture_gather_array(0u32, &pack.cube_array_tex, &pack.s, dir, layer);
+        let g1 = texture_gather_array(3u32, &pack.cube_array_tex, &pack.s, dir, layer_i);
         vec4f(g0.x, g0.w, g1.y, g1.z)
     }
 }
@@ -297,10 +320,14 @@ pub mod tex_cube_array_gather_variants {
 #[wgsl]
 pub mod depth_cube_gather_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), CUBE_TEX: TextureDepthCube);
-    texture!(group(0), binding(1), CUBE_ARRAY_TEX: TextureDepthCubeArray);
-    sampler!(group(0), binding(2), S: Sampler);
+    pub struct DepthCubeGatherVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub cube_tex: TextureDepthCube,
+        #[texture(group(0), binding(1))]
+        pub cube_array_tex: TextureDepthCubeArray,
+        #[sampler(group(0), binding(2))]
+        pub s: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -315,7 +342,7 @@ pub mod depth_cube_gather_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
+    pub fn frag_main(input: FragInput, pack: &DepthCubeGatherVariantsPack) -> Vec4f {
         // Direction sweep across the 6 face bands, kept inside face
         // interiors for the same two-worlds reason as
         // tex_cube_gather_variants.
@@ -335,12 +362,12 @@ pub mod depth_cube_gather_variants {
             dir = vec3f(a, b, -1.0);
         }
         // Depth cube gathers take a plain sampler and no component.
-        let g = texture_gather_depth(CUBE_TEX, S, dir);
+        let g = texture_gather_depth(&pack.cube_tex, &pack.s, dir);
         let mut layer = 0u32;
         if (input.position.x as i32 & 1) != 0 {
             layer = 1u32;
         }
-        let ga = texture_gather_depth_array(CUBE_ARRAY_TEX, S, dir, layer);
+        let ga = texture_gather_depth_array(&pack.cube_array_tex, &pack.s, dir, layer);
         vec4f(g.x, g.w, ga.y, ga.z)
     }
 }
@@ -348,10 +375,14 @@ pub mod depth_cube_gather_variants {
 #[wgsl]
 pub mod depth_cube_gather_compare_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), CUBE_TEX: TextureDepthCube);
-    texture!(group(0), binding(1), CUBE_ARRAY_TEX: TextureDepthCubeArray);
-    sampler!(group(0), binding(2), DEPTH_SAMPLER: SamplerComparison);
+    pub struct DepthCubeGatherCompareVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub cube_tex: TextureDepthCube,
+        #[texture(group(0), binding(1))]
+        pub cube_array_tex: TextureDepthCubeArray,
+        #[sampler(group(0), binding(2))]
+        pub depth_sampler: SamplerComparison,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -366,7 +397,7 @@ pub mod depth_cube_gather_compare_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
+    pub fn frag_main(input: FragInput, pack: &DepthCubeGatherCompareVariantsPack) -> Vec4f {
         // Same face-band sweep as depth_cube_gather_variants.
         let a = (input.position.x - 4.0) / 6.0;
         let b = (input.position.y - 4.0) / 6.0;
@@ -386,12 +417,18 @@ pub mod depth_cube_gather_compare_variants {
         // Sweep the reference across [0, 1) so both compare outcomes are
         // exercised per face.
         let depth_ref = input.position.x / 8.0;
-        let d = texture_gather_compare(CUBE_TEX, DEPTH_SAMPLER, dir, depth_ref);
+        let d = texture_gather_compare(&pack.cube_tex, &pack.depth_sampler, dir, depth_ref);
         let mut layer = 0u32;
         if (input.position.x as i32 & 1) != 0 {
             layer = 1u32;
         }
-        let da = texture_gather_compare_array(CUBE_ARRAY_TEX, DEPTH_SAMPLER, dir, layer, depth_ref);
+        let da = texture_gather_compare_array(
+            &pack.cube_array_tex,
+            &pack.depth_sampler,
+            dir,
+            layer,
+            depth_ref,
+        );
         vec4f(d.x, d.w, da.y, da.z)
     }
 }
@@ -399,9 +436,12 @@ pub mod depth_cube_gather_compare_variants {
 #[wgsl]
 pub mod depth2d_compare_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), DEPTH_TEX: TextureDepth2D);
-    sampler!(group(0), binding(1), DEPTH_SAMPLER: SamplerComparison);
+    pub struct Depth2dCompareVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub depth_tex: TextureDepth2D,
+        #[sampler(group(0), binding(1))]
+        pub depth_sampler: SamplerComparison,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -416,17 +456,23 @@ pub mod depth2d_compare_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(DEPTH_TEX);
+    pub fn frag_main(input: FragInput, pack: &Depth2dCompareVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.depth_tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
         );
         let depth_ref = 0.5;
-        let a = texture_sample_compare(DEPTH_TEX, DEPTH_SAMPLER, uv, depth_ref);
-        let b = texture_sample_compare_level(DEPTH_TEX, DEPTH_SAMPLER, uv, depth_ref);
-        let c = texture_sample_compare_offset(DEPTH_TEX, DEPTH_SAMPLER, uv, depth_ref, vec2i(1, 0));
-        let d = texture_gather_compare(DEPTH_TEX, DEPTH_SAMPLER, uv, depth_ref);
+        let a = texture_sample_compare(&pack.depth_tex, &pack.depth_sampler, uv, depth_ref);
+        let b = texture_sample_compare_level(&pack.depth_tex, &pack.depth_sampler, uv, depth_ref);
+        let c = texture_sample_compare_offset(
+            &pack.depth_tex,
+            &pack.depth_sampler,
+            uv,
+            depth_ref,
+            vec2i(1, 0),
+        );
+        let d = texture_gather_compare(&pack.depth_tex, &pack.depth_sampler, uv, depth_ref);
         vec4f(a, b, c, d.x)
     }
 }
@@ -434,9 +480,12 @@ pub mod depth2d_compare_variants {
 #[wgsl]
 pub mod depth2d_array_compare_variants {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), DEPTH_TEX: TextureDepth2DArray);
-    sampler!(group(0), binding(1), DEPTH_SAMPLER: SamplerComparison);
+    pub struct Depth2dArrayCompareVariantsPack {
+        #[texture(group(0), binding(0))]
+        pub depth_tex: TextureDepth2DArray,
+        #[sampler(group(0), binding(1))]
+        pub depth_sampler: SamplerComparison,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -451,8 +500,8 @@ pub mod depth2d_array_compare_variants {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(DEPTH_TEX);
+    pub fn frag_main(input: FragInput, pack: &Depth2dArrayCompareVariantsPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.depth_tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
@@ -463,17 +512,35 @@ pub mod depth2d_array_compare_variants {
         }
         let depth_ref = 0.5;
 
-        let a = texture_sample_compare_array(DEPTH_TEX, DEPTH_SAMPLER, uv, layer, depth_ref);
-        let b = texture_sample_compare_level_array(DEPTH_TEX, DEPTH_SAMPLER, uv, layer, depth_ref);
+        let a = texture_sample_compare_array(
+            &pack.depth_tex,
+            &pack.depth_sampler,
+            uv,
+            layer,
+            depth_ref,
+        );
+        let b = texture_sample_compare_level_array(
+            &pack.depth_tex,
+            &pack.depth_sampler,
+            uv,
+            layer,
+            depth_ref,
+        );
         let c = texture_sample_compare_array_offset(
-            DEPTH_TEX,
-            DEPTH_SAMPLER,
+            &pack.depth_tex,
+            &pack.depth_sampler,
             uv,
             layer,
             depth_ref,
             vec2i(1, 0),
         );
-        let d = texture_gather_compare_array(DEPTH_TEX, DEPTH_SAMPLER, uv, layer, depth_ref);
+        let d = texture_gather_compare_array(
+            &pack.depth_tex,
+            &pack.depth_sampler,
+            uv,
+            layer,
+            depth_ref,
+        );
         vec4f(a, b, c, d.x)
     }
 }
@@ -516,7 +583,10 @@ pub mod fill_depth_cube_face {
     // Per-face identifier (face + cube_index * 6). Keeps every cube face
     // and array layer distinguishable so cube gathers actually verify face
     // selection on the GPU.
-    uniform!(group(0), binding(0), FACE_ID: u32);
+    pub struct FillDepthCubeFacePack {
+        #[uniform(group(0), binding(0))]
+        pub face_id: Uniform<u32>,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -536,10 +606,10 @@ pub mod fill_depth_cube_face {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> FragOutput {
+    pub fn frag_main(input: FragInput, pack: &FillDepthCubeFacePack) -> FragOutput {
         let x = u32(input.position.x);
         let y = u32(input.position.y);
-        let off = f32(load!(FACE_ID)) * 0.13;
+        let off = f32(load!(pack.face_id)) * 0.13;
         FragOutput {
             depth: clamp((x as f32 * 0.07 + y as f32 * 0.11 + off) % 1.0, 0.0, 1.0),
         }
@@ -1260,7 +1330,7 @@ fn fill_gpu_depth_cube(
     // reading the last-written value.
     for face_id in 0..(cubes * 6) {
         let face_id_buffer = linkage
-            .buffer("FACE_ID")
+            .buffer("filldepthcubefacepack__face_id")
             .expect("FACE_ID binding present")
             .create_buffer(device);
         queue.write_buffer(&face_id_buffer, 0, &face_id.to_ne_bytes());
@@ -1274,11 +1344,7 @@ fn fill_gpu_depth_cube(
             ..Default::default()
         });
         let bg = linkage
-            .create_bind_group_named(
-                0,
-                device,
-                &[("FACE_ID", face_id_buffer.as_entire_binding())],
-            )
+            .create_bind_group(0, device, &[face_id_buffer.as_entire_binding()])
             .expect("fill_depth_cube bind group");
 
         {
@@ -1449,12 +1515,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let module = linkage.shader_module(device);
             let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_tex2d_variants"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_tex2d_variants bind group");
@@ -1482,17 +1548,24 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture2d(tex2d_variants::TEX, &color0);
-            tex2d_variants::S.set(SamplerState::default());
+            let pack = tex2d_variants::Tex2dVariantsPack {
+                tex: Texture2D::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture2d(&pack.tex, &color0);
+            pack.s.set(SamplerState::default());
 
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let result = tex2d_variants::frag_main(tex2d_variants::FragInput {
-                        position: builtins.position,
-                    });
+                    let result = tex2d_variants::frag_main(
+                        tex2d_variants::FragInput {
+                            position: builtins.position,
+                        },
+                        &pack,
+                    );
                     [result.x, result.y, result.z, result.w]
                 },
             );
@@ -1514,12 +1587,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let module = linkage.shader_module(device);
             let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_tex2d_gather"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_tex2d_gather bind group");
@@ -1547,17 +1620,23 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture2d(tex2d_gather_variants::TEX, &color0);
-            tex2d_gather_variants::S.set(SamplerState::default());
+            let pack = tex2d_gather_variants::Tex2dGatherVariantsPack {
+                tex: Texture2D::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture2d(&pack.tex, &color0);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let result =
-                        tex2d_gather_variants::frag_main(tex2d_gather_variants::FragInput {
+                    let result = tex2d_gather_variants::frag_main(
+                        tex2d_gather_variants::FragInput {
                             position: builtins.position,
-                        });
+                        },
+                        &pack,
+                    );
                     [result.x, result.y, result.z, result.w]
                 },
             );
@@ -1582,13 +1661,13 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_tex2d_gather_integer"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("TEX_I", wgpu::BindingResource::TextureView(&source_view_i)),
-                        ("TEX_U", wgpu::BindingResource::TextureView(&source_view_u)),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view_i),
+                        wgpu::BindingResource::TextureView(&source_view_u),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_tex2d_gather_integer bind group");
@@ -1616,9 +1695,14 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture2d_i32(tex2d_gather_integer_variants::TEX_I, &pixels_i32);
-            write_cpu_texture2d_u32(tex2d_gather_integer_variants::TEX_U, &pixels_u32);
-            tex2d_gather_integer_variants::S.set(SamplerState::default());
+            let pack = tex2d_gather_integer_variants::Tex2dGatherIntegerVariantsPack {
+                tex_i: Texture2D::new(),
+                tex_u: Texture2D::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture2d_i32(&pack.tex_i, &pixels_i32);
+            write_cpu_texture2d_u32(&pack.tex_u, &pixels_u32);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
@@ -1628,6 +1712,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                         tex2d_gather_integer_variants::FragInput {
                             position: builtins.position,
                         },
+                        &pack,
                     );
                     [result.x, result.y, result.z, result.w]
                 },
@@ -1655,12 +1740,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_tex2d_array_gather"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_tex2d_array_gather bind group");
@@ -1688,8 +1773,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture2d_array(tex2d_array_gather_variants::TEX, &color_layers);
-            tex2d_array_gather_variants::S.set(SamplerState::default());
+            let pack = tex2d_array_gather_variants::Tex2dArrayGatherVariantsPack {
+                tex: Texture2DArray::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture2d_array(&pack.tex, &color_layers);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
@@ -1699,6 +1788,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                         tex2d_array_gather_variants::FragInput {
                             position: builtins.position,
                         },
+                        &pack,
                     );
                     [result.x, result.y, result.z, result.w]
                 },
@@ -1725,12 +1815,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_tex2d_array_variants"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_tex2d_array bind group");
@@ -1758,16 +1848,23 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture2d_array(tex2d_array_variants::TEX, &color_layers);
-            tex2d_array_variants::S.set(SamplerState::default());
+            let pack = tex2d_array_variants::Tex2dArrayVariantsPack {
+                tex: Texture2DArray::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture2d_array(&pack.tex, &color_layers);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let result = tex2d_array_variants::frag_main(tex2d_array_variants::FragInput {
-                        position: builtins.position,
-                    });
+                    let result = tex2d_array_variants::frag_main(
+                        tex2d_array_variants::FragInput {
+                            position: builtins.position,
+                        },
+                        &pack,
+                    );
                     [result.x, result.y, result.z, result.w]
                 },
             );
@@ -1796,12 +1893,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let module = linkage.shader_module(device);
             let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_cube_gather"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("CUBE_TEX", wgpu::BindingResource::TextureView(&source_view)),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_cube_gather bind group");
@@ -1829,17 +1926,23 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture_cube(tex_cube_gather_variants::CUBE_TEX, &cube_faces);
-            tex_cube_gather_variants::S.set(SamplerState::default());
+            let pack = tex_cube_gather_variants::TexCubeGatherVariantsPack {
+                cube_tex: TextureCube::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture_cube(&pack.cube_tex, &cube_faces);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let result =
-                        tex_cube_gather_variants::frag_main(tex_cube_gather_variants::FragInput {
+                    let result = tex_cube_gather_variants::frag_main(
+                        tex_cube_gather_variants::FragInput {
                             position: builtins.position,
-                        });
+                        },
+                        &pack,
+                    );
                     [result.x, result.y, result.z, result.w]
                 },
             );
@@ -1876,15 +1979,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_cube_array_gather"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        (
-                            "CUBE_ARRAY_TEX",
-                            wgpu::BindingResource::TextureView(&source_view),
-                        ),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_cube_array_gather bind group");
@@ -1912,11 +2012,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_texture_cube_array(
-                tex_cube_array_gather_variants::CUBE_ARRAY_TEX,
-                &cube_array_layers,
-            );
-            tex_cube_array_gather_variants::S.set(SamplerState::default());
+            let pack = tex_cube_array_gather_variants::TexCubeArrayGatherVariantsPack {
+                cube_array_tex: TextureCubeArray::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_texture_cube_array(&pack.cube_array_tex, &cube_array_layers);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
@@ -1926,6 +2027,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                         tex_cube_array_gather_variants::FragInput {
                             position: builtins.position,
                         },
+                        &pack,
                     );
                     [result.x, result.y, result.z, result.w]
                 },
@@ -1952,18 +2054,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let module = linkage.shader_module(device);
             let pipeline_layout = linkage.pipeline_layout(device, Some("advanced_depth2d_compare"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        (
-                            "DEPTH_TEX",
-                            wgpu::BindingResource::TextureView(&source_view),
-                        ),
-                        (
-                            "DEPTH_SAMPLER",
-                            wgpu::BindingResource::Sampler(&cmp_sampler),
-                        ),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&cmp_sampler),
                     ],
                 )
                 .expect("advanced_depth2d_compare bind group");
@@ -1991,17 +2087,23 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_depth2d(depth2d_compare_variants::DEPTH_TEX, &depth0);
-            depth2d_compare_variants::DEPTH_SAMPLER.set(SamplerComparisonState::default());
+            let pack = depth2d_compare_variants::Depth2dCompareVariantsPack {
+                depth_tex: TextureDepth2D::new(),
+                depth_sampler: SamplerComparison::new(),
+            };
+            write_cpu_depth2d(&pack.depth_tex, &depth0);
+            pack.depth_sampler.set(SamplerComparisonState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
                 |_, _| (),
                 |builtins, _| {
-                    let result =
-                        depth2d_compare_variants::frag_main(depth2d_compare_variants::FragInput {
+                    let result = depth2d_compare_variants::frag_main(
+                        depth2d_compare_variants::FragInput {
                             position: builtins.position,
-                        });
+                        },
+                        &pack,
+                    );
                     [result.x, result.y, result.z, result.w]
                 },
             );
@@ -2033,18 +2135,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_depth2d_array_compare"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        (
-                            "DEPTH_TEX",
-                            wgpu::BindingResource::TextureView(&source_view),
-                        ),
-                        (
-                            "DEPTH_SAMPLER",
-                            wgpu::BindingResource::Sampler(&cmp_sampler),
-                        ),
+                        wgpu::BindingResource::TextureView(&source_view),
+                        wgpu::BindingResource::Sampler(&cmp_sampler),
                     ],
                 )
                 .expect("advanced_depth2d_array_compare bind group");
@@ -2072,8 +2168,12 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_depth2d_array(depth2d_array_compare_variants::DEPTH_TEX, &depth_layers);
-            depth2d_array_compare_variants::DEPTH_SAMPLER.set(SamplerComparisonState::default());
+            let pack = depth2d_array_compare_variants::Depth2dArrayCompareVariantsPack {
+                depth_tex: TextureDepth2DArray::new(),
+                depth_sampler: SamplerComparison::new(),
+            };
+            write_cpu_depth2d_array(&pack.depth_tex, &depth_layers);
+            pack.depth_sampler.set(SamplerComparisonState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
@@ -2083,6 +2183,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                         depth2d_array_compare_variants::FragInput {
                             position: builtins.position,
                         },
+                        &pack,
                     );
                     [result.x, result.y, result.z, result.w]
                 },
@@ -2119,16 +2220,13 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_depth_cube_gather"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("CUBE_TEX", wgpu::BindingResource::TextureView(&cube_view)),
-                        (
-                            "CUBE_ARRAY_TEX",
-                            wgpu::BindingResource::TextureView(&cube_array_view),
-                        ),
-                        ("S", wgpu::BindingResource::Sampler(&sampler)),
+                        wgpu::BindingResource::TextureView(&cube_view),
+                        wgpu::BindingResource::TextureView(&cube_array_view),
+                        wgpu::BindingResource::Sampler(&sampler),
                     ],
                 )
                 .expect("advanced_depth_cube_gather bind group");
@@ -2156,9 +2254,14 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_depth_cube(depth_cube_gather_variants::CUBE_TEX);
-            write_cpu_depth_cube_array(depth_cube_gather_variants::CUBE_ARRAY_TEX);
-            depth_cube_gather_variants::S.set(SamplerState::default());
+            let pack = depth_cube_gather_variants::DepthCubeGatherVariantsPack {
+                cube_tex: TextureDepthCube::new(),
+                cube_array_tex: TextureDepthCubeArray::new(),
+                s: Sampler::new(),
+            };
+            write_cpu_depth_cube(&pack.cube_tex);
+            write_cpu_depth_cube_array(&pack.cube_array_tex);
+            pack.s.set(SamplerState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
@@ -2168,6 +2271,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                         depth_cube_gather_variants::FragInput {
                             position: builtins.position,
                         },
+                        &pack,
                     );
                     [result.x, result.y, result.z, result.w]
                 },
@@ -2211,19 +2315,13 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             let pipeline_layout =
                 linkage.pipeline_layout(device, Some("advanced_depth_cube_gather_compare"));
             let bg = linkage
-                .create_bind_group_named(
+                .create_bind_group(
                     0,
                     device,
                     &[
-                        ("CUBE_TEX", wgpu::BindingResource::TextureView(&cube_view)),
-                        (
-                            "CUBE_ARRAY_TEX",
-                            wgpu::BindingResource::TextureView(&cube_array_view),
-                        ),
-                        (
-                            "DEPTH_SAMPLER",
-                            wgpu::BindingResource::Sampler(&cmp_sampler),
-                        ),
+                        wgpu::BindingResource::TextureView(&cube_view),
+                        wgpu::BindingResource::TextureView(&cube_array_view),
+                        wgpu::BindingResource::Sampler(&cmp_sampler),
                     ],
                 )
                 .expect("advanced_depth_cube_gather_compare bind group");
@@ -2251,10 +2349,14 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                     ),
             );
 
-            write_cpu_depth_cube(depth_cube_gather_compare_variants::CUBE_TEX);
-            write_cpu_depth_cube_array(depth_cube_gather_compare_variants::CUBE_ARRAY_TEX);
-            depth_cube_gather_compare_variants::DEPTH_SAMPLER
-                .set(SamplerComparisonState::default());
+            let pack = depth_cube_gather_compare_variants::DepthCubeGatherCompareVariantsPack {
+                cube_tex: TextureDepthCube::new(),
+                cube_array_tex: TextureDepthCubeArray::new(),
+                depth_sampler: SamplerComparison::new(),
+            };
+            write_cpu_depth_cube(&pack.cube_tex);
+            write_cpu_depth_cube_array(&pack.cube_array_tex);
+            pack.depth_sampler.set(SamplerComparisonState::default());
             let cpu = dispatch_fragments(
                 WIDTH,
                 HEIGHT,
@@ -2264,6 +2366,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
                         depth_cube_gather_compare_variants::FragInput {
                             position: builtins.position,
                         },
+                        &pack,
                     );
                     [result.x, result.y, result.z, result.w]
                 },

@@ -196,26 +196,36 @@ impl WgpuLinkage {
 
     /// Returns the buffer descriptor for a `uniform!` or `storage!`
     /// binding by its declared name, if any.
+    ///
+    /// Resource-pack fields may also be looked up by their friendly key,
+    /// `"Pack::field"` (as emitted by the generated per-field consts);
+    /// it is canonicalized to the mangled global name automatically.
     pub fn buffer(&self, name: &str) -> Option<&BufferDescriptorInfo> {
-        self.buffers.iter().find(|b| b.binding_name == name)
+        if let Some(info) = self.buffers.iter().find(|b| b.binding_name == name) {
+            return Some(info);
+        }
+        let normalized = normalize_binding_key(name)?;
+        self.buffers.iter().find(|b| b.binding_name == normalized)
     }
 
     /// Returns the buffer descriptor for a `uniform!` or `storage!`
     /// binding by its declared name, if any - removing it from the linkage.
     ///
+    /// Resource-pack fields may also be looked up by their friendly key,
+    /// `"Pack::field"`; it is canonicalized to the mangled global name
+    /// automatically.
+    ///
     /// Use this to ensure that you provide data for all buffers in your
     /// program.
     pub fn take_buffer(&mut self, name: &str) -> Option<BufferDescriptorInfo> {
-        let mut info = None;
-        self.buffers.retain(|bi| {
-            if bi.binding_name == name {
-                info = Some(bi.clone());
-                false
-            } else {
-                true
+        let index = match self.buffers.iter().position(|bi| bi.binding_name == name) {
+            Some(index) => index,
+            None => {
+                let normalized = normalize_binding_key(name)?;
+                self.buffers.iter().position(|bi| bi.binding_name == normalized)?
             }
-        });
-        info
+        };
+        Some(self.buffers.remove(index))
     }
 
     /// Returns the WGSL source for this linkage's source, rendered from
@@ -295,6 +305,10 @@ impl WgpuLinkage {
     /// have to match the binding declaration order; the produced
     /// `BindGroupEntry` list is sorted by binding number, matching the
     /// cached layout.
+    ///
+    /// Resource-pack fields accept their friendly key,
+    /// `"Pack::field"` (as emitted by the generated per-field consts),
+    /// in addition to the mangled binding name.
     ///
     /// Looks up (and builds+caches on first access) the bind group
     /// layout for `group`, then delegates to
@@ -535,6 +549,12 @@ impl BindGroupInfo {
     /// the binding declaration order; the produced `BindGroupEntry`
     /// list is sorted by binding number, matching the layout.
     ///
+    /// Resource-pack fields accept their friendly key,
+    /// `"Pack::field"` (as emitted by the generated per-field consts),
+    /// in addition to the mangled binding name: the key is canonicalized
+    /// automatically, and mixing both spellings of one field is a
+    /// duplicate-name error.
+    ///
     /// `module_label` is the linkage's `module_label`, used to build
     /// helpful error messages. It is not borrowed into the returned
     /// bind group.
@@ -556,11 +576,20 @@ impl BindGroupInfo {
     ) -> Result<wgpu::BindGroup, Error> {
         use std::collections::HashMap;
 
-        // Build a name → resource map. Detect duplicates as we go.
-        let mut by_name: HashMap<&str, wgpu::BindingResource<'a>> =
+        // Build a canonical name → resource map. Friendly keys
+        // (`"Pack::field"`, as emitted by the generated per-field consts)
+        // are canonicalized to the mangled binding names they select.
+        // Detect duplicates as we go.
+        let mut by_name: HashMap<String, wgpu::BindingResource<'a>> =
             HashMap::with_capacity(resources.len());
         for &(name, ref resource) in resources {
-            if by_name.insert(name, resource.clone()).is_some() {
+            let canonical = match normalize_binding_key(name) {
+                Some(normalized) if self.bindings.iter().any(|b| b.name == normalized) => {
+                    normalized
+                }
+                _ => name.to_string(),
+            };
+            if by_name.insert(canonical, resource.clone()).is_some() {
                 return DuplicateBindingNameSnafu {
                     module: module_label,
                     group: self.group,
@@ -599,12 +628,12 @@ impl BindGroupInfo {
             });
         }
         for name in by_name.keys() {
-            if !hit.contains_key(name) {
+            if !hit.contains_key(name.as_str()) {
                 let declared: Vec<String> = self.bindings.iter().map(|b| b.name.clone()).collect();
                 return UnknownBindingNameSnafu {
                     module: module_label,
                     group: self.group,
-                    name: (*name).to_string(),
+                    name: name.clone(),
                     declared,
                 }
                 .fail();
@@ -1508,5 +1537,52 @@ mod binding_visibility {
             visibility_of(&linkage, "MY_UNIFORM"),
             wgpu::ShaderStages::VERTEX
         );
+    }
+}
+
+/// Canonicalize a friendly binding key to the mangled binding name.
+///
+/// Pack fields are keyed `"Pack::field"` (the Rust path form emitted by
+/// the generated per-field consts), while the linkage stores the mangled
+/// WGSL global name `pack__field` (the macro's `mangle_resource_name`:
+/// the lowercased pack name joined to the field name). Keys without `::`
+/// (legacy names and mangled names) yield `None` and are matched exactly.
+fn normalize_binding_key(key: &str) -> Option<String> {
+    let mut segments = key.rsplit("::");
+    let field = segments.next()?;
+    let pack = segments.next()?;
+    if field.is_empty() || pack.is_empty() {
+        return None;
+    }
+    Some(format!("{}__{}", pack.to_lowercase(), field))
+}
+
+#[cfg(test)]
+mod normalize_binding_key_tests {
+    use super::normalize_binding_key;
+
+    #[test]
+    fn friendly_keys_canonicalize_to_mangled_names() {
+        assert_eq!(
+            normalize_binding_key("AtlasBindGroup::slab").as_deref(),
+            Some("atlasbindgroup__slab")
+        );
+        assert_eq!(
+            normalize_binding_key("My_Bg::heights_smp").as_deref(),
+            Some("my_bg__heights_smp")
+        );
+        // Qualified paths use the last two segments.
+        assert_eq!(
+            normalize_binding_key("crate::shaders::Pack::tex").as_deref(),
+            Some("pack__tex")
+        );
+    }
+
+    #[test]
+    fn mangled_and_legacy_names_stay_exact() {
+        assert_eq!(normalize_binding_key("atlasbindgroup__slab"), None);
+        assert_eq!(normalize_binding_key("FRAME"), None);
+        assert_eq!(normalize_binding_key(""), None);
+        assert_eq!(normalize_binding_key("only::"), None);
     }
 }

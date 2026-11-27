@@ -87,3 +87,104 @@ fn pack_addresses_and_filterability_reach_wgpu_layouts() {
         ));
     }
 }
+
+/// Packs expose binding-key consts: `"Pack::field"` spellings that are
+/// independent of layout-only consts (FILTERABLE), and a `{PARAM}_N` value
+/// const for consts that select the group axis. The friendly keys resolve
+/// in `buffer()` lookups alongside the mangled names.
+#[test]
+fn pack_field_consts_key_bindings_by_friendly_name() {
+    // Layout-only consts vanish from the key: every instantiation shares
+    // one spelling.
+    assert_eq!(
+        packs::TexturePack::<4, false, 7>::TEXTURE,
+        "TexturePack::texture"
+    );
+    assert_eq!(
+        packs::TexturePack::<6, true, 1>::TEXTURE,
+        "TexturePack::texture"
+    );
+    assert_eq!(packs::TexturePack::<4, false, 7>::SMP, "TexturePack::smp");
+    assert_eq!(packs::BufferPack::INPUT, "BufferPack::input");
+    // The group rides the const-param axis.
+    assert_eq!(packs::TexturePack::<4, false, 7>::GROUP_N, 4);
+    assert_eq!(packs::TexturePack::<6, false, 1>::GROUP_N, 6);
+
+    let module = packs::instantiate::<4, 7, false>();
+    let linkage = wg::analyze_ir_module(module);
+    let buf = linkage
+        .buffer(packs::BufferPack::INPUT)
+        .expect("friendly key finds the buffer");
+    assert_eq!(buf.group, 2);
+    assert_eq!(buf.binding, 3);
+    assert!(linkage.buffer("bufferpack__input").is_some());
+    assert!(linkage.buffer("BufferPack::nope").is_none());
+}
+
+/// Helper: returns a `wgpu::Device` for tests, or `None` if no GPU is
+/// available. Device-backed tests early-return when this is `None`.
+fn test_device() -> Option<wg::wgpu::Device> {
+    use futures::executor::block_on;
+    let instance = wg::wgpu::Instance::new(wg::wgpu::InstanceDescriptor {
+        backends: wg::wgpu::Backends::all(),
+        ..wg::wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = block_on(instance.request_adapter(&wg::wgpu::RequestAdapterOptions {
+        power_preference: wg::wgpu::PowerPreference::default(),
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    }))
+    .ok()?;
+    let (device, _queue) =
+        block_on(adapter.request_device(&wg::wgpu::DeviceDescriptor::default())).ok()?;
+    Some(device)
+}
+
+/// The design driver: `MyBg<const GROUP: u32>` bound in three groups. The
+/// two-axis key `(group, "MyBg::slab")` stays collision-free across all
+/// three per-instantiation linkages, and `GROUP_N` selects the group axis.
+#[wgsl(validate_with_instantiation_types(SLAB_GROUP))]
+mod slabs {
+    use wgsl_rs::std::*;
+
+    pub const SLAB_GROUP: u32 = 0;
+
+    #[allow(dead_code)]
+    pub struct MyBg<const GROUP: u32> {
+        #[storage(group(GROUP), binding(0), read_only)]
+        pub slab: Storage<[Vec4f; 4], Read>,
+    }
+}
+
+#[test]
+fn group_param_packs_bind_by_the_same_key_in_three_groups() {
+    let Some(device) = test_device() else {
+        eprintln!("[skip] no GPU available");
+        return;
+    };
+
+    fn bind_at<const GROUP: u32>(device: &wg::wgpu::Device) {
+        let module = slabs::instantiate::<GROUP>();
+        let mut linkage = wg::analyze_ir_module(module);
+        let info = linkage
+            .buffer(slabs::MyBg::<GROUP>::SLAB)
+            .expect("friendly key finds the slab buffer");
+        assert_eq!(info.group, GROUP);
+        assert_eq!(info.binding, 0);
+
+        let buffer = info.create_buffer(device);
+        let bind_group = linkage
+            .create_bind_group_named(
+                slabs::MyBg::<GROUP>::GROUP_N,
+                device,
+                &[(slabs::MyBg::<GROUP>::SLAB, buffer.as_entire_binding())],
+            )
+            .expect("friendly key creates the bind group");
+        let _ = bind_group;
+    }
+
+    bind_at::<0>(&device);
+    bind_at::<1>(&device);
+    bind_at::<2>(&device);
+}

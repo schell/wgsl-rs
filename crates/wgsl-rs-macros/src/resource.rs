@@ -5,7 +5,7 @@
 //! WGSL resources for later lowering passes.
 
 use proc_macro2::Span;
-use quote::ToTokens;
+use quote::{ToTokens, format_ident, quote};
 use syn::{Ident, Token, spanned::Spanned};
 use wgsl_rs_ir as ir;
 
@@ -921,6 +921,11 @@ pub(crate) fn validate_pack_param_slots(module: &parse::ItemMod) -> parse::Resul
 /// else about the user's struct is emitted verbatim: hosts construct packs
 /// by hand, so there are no generated constructors and no field-type
 /// rewrites.
+///
+/// Each pack also gains an impl of binding-key consts: one
+/// `pub const {FIELD}: &'static str = "{Pack}::{field}";` per annotated
+/// field, and one `pub const {PARAM}_N: {ty} = {PARAM};` for every const
+/// parameter that selects the group axis. See [`pack_key_impl`].
 pub(crate) fn rewrite_rust_module(
     input_mod: &mut syn::ItemMod,
     module: &parse::ItemMod,
@@ -928,6 +933,7 @@ pub(crate) fn rewrite_rust_module(
     let Some((_, items)) = input_mod.content.as_mut() else {
         return Ok(());
     };
+    let mut key_impls: Vec<syn::Item> = Vec::new();
     for item in items.iter_mut() {
         let syn::Item::Struct(item_struct) = item else {
             continue;
@@ -953,8 +959,61 @@ pub(crate) fn rewrite_rust_module(
                 insert_access_marker(&mut field.ty, resource.access);
             }
         }
+        key_impls.push(pack_key_impl(item_struct, pack));
     }
+    items.extend(key_impls);
     Ok(())
+}
+
+/// Generate the binding-key consts for one resource pack.
+///
+/// A binding is keyed by two axes, `(group, "Pack::field")`. The per-field
+/// consts are parameter-independent strings: consts that only change layout
+/// (`FILTERABLE`) vanish from the key, so every instantiation shares one
+/// spelling. Const parameters that select the group axis cannot be baked
+/// into a string (Rust has no const string formatting), so the group rides
+/// a value const instead: `pub const GROUP_N: u32 = GROUP;`.
+///
+/// The `#[allow(dead_code)]` mirrors the field-level convention for
+/// generated resources: bin crates that never read a const would otherwise
+/// warn on code the user did not write.
+fn pack_key_impl(item_struct: &syn::ItemStruct, pack: &ItemResourcePack) -> syn::Item {
+    let (impl_generics, ty_generics, _) = item_struct.generics.split_for_impl();
+    let pack_ident = &pack.ident;
+    let mut consts: Vec<proc_macro2::TokenStream> = Vec::new();
+    for field in &pack.fields {
+        let field_ident = &field.ident;
+        let key = format!("{pack_ident}::{field_ident}");
+        let const_ident = format_ident!(
+            "{}",
+            field_ident.to_string().to_uppercase(),
+            span = field_ident.span(),
+        );
+        consts.push(quote! {
+            /// The binding key for this field: `"Pack::field"`.
+            pub const #const_ident: &'static str = #key;
+        });
+    }
+    for (param, ty) in &pack.const_params {
+        let selects_group = pack
+            .fields
+            .iter()
+            .any(|field| matches!(&field.group, AddressValue::Param(name) if name == param));
+        if !selects_group {
+            continue;
+        }
+        let const_ident = format_ident!("{}_N", param, span = param.span());
+        consts.push(quote! {
+            /// The group index this instantiation binds at.
+            pub const #const_ident: #ty = #param;
+        });
+    }
+    syn::parse_quote! {
+        #[allow(dead_code)]
+        impl #impl_generics #pack_ident #ty_generics {
+            #(#consts)*
+        }
+    }
 }
 
 /// Append the access marker to a `Storage<T>` field type that omitted it,

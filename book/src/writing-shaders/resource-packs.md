@@ -147,6 +147,44 @@ compile-time errors. Duplicate names and addresses are checked again after
 instantiation. See [Template Modules & Instantiation](../generics/templates.md)
 for the full ordering rules.
 
+## Binding-key consts
+
+Every pack gains generated consts that key its bindings without hand-mangled
+strings. A binding is addressed by two axes, `(group, "Pack::field")`:
+
+```rust
+impl<const FILTERABLE: bool> AtlasBindGroup<FILTERABLE> {
+    pub const SLAB: &'static str = "AtlasBindGroup::slab";
+    pub const TEXTURE: &'static str = "AtlasBindGroup::texture";
+    pub const SMP: &'static str = "AtlasBindGroup::smp";
+}
+```
+
+Consts that change only layout (`FILTERABLE`) vanish from the key: every
+instantiation shares one spelling, so the key never needs to mention them.
+Consts that select the group axis cannot be baked into a string (Rust has no
+const string formatting), so the group rides a value const instead:
+
+```rust
+impl<const GROUP: u32> MyBg<GROUP> {
+    pub const GROUP_N: u32 = GROUP;
+    pub const SLAB: &'static str = "MyBg::slab";
+}
+
+// The group axis selects the bind group; the key stays the same.
+let bg = linkage.create_bind_group_named(
+    MyBg::<1>::GROUP_N,
+    &device,
+    &[(MyBg::<1>::SLAB, slab_buffer.as_entire_binding())],
+)?;
+```
+
+The linkage accepts both spellings everywhere bindings are named:
+`create_bind_group_named`, `BindGroupInfo::create_named`, and the
+`buffer`/`take_buffer` lookups all canonicalize `"Pack::field"` to the
+mangled WGSL global name automatically. See
+[Bind Groups & Buffers](../linkage/bind-groups.md).
+
 ## Type parameters on packs
 
 Packs may declare type parameters alongside their consts. A type parameter

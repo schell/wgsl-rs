@@ -52,12 +52,14 @@ let bg = bg0.create(&device, &layout, &[
 ]);
 ```
 
-`create_named` lets you supply resources by name instead of position:
+`create_named` lets you supply resources by name instead of position.
+Resource-pack fields accept their generated friendly keys,
+`"Pack::field"`, as well as the mangled names:
 
 ```rust
 let bg = bg0.create_named("renderer", &device, &layout, &[
-    ("framepack__frame", frame_buffer.as_entire_binding()),
-    ("framepack__albedo", &albedo_view),
+    (AtlasBindGroup::SLAB, frame_buffer.as_entire_binding()),
+    (AtlasBindGroup::TEXTURE, &albedo_view),
 ]);
 ```
 
@@ -65,13 +67,12 @@ let bg = bg0.create_named("renderer", &device, &layout, &[
 
 `#[uniform]` and `#[storage]` pack fields produce a `BufferDescriptorInfo`
 entry that knows the buffer's WGSL size and usage. Find a buffer by its
-mangled global name (the lowercased pack name joined to the field name with
-a double underscore):
+generated friendly key (preferred) or by its mangled global name:
 
 ```rust
 let frame_buf_info = linkage
-    .buffer("framepack__frame")
-    .expect("framepack__frame buffer exists");
+    .buffer(AtlasBindGroup::FRAME)
+    .expect("AtlasBindGroup::frame buffer exists");
 let frame_buffer = frame_buf_info.create_buffer(&device);
 ```
 
@@ -88,7 +89,7 @@ workgroup-scoped storage. They do not need wgpu host-side resources.
 ## Example: full bind group setup
 
 ```rust
-let frame_info = linkage.buffer("framepack__frame").unwrap();
+let frame_info = linkage.buffer(FramePack::FRAME).unwrap();
 let frame_buffer = frame_info.create_buffer(&device);
 
 let frame_bg = linkage.create_bind_group(0, &device, &[

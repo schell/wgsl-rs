@@ -2546,3 +2546,35 @@ green until the removal pass deletes the declaration macros and the
 `ModuleVar` layer with them. Textures and samplers keep their lazy
 `ModuleVar` storage for now (their pixel data cannot be const-constructed in
 statics); their value-holding form is a decision for the removal pass.
+
+### 2026-11-27: Binding keys are two axes, canonicalized at lookup
+
+**Problem.** Pack fields mangle into WGSL global names (`atlasbindgroup__slab`),
+so every host that binds by name has to hand-mangle strings, and the mangled
+spelling leaks into error messages and user code (the renderling atlas port
+hit exactly this with `MissingBinding { name: "atlasbindgroup__slab" }`).
+
+**Decision.** A binding is keyed by two axes, `(group, "Pack::field")`, using
+the Rust path spelling as the canonical key. The linkage does not store the
+friendly form: lookups canonicalize `"Pack::field"` to the mangled name at
+match time (lowercased pack segment joined to the field with `__`, mirroring
+the macro's `mangle_resource_name`), so the IR and the analysis are
+unchanged and both spellings resolve in `create_bind_group_named`,
+`BindGroupInfo::create_named`, and `buffer`/`take_buffer`.
+
+Per-field key consts are generated onto the pack, and layout-only consts
+(`FILTERABLE`) vanish from the key: the spelling is parameter-independent,
+so every instantiation shares one const value. Consts that select the group
+axis cannot be formatted into a string at compile time, so the group rides a
+`{PARAM}_N` value const instead (`MyBg::<1>::GROUP_N == 1`); the group is
+always the positional argument, never part of the name. One name therefore
+resolves in any number of groups without collision (the "three slabs" driver).
+
+**Why canonicalization over storage.** Storing a second friendly name per
+binding in the IR would touch the IR, the analyzer, and the Display output
+for a spelling that is derivable from the mangled name. The `::` separator
+cannot appear in a WGSL identifier, so friendly keys can never collide with
+legacy or mangled names; mixing both spellings of one field is detected as a
+duplicate. This keeps Phase A a small, reversible change on top of the
+positional `create_bind_group`, while the later typed `BindGroup` derive
+sits on the same canonical keys.

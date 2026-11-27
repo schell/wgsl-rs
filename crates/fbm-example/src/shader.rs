@@ -12,9 +12,15 @@ use wgsl_rs::wgsl;
 pub mod fbm_shader {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), U_RESOLUTION: Vec2f);
-    uniform!(group(0), binding(1), U_MOUSE: Vec2f);
-    uniform!(group(0), binding(2), U_TIME: f32);
+    pub struct FbmShaderPack {
+        #[uniform(group(0), binding(0))]
+        pub u_resolution: Uniform<Vec2f>,
+        #[allow(dead_code)]
+        #[uniform(group(0), binding(1))]
+        pub u_mouse: Uniform<Vec2f>,
+        #[uniform(group(0), binding(2))]
+        pub u_time: Uniform<f32>,
+    }
 
     /// Pseudo-random number generator based on a 2D input.
     pub fn random(st: Vec2f) -> f32 {
@@ -85,11 +91,11 @@ pub mod fbm_shader {
     /// into fbm) to produce organic, flowing patterns animated over
     /// time.
     #[fragment]
-    pub fn frag_main(input: FragIn) -> Vec4f {
+    pub fn frag_main(input: FragIn, pack: &FbmShaderPack) -> Vec4f {
         // Load uniforms into local values. `load!` copies the value out of
         // the guard; in WGSL it is the bare variable reference.
-        let res = load!(U_RESOLUTION);
-        let time = load!(U_TIME);
+        let res = load!(pack.u_resolution);
+        let time = load!(pack.u_time);
         let st = input.frag_coord.xy() / res * 3.0;
 
         let qx = fbm(st + 0.00 * time);

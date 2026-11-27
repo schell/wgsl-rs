@@ -190,20 +190,23 @@ fn build_linkage() {
             // Runtime IR-based wgpu linkage analysis (issue #120).
             let mut linkage = analyze_wgsl_module(&hello_triangle::WGSL_SOURCE)?;
 
-            // Pull the FRAME uniform's buffer descriptor out by binding
-            // name. Sizing follows WGSL §14.4.1.
+            // Pull the frame uniform's buffer descriptor out by binding
+            // name. Pack fields mangle into `packlower__field` WGSL
+            // globals; sizing follows WGSL §14.4.1.
             let frame_uniform_buffer = linkage
-                .buffer("FRAME")
-                .expect("FRAME binding present")
+                .buffer("hellotrianglepack__frame")
+                .expect("hellotrianglepack__frame binding present")
                 .create_buffer(device);
             queue.write_buffer(&frame_uniform_buffer, 0, &frame.to_ne_bytes());
 
             // Build the bind group layout and bind group from the analyzer.
+            // Binding is positional: one resource per binding, in
+            // binding-number order.
             let pipeline_layout = linkage.pipeline_layout(device, Some("hello_triangle"));
-            let bindgroup = linkage.create_bind_group_named(
+            let bindgroup = linkage.create_bind_group(
                 0,
                 device,
-                &[("FRAME", frame_uniform_buffer.as_entire_binding())],
+                &[frame_uniform_buffer.as_entire_binding()],
             )?;
 
             // Create the shader module.

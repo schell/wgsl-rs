@@ -14,16 +14,23 @@ pub mod synchronization_example {
     //! compute shader entry points in uniform control flow.
     use wgsl_rs::std::*;
 
-    workgroup!(SCRATCH: [u32; 64]);
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct SynchronizationExamplePack {
+        #[workgroup]
+        pub scratch: Workgroup<[u32; 64]>,
+        #[storage(group(0), binding(0), read_only)]
+        pub input: Storage<[u32; 64], Read>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64], ReadWrite>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn main(
+        #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &SynchronizationExamplePack,
+    ) {
         // Copy input data into workgroup-shared memory.
-        get_mut!(SCRATCH)[local_idx as usize] = get!(INPUT)[local_idx as usize];
+        get_mut!(pack.scratch)[local_idx as usize] = get!(pack.input)[local_idx as usize];
 
         // Ensure all workgroup memory writes are visible to every invocation.
         workgroup_barrier();
@@ -31,28 +38,31 @@ pub mod synchronization_example {
         // Read from a neighbor's slot (with wrap-around) to demonstrate
         // that the barrier made all writes visible.
         let neighbor_idx: u32 = (local_idx + 1u32) % 64u32;
-        let neighbor_val: u32 = get!(SCRATCH)[neighbor_idx as usize];
+        let neighbor_val: u32 = get!(pack.scratch)[neighbor_idx as usize];
 
         // Ensure all storage writes from the workgroup are complete
         // before writing results.
         storage_barrier();
 
-        get_mut!(OUTPUT)[local_idx as usize] = neighbor_val;
+        get_mut!(pack.output)[local_idx as usize] = neighbor_val;
     }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn uniform_load_example(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn uniform_load_example(
+        #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &SynchronizationExamplePack,
+    ) {
         // Each invocation writes its index into shared memory.
-        get_mut!(SCRATCH)[local_idx as usize] = local_idx;
+        get_mut!(pack.scratch)[local_idx as usize] = local_idx;
 
         // Ensure all writes are visible before uniform load.
         workgroup_barrier();
 
         // Uniformly load the first element across the entire workgroup.
         // All invocations receive the same value.
-        let first: [u32; 64] = workgroup_uniform_load(&SCRATCH);
-        get_mut!(OUTPUT)[local_idx as usize] = first[0];
+        let first: [u32; 64] = workgroup_uniform_load(&pack.scratch);
+        get_mut!(pack.output)[local_idx as usize] = first[0];
     }
 }
 ```
@@ -60,29 +70,29 @@ pub mod synchronization_example {
 ## Generated WGSL
 
 ```wgsl
-var<workgroup> SCRATCH: array<u32, 64>;
-@group(0) @binding(0) var<storage, read> INPUT: array<u32, 64>;
-@group(0) @binding(1) var<storage, read_write> OUTPUT: array<u32, 64>;
+var<workgroup> synchronizationexamplepack__scratch: array<u32, 64>;
+@group(0) @binding(0) var<storage, read> synchronizationexamplepack__input: array<u32, 64>;
+@group(0) @binding(1) var<storage, read_write> synchronizationexamplepack__output: array<u32, 64>;
 
 @compute @workgroup_size(64) fn main(@builtin(local_invocation_index) local_idx: u32) {
-    SCRATCH[u32(local_idx)] = INPUT[u32(local_idx)];
+    synchronizationexamplepack__scratch[u32(local_idx)] = synchronizationexamplepack__input[u32(local_idx)];
     workgroupBarrier();
     let neighbor_idx: u32 = (local_idx + 1u) % 64u;
-    let neighbor_val: u32 = SCRATCH[u32(neighbor_idx)];
+    let neighbor_val: u32 = synchronizationexamplepack__scratch[u32(neighbor_idx)];
     storageBarrier();
-    OUTPUT[u32(local_idx)] = neighbor_val;
+    synchronizationexamplepack__output[u32(local_idx)] = neighbor_val;
 }
 
 @compute @workgroup_size(64) fn uniform_load_example(@builtin(local_invocation_index) local_idx: u32) {
-    SCRATCH[u32(local_idx)] = local_idx;
+    synchronizationexamplepack__scratch[u32(local_idx)] = local_idx;
     workgroupBarrier();
-    let first: array<u32, 64> = workgroupUniformLoad(&SCRATCH);
-    OUTPUT[u32(local_idx)] = first[0];
+    let first: array<u32, 64> = workgroupUniformLoad(&synchronizationexamplepack__scratch);
+    synchronizationexamplepack__output[u32(local_idx)] = first[0];
 }
 ```
 
 ## Notes
 
 - `workgroup_barrier()` maps to `workgroupBarrier`; `storage_barrier()` maps to `storageBarrier`.
-- `workgroup_uniform_load(&SCRATCH)` maps to `workgroupUniformLoad(&SCRATCH)`.
+- `workgroup_uniform_load(&pack.scratch)` maps to `workgroupUniformLoad(&synchronizationexamplepack__scratch)`.
 - These functions must only be called from compute entry points in uniform control flow.

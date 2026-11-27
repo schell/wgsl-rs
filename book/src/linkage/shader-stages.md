@@ -26,25 +26,30 @@ Given:
 pub mod stages_example {
     use wgsl_rs::std::*;
 
-    uniform!(FRAME, Frame);
-    storage!(VERTICES, [Vertex; 1024]);
-    storage!(COUNTERS, [u32; 4]);
+    pub struct StagesExamplePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<Frame>,
+        #[storage(group(0), binding(1), read_only)]
+        pub vertices: Storage<[Vertex; 1024]>,
+        #[storage(group(0), binding(2), read_write)]
+        pub counters: Storage<[u32; 4]>,
+    }
 
     #[vertex]
-    pub fn vs(...) -> VertexOutput {
-        let v = VERTICES[i];
+    pub fn vs(..., pack: &StagesExamplePack) -> VertexOutput {
+        let v = get!(pack.vertices)[i];
         // ...
     }
 
     #[fragment]
-    pub fn fs(in: VertexOutput) -> Vec4f {
-        let f = FRAME.time;
+    pub fn fs(in: VertexOutput, pack: &StagesExamplePack) -> Vec4f {
+        let f = get!(pack.frame).time;
         // ...
     }
 
     #[compute]
-    pub fn cs(...) {
-        COUNTERS[0] += 1;
+    pub fn cs(..., pack: &StagesExamplePack) {
+        get_mut!(pack.counters)[0] += 1;
     }
 }
 ```
@@ -53,16 +58,17 @@ Resulting visibility:
 
 | Binding | Referenced by | `ShaderStages` |
 |---------|---------------|----------------|
-| `FRAME` | `fs` | `FRAGMENT` |
-| `VERTICES` | `vs` | `VERTEX` |
-| `COUNTERS` | `cs` | `COMPUTE` |
+| `stagesexamplepack__frame` | `fs` | `FRAGMENT` |
+| `stagesexamplepack__vertices` | `vs` | `VERTEX` |
+| `stagesexamplepack__counters` | `cs` | `COMPUTE` |
 
 If a binding is referenced from both vertex and fragment stages, the
 visibility is `VERTEX | FRAGMENT`.
 
 ## Why this matters: read-write storage in vertex stage
 
-`storage!` bindings default to `read_write` access in WGSL unless restricted.
+Storage pack fields default to `read_write` access unless their annotation
+restricts them.
 A `read_write` storage buffer visible to the **vertex** stage requires the
 [`wgpu::Features::BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING`
 family / `VERTEX_WRITABLE_STORAGE`](https://wgpu.rs) feature — specifically

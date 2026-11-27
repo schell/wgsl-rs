@@ -9,7 +9,7 @@ from vertex or fragment stages is a WGSL error.
 | Function | WGSL Equivalent | Description |
 |----------|-----------------|-------------|
 | `workgroup_barrier()` | `workgroupBarrier` | Sync all invocations in the workgroup at this point. |
-| `storage_barrier()` | `storageBarrier` | Memory barrier for `storage!` accesses across the workgroup. |
+| `storage_barrier()` | `storageBarrier` | Memory barrier for storage accesses across the workgroup. |
 | `texture_barrier()` | `textureBarrier` | Memory barrier for storage-texture writes. |
 
 All three take no arguments and return unit. On the CPU they are no-ops — a
@@ -30,17 +30,20 @@ types that are safe to load this way.
 pub mod sync_example {
     use wgsl_rs::std::*;
 
-    workgroup!(SHARED: [u32; 64]);
+    pub struct SyncExamplePack {
+        #[workgroup]
+        pub shared: Workgroup<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn cs(#[builtin(local_invocation_id)] lid: Vec3u) {
+    pub fn cs(#[builtin(local_invocation_id)] lid: Vec3u, pack: &SyncExamplePack) {
         let idx = lid.x() as usize;
-        get_mut!(SHARED)[idx] = lid.x();
+        get_mut!(pack.shared)[idx] = lid.x();
         workgroup_barrier();
-        let partner = get!(SHARED)[((lid.x() + 1u32) % 64u32) as usize];
+        let partner = get!(pack.shared)[((lid.x() + 1u32) % 64u32) as usize];
         workgroup_barrier();
-        let uniform_first = workgroup_uniform_load(&SHARED);
+        let uniform_first = workgroup_uniform_load(&pack.shared);
     }
 }
 ```
@@ -49,7 +52,7 @@ pub mod sync_example {
 
 - **`workgroup_barrier`** — gate control flow: ensure every invocation has
   reached a point before any proceeds.
-- **`storage_barrier`** — gate `storage!` reads/writes across invocations.
+- **`storage_barrier`** — gate storage reads/writes across invocations.
 - **`texture_barrier`** — gate storage-texture writes before subsequent reads.
 - **`workgroup_uniform_load`** — broadcast one uniform value to the whole
   workgroup (useful for divergent control flow convergence).

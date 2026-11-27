@@ -1,6 +1,6 @@
 # Texture
 
-Demonstrates textures, samplers, and the `textureSample` builtin. Covers the `texture!` and `sampler!` macros and a fragment shader that samples a 2D texture.
+Demonstrates textures, samplers, and the `textureSample` builtin. Covers texture and sampler pack fields and a fragment shader that samples a 2D texture.
 
 ## Rust Source
 
@@ -18,10 +18,14 @@ pub mod texture_example {
     //! - **Depth comparison**: `textureSampleCompare` - for shadow mapping
     use wgsl_rs::std::*;
 
-    // A 2D texture for color/albedo
-    texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
-    // A sampler for filtering the texture
-    sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+    pub struct TextureExamplePack {
+        // A 2D texture for color/albedo
+        #[texture(group(0), binding(0))]
+        pub diffuse_tex: Texture2D<f32>,
+        // A sampler for filtering the texture
+        #[sampler(group(0), binding(1))]
+        pub tex_sampler: Sampler,
+    }
 
     // Fragment input with texture coordinates
     pub struct FragmentInput {
@@ -37,9 +41,9 @@ pub mod texture_example {
 
     // Main fragment shader demonstrating texture operations.
     #[fragment]
-    pub fn frag_main(input: FragmentInput) -> FragmentOutput {
+    pub fn frag_main(input: FragmentInput, pack: &TextureExamplePack) -> FragmentOutput {
         // Sample the diffuse texture
-        let albedo = texture_sample(DIFFUSE_TEX, TEX_SAMPLER, input.uv);
+        let albedo = texture_sample(&pack.diffuse_tex, &pack.tex_sampler, input.uv);
 
         FragmentOutput { color: albedo }
     }
@@ -48,9 +52,12 @@ pub mod texture_example {
 
 ## Generated WGSL
 
+Pack fields become mangled WGSL globals (`packlower__field`), and the pack
+parameter disappears from the entry point:
+
 ```wgsl
-@group(0) @binding(0) var DIFFUSE_TEX: texture_2d<f32>;
-@group(0) @binding(1) var TEX_SAMPLER: sampler;
+@group(0) @binding(0) var textureexamplepack__diffuse_tex: texture_2d<f32>;
+@group(0) @binding(1) var textureexamplepack__tex_sampler: sampler;
 
 struct FragmentInput {
     @location(0) uv: vec2f
@@ -61,13 +68,13 @@ struct FragmentOutput {
 }
 
 @fragment fn frag_main(input: FragmentInput) -> FragmentOutput {
-    let albedo = textureSample(DIFFUSE_TEX, TEX_SAMPLER, input.uv);
+    let albedo = textureSample(textureexamplepack__diffuse_tex, textureexamplepack__tex_sampler, input.uv);
     return FragmentOutput(albedo);
 }
 ```
 
 ## Notes
 
-- `texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>)` declares a `texture_2d<f32>` binding.
-- `sampler!(...)` declares a `sampler` binding.
+- `#[texture(group(0), binding(0))] pub diffuse_tex: Texture2D<f32>` declares a `texture_2d<f32>` binding.
+- `#[sampler(...)]` declares a `sampler` binding.
 - `texture_sample(...)` maps to the WGSL `textureSample` builtin.

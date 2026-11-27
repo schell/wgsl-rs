@@ -27,16 +27,19 @@ pub mod runtime_array_example {
         pub particles: RuntimeArray<Particle>,
     }
 
-    storage!(group(0), binding(0), read_write, PARTICLES: ParticleSystem);
+    pub struct RuntimeArrayExamplePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub particles: Storage<ParticleSystem, ReadWrite>,
+    }
 
     #[compute]
     #[workgroup_size(16, 16, 1)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
-        let num_particles = array_length(&get!(PARTICLES).particles);
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &RuntimeArrayExamplePack) {
+        let num_particles = array_length(&get!(pack.particles).particles);
         let index = global_id.y() * 16 + global_id.x();
         if num_particles < index {
-            let velocity = get!(PARTICLES).particles[index].velocity;
-            let position = &mut get_mut!(PARTICLES).particles[index].position;
+            let velocity = get!(pack.particles).particles[index].velocity;
+            let position = &mut get_mut!(pack.particles).particles[index].position;
             *position = *position + velocity;
         }
     }
@@ -55,14 +58,14 @@ struct ParticleSystem {
     count: u32,
     particles: array<Particle>
 }
-@group(0) @binding(0) var<storage, read_write> PARTICLES: ParticleSystem;
+@group(0) @binding(0) var<storage, read_write> runtimearrayexamplepack__particles: ParticleSystem;
 
 @compute @workgroup_size(16, 16, 1) fn main(@builtin(global_invocation_id) global_id: vec3u) {
-    let num_particles = arrayLength(&PARTICLES.particles);
+    let num_particles = arrayLength(&runtimearrayexamplepack__particles.particles);
     let index = global_id.y * 16 + global_id.x;
     if num_particles < index {
-        let velocity = PARTICLES.particles[index].velocity;
-        let position = &PARTICLES.particles[index].position;
+        let velocity = runtimearrayexamplepack__particles.particles[index].velocity;
+        let position = &runtimearrayexamplepack__particles.particles[index].position;
         *position = *position + velocity;
     }
 }

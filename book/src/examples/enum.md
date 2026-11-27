@@ -27,14 +27,20 @@ pub mod enum_example {
         WaitangiDay,
     }
 
-    storage!(group(0), binding(0), read_write, INPUT: [Holidays; 256]);
+    pub struct EnumExamplePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub input: Storage<[Holidays; 256], ReadWrite>,
+    }
 
     #[compute]
     #[workgroup_size(16)]
-    pub fn compute_holidays(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn compute_holidays(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &EnumExamplePack,
+    ) {
         let index = global_id.x();
 
-        let holiday = &mut get_mut!(INPUT)[index as usize];
+        let holiday = &mut get_mut!(pack.input)[index as usize];
 
         #[wgsl_allow(non_literal_match_statement_patterns)]
         match *holiday {
@@ -59,11 +65,11 @@ const LightType_Point: u32 = 666u;
 alias Holidays = u32;
 const Holidays_AprilFoolsDay: u32 = 0u;
 const Holidays_WaitangiDay: u32 = 1u;
-@group(0) @binding(0) var<storage, read_write> INPUT: array<Holidays, 256>;
+@group(0) @binding(0) var<storage, read_write> enumexamplepack__input: array<Holidays, 256>;
 
 @compute @workgroup_size(16) fn compute_holidays(@builtin(global_invocation_id) global_id: vec3u) {
     let index = global_id.x;
-    let holiday = &INPUT[u32(index)];
+    let holiday = &enumexamplepack__input[u32(index)];
     switch *holiday {
         case Holidays_AprilFoolsDay: {
             *holiday = Holidays_WaitangiDay;

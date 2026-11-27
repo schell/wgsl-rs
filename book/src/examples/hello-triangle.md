@@ -1,6 +1,6 @@
 # Hello Triangle
 
-A "hello world" shader that renders a triangle with a color that changes over time. It demonstrates vertex and fragment entry points, the `uniform!` macro, glob imports, and builtins like `vertex_index`.
+A "hello world" shader that renders a triangle with a color that changes over time. It demonstrates vertex and fragment entry points, resource pack fields, glob imports, and builtins like `vertex_index`.
 
 ## Rust Source
 
@@ -13,8 +13,11 @@ pub mod hello_triangle {
     // Glob and named imports work, but hey, imports work!
     use wgsl_rs::std::*;
 
-    // Define a uniform in both Rust and WGSL using the uniform! macro.
-    uniform!(group(0), binding(0), FRAME: u32);
+    // Define a uniform in both Rust and WGSL as a pack field.
+    pub struct HelloTrianglePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<u32>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -25,16 +28,19 @@ pub mod hello_triangle {
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(get!(FRAME)) / 128.0), 0.0, 1.0)
+    pub fn frag_main(pack: &HelloTrianglePack) -> Vec4f {
+        vec4f(1.0, sin(f32(load!(pack.frame)) / 128.0), 0.0, 1.0)
     }
 }
 ```
 
 ## Generated WGSL
 
+Pack fields become mangled WGSL globals (`packlower__field`), and the pack
+parameter disappears from the entry point:
+
 ```wgsl
-@group(0) @binding(0) var<uniform> FRAME: u32;
+@group(0) @binding(0) var<uniform> hellotrianglepack__frame: u32;
 
 @vertex fn vtx_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4f {
     const POS: array<vec2f, 3> = array(vec2f(0.0, 0.5), vec2f(-0.5, -0.5), vec2f(0.5, -0.5));
@@ -43,12 +49,12 @@ pub mod hello_triangle {
 }
 
 @fragment fn frag_main() -> @location(0) vec4f {
-    return vec4f(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0);
+    return vec4f(1.0, sin((f32(hellotrianglepack__frame) / 128.0)), 0.0, 1.0);
 }
 ```
 
 ## Notes
 
-- The `uniform!` macro declares a uniform variable available in both Rust and WGSL.
-- `get!(FRAME)` reads the uniform; it is a no-op in WGSL and is stripped during parsing.
+- `#[uniform(group(0), binding(0))] pub frame: Uniform<u32>` declares a uniform variable available in both Rust and WGSL.
+- `load!(pack.frame)` reads the uniform into a local; it is a no-op in WGSL and is stripped during parsing.
 - `#[vertex]` and `#[fragment]` mark entry points.

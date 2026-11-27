@@ -115,7 +115,7 @@ spaces are:
 |---------------|-------------------|-------------------------------------------|
 | `function`    | `ptr<function, T>`  | Local variables (`let mut x`)            |
 | `private`     | `ptr<private, T>`   | Module-scope private variables           |
-| `workgroup`   | `ptr<workgroup, T>` | Workgroup-shared variables (`workgroup!`) |
+| `workgroup`   | `ptr<workgroup, T>` | Workgroup-shared variables (`#[workgroup]` pack fields) |
 
 Dereference with `*p`, and pass a mutable reference with `&mut x`:
 

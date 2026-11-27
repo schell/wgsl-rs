@@ -8,7 +8,7 @@ This chapter curates the key architectural decisions behind wgsl-rs. The full na
 |--------------|-------------------------------------------------------------------------------------------|
 | 2025-12-08   | **User code is never translated.** The macro is strictly additive; users write regular Rust and the macro only attaches WGSL metadata. |
 | 2025-12-27   | **Rust type system catches all WGSL errors.** Type mismatches surface as Rust compile errors, not runtime shader errors. |
-| 2025-12-27   | **Macros for non-Rust WGSL constructs.** `uniform!`, `ptr!`, and similar macros stand in for WGSL constructs that have no Rust analogue. |
+| 2025-12-27   | **Macros for non-Rust WGSL constructs.** `ptr!`, `discard!`, and similar macros stand in for WGSL constructs that have no Rust analogue. |
 
 ## Types & Syntax
 

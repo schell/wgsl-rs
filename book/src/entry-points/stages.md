@@ -94,14 +94,17 @@ For complex inter-stage IO, use a struct input/output; see [Inter-stage IO](./in
 
 ## All Three Stages Together
 
-A single module may declare all three stages. The example module below shows vertex, fragment, and compute entry points coexisting (see [Binding Macros](../writing-shaders/binding-macros.md) for `storage!` and `get_mut!`):
+A single module may declare all three stages. The example module below shows vertex, fragment, and compute entry points coexisting (see [Resource Pack Structs](../writing-shaders/resource-packs.md) for `#[storage]` fields and `get_mut!`):
 
 ```rust
 #[wgsl]
 pub mod pipeline {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), read_write, COUNTER: u32);
+    pub struct PipelinePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub counter: Storage<u32, ReadWrite>,
+    }
 
     #[vertex]
     pub fn vs_main(#[builtin(vertex_index)] vi: u32) -> Vec4f {
@@ -115,9 +118,9 @@ pub mod pipeline {
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn cs_main(#[builtin(global_invocation_id)] gid: Vec3u) {
+    pub fn cs_main(#[builtin(global_invocation_id)] gid: Vec3u, pack: &PipelinePack) {
         let i = gid.x() as usize;
-        get_mut!(COUNTER);
+        get_mut!(pack.counter);
     }
 }
 ```

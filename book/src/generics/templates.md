@@ -10,9 +10,9 @@ A module becomes a template when **any** of the following appear:
 
 - An entry-point function with type parameters.
 - An entry-point function with const parameters (`const N: usize`, `const N: u32`, `const N: i32`, or `const B: bool`).
-- A linkage macro (`uniform!`, `storage!`, ...) whose declared type uses `impl Trait`.
-- A sampled texture or plain sampler binding with a bare bool filterability parameter, such as `Texture2D<f32, FILTERABLE>` or `Sampler<FILTERABLE>`.
-- A `get!(VAR, T)` accessor that introduces a fresh type variable bound to a linkage variable.
+- A [resource pack](../writing-shaders/resource-packs.md) with a type parameter, such as `FramePack<T>` with a `Uniform<T>` field.
+- A sampled texture or plain sampler pack field with a bare bool filterability parameter, such as `Texture2D<f32, FILTERABLE>` or `Sampler<FILTERABLE>`.
+- A pack const parameter in a field annotation, such as `#[storage(group(GROUP), binding(0))]`.
 
 ## Defining a Template Module
 
@@ -23,9 +23,12 @@ The `hello_triangle_generic` example shows the pattern:
 pub mod hello_triangle_generic {
     use wgsl_rs::std::*;
 
-    // The `impl Convert<f32>` syntax declares that FRAME's concrete type
-    // is chosen at instantiation time.
-    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+    // The pack's `T` slot declares that frame's concrete type is chosen
+    // at instantiation time.
+    pub struct HelloTriangleGenericPack<T> {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<T>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -39,34 +42,48 @@ pub mod hello_triangle_generic {
     }
 
     #[fragment]
-    pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
-        let frame_t = get!(FRAME, T);
+    pub fn frag_main<T: Convert<f32> + Wgsl + Clone + Copy>(
+        pack: &HelloTriangleGenericPack<T>,
+    ) -> Vec4f {
+        let frame_t = *get!(pack.frame);
         vec4f(1.0, sin(f32(frame_t) / 128.0), 0.0, 1.0)
     }
 }
 ```
 
-Two type parameters are in play here: the `impl Convert<f32>` on `FRAME` and the `T` on `frag_main`. They are linked through `get!(FRAME, T)`.
+Two type parameters are in play here: the `T` on the pack (used by the
+`frame` field) and the `T` on `frag_main`. They are linked through the
+`&HelloTriangleGenericPack<T>` parameter.
 
-## Generic Linkage: `impl Trait`
+## Generic Linkage: Pack Type Parameters
 
-A linkage macro may declare its type as `impl SomeTrait`:
+A resource pack may declare a type parameter that its field types use:
 
 ```rust
-uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+pub struct FramePack<T> {
+    #[uniform(group(0), binding(0))]
+    pub frame: Uniform<T>,
+}
 ```
 
-This says: *FRAME has some concrete type, chosen at instantiation time, that implements `Convert<f32>`*. The trait bounds are replayed onto the typestate builder's `set_frame` method, so a host caller can only bind `FRAME` to a type satisfying those bounds.
+This says: *the `frame` binding has some concrete type, chosen at
+instantiation time*. The entry point's trait bounds are replayed onto the
+`instantiate` function, so a host caller can only instantiate with types
+satisfying those bounds.
 
-## `get!(VAR, T)` Constraints
+## `Type<Is = ...>` Constraints
 
-Inside a generic entry point, `get!(VAR, T)` reads the linkage variable `VAR` and introduces a fresh type variable `T` connected to `VAR`'s declared type. This generates a constraint of the form
+Inside a generic entry point, a pack parameter such as
+`&FramePack<T>` introduces a type variable `T` connected to the pack
+field's type. This generates a constraint of the form
 
 ```
-VAR: linkage::Type<Is = T>
+FramePack_T: linkage::Type<Is = T>
 ```
 
-on the module's `instantiate` function. The transpiler threads that constraint so that the same concrete type is used for both the binding and the body of the entry point.
+on the module's `instantiate` function. The transpiler threads that
+constraint so that the same concrete type is used for both the binding and
+the body of the entry point.
 
 ## Instantiation at Runtime
 
@@ -100,34 +117,40 @@ If you omit both, the template is never validated by `cargo test`.
 
 Templates support multiple type parameters and transitive generic calls just like monomorphized generics. Each `instantiate` call substitutes the full tuple of type arguments through the module's IR; the runtime performs deduplication of any shared monomorphized pieces inside the resulting module.
 
-## Const Parameters on Texture and Sampler Bindings
+## Const Parameters on Texture and Sampler Pack Fields
 
-An f32-sampled texture or plain sampler can defer its host-side filterability to instantiation time. Put a bare identifier in the bool const position instead of writing `true` or `false`:
+An f32-sampled texture or plain sampler can defer its host-side filterability to instantiation time. Put a bare identifier in the bool const position of the pack field's type instead of writing `true` or `false`:
 
 ```rust
 #[wgsl(skip_validation)]
 pub mod heightmap {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), HEIGHTS: Texture2D<f32, FILTERABLE>);
-    sampler!(group(0), binding(1), HEIGHTS_SMP: Sampler<FILTERABLE>);
+    pub struct HeightmapPack<const FILTERABLE: bool> {
+        #[texture(group(0), binding(0))]
+        pub heights: Texture2D<f32, FILTERABLE>,
+        #[sampler(group(0), binding(1))]
+        pub heights_smp: Sampler<FILTERABLE>,
+    }
 
     #[fragment]
-    pub fn main() -> Vec4f {
-        texture_sample(HEIGHTS, HEIGHTS_SMP, vec2f(0.0, 0.0))
+    pub fn main(pack: &HeightmapPack<FILTERABLE>) -> Vec4f {
+        texture_sample(&pack.heights, &pack.heights_smp, vec2f(0.0, 0.0))
     }
 }
 
 let module = heightmap::instantiate::<false>();
 ```
 
-Each distinct identifier introduces one binding-owned `const ...: bool` module parameter. Repeating `FILTERABLE` on the texture and sampler intentionally shares one argument. Use different identifiers when independent values are needed.
+Repeating `FILTERABLE` on the texture and sampler fields shares the pack
+const slot, so both receive one argument. Use separate pack const parameters
+when independent values are needed.
 
-These parameters belong to the binding, not to an entry point. A bind group layout is shared by every pipeline entry point that uses the binding, and module-scope Rust macros cannot reference a function's generic parameters. This is the const-valued counterpart of `impl Trait` on a linkage binding.
+These parameters belong to the pack, not to an entry point. A bind group layout is shared by every pipeline entry point that uses the binding, and module-scope Rust structs cannot reference a function's generic parameters. This is the const-valued counterpart of a pack type parameter.
 
 Filterability changes only the generated host layout. The rendered WGSL is identical for `true` and `false`. To generate wgpu linkage, pass the instantiated IR to `analyze_ir_module` or call `generate_linkage` as described in [Template Linkage](../linkage/template-linkage.md).
 
-Parameter order is deterministic: `impl Trait` type linkages come first, resource-pack type parameters follow in pack declaration order, binding-owned consts come next in first-occurrence declaration order, and entry-point parameters that do not alias a resource pack come last in their existing order. Binding-owned consts include standalone filterability and pack-owned group, binding, and filterability values. The authoritative order is also available as `WGSL_SOURCE.module_type_params`.
+Parameter order is deterministic: resource-pack type parameters come first in pack declaration order, pack const parameters follow in first-occurrence field declaration order, and entry-point parameters that do not alias a resource pack come last in their existing order. Pack consts include group, binding, and filterability values. The authoritative order is also available as `WGSL_SOURCE.module_type_params`.
 
 
 ## Const Parameters on Resource Packs

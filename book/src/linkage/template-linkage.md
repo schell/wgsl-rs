@@ -62,19 +62,23 @@ owns it the same way.
 pub mod tinted_output {
     use wgsl_rs::std::*;
 
-    // The uniform's concrete type is chosen at instantiation time.
-    uniform!(group(0), binding(0), TINT: impl Convert<f32>);
+    // The pack's type slot chooses the uniform's concrete type at
+    // instantiation time.
+    pub struct TintedOutputPack<T> {
+        #[uniform(group(0), binding(0))]
+        pub tint: Uniform<T>,
+    }
 
     #[fragment]
-    pub fn fs<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
-        let tint = get!(TINT, T);
+    pub fn fs<T: Convert<f32> + Wgsl + Clone + Copy>(pack: &TintedOutputPack<T>) -> Vec4f {
+        let tint = *get!(pack.tint);
         vec4f(f32(tint), f32(tint) * 0.5, 0.0, 1.0)
     }
 }
 
-// In application code: arguments follow `module_type_params` order. Type
-// linkage variables come first, then binding-owned address/filterability consts,
-// then non-aliased entry-point parameters. Here: TINT, then fs's `T`, both f32.
+// In application code: arguments follow `module_type_params` order. Pack
+// type parameters come first, then pack const parameters, then non-aliased
+// entry-point parameters. Here: the pack's `T`, then fs's `T`, both f32.
 use wgsl_rs_linkage_wgpu::IrModuleExt;
 
 let mut linkage = tinted_output::instantiate::<f32, f32>().generate_linkage();

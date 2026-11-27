@@ -34,15 +34,14 @@ modules.
 | Packing | `pack4x8snorm`, `unpack2x16float`, ... | [Packing](./packing.md) |
 | Synchronization | `workgroup_barrier`, `storage_barrier`, `workgroup_uniform_load` | [Synchronization](./synchronization.md) |
 | Control | `discard!()` | [`discard!()`](./discard.md) |
-| Binding macros | `uniform!`, `storage!`, `workgroup!`, `texture!`, `sampler!`, `ptr!` | [Binding Macros](../writing-shaders/binding-macros.md) |
-| Entry-point attributes | `#[vertex]`, `#[fragment]`, `#[compute]` | [Vertex / Fragment / Compute](../entry-points/stages.md) |
+| Resource packs | `#[uniform]`, `#[storage]`, `#[workgroup]`, `#[texture]`, `#[sampler]` fields | [Resource Pack Structs](../writing-shaders/resource-packs.md) || Entry-point attributes | `#[vertex]`, `#[fragment]`, `#[compute]` | [Vertex / Fragment / Compute](../entry-points/stages.md) |
 | Runtime macros | `load!`, `get!`, `get_mut!`, `discard!`, `slab_copy!` | — |
 | Marker types | `PhantomData<T>` | [Generic Structs: `PhantomData`](../generics/generic-structs.md#phantomdatat-marker-fields) |
 
 ## The `Wgsl` trait
 
 `Wgsl` marks a type usable in a `#[wgsl]` module. Any type passed to a WGSL
-function, stored in a `uniform!`/`storage!`, or returned from an entry point
+function, stored in a uniform or storage pack field, or returned from an entry point
 must implement `Wgsl`. The macro and the runtime both rely on this trait to
 marshal values between Rust and WGSL.
 

@@ -9,7 +9,10 @@ This chapter walks through the canonical `hello_triangle` example end to end. Th
 pub mod hello_triangle {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), FRAME: u32);
+    pub struct HelloTrianglePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<u32>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -19,8 +22,8 @@ pub mod hello_triangle {
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(load!(FRAME)) / 128.0), 0.0, 1.0)
+    pub fn frag_main(pack: &HelloTrianglePack) -> Vec4f {
+        vec4f(1.0, sin(f32(load!(pack.frame)) / 128.0), 0.0, 1.0)
     }
 }
 ```
@@ -33,13 +36,28 @@ The `#[wgsl]` attribute marks a module for transpilation. The macro consumes the
 
 The glob import is required. It brings the WGSL type aliases (`Vec2f`, `Vec3f`, `Vec4f`, ...), constructor functions (`vec2f`, `vec3f`, `vec4f`, ...), and the built-in WGSL functions (`sin`, `cos`, `dot`, ...) into scope so the Rust body type-checks and maps one-to-one onto WGSL declarations.
 
-## `uniform!(...)`
+## The resource pack
 
 ```rust
-uniform!(group(0), binding(0), FRAME: u32);
+pub struct HelloTrianglePack {
+    #[uniform(group(0), binding(0))]
+    pub frame: Uniform<u32>,
+}
 ```
 
-The `uniform!` macro declares a uniform binding that is visible in both worlds. It expands to a WGSL `var<uniform>` declaration in the generated source and to a Rust handle that the runtime can bind and read. Here `FRAME` is a `u32` at group 0, binding 0.
+Resources are declared as annotated fields of an ordinary Rust struct — a
+[resource pack](../writing-shaders/resource-packs.md). Each field carries
+its group and binding, and its type names the wrapper (`Uniform<T>`,
+`Storage<T>`, `Texture2D<..>`, `Sampler<..>`, `Workgroup<T>`) plus the
+value type it holds. The struct is visible in both worlds: on the CPU it is
+a plain struct you construct by hand with real values, and in the generated
+WGSL each field becomes a global binding named `packlower__field` (here
+`hellotrianglepack__frame`).
+
+Entry points that use resources take the pack by reference, `pack:
+&HelloTrianglePack`. The parameter is a Rust-world detail only: WGSL has no
+resource structs, so the parameter and its call arguments disappear from the
+generated source.
 
 ## Entry points: `#[vertex]` and `#[fragment]`
 
@@ -57,20 +75,20 @@ Argument annotations carry WGSL I/O attributes through to the generated signatur
 
 `Vec4f` and `Vec2f` are type aliases for `vec4<f32>` and `vec2<f32>` exposed by `wgsl_rs::std`. The lowercase `vec2f` / `vec4f` functions are the matching constructors. They mirror WGSL exactly, so Rust expressions like `vec4f(1.0, 0.0, 0.0, 1.0)` transpile directly to `vec4<f32>(1.0, 0.0, 0.0, 1.0)`.
 
-## `load!(FRAME)`
+## `load!(pack.frame)`
 
 ```rust
-sin(f32(load!(FRAME)) / 128.0)
+sin(f32(load!(pack.frame)) / 128.0)
 ```
 
-`load!(...)` copies a declared uniform's value into a local, so it can be used directly in expressions. On the Rust side it reads the bound value; in the generated WGSL it expands to the bare uniform reference `FRAME`. This lets the same expression serve both CPU evaluation (e.g. in dispatch-runtime tests) and the shader.
+`load!(...)` copies a pack field's value into a local, so it can be used directly in expressions. On the Rust side it reads the bound value; in the generated WGSL it expands to the bare uniform reference. This lets the same expression serve both CPU evaluation (e.g. in dispatch-runtime tests) and the shader.
 
-The `f32(...)` conversion is a real type conversion (`FRAME` is a `u32`), not part of the accessor. The sibling accessor `get!(...)` returns a guard instead of a value — useful for borrow-style access like field access or indexing.
+The `f32(...)` conversion is a real type conversion (`frame` is a `u32`), not part of the accessor. The sibling accessor `get!(...)` returns a guard instead of a value — useful for borrow-style access like field access or indexing.
 
 ## Generated WGSL
 
 ```wgsl
-@group(0) @binding(0) var<uniform> FRAME: u32;
+@group(0) @binding(0) var<uniform> hellotrianglepack__frame: u32;
 
 @vertex
 fn vtx_main(@builtin(vertex_index) vertex_index: u32) -> vec4<f32> {
@@ -81,11 +99,11 @@ fn vtx_main(@builtin(vertex_index) vertex_index: u32) -> vec4<f32> {
 
 @fragment
 fn frag_main() -> vec4<f32> {
-    return vec4<f32>(1.0, sin(f32(FRAME) / 128.0), 0.0, 1.0);
+    return vec4<f32>(1.0, sin(f32(hellotrianglepack__frame) / 128.0), 0.0, 1.0);
 }
 ```
 
-Note how each Rust construct maps onto WGSL: `const` to `const`, `let` to `var`, array literals to explicit `array<T, N>(...)` constructors, and `get!(FRAME)` to the bare `FRAME` reference.
+Note how each Rust construct maps onto WGSL: `const` to `const`, `let` to `var`, array literals to explicit `array<T, N>(...)` constructors, the pack parameter to nothing, and `load!(pack.frame)` to the bare `hellotrianglepack__frame` reference.
 
 ## Validation
 

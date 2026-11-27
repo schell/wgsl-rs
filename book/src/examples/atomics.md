@@ -17,14 +17,17 @@ pub mod atomic_example {
     use wgsl_rs::std::*;
 
     // Workgroup variable with atomic counter - shared between all invocations
-    workgroup!(COUNTER: Atomic<u32>);
-
     // Workgroup variable with atomic flags
-    workgroup!(FLAGS: Atomic<i32>);
+    pub struct AtomicExamplePack {
+        #[workgroup]
+        pub counter: Workgroup<Atomic<u32>>,
+        #[workgroup]
+        pub flags: Workgroup<Atomic<i32>>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn main(#[builtin(local_invocation_index)] local_idx: u32, pack: &AtomicExamplePack) {
         // Each invocation can access the shared atomic counter
         // Note: atomicLoad/atomicStore builtins will be added in a future update
         // For now, this demonstrates the type parsing and code generation
@@ -36,8 +39,8 @@ pub mod atomic_example {
 ## Generated WGSL
 
 ```wgsl
-var<workgroup> COUNTER: atomic<u32>;
-var<workgroup> FLAGS: atomic<i32>;
+var<workgroup> atomicexamplepack__counter: atomic<u32>;
+var<workgroup> atomicexamplepack__flags: atomic<i32>;
 
 @compute @workgroup_size(64) fn main(@builtin(local_invocation_index) local_idx: u32) {
     let _idx = local_idx;
@@ -47,4 +50,4 @@ var<workgroup> FLAGS: atomic<i32>;
 ## Notes
 
 - `Atomic<T>` maps to WGSL `atomic<T>`; `T` must be `i32` or `u32`.
-- `workgroup!(NAME: T)` declares a `var<workgroup>` variable. Workgroup variables are only valid in compute shaders.
+- A `#[workgroup]` pack field holding `Workgroup<Atomic<T>>` declares a `var<workgroup>` variable. Workgroup variables are only valid in compute shaders.

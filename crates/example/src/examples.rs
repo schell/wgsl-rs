@@ -72,7 +72,7 @@ pub mod hello_triangle {
     // Glob and named imports work, but hey, imports work!
     use wgsl_rs::std::*;
 
-    // Define a uniform in both Rust and WGSL using the uniform! macro.
+    // Define a uniform in both Rust and WGSL as a pack field.
     pub struct HelloTrianglePack {
         #[uniform(group(0), binding(0))]
         pub frame: Uniform<u32>,

@@ -21,9 +21,12 @@ const N: usize = 64;
 #[wgsl]
 pub mod bare_literals {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct BareLiteralsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     /// The issue #145 shape: `0` and `1` are inferred as `u32` from the
     /// array element type. WGSL would read them as `i32` through
@@ -34,16 +37,16 @@ pub mod bare_literals {
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BareLiteralsPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         // Bare `0` against the u32 element — comparison-anchored.
         let data = input[idx] != 0;
         let selected = to_array(data)[0];
         // Bare `63` against the cast-anchored u32 — same-type builtin
         // group.
         let limited = min(idx as u32, 63);
-        get_mut!(OUTPUT)[idx] = selected + limited;
+        get_mut!(pack.output)[idx] = selected + limited;
     }
 }
 
@@ -88,8 +91,10 @@ impl RoundtripTest for LiteralSuffixTest {
 
         let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-        bare_literals::INPUT.set(inputs);
-        bare_literals::OUTPUT.set([0u32; N]);
+        let pack = bare_literals::BareLiteralsPack {
+            input: Storage::new(inputs),
+            output: Storage::new([0u32; N]),
+        };
         dispatch_workgroups(
             (1, 1, 1),
             linkage
@@ -97,10 +102,10 @@ impl RoundtripTest for LiteralSuffixTest {
                 .expect("main entry present")
                 .workgroup_size,
             |builtins| {
-                bare_literals::main(builtins.global_invocation_id);
+                bare_literals::main(builtins.global_invocation_id, &pack);
             },
         );
-        let cpu_results: Vec<u32> = bare_literals::OUTPUT.get().to_vec();
+        let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
         let labels: Vec<String> = (0..N).map(|i| format!("literal_suffixes[{i}]")).collect();
         let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -123,21 +128,24 @@ impl RoundtripTest for LiteralSuffixTest {
 #[wgsl]
 pub mod bare_loop_vars {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct BareLoopVarsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BareLoopVarsPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         let mut acc: u32 = 0;
         for i in 0..4 {
             let step: u32 = i + 1;
             acc += step * input[idx];
         }
-        get_mut!(OUTPUT)[idx] = acc;
+        get_mut!(pack.output)[idx] = acc;
     }
 }
 
@@ -174,8 +182,10 @@ impl RoundtripTest for LoopVarTypeTest {
 
         let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-        bare_loop_vars::INPUT.set(inputs);
-        bare_loop_vars::OUTPUT.set([0u32; N]);
+        let pack = bare_loop_vars::BareLoopVarsPack {
+            input: Storage::new(inputs),
+            output: Storage::new([0u32; N]),
+        };
         dispatch_workgroups(
             (1, 1, 1),
             linkage
@@ -183,10 +193,10 @@ impl RoundtripTest for LoopVarTypeTest {
                 .expect("main entry present")
                 .workgroup_size,
             |builtins| {
-                bare_loop_vars::main(builtins.global_invocation_id);
+                bare_loop_vars::main(builtins.global_invocation_id, &pack);
             },
         );
-        let cpu_results: Vec<u32> = bare_loop_vars::OUTPUT.get().to_vec();
+        let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
         let labels: Vec<String> = (0..N).map(|i| format!("loop_var_types[{i}]")).collect();
         let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();

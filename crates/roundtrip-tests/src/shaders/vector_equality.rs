@@ -21,15 +21,18 @@ const N: usize = 64;
 #[wgsl]
 pub mod vec_eq {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct VecEqPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecEqPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         let base = idx * 8;
         let a = vec4f(
             input[base],
@@ -45,9 +48,9 @@ pub mod vec_eq {
         );
 
         if a == b {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -56,15 +59,18 @@ pub mod vec_eq {
 #[wgsl]
 pub mod vec_ne {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct VecNePack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecNePack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         let base = idx * 8;
         let a = vec4f(
             input[base],
@@ -80,9 +86,9 @@ pub mod vec_ne {
         );
 
         if a != b {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -92,15 +98,18 @@ pub mod vec_ne {
 #[wgsl]
 pub mod cmp_eq_mask {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct CmpEqMaskPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &CmpEqMaskPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         let base = idx * 8;
         let a = vec4f(
             input[base],
@@ -116,9 +125,9 @@ pub mod cmp_eq_mask {
         );
 
         if any(cmp_eq(a, b)) {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -128,15 +137,18 @@ pub mod cmp_eq_mask {
 #[wgsl]
 pub mod cmp_ne_mask {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct CmpNeMaskPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &CmpNeMaskPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         let base = idx * 8;
         let a = vec4f(
             input[base],
@@ -152,9 +164,9 @@ pub mod cmp_ne_mask {
         );
 
         if any(cmp_ne(a, b)) {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -207,9 +219,8 @@ impl RoundtripTest for VectorEqualityTest {
         let mut results = Vec::new();
 
         macro_rules! drive {
-            ($mod_name:ident, $label:expr) => {{
-                let inputs = vector_equality_inputs();
-                let input_bytes = bytemuck::cast_slice::<f32, u8>(&inputs);
+            ($mod_name:ident, $inputs:expr, $label:expr, $pack_init:expr) => {{
+                let input_bytes = bytemuck::cast_slice::<f32, u8>(&$inputs);
 
                 let mut linkage =
                     wgsl_rs_linkage_wgpu::analyze_wgsl_module(&$mod_name::WGSL_SOURCE).unwrap();
@@ -226,8 +237,7 @@ impl RoundtripTest for VectorEqualityTest {
 
                 let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-                $mod_name::INPUT.set(inputs);
-                $mod_name::OUTPUT.set([0u32; N]);
+                let pack = $pack_init;
                 dispatch_workgroups(
                     (1, 1, 1),
                     linkage
@@ -235,10 +245,10 @@ impl RoundtripTest for VectorEqualityTest {
                         .expect("main entry present")
                         .workgroup_size,
                     |builtins| {
-                        $mod_name::main(builtins.global_invocation_id);
+                        $mod_name::main(builtins.global_invocation_id, &pack);
                     },
                 );
-                let cpu_results: Vec<u32> = $mod_name::OUTPUT.get().to_vec();
+                let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
                 let labels: Vec<String> = (0..N).map(|i| format!("{}[{}]", $label, i)).collect();
                 let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -251,10 +261,43 @@ impl RoundtripTest for VectorEqualityTest {
             }};
         }
 
-        drive!(vec_eq, "vec_eq");
-        drive!(vec_ne, "vec_ne");
-        drive!(cmp_eq_mask, "cmp_eq_mask");
-        drive!(cmp_ne_mask, "cmp_ne_mask");
+        let eq_inputs = vector_equality_inputs();
+        drive!(
+            vec_eq,
+            eq_inputs,
+            "vec_eq",
+            vec_eq::VecEqPack {
+                input: Storage::new(eq_inputs),
+                output: Storage::new([0u32; N]),
+            }
+        );
+        drive!(
+            vec_ne,
+            eq_inputs,
+            "vec_ne",
+            vec_ne::VecNePack {
+                input: Storage::new(eq_inputs),
+                output: Storage::new([0u32; N]),
+            }
+        );
+        drive!(
+            cmp_eq_mask,
+            eq_inputs,
+            "cmp_eq_mask",
+            cmp_eq_mask::CmpEqMaskPack {
+                input: Storage::new(eq_inputs),
+                output: Storage::new([0u32; N]),
+            }
+        );
+        drive!(
+            cmp_ne_mask,
+            eq_inputs,
+            "cmp_ne_mask",
+            cmp_ne_mask::CmpNeMaskPack {
+                input: Storage::new(eq_inputs),
+                output: Storage::new([0u32; N]),
+            }
+        );
 
         results
     }

@@ -12,16 +12,19 @@ const N: usize = 64;
 #[wgsl]
 pub mod rounding_basic {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct RoundingBasicPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &RoundingBasicPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4f(ceil(x), floor(x), round(x), trunc(x));
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4f(ceil(x), floor(x), round(x), trunc(x));
     }
 }
 
@@ -29,16 +32,19 @@ pub mod rounding_basic {
 #[wgsl]
 pub mod rounding_fract {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct RoundingFractPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &RoundingFractPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4f(fract(x), saturate(x), 0.0, 0.0);
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4f(fract(x), saturate(x), 0.0, 0.0);
     }
 }
 
@@ -102,12 +108,14 @@ impl RoundtripTest for RoundingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            rounding_basic::INPUT.set(inputs);
-            rounding_basic::OUTPUT.set([Vec4f::default(); N]);
+            let pack = rounding_basic::RoundingBasicPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                rounding_basic::main(builtins.global_invocation_id);
+                rounding_basic::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = rounding_basic::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -147,12 +155,14 @@ impl RoundtripTest for RoundingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            rounding_fract::INPUT.set(inputs);
-            rounding_fract::OUTPUT.set([Vec4f::default(); N]);
+            let pack = rounding_fract::RoundingFractPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                rounding_fract::main(builtins.global_invocation_id);
+                rounding_fract::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = rounding_fract::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)

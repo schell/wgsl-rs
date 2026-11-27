@@ -16,15 +16,18 @@ const N: usize = 64;
 #[wgsl]
 pub mod all_vec2b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 128]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct AllVec2bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 128]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AllVec2bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 2;
         let vec_input = vec2b(input[base] != 0u32, input[base + 1] != 0u32);
@@ -32,9 +35,9 @@ pub mod all_vec2b {
         let result = all(vec_input);
 
         if result {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -45,15 +48,18 @@ pub mod all_vec2b {
 #[wgsl]
 pub mod all_vec3b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 192]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct AllVec3bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 192]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AllVec3bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 3;
         let vec_input = vec3b(
@@ -65,9 +71,9 @@ pub mod all_vec3b {
         let result = all(vec_input);
 
         if result {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -78,15 +84,18 @@ pub mod all_vec3b {
 #[wgsl]
 pub mod all_vec4b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 256]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct AllVec4bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 256]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AllVec4bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 4;
         let vec_input = vec4b(
@@ -99,9 +108,9 @@ pub mod all_vec4b {
         let result = all(vec_input);
 
         if result {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -112,15 +121,18 @@ pub mod all_vec4b {
 #[wgsl]
 pub mod any_vec2b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 128]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct AnyVec2bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 128]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AnyVec2bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 2;
         let vec_input = vec2b(input[base] != 0u32, input[base + 1] != 0u32);
@@ -128,9 +140,9 @@ pub mod any_vec2b {
         let result = any(vec_input);
 
         if result {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -141,15 +153,18 @@ pub mod any_vec2b {
 #[wgsl]
 pub mod any_vec3b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 192]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct AnyVec3bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 192]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AnyVec3bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 3;
         let vec_input = vec3b(
@@ -161,9 +176,9 @@ pub mod any_vec3b {
         let result = any(vec_input);
 
         if result {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -174,15 +189,18 @@ pub mod any_vec3b {
 #[wgsl]
 pub mod any_vec4b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 256]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct AnyVec4bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 256]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AnyVec4bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 4;
         let vec_input = vec4b(
@@ -195,9 +213,9 @@ pub mod any_vec4b {
         let result = any(vec_input);
 
         if result {
-            get_mut!(OUTPUT)[idx] = 1u32;
+            get_mut!(pack.output)[idx] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx] = 0u32;
+            get_mut!(pack.output)[idx] = 0u32;
         }
     }
 }
@@ -282,8 +300,10 @@ impl RoundtripTest for LogicalOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            all_vec2b::INPUT.set(inputs);
-            all_vec2b::OUTPUT.set([0u32; N]);
+            let pack = all_vec2b::AllVec2bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -291,10 +311,10 @@ impl RoundtripTest for LogicalOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    all_vec2b::main(builtins.global_invocation_id);
+                    all_vec2b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = all_vec2b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("all_vec2b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -327,8 +347,10 @@ impl RoundtripTest for LogicalOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            all_vec3b::INPUT.set(inputs);
-            all_vec3b::OUTPUT.set([0u32; N]);
+            let pack = all_vec3b::AllVec3bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -336,10 +358,10 @@ impl RoundtripTest for LogicalOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    all_vec3b::main(builtins.global_invocation_id);
+                    all_vec3b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = all_vec3b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("all_vec3b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -372,8 +394,10 @@ impl RoundtripTest for LogicalOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            all_vec4b::INPUT.set(inputs);
-            all_vec4b::OUTPUT.set([0u32; N]);
+            let pack = all_vec4b::AllVec4bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -381,10 +405,10 @@ impl RoundtripTest for LogicalOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    all_vec4b::main(builtins.global_invocation_id);
+                    all_vec4b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = all_vec4b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("all_vec4b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -417,8 +441,10 @@ impl RoundtripTest for LogicalOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            any_vec2b::INPUT.set(inputs);
-            any_vec2b::OUTPUT.set([0u32; N]);
+            let pack = any_vec2b::AnyVec2bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -426,10 +452,10 @@ impl RoundtripTest for LogicalOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    any_vec2b::main(builtins.global_invocation_id);
+                    any_vec2b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = any_vec2b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("any_vec2b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -462,8 +488,10 @@ impl RoundtripTest for LogicalOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            any_vec3b::INPUT.set(inputs);
-            any_vec3b::OUTPUT.set([0u32; N]);
+            let pack = any_vec3b::AnyVec3bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -471,10 +499,10 @@ impl RoundtripTest for LogicalOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    any_vec3b::main(builtins.global_invocation_id);
+                    any_vec3b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = any_vec3b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("any_vec3b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -507,8 +535,10 @@ impl RoundtripTest for LogicalOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            any_vec4b::INPUT.set(inputs);
-            any_vec4b::OUTPUT.set([0u32; N]);
+            let pack = any_vec4b::AnyVec4bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -516,10 +546,10 @@ impl RoundtripTest for LogicalOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    any_vec4b::main(builtins.global_invocation_id);
+                    any_vec4b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = any_vec4b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("any_vec4b[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();

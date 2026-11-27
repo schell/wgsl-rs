@@ -14,17 +14,20 @@ use crate::harness::{self, ComparisonResult, RoundtripTest};
 #[wgsl]
 pub mod load_copy {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 4]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 4]);
+    pub struct LoadCopyPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 4]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 4]>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
-    pub fn main(#[builtin(global_invocation_id)] _global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] _global_id: Vec3u, pack: &LoadCopyPack) {
         // `load!` copies the value out of the read guard; the deref on
         // the left writes through the write guard. In WGSL this renders
         // as `OUTPUT = INPUT;` (wgsl-rs#153).
-        *get_mut!(OUTPUT) = load!(INPUT);
+        *get_mut!(pack.output) = load!(pack.input);
     }
 }
 
@@ -62,12 +65,14 @@ impl RoundtripTest for LoadMacroTest {
         let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
         use wgsl_rs::std::*;
-        load_copy::INPUT.set(inputs);
-        load_copy::OUTPUT.set([0.0f32; 4]);
+        let pack = load_copy::LoadCopyPack {
+            input: Storage::new(inputs),
+            output: Storage::new([0.0f32; 4]),
+        };
         dispatch_workgroups((1, 1, 1), (1, 1, 1), |builtins| {
-            load_copy::main(builtins.global_invocation_id);
+            load_copy::main(builtins.global_invocation_id, &pack);
         });
-        let cpu_floats: Vec<f32> = load_copy::OUTPUT.get().to_vec();
+        let cpu_floats: Vec<f32> = pack.output.get().to_vec();
 
         let labels: Vec<String> = (0..4).map(|i| format!("out[{i}]")).collect();
         let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();

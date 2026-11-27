@@ -17,15 +17,18 @@ const N: usize = 64;
 #[wgsl]
 pub mod select_f32_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 192]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct SelectF32ScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 192]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectF32ScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 3;
         let true_val = bitcast_f32(input[base]);
@@ -34,7 +37,7 @@ pub mod select_f32_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx] = bitcast_u32(result);
+        get_mut!(pack.output)[idx] = bitcast_u32(result);
     }
 }
 
@@ -44,15 +47,18 @@ pub mod select_f32_scalar {
 #[wgsl]
 pub mod select_i32_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 192]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct SelectI32ScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 192]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectI32ScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 3;
         let true_val = input[base] as i32;
@@ -61,7 +67,7 @@ pub mod select_i32_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx] = result as u32;
+        get_mut!(pack.output)[idx] = result as u32;
     }
 }
 
@@ -71,15 +77,18 @@ pub mod select_i32_scalar {
 #[wgsl]
 pub mod select_u32_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 192]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct SelectU32ScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 192]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectU32ScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 3;
         let true_val = input[base];
@@ -88,7 +97,7 @@ pub mod select_u32_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx] = result;
+        get_mut!(pack.output)[idx] = result;
     }
 }
 
@@ -98,15 +107,18 @@ pub mod select_u32_scalar {
 #[wgsl]
 pub mod select_vec2f_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 320]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 128]);
+    pub struct SelectVec2fScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 320]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 128]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec2fScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 5;
         let true_val = vec2f(bitcast_f32(input[base]), bitcast_f32(input[base + 1]));
@@ -115,8 +127,8 @@ pub mod select_vec2f_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 2] = bitcast_u32(result.x);
-        get_mut!(OUTPUT)[idx * 2 + 1] = bitcast_u32(result.y);
+        get_mut!(pack.output)[idx * 2] = bitcast_u32(result.x);
+        get_mut!(pack.output)[idx * 2 + 1] = bitcast_u32(result.y);
     }
 }
 
@@ -126,15 +138,18 @@ pub mod select_vec2f_scalar {
 #[wgsl]
 pub mod select_vec4f_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct SelectVec4fScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec4fScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 9;
         let true_val = vec4f(
@@ -153,10 +168,10 @@ pub mod select_vec4f_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 4] = bitcast_u32(result.x);
-        get_mut!(OUTPUT)[idx * 4 + 1] = bitcast_u32(result.y);
-        get_mut!(OUTPUT)[idx * 4 + 2] = bitcast_u32(result.z);
-        get_mut!(OUTPUT)[idx * 4 + 3] = bitcast_u32(result.w);
+        get_mut!(pack.output)[idx * 4] = bitcast_u32(result.x);
+        get_mut!(pack.output)[idx * 4 + 1] = bitcast_u32(result.y);
+        get_mut!(pack.output)[idx * 4 + 2] = bitcast_u32(result.z);
+        get_mut!(pack.output)[idx * 4 + 3] = bitcast_u32(result.w);
     }
 }
 
@@ -166,15 +181,18 @@ pub mod select_vec4f_scalar {
 #[wgsl]
 pub mod select_vec4i_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct SelectVec4iScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec4iScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 9;
         let true_val = vec4i(
@@ -193,10 +211,10 @@ pub mod select_vec4i_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 4] = result.x as u32;
-        get_mut!(OUTPUT)[idx * 4 + 1] = result.y as u32;
-        get_mut!(OUTPUT)[idx * 4 + 2] = result.z as u32;
-        get_mut!(OUTPUT)[idx * 4 + 3] = result.w as u32;
+        get_mut!(pack.output)[idx * 4] = result.x as u32;
+        get_mut!(pack.output)[idx * 4 + 1] = result.y as u32;
+        get_mut!(pack.output)[idx * 4 + 2] = result.z as u32;
+        get_mut!(pack.output)[idx * 4 + 3] = result.w as u32;
     }
 }
 
@@ -206,15 +224,18 @@ pub mod select_vec4i_scalar {
 #[wgsl]
 pub mod select_vec4u_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct SelectVec4uScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec4uScalarPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 9;
         let true_val = vec4u(
@@ -233,10 +254,10 @@ pub mod select_vec4u_scalar {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 4] = result.x;
-        get_mut!(OUTPUT)[idx * 4 + 1] = result.y;
-        get_mut!(OUTPUT)[idx * 4 + 2] = result.z;
-        get_mut!(OUTPUT)[idx * 4 + 3] = result.w;
+        get_mut!(pack.output)[idx * 4] = result.x;
+        get_mut!(pack.output)[idx * 4 + 1] = result.y;
+        get_mut!(pack.output)[idx * 4 + 2] = result.z;
+        get_mut!(pack.output)[idx * 4 + 3] = result.w;
     }
 }
 
@@ -246,15 +267,18 @@ pub mod select_vec4u_scalar {
 #[wgsl]
 pub mod select_vec4f_vec4b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct SelectVec4fVec4bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec4fVec4bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 12;
         let true_val = vec4f(
@@ -278,10 +302,10 @@ pub mod select_vec4f_vec4b {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 4] = bitcast_u32(result.x);
-        get_mut!(OUTPUT)[idx * 4 + 1] = bitcast_u32(result.y);
-        get_mut!(OUTPUT)[idx * 4 + 2] = bitcast_u32(result.z);
-        get_mut!(OUTPUT)[idx * 4 + 3] = bitcast_u32(result.w);
+        get_mut!(pack.output)[idx * 4] = bitcast_u32(result.x);
+        get_mut!(pack.output)[idx * 4 + 1] = bitcast_u32(result.y);
+        get_mut!(pack.output)[idx * 4 + 2] = bitcast_u32(result.z);
+        get_mut!(pack.output)[idx * 4 + 3] = bitcast_u32(result.w);
     }
 }
 
@@ -291,15 +315,18 @@ pub mod select_vec4f_vec4b {
 #[wgsl]
 pub mod select_vec4i_vec4b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct SelectVec4iVec4bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec4iVec4bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 12;
         let true_val = vec4i(
@@ -323,10 +350,10 @@ pub mod select_vec4i_vec4b {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 4] = result.x as u32;
-        get_mut!(OUTPUT)[idx * 4 + 1] = result.y as u32;
-        get_mut!(OUTPUT)[idx * 4 + 2] = result.z as u32;
-        get_mut!(OUTPUT)[idx * 4 + 3] = result.w as u32;
+        get_mut!(pack.output)[idx * 4] = result.x as u32;
+        get_mut!(pack.output)[idx * 4 + 1] = result.y as u32;
+        get_mut!(pack.output)[idx * 4 + 2] = result.z as u32;
+        get_mut!(pack.output)[idx * 4 + 3] = result.w as u32;
     }
 }
 
@@ -336,15 +363,18 @@ pub mod select_vec4i_vec4b {
 #[wgsl]
 pub mod select_vec4u_vec4b {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct SelectVec4uVec4bPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SelectVec4uVec4bPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 12;
         let true_val = vec4u(
@@ -368,10 +398,10 @@ pub mod select_vec4u_vec4b {
 
         let result = select(false_val, true_val, condition);
 
-        get_mut!(OUTPUT)[idx * 4] = result.x;
-        get_mut!(OUTPUT)[idx * 4 + 1] = result.y;
-        get_mut!(OUTPUT)[idx * 4 + 2] = result.z;
-        get_mut!(OUTPUT)[idx * 4 + 3] = result.w;
+        get_mut!(pack.output)[idx * 4] = result.x;
+        get_mut!(pack.output)[idx * 4 + 1] = result.y;
+        get_mut!(pack.output)[idx * 4 + 2] = result.z;
+        get_mut!(pack.output)[idx * 4 + 3] = result.w;
     }
 }
 
@@ -477,8 +507,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_f32_scalar::INPUT.set(inputs);
-            select_f32_scalar::OUTPUT.set([0u32; N]);
+            let pack = select_f32_scalar::SelectF32ScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -486,10 +518,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_f32_scalar::main(builtins.global_invocation_id);
+                    select_f32_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_f32_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N)
                 .map(|i| format!("select_f32_scalar[{}]", i))
@@ -524,8 +556,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_i32_scalar::INPUT.set(inputs);
-            select_i32_scalar::OUTPUT.set([0u32; N]);
+            let pack = select_i32_scalar::SelectI32ScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -533,10 +567,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_i32_scalar::main(builtins.global_invocation_id);
+                    select_i32_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_i32_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N)
                 .map(|i| format!("select_i32_scalar[{}]", i))
@@ -571,8 +605,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_u32_scalar::INPUT.set(inputs);
-            select_u32_scalar::OUTPUT.set([0u32; N]);
+            let pack = select_u32_scalar::SelectU32ScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -580,10 +616,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_u32_scalar::main(builtins.global_invocation_id);
+                    select_u32_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_u32_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N)
                 .map(|i| format!("select_u32_scalar[{}]", i))
@@ -619,8 +655,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec2f_scalar::INPUT.set(inputs);
-            select_vec2f_scalar::OUTPUT.set([0u32; N * 2]);
+            let pack = select_vec2f_scalar::SelectVec2fScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 2]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -628,10 +666,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec2f_scalar::main(builtins.global_invocation_id);
+                    select_vec2f_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec2f_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 2)
                 .map(|i| format!("select_vec2f_scalar[{}]", i))
@@ -667,8 +705,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec4f_scalar::INPUT.set(inputs);
-            select_vec4f_scalar::OUTPUT.set([0u32; N * 4]);
+            let pack = select_vec4f_scalar::SelectVec4fScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 4]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -676,10 +716,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec4f_scalar::main(builtins.global_invocation_id);
+                    select_vec4f_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec4f_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4f_scalar[{}]", i))
@@ -715,8 +755,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec4i_scalar::INPUT.set(inputs);
-            select_vec4i_scalar::OUTPUT.set([0u32; N * 4]);
+            let pack = select_vec4i_scalar::SelectVec4iScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 4]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -724,10 +766,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec4i_scalar::main(builtins.global_invocation_id);
+                    select_vec4i_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec4i_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4i_scalar[{}]", i))
@@ -763,8 +805,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec4u_scalar::INPUT.set(inputs);
-            select_vec4u_scalar::OUTPUT.set([0u32; N * 4]);
+            let pack = select_vec4u_scalar::SelectVec4uScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 4]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -772,10 +816,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec4u_scalar::main(builtins.global_invocation_id);
+                    select_vec4u_scalar::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec4u_scalar::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4u_scalar[{}]", i))
@@ -811,8 +855,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec4f_vec4b::INPUT.set(inputs);
-            select_vec4f_vec4b::OUTPUT.set([0u32; N * 4]);
+            let pack = select_vec4f_vec4b::SelectVec4fVec4bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 4]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -820,10 +866,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec4f_vec4b::main(builtins.global_invocation_id);
+                    select_vec4f_vec4b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec4f_vec4b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4f_vec4b[{}]", i))
@@ -859,8 +905,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec4i_vec4b::INPUT.set(inputs);
-            select_vec4i_vec4b::OUTPUT.set([0u32; N * 4]);
+            let pack = select_vec4i_vec4b::SelectVec4iVec4bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 4]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -868,10 +916,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec4i_vec4b::main(builtins.global_invocation_id);
+                    select_vec4i_vec4b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec4i_vec4b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4i_vec4b[{}]", i))
@@ -907,8 +955,10 @@ impl RoundtripTest for SelectOperationsTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            select_vec4u_vec4b::INPUT.set(inputs);
-            select_vec4u_vec4b::OUTPUT.set([0u32; N * 4]);
+            let pack = select_vec4u_vec4b::SelectVec4uVec4bPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 4]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -916,10 +966,10 @@ impl RoundtripTest for SelectOperationsTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    select_vec4u_vec4b::main(builtins.global_invocation_id);
+                    select_vec4u_vec4b::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = select_vec4u_vec4b::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 4)
                 .map(|i| format!("select_vec4u_vec4b[{}]", i))

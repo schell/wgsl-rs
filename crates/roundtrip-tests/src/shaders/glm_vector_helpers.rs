@@ -14,19 +14,22 @@ const N: usize = 8;
 #[wgsl]
 pub mod glm_vector_ops {
     use wgsl_rs::glm::*;
-
-    storage!(group(0), binding(0), INPUT: [Vec4f; 8]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 8]);
+    pub struct GlmVectorOpsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4f; 8]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 8]>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GlmVectorOpsPack) {
         let idx = global_id.x as usize;
-        let a4 = get!(INPUT)[idx];
+        let a4 = get!(pack.input)[idx];
         let a: Vec3f = a4.xyz();
         let b: Vec3f = a4.yzx();
 
-        get_mut!(OUTPUT)[idx] = vec4f(
+        get_mut!(pack.output)[idx] = vec4f(
             length_squared3(a + Vec3f::ZERO),
             angle_between3(a, b),
             normalize_or_zero3(a).x,
@@ -39,17 +42,20 @@ pub mod glm_vector_ops {
 #[wgsl]
 pub mod glm_vector_ops_24 {
     use wgsl_rs::glm::*;
-
-    storage!(group(0), binding(0), INPUT: [Vec4f; 8]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 8]);
+    pub struct GlmVectorOps24Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4f; 8]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 8]>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GlmVectorOps24Pack) {
         let idx = global_id.x as usize;
-        let a4 = get!(INPUT)[idx];
+        let a4 = get!(pack.input)[idx];
 
-        get_mut!(OUTPUT)[idx] = vec4f(
+        get_mut!(pack.output)[idx] = vec4f(
             length_squared2(a4.xy()),
             normalize_or_zero2(a4.xy()).x,
             normalize_or_zero4(a4).x,
@@ -136,12 +142,14 @@ impl RoundtripTest for GlmVectorHelpersTest {
             "angle_between2(a.xy(), a.yx())",
         ];
         let ops_cpu = || {
-            glm_vector_ops::INPUT.set(inputs);
-            glm_vector_ops::OUTPUT.set(zeroed);
+            let pack = glm_vector_ops::GlmVectorOpsPack {
+                input: Storage::new(inputs),
+                output: Storage::new(zeroed),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                glm_vector_ops::main(builtins.global_invocation_id);
+                glm_vector_ops::main(builtins.global_invocation_id, &pack);
             });
-            glm_vector_ops::OUTPUT
+            pack.output
                 .get()
                 .iter()
                 .flat_map(|v| v.to_array())
@@ -164,12 +172,14 @@ impl RoundtripTest for GlmVectorHelpersTest {
             "length_squared4(a)",
         ];
         let ops24_cpu = || {
-            glm_vector_ops_24::INPUT.set(inputs);
-            glm_vector_ops_24::OUTPUT.set(zeroed);
+            let pack = glm_vector_ops_24::GlmVectorOps24Pack {
+                input: Storage::new(inputs),
+                output: Storage::new(zeroed),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                glm_vector_ops_24::main(builtins.global_invocation_id);
+                glm_vector_ops_24::main(builtins.global_invocation_id, &pack);
             });
-            glm_vector_ops_24::OUTPUT
+            pack.output
                 .get()
                 .iter()
                 .flat_map(|v| v.to_array())

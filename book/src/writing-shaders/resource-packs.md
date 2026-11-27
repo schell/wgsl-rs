@@ -185,6 +185,11 @@ The linkage accepts both spellings everywhere bindings are named:
 mangled WGSL global name automatically. See
 [Bind Groups & Buffers](../linkage/bind-groups.md).
 
+For the string-free path, derive
+[`wgsl_rs_linkage_wgpu::BindGroup`](../linkage/bind-groups.md#typed-bind-groups-derivebindgroup)
+on the pack: the derive generates a typed `Resources` struct and a
+`create_bind_group` that needs no keys at all.
+
 ## Type parameters on packs
 
 Packs may declare type parameters alongside their consts. A type parameter

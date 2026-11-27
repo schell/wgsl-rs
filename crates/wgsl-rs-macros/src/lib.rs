@@ -10,6 +10,7 @@ use syn::{
 
 use crate::parse::InterStageIo;
 
+mod bind_group;
 mod builder;
 mod builtins;
 mod deref_validation;
@@ -30,6 +31,20 @@ mod texture;
 mod uniform;
 mod vector_cmp;
 mod workgroup;
+
+/// Derives `wgsl_rs_linkage_wgpu::BindGroup` for one annotated pack
+/// struct: typed resources, zero string keys. Works on `#[wgsl]`-module
+/// packs and standalone annotated Rust structs alike; the generated
+/// `Resources` struct maps each field by annotation kind, and bindings
+/// resolve through the generated `"Pack::field"` keys, never declaration
+/// order. See `bind_group.rs` for the expansion.
+#[proc_macro_derive(BindGroup, attributes(storage, texture, sampler, uniform, workgroup))]
+pub fn bind_group_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let derive_input: syn::DeriveInput = syn::parse_macro_input!(input as syn::DeriveInput);
+    bind_group::expand(&derive_input)
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
 
 /// Visitor that strips `#[wgsl_allow(...)]` attributes from expressions.
 /// These attributes are used by wgsl-rs during parsing but should not appear

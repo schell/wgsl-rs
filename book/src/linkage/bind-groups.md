@@ -99,6 +99,65 @@ let frame_bg = linkage.create_bind_group(0, &device, &[
 ])?;
 ```
 
+## Typed bind groups: `#[derive(BindGroup)]`
+
+The string-free endgame: derive `BindGroup` on a pack and pass a **named**
+resources struct instead of key/value pairs. The derive works on
+`#[wgsl]`-module packs (spell it `#[derive(wgsl_rs_linkage_wgpu::BindGroup)]`
+inside the module) and on standalone annotated structs in host crates.
+
+```rust
+use wgsl_rs_linkage_wgpu::BindGroup;
+
+#[derive(BindGroup)]
+pub struct AtlasBindGroup<const FILTERABLE: bool> {
+    #[texture(group(2), binding(1))]
+    pub texture: Texture2D<f32, FILTERABLE>,
+    #[storage(group(2), binding(0))]
+    pub slab: Storage<[Vec4f; 4]>,
+    #[sampler(group(2), binding(2))]
+    pub smp: Sampler<FILTERABLE>,
+}
+```
+
+The derive generates `AtlasBindGroupResources<'a>`, one named wgpu resource
+per bindable field mapped by annotation kind:
+
+| Annotation | Resources field | wgpu binding |
+|------------|-----------------|--------------|
+| `#[storage]` / `#[uniform]` | `wgpu::BufferBinding<'a>` | `BindingResource::Buffer` |
+| `#[texture]` | `&'a wgpu::TextureView` | `BindingResource::TextureView` |
+| `#[sampler]` | `&'a wgpu::Sampler` | `BindingResource::Sampler` |
+| `#[workgroup]` | *(skipped - no host resource)* | - |
+
+Creation takes the pack's own group and keys, so no strings appear at the
+call site:
+
+```rust
+let bind_group = <AtlasBindGroup::<true> as BindGroup>::create_bind_group(
+    &mut linkage,
+    &device,
+    AtlasBindGroupResources {
+        slab: slab_buffer.as_entire_buffer_binding(),
+        texture: &view,
+        smp: &sampler,
+    },
+    Some("atlas_blit"),
+);
+```
+
+Because bindings resolve through the field attributes (and their
+`binding(N)` numbers), reordering pack fields cannot rebind anything.
+Layout-only consts vanish from the generated types: every instantiation
+shares one `Resources` struct. One `create_bind_group` call builds one bind
+group, so every field must select the same group; split multi-group packs
+into one pack per group.
+
+A pack instantiation is not statically tied to the matching module
+instantiation's linkage (`AtlasBindGroup::<true>` vs
+`instantiate::<true>()`); a mismatched pair panics with the linkage's own
+error, and wgpu rejects layout mismatches at `set_bind_group` time.
+
 ## Layout caching
 
 `create_bind_group` caches the `wgpu::BindGroupLayout` inside the

@@ -84,3 +84,16 @@ pub use crate::v30::*;
 
 #[cfg(all(feature = "v29", not(feature = "v30")))]
 pub use crate::v29::*;
+
+/// The `BindGroup` derive, implementing [`BindGroup`] (and its generated
+/// `Resources` struct) for annotated packs - both inside `#[wgsl]` modules
+/// and standalone. Re-exported here so the derive and the trait it
+/// implements are spelled the same way:
+///
+/// ```ignore
+/// use wgsl_rs_linkage_wgpu::BindGroup;
+///
+/// #[derive(BindGroup)]
+/// pub struct AtlasBindGroup { /* annotated fields */ }
+/// ```
+pub use wgsl_rs_macros::BindGroup;

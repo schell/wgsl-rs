@@ -2578,3 +2578,37 @@ legacy or mangled names; mixing both spellings of one field is detected as a
 duplicate. This keeps Phase A a small, reversible change on top of the
 positional `create_bind_group`, while the later typed `BindGroup` derive
 sits on the same canonical keys.
+
+### 2026-11-27: Typed bind groups via an opt-in derive, not auto-apply
+
+**Problem.** The binding-key design called for `#[derive(BindGroup)]` to be
+"auto-applied inside `#[wgsl]`" - every pack silently gaining the typed impl.
+But the generated impl references `::wgsl_rs_linkage_wgpu::...`, and
+`wgsl-rs` is deliberately wgpu-free (a documented crate boundary; the
+linkage crate depends on wgsl-rs, never the reverse). Eager path resolution
+means auto-apply would break every CPU-only pack user - including wgsl-rs's
+own test suite - unless they add a wgpu dependency they do not use.
+
+**Decision.** The derive is opt-in: one `#[derive(BindGroup)]` line per pack,
+spelled with a path inside `#[wgsl]` modules
+(`#[derive(wgsl_rs_linkage_wgpu::BindGroup)]`) and usable on standalone
+annotated structs in host crates. When the `#[wgsl]` macro sees the derive
+on a pack it stops stripping the field annotations, so the derive re-reads
+them from the emitted struct (the derive registers them as helper
+attributes, keeping them legal Rust); both entry points share one expansion
+in `bind_group.rs`. This preserves the zero-ceremony property where it is
+free (no wgsl attribute, no constructor call, just the derive) while keeping
+CPU-only crates link-clean.
+
+The generated shape follows the agreed design: a NAMED `{Pack}Resources<'a>`
+struct forbids the silent same-kind swaps a tuple would allow; resource kinds
+map by annotation (`Storage`/`Uniform` -> `BufferBinding`, textures ->
+`&TextureView`, samplers -> `&Sampler`, `#[workgroup]` skipped); bindings
+resolve from field attributes and generated keys, never declaration order;
+layout-only consts leave `Resources` flavor-agnostic; the group rides the
+pack's const parameter, so `MyBg::<1>` *is* group 1. One call builds one
+bind group, so the derive rejects packs whose fields select different
+groups. The trait lives inside `linkage.rs` (compiled per wgpu major, like
+the rest of the linkage) and creation panics on instantiation mismatch
+with the linkage's own error - the accepted gap, since nothing statically
+ties a pack instantiation to a module instantiation's linkage.

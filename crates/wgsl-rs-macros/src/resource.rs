@@ -22,7 +22,7 @@ pub(crate) enum ResourceKind {
 }
 
 impl ResourceKind {
-    fn from_attr(attr: &syn::Attribute) -> Option<Self> {
+    pub(crate) fn from_attr(attr: &syn::Attribute) -> Option<Self> {
         let ident = attr.path().get_ident()?;
         match ident.to_string().as_str() {
             "uniform" => Some(Self::Uniform),
@@ -46,7 +46,7 @@ impl ResourceKind {
 }
 
 /// A literal or const-generic binding address component.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AddressValue {
     Literal(syn::LitInt),
     Param(Ident),
@@ -621,16 +621,16 @@ fn extract_wrapper(
     Ok((inner, marker))
 }
 
-struct BindingArgs {
-    group: AddressValue,
-    binding: AddressValue,
+pub(crate) struct BindingArgs {
+    pub(crate) group: AddressValue,
+    pub(crate) binding: AddressValue,
     /// The annotation-named access mode, if present.
-    access: Option<StorageAccess>,
+    pub(crate) access: Option<StorageAccess>,
 }
 
 /// Parse `group(...)`, `binding(...)`, and storage access modifiers in any
 /// order, while rejecting duplicates and unknown modifiers.
-fn parse_binding_args(
+pub(crate) fn parse_binding_args(
     attr: &syn::Attribute,
     kind: ResourceKind,
     const_params: &std::collections::HashMap<String, syn::Type>,
@@ -941,13 +941,20 @@ pub(crate) fn rewrite_rust_module(
         let Some(pack) = module.resource_pack(&item_struct.ident) else {
             continue;
         };
+        // When the pack also derives `BindGroup`, the derive re-reads the
+        // binding annotations from the emitted struct, so they must survive
+        // this rewrite (the derive registers them as helper attributes,
+        // which keeps them legal Rust).
+        let keep_binding_attrs = has_bind_group_derive(item_struct);
         let syn::Fields::Named(fields) = &mut item_struct.fields else {
             continue;
         };
         for field in &mut fields.named {
-            field
-                .attrs
-                .retain(|attr| ResourceKind::from_attr(attr).is_none());
+            if !keep_binding_attrs {
+                field
+                    .attrs
+                    .retain(|attr| ResourceKind::from_attr(attr).is_none());
+            }
             let Some(resource) = pack
                 .fields
                 .iter()
@@ -1014,6 +1021,25 @@ fn pack_key_impl(item_struct: &syn::ItemStruct, pack: &ItemResourcePack) -> syn:
             #(#consts)*
         }
     }
+}
+
+/// True when the struct carries a `#[derive(...BindGroup)]` attribute
+/// (best-effort match on the last path segment, so both `#[derive(BindGroup)]`
+/// and `#[derive(wgsl_rs_linkage_wgpu::BindGroup)]` qualify).
+fn has_bind_group_derive(item_struct: &syn::ItemStruct) -> bool {
+    item_struct.attrs.iter().any(|attr| {
+        if !attr.path().is_ident("derive") {
+            return false;
+        }
+        let Ok(paths) = attr.parse_args_with(|input: syn::parse::ParseStream| {
+            syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated(input)
+        }) else {
+            return false;
+        };
+        paths
+            .iter()
+            .any(|path| path.segments.last().is_some_and(|s| s.ident == "BindGroup"))
+    })
 }
 
 /// Append the access marker to a `Storage<T>` field type that omitted it,

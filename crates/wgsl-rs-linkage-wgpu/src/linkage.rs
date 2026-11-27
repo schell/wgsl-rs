@@ -357,6 +357,44 @@ impl WgpuLinkage {
         info.create_named(self.module_label, device, layout, resources)
     }
 
+    /// The labeled counterpart to [`Self::create_bind_group_named`]:
+    /// `label` overrides the created bind group's wgpu diagnostic
+    /// label, falling back to the linkage-derived default when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::create_bind_group_named`].
+    pub fn create_bind_group_named_with_label<'a>(
+        &mut self,
+        group: u32,
+        device: &wgpu::Device,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'a>)],
+    ) -> Result<wgpu::BindGroup, Error> {
+        if !self.bind_group_layouts.contains_key(&group) {
+            let Some(info) = self.bind_groups.get(&group) else {
+                let mut available: Vec<u32> = self.bind_groups.keys().copied().collect();
+                available.sort_unstable();
+                return NoSuchBindGroupSnafu {
+                    module: self.module_label,
+                    group,
+                    available,
+                }
+                .fail();
+            };
+            self.bind_group_layouts.insert(group, info.layout(device));
+        }
+        let info = self
+            .bind_groups
+            .get(&group)
+            .expect("just inserted or found");
+        let layout = self
+            .bind_group_layouts
+            .get(&group)
+            .expect("just inserted or found");
+        info.create_named_with_label(self.module_label, device, layout, label, resources)
+    }
+
     /// Creates a bind group for `group` with one resource per binding, in
     /// binding-number order. This is the positional counterpart to
     /// [`Self::create_bind_group_named`]: pack fields mangle their resource
@@ -574,6 +612,37 @@ impl BindGroupInfo {
         layout: &wgpu::BindGroupLayout,
         resources: &[(&str, wgpu::BindingResource<'a>)],
     ) -> Result<wgpu::BindGroup, Error> {
+        self.create_named_inner(module_label, device, layout, None, resources)
+    }
+
+    /// The labeled counterpart to [`Self::create_named`]: `label` overrides
+    /// the bind group's wgpu diagnostic label, falling back to the
+    /// linkage-derived default when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::create_named`].
+    pub fn create_named_with_label<'a>(
+        &self,
+        module_label: &'static str,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'a>)],
+    ) -> Result<wgpu::BindGroup, Error> {
+        self.create_named_inner(module_label, device, layout, label, resources)
+    }
+
+    /// The shared implementation of [`Self::create_named`] and
+    /// [`Self::create_named_with_label`].
+    fn create_named_inner<'a>(
+        &self,
+        module_label: &'static str,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'a>)],
+    ) -> Result<wgpu::BindGroup, Error> {
         use std::collections::HashMap;
 
         // Build a canonical name → resource map. Friendly keys
@@ -641,7 +710,7 @@ impl BindGroupInfo {
         }
 
         Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&self.label),
+            label: label.or(Some(self.label.as_str())),
             layout,
             entries: &entries,
         }))
@@ -1206,6 +1275,58 @@ fn texture_depth_view_dimension(kind: ir::TextureDepthKind) -> wgpu::TextureView
         ir::TextureDepthKind::DepthCube => wgpu::TextureViewDimension::Cube,
         ir::TextureDepthKind::DepthCubeArray => wgpu::TextureViewDimension::CubeArray,
     }
+}
+
+// ===== Typed bind-group creation =====
+
+/// Typed, string-free bind-group creation for one resource pack.
+///
+/// Implemented by the `#[derive(BindGroup)]` macro (`wgsl_rs_linkage_wgpu::BindGroup`)
+/// for both `#[wgsl]`-module packs and standalone annotated Rust structs.
+/// The derive emits a companion `Resources` struct whose **named** fields
+/// carry one wgpu resource per pack field, mapped by field kind:
+/// `Storage<..>`/`Uniform<..>` → [`wgpu::BindingResource::Buffer`] via a
+/// [`wgpu::BufferBinding`], texture kinds → a borrowed
+/// [`wgpu::TextureView`], `Sampler`/`SamplerComparison` → a borrowed
+/// [`wgpu::Sampler`]. `#[workgroup]` fields are workgroup-scoped and take
+/// no host resource, so they are skipped. Named fields forbid the silent
+/// same-kind swaps a tuple would allow.
+///
+/// Binding indices resolve from the field **attributes** (`binding(N)`),
+/// never from declaration order, so reordering pack fields cannot rebind
+/// anything. The group axis resolves from the pack's own value: a literal
+/// `group(N)` or the const parameter a `group(PARAM)` field selects, so
+/// `MyBg::<1>` *is* group 1. Layout-only consts (filterability) leave
+/// `Resources` flavor-agnostic: one resource struct feeds every
+/// instantiation.
+///
+/// # Known gap
+///
+/// Nothing statically ties a pack instantiation (`AtlasBindGroup::<true>`)
+/// to the linkage of the matching module instantiation
+/// (`instantiate::<true>()`). A mismatched pair panics here with the
+/// linkage's own error (a missing binding or group), and wgpu itself
+/// rejects mismatches at `set_bind_group` time via bind group layout
+/// identity. This is the accepted cost of keeping the linkage a runtime
+/// analysis rather than a compile-time type.
+pub trait BindGroup<'a> {
+    /// The named-struct resource bundle for this pack's bind group.
+    type Resources;
+
+    /// Creates the bind group for this pack instantiation from its
+    /// resources, using the generated `"Pack::field"` keys.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the linkage does not declare the bindings this pack
+    /// expects (a pack/linkage instantiation mismatch; see the
+    /// [known gap](Self) above).
+    fn create_bind_group(
+        linkage: &mut WgpuLinkage,
+        device: &wgpu::Device,
+        resources: Self::Resources,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup;
 }
 
 #[cfg(test)]

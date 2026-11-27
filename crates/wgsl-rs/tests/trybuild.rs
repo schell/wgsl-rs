@@ -389,6 +389,12 @@ fn resource_pack_slot_collision_is_rejected() {
 }
 
 #[test]
+fn resource_pack_slot_filterability_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_slot_filterability_collision.rs");
+}
+
+#[test]
 fn resource_pack_unused_type_param_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_unused_type_param.rs");

@@ -199,7 +199,6 @@ fn build_rgba8_pixels() -> Vec<[u8; 4]> {
 
 /// Writes RGBA8 pixels into a CPU `Texture2D<f32>` as normalized channels.
 fn write_cpu_texture(tex: &wgsl_rs::std::Texture2D<f32>, rgba8: &[[u8; 4]]) {
-    tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let idx = (y * WIDTH + x) as usize;
@@ -327,7 +326,6 @@ fn write_cpu_texture_r32<const FILTERABLE: bool>(
     tex: &wgsl_rs::std::Texture2D<f32, FILTERABLE>,
     values: &[f32],
 ) {
-    tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let v = values[(y * WIDTH + x) as usize];
@@ -726,7 +724,6 @@ fn render_texture_sample_gpu(
 
 /// Writes RGBA8 pixels into a CPU `Texture3D<f32>` as normalized channels.
 fn write_cpu_texture_3d(tex: &wgsl_rs::std::Texture3D<f32>, rgba8: &[[u8; 4]]) {
-    tex.init(WIDTH, HEIGHT, DEPTH);
     for z in 0..DEPTH {
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
@@ -932,7 +929,7 @@ impl RoundtripTest for TextureOperationsTest {
         let gpu_source_texture = create_gpu_source_texture(device, queue, &pixels);
 
         let load_pack = texture_load_2d::TextureLoad2dPack {
-            tex: Texture2D::new(),
+            tex: Texture2D::new(WIDTH, HEIGHT),
         };
         write_cpu_texture(&load_pack.tex, &pixels);
         let gpu_load_pixels = render_texture_load_gpu(device, queue, &gpu_source_texture);
@@ -971,7 +968,7 @@ impl RoundtripTest for TextureOperationsTest {
         let gpu_r32_texture = create_gpu_r32float_texture(device, queue, &r32_values);
 
         let load_unfilterable_pack = texture_load_2d_unfilterable::TextureLoad2dUnfilterablePack {
-            tex: Texture2D::new(),
+            tex: Texture2D::new(WIDTH, HEIGHT),
         };
         write_cpu_texture_r32(&load_unfilterable_pack.tex, &r32_values);
         let gpu_load_unfilterable_pixels =
@@ -1012,7 +1009,7 @@ impl RoundtripTest for TextureOperationsTest {
         // (nearest-only) sampler must produce the same samples.
         let sample_unfilterable_pack =
             texture_sample_2d_unfilterable::TextureSample2dUnfilterablePack {
-                tex: Texture2D::new(),
+                tex: Texture2D::new(WIDTH, HEIGHT),
                 smp: Sampler::new(),
             };
         write_cpu_texture_r32(&sample_unfilterable_pack.tex, &r32_values);
@@ -1050,7 +1047,7 @@ impl RoundtripTest for TextureOperationsTest {
         ));
 
         let sample_pack = texture_sample_2d::TextureSample2dPack {
-            tex: Texture2D::new(),
+            tex: Texture2D::new(WIDTH, HEIGHT),
             tex_sampler: Sampler::new(),
         };
         write_cpu_texture(&sample_pack.tex, &pixels);
@@ -1088,7 +1085,7 @@ impl RoundtripTest for TextureOperationsTest {
         let gpu_source_texture_3d = create_gpu_source_texture_3d(device, queue, &pixels_3d);
 
         let sample_3d_pack = texture_sample_3d::TextureSample3dPack {
-            tex: Texture3D::new(),
+            tex: Texture3D::new(WIDTH, HEIGHT, DEPTH),
             tex_sampler: Sampler::new(),
         };
         write_cpu_texture_3d(&sample_3d_pack.tex, &pixels_3d);

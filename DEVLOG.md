@@ -2646,10 +2646,14 @@ has a meaning.
   rewritten this way; module_type_params now name pack slots
   (`"DataPack_T"`) instead of variable names.
 - The CPU texture/sampler wrappers lost their `ModuleVar<T>` backing
-  store. They now hold `RwLock<Option<TextureData<T>>>` behind small typed
-  `Deref` guards, which keeps `const fn new()` (Rust's `RwLock::new` is
-  const) and panics with a targeted message when `init`/`set` was never
-  called. The `const`-facing constructor surface is unchanged.
+  store - and its `Option`-shaped two-phase `new()`/`init()` dance with
+  it. Textures now construct eagerly, `Texture2D::new(width, height)`
+  zero-filled under `T: WgslTextureScalar + Default + Copy` (every scalar
+  qualifies), and samplers default their state in `new()`; `init` is
+  gone. This matches the pack-world rule documented on
+  `Uniform`/`Storage`/`Workgroup`: values are constructed, never
+  defaulted, and the "texture data was never initialized" runtime panic
+  class disappears outright.
 - Cross-module workgroup uniform load: the old thread-local workgroup
   barrier story is the same, but `WorkgroupUniformLoad` is implemented on
   the value types only.

@@ -677,7 +677,6 @@ fn build_depth_pixels(offset: f32) -> Vec<f32> {
 }
 
 fn write_cpu_texture2d(tex: &wgsl_rs::std::Texture2D<f32>, rgba8: &[[u8; 4]]) {
-    tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let px = rgba8[(y * WIDTH + x) as usize];
@@ -696,7 +695,6 @@ fn write_cpu_texture2d(tex: &wgsl_rs::std::Texture2D<f32>, rgba8: &[[u8; 4]]) {
 }
 
 fn write_cpu_texture2d_i32(tex: &wgsl_rs::std::Texture2D<i32>, pixels: &[[i32; 4]]) {
-    tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             tex.set_pixel(x, y, pixels[(y * WIDTH + x) as usize]);
@@ -705,7 +703,6 @@ fn write_cpu_texture2d_i32(tex: &wgsl_rs::std::Texture2D<i32>, pixels: &[[i32; 4
 }
 
 fn write_cpu_texture2d_u32(tex: &wgsl_rs::std::Texture2D<u32>, pixels: &[[u32; 4]]) {
-    tex.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             tex.set_pixel(x, y, pixels[(y * WIDTH + x) as usize]);
@@ -1549,7 +1546,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex2d_variants::Tex2dVariantsPack {
-                tex: Texture2D::new(),
+                tex: Texture2D::new(WIDTH, HEIGHT),
                 s: Sampler::new(),
             };
             write_cpu_texture2d(&pack.tex, &color0);
@@ -1621,7 +1618,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex2d_gather_variants::Tex2dGatherVariantsPack {
-                tex: Texture2D::new(),
+                tex: Texture2D::new(WIDTH, HEIGHT),
                 s: Sampler::new(),
             };
             write_cpu_texture2d(&pack.tex, &color0);
@@ -1696,8 +1693,8 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex2d_gather_integer_variants::Tex2dGatherIntegerVariantsPack {
-                tex_i: Texture2D::new(),
-                tex_u: Texture2D::new(),
+                tex_i: Texture2D::new(WIDTH, HEIGHT),
+                tex_u: Texture2D::new(WIDTH, HEIGHT),
                 s: Sampler::new(),
             };
             write_cpu_texture2d_i32(&pack.tex_i, &pixels_i32);
@@ -1774,7 +1771,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex2d_array_gather_variants::Tex2dArrayGatherVariantsPack {
-                tex: Texture2DArray::new(),
+                tex: Texture2DArray::new(WIDTH, HEIGHT, LAYERS),
                 s: Sampler::new(),
             };
             write_cpu_texture2d_array(&pack.tex, &color_layers);
@@ -1849,7 +1846,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex2d_array_variants::Tex2dArrayVariantsPack {
-                tex: Texture2DArray::new(),
+                tex: Texture2DArray::new(WIDTH, HEIGHT, LAYERS),
                 s: Sampler::new(),
             };
             write_cpu_texture2d_array(&pack.tex, &color_layers);
@@ -1927,7 +1924,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex_cube_gather_variants::TexCubeGatherVariantsPack {
-                cube_tex: TextureCube::new(),
+                cube_tex: TextureCube::new(FACE),
                 s: Sampler::new(),
             };
             write_cpu_texture_cube(&pack.cube_tex, &cube_faces);
@@ -2013,7 +2010,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = tex_cube_array_gather_variants::TexCubeArrayGatherVariantsPack {
-                cube_array_tex: TextureCubeArray::new(),
+                cube_array_tex: TextureCubeArray::new(FACE, LAYERS),
                 s: Sampler::new(),
             };
             write_cpu_texture_cube_array(&pack.cube_array_tex, &cube_array_layers);
@@ -2088,7 +2085,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = depth2d_compare_variants::Depth2dCompareVariantsPack {
-                depth_tex: TextureDepth2D::new(),
+                depth_tex: TextureDepth2D::new(WIDTH, HEIGHT),
                 depth_sampler: SamplerComparison::new(),
             };
             write_cpu_depth2d(&pack.depth_tex, &depth0);
@@ -2169,7 +2166,7 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = depth2d_array_compare_variants::Depth2dArrayCompareVariantsPack {
-                depth_tex: TextureDepth2DArray::new(),
+                depth_tex: TextureDepth2DArray::new(WIDTH, HEIGHT, LAYERS),
                 depth_sampler: SamplerComparison::new(),
             };
             write_cpu_depth2d_array(&pack.depth_tex, &depth_layers);
@@ -2255,8 +2252,8 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = depth_cube_gather_variants::DepthCubeGatherVariantsPack {
-                cube_tex: TextureDepthCube::new(),
-                cube_array_tex: TextureDepthCubeArray::new(),
+                cube_tex: TextureDepthCube::new(FACE),
+                cube_array_tex: TextureDepthCubeArray::new(FACE, LAYERS),
                 s: Sampler::new(),
             };
             write_cpu_depth_cube(&pack.cube_tex);
@@ -2350,8 +2347,8 @@ impl RoundtripTest for AdvancedTextureOperationsTest {
             );
 
             let pack = depth_cube_gather_compare_variants::DepthCubeGatherCompareVariantsPack {
-                cube_tex: TextureDepthCube::new(),
-                cube_array_tex: TextureDepthCubeArray::new(),
+                cube_tex: TextureDepthCube::new(FACE),
+                cube_array_tex: TextureDepthCubeArray::new(FACE, LAYERS),
                 depth_sampler: SamplerComparison::new(),
             };
             write_cpu_depth_cube(&pack.cube_tex);

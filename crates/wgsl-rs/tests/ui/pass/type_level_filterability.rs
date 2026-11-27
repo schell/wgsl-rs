@@ -23,11 +23,9 @@ mod flat_pack {
 }
 
 fn main() {
-    let tex: Texture2D<f32, false> = Texture2D::new();
+    let tex: Texture2D<f32, false> = Texture2D::new(1, 1);
     let smp: Sampler<false> = Sampler::new();
     let _: &Texture2D<f32, false> = &tex;
     let _: &Sampler<false> = &smp;
-    tex.init(1, 1);
-    smp.init();
     let _ = flat_pack::instantiate();
 }

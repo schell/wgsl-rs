@@ -267,12 +267,11 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     use wgsl_rs::std::*;
 
     let pack = storage_texture_compute::StorageTextureComputePack {
-        input: TextureStorage2D::new(),
-        output: TextureStorage2D::new(),
+        input: TextureStorage2D::new(WIDTH, HEIGHT),
+        output: TextureStorage2D::new(WIDTH, HEIGHT),
     };
 
     // Initialize input texture.
-    pack.input.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let idx = (y * WIDTH + x) as usize;
@@ -290,7 +289,6 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     }
 
     // Initialize output texture.
-    pack.output.init(WIDTH, HEIGHT);
 
     // Run the compute shader.
     dispatch_workgroups((WIDTH, HEIGHT, 1), (1, 1, 1), |builtins| {

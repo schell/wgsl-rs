@@ -15,6 +15,7 @@ mod atlas {
     pub const ATLAS_FILTERABLE: bool = true;
 
     #[derive(wgsl_rs_linkage_wgpu::BindGroup)]
+    #[allow(dead_code)]
     pub struct AtlasBindGroup<const FILTERABLE: bool> {
         #[texture(group(2), binding(1))]
         pub texture: Texture2D<f32, FILTERABLE>,
@@ -134,12 +135,10 @@ fn typed_path_builds_the_atlas_bind_group_on_device() {
     // The pack stays CPU-constructible and callable alongside the typed
     // GPU path.
     let cpu_pack = atlas::AtlasBindGroup::<true> {
-        texture: Texture2D::new(),
+        texture: Texture2D::new(4, 4),
         slab: Storage::new([vec4f(0.0, 0.0, 0.0, 1.0); 4]),
         smp: Sampler::new(),
     };
-    cpu_pack.texture.init(4, 4);
-    cpu_pack.smp.init();
     let _color = atlas::blit::<true>(&cpu_pack);
     let _position = atlas::vtx_fullscreen(0);
 

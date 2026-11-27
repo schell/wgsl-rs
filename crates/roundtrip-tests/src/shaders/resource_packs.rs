@@ -142,7 +142,6 @@ fn cpu_run(filterable: bool, pixels: &[[u8; 4]]) -> Vec<f32> {
         use resource_pack_render as shader;
         use wgsl_rs::std::*;
 
-        texture.heights.init(WIDTH, HEIGHT);
         for (index, pixel) in pixels.iter().enumerate() {
             texture.heights.set_pixel(
                 index as u32 % WIDTH,
@@ -179,13 +178,13 @@ fn cpu_run(filterable: bool, pixels: &[[u8; 4]]) -> Vec<f32> {
 
     if filterable {
         let texture = shader::TextureBindGroup::<0, true> {
-            heights: Texture2D::new(),
+            heights: Texture2D::new(WIDTH, HEIGHT),
             heights_smp: Sampler::new(),
         };
         run_texture(&texture, pixels)
     } else {
         let texture = shader::TextureBindGroup::<0, false> {
-            heights: Texture2D::new(),
+            heights: Texture2D::new(WIDTH, HEIGHT),
             heights_smp: Sampler::new(),
         };
         run_texture(&texture, pixels)

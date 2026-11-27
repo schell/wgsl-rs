@@ -132,8 +132,9 @@ let u = get!(pack.u);   // a local holding a pack field value
 
 No constructors are generated. Hosts construct packs by hand over `pub`
 fields, passing real values to the runtime wrappers: buffers take their
-data at construction, textures and samplers start empty and are filled
-with `init`/`set_pixel`:
+data at construction, textures take their dimensions (`Texture2D::new(width,
+height)`, zero-filled), and samplers start with default state; both are
+filled with `set_pixel`/`set`:
 
 ```rust
 use wgsl_rs::std::*;
@@ -145,12 +146,10 @@ let storage = render::SlabBindGroup::<1> {
 };
 
 let textures = render::TextureBindGroup::<0, false> {
-    heights: Texture2D::new(),
+    heights: Texture2D::new(1, 1),
     heights_smp: Sampler::new(),
 };
-textures.heights.init(1, 1);
 textures.heights.set_pixel(0, 0, [0.25, 0.5, 0.75, 1.0]);
-textures.heights_smp.init();
 
 let position = render::vertex::<1>(0, &storage);
 let color = render::fragment::<0, false>(

@@ -12,6 +12,7 @@ mod packs {
     pub const TEST_FILTERABLE: bool = false;
     pub const TEST_BINDING: usize = 7;
 
+    #[allow(dead_code)]
     pub struct TexturePack<const GROUP: u32, const FILTERABLE: bool, const BINDING: usize> {
         #[texture(group(GROUP), binding(BINDING))]
         pub texture: Texture2D<f32, FILTERABLE>,
@@ -37,12 +38,10 @@ fn pack_addresses_and_filterability_reach_wgpu_layouts() {
         ]
     );
 
-    let cpu = packs::TexturePack::<4, false, 7> {
-        texture: Texture2D::new(),
+    let _cpu = packs::TexturePack::<4, false, 7> {
+        texture: Texture2D::new(1, 1),
         smp: Sampler::new(),
     };
-    cpu.texture.init(1, 1);
-    cpu.smp.init();
     let buffers = packs::BufferPack {
         input: Storage::new(RuntimeArray::new()),
     };

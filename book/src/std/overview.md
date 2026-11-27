@@ -1,7 +1,7 @@
 # The Standard Library
 
 `wgsl_rs::std` is the prelude for every `#[wgsl]` module. It provides WGSL
-types, builtin functions, binding macros, entry-point attributes, and
+types, builtin functions, resource packs, entry-point attributes, and
 runtime macros that bridge the Rust and WGSL worlds.
 
 ## The glob import

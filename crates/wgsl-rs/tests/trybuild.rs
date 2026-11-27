@@ -179,12 +179,6 @@ fn load_on_undeclared_is_rejected() {
 }
 
 #[test]
-fn load_generic_one_arg_is_rejected() {
-    let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/fail/load_generic_one_arg.rs");
-}
-
-#[test]
 fn deref_of_value_local_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/deref_value_local.rs");
@@ -230,12 +224,6 @@ fn bool_const_generics_compile() {
 fn type_level_filterability_compiles() {
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/pass/type_level_filterability.rs");
-}
-
-#[test]
-fn filterability_param_type_collision_is_rejected() {
-    let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/fail/filterability_param_type_collision.rs");
 }
 
 #[test]
@@ -389,12 +377,6 @@ fn resource_pack_slot_collision_is_rejected() {
 }
 
 #[test]
-fn resource_pack_slot_filterability_collision_is_rejected() {
-    let t = trybuild::TestCases::new();
-    t.compile_fail("tests/ui/fail/resource_pack_slot_filterability_collision.rs");
-}
-
-#[test]
 fn resource_pack_key_name_collision_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_key_name_collision.rs");
@@ -416,6 +398,42 @@ fn bind_group_multi_group_is_rejected() {
 fn bind_group_unannotated_field_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/bind_group_unannotated_field.rs");
+}
+
+#[test]
+fn uniform_declaration_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/uniform_declaration_is_rejected.rs");
+}
+
+#[test]
+fn storage_declaration_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/storage_declaration_is_rejected.rs");
+}
+
+#[test]
+fn texture_declaration_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/texture_declaration_is_rejected.rs");
+}
+
+#[test]
+fn sampler_declaration_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/sampler_declaration_is_rejected.rs");
+}
+
+#[test]
+fn workgroup_declaration_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/workgroup_declaration_is_rejected.rs");
+}
+
+#[test]
+fn macro_access_bare_ident_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/macro_access_bare_ident_is_rejected.rs");
 }
 
 #[test]

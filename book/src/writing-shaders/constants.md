@@ -40,7 +40,7 @@ Constants are commonly used for:
 - Configuration knobs (light counts, tile sizes)
 - Fixed colors or directions
 
-Note: WGSL `const` values are compile-time constants. For values that may vary per dispatch, use a uniform binding (see [Binding Macros](./binding-macros.md)).
+Note: WGSL `const` values are compile-time constants. For values that may vary per dispatch, use a `#[uniform]` pack field (see [Resource Pack Structs](./resource-packs.md)).
 
 ## Initializers Must Be Const-Expressions
 

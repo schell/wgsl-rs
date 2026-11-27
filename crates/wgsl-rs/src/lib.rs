@@ -145,9 +145,9 @@ pub struct Source {
     ///
     /// Two distinct kinds of declaration contribute to this list:
     ///
-    /// * `impl Trait` linkage variables, e.g. `uniform!(group(0), binding(0),
-    ///   FRAME: impl Convert<f32>)`. Each such declaration contributes the
-    ///   variable's identifier (`"FRAME"`).
+    /// * Generic resource packs, e.g. `pub struct DataPack<T> { ... }`. Each of
+    ///   a pack's type parameters contributes `"<Pack>_<param>"` (e.g.
+    ///   `"DataPack_T"`).
     /// * Generic shader entry points, e.g. `pub fn frag_main<T: Convert<f32>>()
     ///   -> Vec4f`. Each one of an entry point's type parameters contributes a
     ///   positional name of the form `"<fn_name>_<index>"` (e.g.
@@ -4203,16 +4203,20 @@ mod test {
     pub mod generic_shader {
         use crate::std::*;
 
-        // The linkage variable is generic via `impl Trait` syntax. Its
-        // module-level type-parameter name is `FRAME` (the variable's
-        // identifier), independent of any entry point's type params.
-        uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+        // The uniform is generic via the pack's type parameter. Its
+        // module-level type-parameter name is `FramePack_T`, independent of
+        // any entry point's type params.
+        pub struct FramePack<T> {
+            #[uniform(group(0), binding(0))]
+            pub frame: Uniform<T>,
+        }
 
         // The fragment entry point has its own type parameter `T`. In the
-        // emitted IR this becomes the positional name `frag_main_0`.
+        // emitted IR this becomes the positional name `frag_main_0`. `Copy`
+        // lets `load!` move the value out of the CPU lock guard.
         #[fragment]
-        pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
-            vec4f(1.0, sin(f32(get!(FRAME, T)) / 128.0), 0.0, 1.0)
+        pub fn frag_main<T: Convert<f32> + Wgsl + Copy>(pack: &FramePack<T>) -> Vec4f {
+            vec4f(1.0, sin(f32(load!(pack.frame)) / 128.0), 0.0, 1.0)
         }
     }
 
@@ -4220,8 +4224,9 @@ mod test {
     fn generic_module_is_template() {
         let m = &generic_shader::WGSL_SOURCE;
         assert!(m.is_template());
-        // FRAME first (linkage var), then frag_main_0 (entry-point param 0).
-        assert_eq!(m.module_type_params, &["FRAME", "frag_main_0"]);
+        // FramePack_T first (pack type param), then frag_main_0 (entry-point
+        // param 0).
+        assert_eq!(m.module_type_params, &["FramePack_T", "frag_main_0"]);
     }
 
     #[test]
@@ -4233,35 +4238,18 @@ mod test {
 
     #[test]
     fn generic_module_instantiate_substitutes_placeholders() {
-        // Order matches `module_type_params`: FRAME first, then frag_main_0.
+        // Order matches `module_type_params`: FramePack_T first, then
+        // frag_main_0.
         let m = generic_shader::instantiate::<f32, f32>();
         let src = ir::render_module(&m);
         assert!(
-            !src.contains("__TPFRAME__") && !src.contains("__TPfrag_main_0__"),
+            !src.contains("__TPFramePack_T__") && !src.contains("__TPfrag_main_0__"),
             "expected no placeholders after instantiation, got:\n{src}"
         );
         assert!(
-            src.contains("FRAME") && src.contains("f32"),
-            "expected FRAME with f32 type, got:\n{src}"
+            src.contains("framepack__frame") && src.contains("f32"),
+            "expected FramePack's uniform with f32 type, got:\n{src}"
         );
-    }
-
-    #[test]
-    fn generic_uniform_is_type_erased_static() {
-        // The Rust-side static is `Uniform` (with default
-        // WgslTypeVariable), not `Uniform<T>`. Setting and getting via the
-        // typed accessors should round-trip.
-        generic_shader::FRAME.set_typed::<f32>(42.0f32);
-        let v = *generic_shader::FRAME.get_typed::<f32>();
-        assert_eq!(v, 42.0);
-
-        // A different concrete type can also be stored simultaneously.
-        generic_shader::FRAME.set_typed::<u32>(7u32);
-        let u = *generic_shader::FRAME.get_typed::<u32>();
-        assert_eq!(u, 7);
-        // The f32 value is unaffected.
-        let v2 = *generic_shader::FRAME.get_typed::<f32>();
-        assert_eq!(v2, 42.0);
     }
 
     #[cfg(feature = "validation")]
@@ -4281,7 +4269,7 @@ mod test {
         // params resolved. Its rendering should be free of placeholders.
         let m = generic_shader::instantiate::<f32, f32>();
         let src = ir::render_module(&m);
-        assert!(!src.contains("__TPFRAME__"));
+        assert!(!src.contains("__TPFramePack_T__"));
         assert!(!src.contains("__TPfrag_main_0__"));
         assert!(src.contains("f32"));
     }
@@ -4295,36 +4283,41 @@ mod test {
             .expect("instantiated generic_shader should produce valid WGSL");
     }
 
-    // Generic compute shader exercising multiple linkage and entry-point
-    // type parameters using `impl Trait` syntax.
-    #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, u32))]
+    // Generic compute shader exercising two independent pack type
+    // parameters, one per storage.
+    #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, u32, f32, u32))]
     pub mod generic_compute {
         use crate::std::*;
 
-        storage!(group(0), binding(0), read_write, INPUT: impl Wgsl + Convert<f32> + Clone);
-        storage!(group(0), binding(1), read_write, OUTPUT: impl Wgsl + Convert<f32> + Clone);
+        pub struct InputPack<T> {
+            #[storage(group(0), binding(0), read_write)]
+            pub input: Storage<T>,
+        }
+
+        pub struct OutputPack<U> {
+            #[storage(group(0), binding(1), read_write)]
+            pub output: Storage<U>,
+        }
 
         #[compute]
         #[workgroup_size(1)]
-        pub fn cs_main() {}
+        pub fn cs_main<T: Wgsl>(_in_pack: &InputPack<T>) {}
+
+        #[compute]
+        #[workgroup_size(1)]
+        pub fn cs_out<U: Wgsl>(_out_pack: &OutputPack<U>) {}
     }
 
     #[test]
-    fn generic_compute_has_two_type_params() {
+    fn generic_compute_has_four_type_params() {
         let m = &generic_compute::WGSL_SOURCE;
         assert!(m.is_template());
-        // Linkage variables in declaration order: INPUT, OUTPUT.
-        assert_eq!(m.module_type_params, &["INPUT", "OUTPUT"]);
-    }
-
-    #[test]
-    fn generic_compute_storages_are_type_erased() {
-        generic_compute::INPUT.set_typed::<f32>(1.5f32);
-        generic_compute::OUTPUT.set_typed::<u32>(42u32);
-        let a = *generic_compute::INPUT.get_typed::<f32>();
-        let b = *generic_compute::OUTPUT.get_typed::<u32>();
-        assert_eq!(a, 1.5);
-        assert_eq!(b, 42);
+        // Pack type params in pack declaration order, then entry-point
+        // params in fn order.
+        assert_eq!(
+            m.module_type_params,
+            &["InputPack_T", "OutputPack_U", "cs_main_0", "cs_out_0"]
+        );
     }
 
     #[test]
@@ -4339,7 +4332,7 @@ mod test {
                 assert_eq!(uninstantiated_source.name, "generic_compute");
                 assert_eq!(
                     uninstantiated_source.module_type_params,
-                    &["INPUT", "OUTPUT"]
+                    &["InputPack_T", "OutputPack_U", "cs_main_0", "cs_out_0"]
                 );
             }
             _ => unreachable!("expected TemplateWgsl for generic_compute"),
@@ -4349,7 +4342,7 @@ mod test {
         let msg = err.to_string();
         assert!(msg.contains("generic_compute"), "got: {msg}");
         assert!(
-            msg.contains("INPUT") && msg.contains("OUTPUT"),
+            msg.contains("InputPack_T") && msg.contains("OutputPack_U"),
             "got: {msg}"
         );
         assert!(msg.contains("instantiate"), "got: {msg}");
@@ -4357,56 +4350,63 @@ mod test {
 
     #[test]
     fn generic_compute_instantiate_substitutes_both() {
-        let m = generic_compute::instantiate::<f32, u32>();
+        let m = generic_compute::instantiate::<f32, u32, f32, u32>();
         let src = ir::render_module(&m);
-        assert!(!src.contains("__TPINPUT__") && !src.contains("__TPOUTPUT__"));
-        assert!(src.contains("INPUT") && src.contains("OUTPUT"));
+        assert!(
+            !src.contains("__TPInputPack_T__") && !src.contains("__TPOutputPack_U__"),
+            "expect no pack placeholders, got:\n{src}"
+        );
+        assert!(!src.contains("__TPcs_main_0__") && !src.contains("__TPcs_out_0__"));
+        assert!(src.contains("inputpack__input") && src.contains("outputpack__output"));
         assert!(src.contains("f32") && src.contains("u32"));
     }
 
     #[test]
     fn generic_compute_instantiate_binds_both_storages() {
-        let m = generic_compute::instantiate::<f32, u32>();
+        let m = generic_compute::instantiate::<f32, u32, f32, u32>();
         let src = ir::render_module(&m);
-        assert!(!src.contains("__TPINPUT__"));
-        assert!(!src.contains("__TPOUTPUT__"));
+        assert!(!src.contains("__TPInputPack_T__"));
+        assert!(!src.contains("__TPOutputPack_U__"));
         assert!(src.contains("f32") && src.contains("u32"));
     }
 
     // --- Multi-entry-point type param disambiguation tests ---
 
     // Module with two entry points that both use the letter `T` and
-    // both access the same linkage variable DATA via `get!`. This tests
+    // both access the same pack field via `get!`/`get_mut!`. This tests
     // that the `instantiate` function correctly disambiguates the type
     // params and generates the right `Type<Is = ...>` constraints.
     #[wgsl(crate_path = crate, validate_with_instantiation_types(f32, f32, f32))]
     pub mod multi_ep {
         use crate::std::*;
 
-        storage!(group(0), binding(0), read_write, DATA: impl std::any::Any);
-
-        #[compute]
-        #[workgroup_size(1)]
-        pub fn read_as<T: Wgsl + Convert<f32>>(#[builtin(global_invocation_id)] _gid: Vec3u) {
-            let _v = get!(DATA, T);
+        pub struct DataPack<T> {
+            #[storage(group(0), binding(0), read_write)]
+            pub data: Storage<T>,
         }
 
         #[compute]
         #[workgroup_size(1)]
-        pub fn write_as<T: Wgsl + Convert<f32>>(#[builtin(global_invocation_id)] _gid: Vec3u) {
-            let mut _v = get_mut!(DATA, T);
+        pub fn read_as<T: Wgsl>(#[builtin(global_invocation_id)] _gid: Vec3u, pack: &DataPack<T>) {
+            let _v = get!(pack.data);
+        }
+
+        #[compute]
+        #[workgroup_size(1)]
+        pub fn write_as<T: Wgsl>(#[builtin(global_invocation_id)] _gid: Vec3u, pack: &DataPack<T>) {
+            let mut _v = get_mut!(pack.data);
         }
     }
 
     #[test]
     fn multi_ep_instantiate_substitutes_correctly() {
-        // Three type params: DATA, T_read_as, T_write_as.
+        // Three type params: DataPack_T, T_read_as, T_write_as.
         // Both entry-point type params are substituted with f32.
         let m = multi_ep::instantiate::<f32, f32, f32>();
         let src = ir::render_module(&m);
         assert!(
-            !src.contains("__TPDATA__"),
-            "expected no placeholder for DATA, got:\n{src}"
+            !src.contains("__TPDataPack_T__"),
+            "expected no placeholder for DataPack_T, got:\n{src}"
         );
         assert!(
             !src.contains("__TPread_as_0__") && !src.contains("__TPwrite_as_0__"),
@@ -4423,14 +4423,14 @@ mod test {
         // Even though both entry points use the letter `T`, the
         // `instantiate` function should have two independent type params
         // (T_read_as and T_write_as). This test verifies the constraints
-        // are correct by using different concrete types: DATA = f32 for
-        // the read path and DATA = f32 for the write path (they must agree
-        // since DATA: Type<Is = T_read_as> and DATA: Type<Is = T_write_as>,
-        // so T_read_as must equal T_write_as).
+        // are correct by using different concrete types: data = f32 for
+        // the read path and data = f32 for the write path (they must agree
+        // since DataPack_T: Type<Is = T_read_as> and DataPack_T: Type<Is =
+        // T_write_as>, so T_read_as must equal T_write_as).
         let m = multi_ep::instantiate::<f32, f32, f32>();
         let src = ir::render_module(&m);
-        assert!(!src.contains("__TPDATA__"));
-        assert!(src.contains("DATA"));
+        assert!(!src.contains("__TPDataPack_T__"));
+        assert!(src.contains("datapack__data"));
     }
 
     // --- Integer inter-stage IO (explicit @interpolate(flat)) ---

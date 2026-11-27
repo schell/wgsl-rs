@@ -298,7 +298,7 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     });
 
     // Read back output directly from CPU-side data (OUTPUT is write-only,
-    // so we can't use texture_load_storage — read the ModuleVar directly).
+    // so we can't use texture_load_storage — read the CPU field directly).
     let data = pack.output.get();
     let mut output = vec![[0.0f32; 4]; (WIDTH * HEIGHT) as usize];
     for y in 0..HEIGHT {

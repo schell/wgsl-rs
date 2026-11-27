@@ -10,12 +10,7 @@
 //! These types include (but are not limited to) vector types like `Vec2f`,
 //! `Vec3f`, etc. and constructors like `vec2`, `vec2f` and `vec3i`, etc.
 
-use std::{
-    any::TypeId,
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-    sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
-};
+use std::sync::RwLock;
 use wgsl_rs_ir as ir;
 
 // Re-export `PhantomData` so users can write `use wgsl_rs::std::*;` and refer
@@ -26,8 +21,7 @@ use wgsl_rs_ir as ir;
 pub use std::marker::PhantomData;
 
 pub use wgsl_rs_macros::{
-    Wgsl, builtin, compute, fragment, ptr, sampler, storage, texture, uniform, vertex, wgsl_allow,
-    wgsl_ignore, workgroup, workgroup_size,
+    Wgsl, builtin, compute, fragment, ptr, vertex, wgsl_allow, wgsl_ignore, workgroup_size,
 };
 
 pub use crate::{discard, get, get_mut, load, slab_copy};
@@ -123,239 +117,6 @@ impl<T: Wgsl, const N: usize> Wgsl for [T; N] {
                 suffix: String::new(),
             }),
         }
-    }
-}
-
-/// Shared reference to a uniform, storage or workgroup variable.
-pub struct ModuleVarReadGuard<'a, T> {
-    inner: RwLockReadGuard<'a, TypeMap>,
-    _phantom: PhantomData<T>,
-}
-
-impl<T: AnySendSync> Deref for ModuleVarReadGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        let box_any = self
-            .inner
-            .get(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"));
-        box_any
-            .downcast_ref()
-            .unwrap_or_else(|| panic!("Value was not of type {}", std::any::type_name::<T>()))
-    }
-}
-
-/// Exclusive reference to a storage or workgroup variable.
-pub struct ModuleVarWriteGuard<'a, T> {
-    inner: RwLockWriteGuard<'a, TypeMap>,
-    _phantom: PhantomData<T>,
-}
-
-impl<T: AnySendSync> Deref for ModuleVarWriteGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.inner
-            .get(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("Accessed an uninitialized module variable"))
-            .downcast_ref()
-            .unwrap_or_else(|| panic!("Value was not of type {}", std::any::type_name::<T>()))
-    }
-}
-
-impl<T: AnySendSync> DerefMut for ModuleVarWriteGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner
-            .get_mut(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("Mutably accessed an uninitialized module variable"))
-            .downcast_mut()
-            .unwrap_or_else(|| panic!("Value was not of type {}", std::any::type_name::<T>()))
-    }
-}
-
-/// A `TypeMap` holds values of any WGSL type, but only one of that type.
-type TypeMap = HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>;
-
-/// Default placeholder type for module-level variables that are generic over
-/// a WGSL type parameter.
-///
-/// When a `uniform!`, `storage!` or `workgroup!` declaration uses an
-/// `impl Trait` type (e.g. `uniform!(group(0), binding(0), FRAME: impl
-/// Convert<f32>)`), the generated Rust `static` is declared as
-/// `Uniform<WgslTypeVariable>` (i.e. `Uniform`). This is because Rust statics
-/// require concrete types and the concrete type is not known at module level.
-///
-/// Such "generic" module variables are accessed via `get_typed::<T>()` /
-/// `set_typed::<T>()` (or the two-arg `get!(VAR, T)` / `get_mut!(VAR, T)`
-/// macros), which use the underlying type-keyed map to read/write a value
-/// of the requested concrete type.
-pub struct WgslTypeVariable;
-
-impl Wgsl for WgslTypeVariable {
-    fn to_ir() -> wgsl_rs_ir::Type {
-        ir::Type::TypeParam {
-            name: "T".to_string(),
-        }
-    }
-}
-
-/// Thread-safe module-level variable backing the standalone declaration
-/// statics (`uniform!`, `storage!`, `workgroup!`): lazily allocated,
-/// type-erased storage that is set before first read. Pack fields use the
-/// value-holding `Uniform`/`Storage`/`Workgroup` types instead.
-pub struct ModuleVar<T = WgslTypeVariable> {
-    inner: LazyLock<Arc<RwLock<TypeMap>>>,
-    _phantom: PhantomData<T>,
-}
-
-impl ModuleVar {
-    /// Like `read`, but for dynamic module variables.
-    ///
-    /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    pub fn get_typed<T: AnySendSync>(&self) -> ModuleVarReadGuard<'_, T> {
-        let lock = self
-            .inner
-            .read()
-            .unwrap_or_else(|_| panic!("could not acquire a read lock on a module variable"));
-        ModuleVarReadGuard {
-            inner: lock,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Returns a mutable reference to the inner `T`.
-    ///
-    /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    pub fn get_mut_typed<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
-        let lock = self
-            .inner
-            .write()
-            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
-        ModuleVarWriteGuard {
-            inner: lock,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Set the inner data for type `T` on a generic module variable.
-    ///
-    /// ## Panics
-    /// Panics if the underlying lock on the inner data has been poisoned.
-    pub fn set_typed<T: Wgsl>(&self, data: T) {
-        let mut map = self
-            .inner
-            .write()
-            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
-        map.insert(TypeId::of::<T>(), Box::new(data));
-    }
-}
-
-impl<T: AnySendSync> ModuleVar<T> {
-    /// Creates a new, empty module variable.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            inner: LazyLock::new(Default::default),
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Ensures module variable types adhere to some rules.
-    ///
-    /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    fn guard_on_generic_use(&self) {
-        if TypeId::of::<T>() == TypeId::of::<WgslTypeVariable>() {
-            panic!(
-                "Requested a generic module variable. All runtime use of generic variables must \
-                 be monomorphized."
-            );
-        }
-    }
-
-    /// Returns a reference to the inner `T`.
-    ///
-    /// ## Panics
-    /// - Panics if the variable has not been monomorphized.
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    pub fn read(&self) -> ModuleVarReadGuard<'_, T> {
-        self.guard_on_generic_use();
-
-        let lock = self
-            .inner
-            .read()
-            .unwrap_or_else(|_| panic!("could not acquire a read lock on a module variable"));
-        ModuleVarReadGuard {
-            inner: lock,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Returns a mutable reference to the inner `T`.
-    ///
-    /// ## Panics
-    /// - Panics if the variable has not been monomorphized.
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    pub fn write(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.guard_on_generic_use();
-
-        let lock = self
-            .inner
-            .write()
-            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
-        ModuleVarWriteGuard {
-            inner: lock,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Set the inner `T`.
-    ///
-    /// ## Panics
-    /// Panics if the underlying lock on the inner data has been poisoned.
-    pub fn set(&self, data: T) {
-        self.guard_on_generic_use();
-
-        let mut map = self
-            .inner
-            .write()
-            .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
-        map.insert(TypeId::of::<T>(), Box::new(data));
-    }
-
-    /// Alias of [`Self::read`] matching the `get!`/`load!` macro surface.
-    ///
-    /// ## Panics
-    /// - Panics if the variable has not been monomorphized.
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
-        self.read()
-    }
-
-    /// Alias of [`Self::write`] matching the `get_mut!` macro surface.
-    ///
-    /// ## Panics
-    /// - Panics if the variable has not been monomorphized.
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard will panic if it has not previously
-    ///   been set.
-    pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.write()
     }
 }
 
@@ -543,126 +304,89 @@ impl<T: Wgsl, AM: AccessMode> Storage<T, AM> {
     }
 }
 
-/// Provides access to a storage, uniform, or workgroup variable.
+
+/// Reads a resource-pack field through its CPU lock guard.
 ///
-/// Since module variables are `static` and implemented with locks,
-/// normal borrows aren't possible.
+/// The target must be a resource-pack parameter's field, `pack.field` or
+/// `&pack.field`. In WGSL this transpiles to the mangled global resource
+/// name; the access kind (uniform mutability, storage access mode, handle
+/// types) is checked against the pack field by the transpiler.
 ///
-/// # Forms
-///
-/// - `get!(VAR)` — reads the inner value of a concrete module variable.
-/// - `get!(VAR, T)` — reads the inner value of a *generic* module variable,
-///   downcasting to the concrete type `T`. The variable must have been declared
-///   with an `impl Trait` type (e.g. `uniform!(group(0), binding(0), FRAME:
-///   impl Convert<f32>)`); using this form on a non-generic variable is a
-///   compile-time error.
+/// # Panics
+/// Panics if the underlying lock has been poisoned.
 ///
 /// # Example
 /// ```ignore
-/// storage!(group(0), binding(0), read_write, OUTPUT: [f32; 256]);
-///
-/// let value = get!(OUTPUT)[idx];
-/// let value = get!(OUTPUT).field;
-///
-/// // Generic uniform usage:
-/// uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
-///
-/// fn use_frame<T: Wgsl + Convert<f32>>() -> f32 {
-///     f32(get!(FRAME, T))
+/// #[fragment]
+/// pub fn main(pack: &MyPack) -> f32 {
+///     let value = get!(pack.input)[0];
+///     value + 1.0
 /// }
 /// ```
 #[macro_export]
 macro_rules! get {
-    ($var:ident) => {
-        $var.get()
-    };
     (&$pack:ident . $field:ident) => {
         (&$pack.$field).get()
     };
     ($pack:ident . $field:ident) => {
         $pack.$field.get()
     };
-    ($var:ident, $ty:ty) => {
-        $var.get_typed::<$ty>()
-    };
 }
 
-/// Provides mutable access to a storage or workgroup variable.
+/// Mutably reads a resource-pack field through its CPU lock guard.
 ///
-/// Since module variables are `static` and implemented with locks,
-/// normal mutable borrows aren't possible.
-/// This macro uses interior mutability to enable writes.
+/// The target must be a resource-pack parameter's field. Uniform fields are
+/// read-only from a shader; `get_mut!` requires a read-write storage or
+/// workgroup field (checked against the pack field by the transpiler).
 ///
-/// # Forms
-///
-/// - `get_mut!(VAR)` — mutably accesses a concrete module variable.
-/// - `get_mut!(VAR, T)` — mutably accesses a *generic* module variable,
-///   downcasting to the concrete type `T`. Using this form on a non-generic
-///   variable is a compile-time error.
+/// # Panics
+/// Panics if the underlying lock has been poisoned.
 ///
 /// # Example
 /// ```ignore
-/// storage!(group(0), binding(0), read_write, OUTPUT: [f32; 256]);
-///
-/// get_mut!(OUTPUT)[idx] = value;
-/// get_mut!(OUTPUT).field = value;
+/// #[compute]
+/// pub fn main(pack: &mut MyPack) {
+///     get_mut!(pack.output)[0] = 1.0;
+/// }
 /// ```
 #[macro_export]
 macro_rules! get_mut {
-    ($var:ident) => {
-        $var.get_mut()
-    };
     (&$pack:ident . $field:ident) => {
         (&$pack.$field).get_mut()
     };
     ($pack:ident . $field:ident) => {
         $pack.$field.get_mut()
     };
-    ($var:ident, $ty:ty) => {
-        $var.get_mut_typed::<$ty>()
-    };
 }
 
-/// Copies the value of a uniform, storage, or workgroup variable into a local.
+/// Copies a resource-pack field's value out of its CPU lock, by value.
 ///
-/// `get!` returns a lock guard that dereferences to `&T`, which cannot be used
-/// directly in arithmetic. `load!` copies the value out of the guard and
-/// returns plain `T` by value, so it works in expressions. In WGSL this
-/// transpiles to the bare variable name (a plain value read).
+/// `get!` returns a lock guard that dereferences to `&T`, which cannot be
+/// used directly in arithmetic. `load!` copies the value out of the guard
+/// and returns plain `T`, so it works in expressions. In WGSL this
+/// transpiles to the bare mangled variable reference (a plain value read).
 ///
 /// The value type must be `Copy`; all built-in WGSL value types are.
-///
-/// # Forms
-///
-/// - `load!(VAR)` — loads the value of a concrete module variable.
-/// - `load!(VAR, T)` — loads the value of a *generic* module variable,
-///   downcasting to the concrete type `T` (like `get!(VAR, T)`).
+/// Atomics and runtime-sized arrays are rejected by the transpiler: read
+/// atomics with `atomic_load(&get!(pack.field))` and index into
+/// `get!(pack.field)` for runtime arrays.
 ///
 /// # Example
 /// ```ignore
-/// uniform!(group(0), binding(0), U_RESOLUTION: Vec2f);
-///
-/// // Value semantics: usable directly in arithmetic
-/// let st = frag_coord.xy() / load!(U_RESOLUTION) * 3.0;
+/// #[fragment]
+/// pub fn main(pack: &MyPack) -> Vec4f {
+///     let uv = frag_coord.xy() / load!(pack.u_resolution) * 3.0;
+///     vec4f(uv, 0.0, 1.0)
+/// }
 /// ```
 #[macro_export]
 macro_rules! load {
-    ($var:ident) => {{
-        // The `let` binding forces the copy into an owned value; `*$var.get()`
-        // alone would be a place expression that still borrows the guard.
-        let v = *$var.get();
-        v
-    }};
     (&$pack:ident . $field:ident) => {{
         let v = *(&$pack.$field).get();
         v
     }};
     ($pack:ident . $field:ident) => {{
         let v = *$pack.$field.get();
-        v
-    }};
-    ($var:ident, $ty:ty) => {{
-        let v = *$var.get_typed::<$ty>();
         v
     }};
 }
@@ -761,17 +485,6 @@ impl Convert<i32> for i32 {
     }
 }
 
-impl<A: Clone + Convert<B> + Wgsl, B> Convert<B> for ModuleVarReadGuard<'_, A> {
-    fn convert(self) -> B {
-        (*self).clone().convert()
-    }
-}
-
-impl<A: Clone + Convert<B> + Wgsl, B> Convert<B> for ModuleVarWriteGuard<'_, A> {
-    fn convert(self) -> B {
-        (*self).clone().convert()
-    }
-}
 
 macro_rules! impl_convert_as {
     ($from:ty, $to:ty) => {
@@ -966,28 +679,6 @@ pub fn array_length(array: impl ArrayLength) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn load_copies_concrete_module_var_values() {
-        static U: ModuleVar<f32> = ModuleVar::new();
-        static S: ModuleVar<f32> = ModuleVar::new();
-        static W: ModuleVar<f32> = ModuleVar::new();
-
-        U.set(1.5_f32);
-        S.set(2.5_f32);
-        W.set(3.5_f32);
-
-        assert_eq!(load!(U), 1.5_f32);
-        assert_eq!(load!(S), 2.5_f32);
-        assert_eq!(load!(W), 3.5_f32);
-    }
-
-    #[test]
-    fn load_typed_copies_generic_module_var_values() {
-        static G: ModuleVar = ModuleVar::new();
-        G.set_typed(4.5_f32);
-        assert_eq!(load!(G, f32), 4.5_f32);
-    }
 
     #[test]
     fn value_holders_construct_with_values() {

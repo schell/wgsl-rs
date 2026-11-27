@@ -88,15 +88,21 @@ mod flag_entry_point {
 
     const APPLY_TRUE: bool = true;
 
-    storage!(group(0), binding(0), read_write, OUTPUT: [u32; 1]);
+    pub struct OutPack {
+        #[storage(group(0), binding(0), read_write)]
+        pub output: Storage<[u32; 1]>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
-    pub fn main<const APPLY_FOG: bool>(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main<const APPLY_FOG: bool>(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &OutPack,
+    ) {
         if APPLY_FOG {
-            get_mut!(OUTPUT)[0] = global_id.x;
+            get_mut!(pack.output)[0] = global_id.x;
         } else {
-            get_mut!(OUTPUT)[0] = 0u32;
+            get_mut!(pack.output)[0] = 0u32;
         }
     }
 }

@@ -797,61 +797,28 @@ pub(crate) fn validate_resources(module: &parse::ItemMod) -> parse::Result<()> {
         lit.base10_parse::<u32>().ok()
     }
 
-    for item in &module.content {
-        match item {
-            parse::Item::Uniform(item) => record(
-                &item.name,
-                literal(&item.group),
-                literal(&item.binding),
-                &mut names,
-                &mut addresses,
-            )?,
-            parse::Item::Storage(item) => record(
-                &item.name,
-                literal(&item.group),
-                literal(&item.binding),
-                &mut names,
-                &mut addresses,
-            )?,
-            parse::Item::Sampler(item) => record(
-                &item.name,
-                literal(&item.group),
-                literal(&item.binding),
-                &mut names,
-                &mut addresses,
-            )?,
-            parse::Item::Texture(item) => record(
-                &item.name,
-                literal(&item.group),
-                literal(&item.binding),
-                &mut names,
-                &mut addresses,
-            )?,
-            parse::Item::ResourcePack(pack) => {
-                for field in &pack.fields {
-                    // Workgroup fields carry no addresses; their dummy
-                    // literals must not collide with real bindings.
-                    let (group, binding) = if matches!(field.kind, ResourceKind::Workgroup) {
-                        (None, None)
-                    } else {
-                        let group = match &field.group {
-                            AddressValue::Literal(lit) => literal(lit),
-                            AddressValue::Param(_) => None,
-                        };
-                        let binding = match &field.binding {
-                            AddressValue::Literal(lit) => literal(lit),
-                            AddressValue::Param(_) => None,
-                        };
-                        (group, binding)
-                    };
-                    let name = Ident::new(
-                        &mangle_resource_name(&pack.ident, &field.ident),
-                        field.ident.span(),
-                    );
-                    record(&name, group, binding, &mut names, &mut addresses)?;
-                }
-            }
-            _ => {}
+    for pack in module.resource_packs() {
+        for field in &pack.fields {
+            // Workgroup fields carry no addresses; their dummy
+            // literals must not collide with real bindings.
+            let (group, binding) = if matches!(field.kind, ResourceKind::Workgroup) {
+                (None, None)
+            } else {
+                let group = match &field.group {
+                    AddressValue::Literal(lit) => literal(lit),
+                    AddressValue::Param(_) => None,
+                };
+                let binding = match &field.binding {
+                    AddressValue::Literal(lit) => literal(lit),
+                    AddressValue::Param(_) => None,
+                };
+                (group, binding)
+            };
+            let name = Ident::new(
+                &mangle_resource_name(&pack.ident, &field.ident),
+                field.ident.span(),
+            );
+            record(&name, group, binding, &mut names, &mut addresses)?;
         }
     }
     Ok(())

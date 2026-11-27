@@ -77,6 +77,57 @@ arguments are removed. A direct borrow such as `&texture_bg.heights` resolves
 to the global `heights` resource. Storage access comes from the annotation or
 the type marker; `read` is the default when neither names one.
 
+## Reading and writing pack fields
+
+Packs took over the access macro story entirely: `load!`, `get!`, and
+`get_mut!` accept exactly one target shape, a pack parameter's field —
+`pack.field`, or `&pack.field` when the pack is passed by reference:
+
+```rust
+pub fn read(pack: &ScenePack) {
+    let camera = get!(pack.camera);          // guard: borrow-style access
+    let mut data = get_mut!(pack.output);    // mutable guard (storage/workgroup only)
+    let uv = frag_coord.xy() / load!(pack.u_resolution) * 3.0;  // value copy
+    let first = get!(pack.positions)[0];     // indexed reads on the guard
+}
+```
+
+In WGSL they are stripped and the mangled `packlower__field` global is emitted
+directly. Rules per field kind:
+
+- `load!(pack.field)` copies the value out of the guard, so it needs a `Copy`
+  type. Every value field (uniform/read-write/read-only storage/workgroup) is
+  loadable; `load!` is rejected on textures, samplers, atomics, and
+  runtime-sized arrays.
+- `get_mut!(pack.field)` requires a `read_write` storage or workgroup field;
+  uniform fields are read-only from a shader, and read-only storage rejects
+  mutation.
+- Textures and samplers are handles, not values: pass them to the texture
+  builtins as `&pack.field`.
+- Atomics are read with `atomic_load(&get!(pack.field))`; runtime-sized arrays
+  are indexed through `get!(pack.field)` or copied with `slab_copy!`.
+- There is no `, T` typed form anymore: pack fields hold concrete types at
+  their declaration, and generic packs carry their types as parameters (see
+  [Type parameters on packs](#type-parameters-on-packs)).
+
+Packed slab buffers use `slab_copy!` exactly as before — pass the slab as the
+source to read, or as the destination to write:
+
+```rust
+let mut raw = [0u32; 4];
+slab_copy!(get!(pack.slab), index, raw, 0, 4);
+slab_copy!(raw, 0, get_mut!(pack.slab), index, 4);
+```
+
+Module bindings are WGSL **values**, not pointers. Derefs of the accessor
+itself (`*get_mut!(pack.data) = v`) are elided and render as plain value
+assignment, but dereferencing a *local* that holds a value is a compile error:
+
+```rust
+let u = get!(pack.u);   // a local holding a pack field value
+// *u = ...;            // error: derefs a pack field value; bind with load!
+```
+
 ## Constructing packs and making direct CPU calls
 
 No constructors are generated. Hosts construct packs by hand over `pub`

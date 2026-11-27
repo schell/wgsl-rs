@@ -54,11 +54,14 @@ impl AtomicScalar for i32 {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// // In a storage buffer or workgroup variable
-/// workgroup!(COUNTER: Atomic<u32>);
+/// // In a workgroup pack
+/// pub struct CounterPack {
+///     #[workgroup]
+///     pub counter: Workgroup<Atomic<u32>>,
+/// }
 ///
 /// // Use atomic operations
-/// let old = atomic_add(&COUNTER, 1);
+/// let old = atomic_add(&get!(pack.counter), 1);
 /// ```
 #[derive(Debug)]
 pub struct Atomic<T: AtomicScalar> {

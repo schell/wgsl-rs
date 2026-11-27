@@ -24,13 +24,8 @@ mod parse;
 mod parse_visitor;
 mod ptr;
 mod resource;
-mod sampler;
-mod storage;
 mod swizzle;
-mod texture;
-mod uniform;
 mod vector_cmp;
-mod workgroup;
 
 /// Derives `wgsl_rs_linkage_wgpu::BindGroup` for one annotated pack
 /// struct: typed resources, zero string keys. Works on `#[wgsl]`-module
@@ -260,16 +255,15 @@ impl From<parse::Error> for WgslGenError {
 /// Collect the encoded names of all module-level parameters in the order they
 /// appear in `Source::module_type_params` and the generated `instantiate`.
 ///
-/// Three sources contribute:
+/// Two sources contribute:
 ///
-/// 1. Linkage variables declared with `impl Trait` syntax.
-/// 2. Binding-owned filterability const parameters. Repeated names share one
-///    slot, so a texture and its sampler can use the same flag.
-/// 3. Entry-point type and const parameters, encoded positionally.
+/// 1. Binding-owned filterability const parameters and pack-owned type
+///    parameters. Repeated filterability names share one slot, so a texture and
+///    its sampler can use the same flag.
+/// 2. Entry-point type and const parameters, encoded positionally.
 ///
-/// Order follows those groups: generic type linkages in declaration order,
-/// binding consts in first-occurrence declaration order, then entry-point
-/// parameters in their existing order.
+/// Order follows those groups: pack and binding params in first-occurrence
+/// declaration order, then entry-point parameters in their existing order.
 fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, WgslGenError> {
     use parse::{FnAttrs, Item};
     use std::collections::HashSet;
@@ -277,22 +271,6 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     let pack_plans = resource::pack_const_plans(wgsl_module)?;
     let mut params: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
-    let mut type_slots = HashSet::new();
-
-    // Pass 1: linkage variables declared with `impl Trait`.
-    for item in &wgsl_module.content {
-        let name = match item {
-            Item::Uniform(u) if u.impl_bounds.is_some() => u.name.to_string(),
-            Item::Storage(s) if s.impl_bounds.is_some() => s.name.to_string(),
-            Item::Workgroup(w) if w.impl_bounds.is_some() => w.name.to_string(),
-            _ => continue,
-        };
-        type_slots.insert(name.clone());
-        if seen.insert(name.clone()) {
-            params.push(name);
-        }
-    }
-
     let mut binding_slots = HashSet::new();
 
     // Pass 1.5: resource-pack type parameters. Each pack-owned slot is a
@@ -302,16 +280,6 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     for pack in wgsl_module.resource_packs() {
         for param in &pack.type_params {
             let encoded = resource::pack_slot_name(&pack.ident, &param.ident);
-            if type_slots.contains(&encoded) {
-                return Err(parse::Error::unsupported(
-                    param.ident.span(),
-                    format!(
-                        "resource-pack type slot `{encoded}` collides with the `impl Trait` type \
-                         linkage slot of the same name; use distinct names"
-                    ),
-                )
-                .into());
-            }
             pack_type_slots.insert(encoded.clone());
             binding_slots.insert(encoded.clone());
             if seen.insert(encoded.clone()) {
@@ -332,16 +300,6 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
         });
         if fixed {
             continue;
-        }
-        if type_slots.contains(&name) {
-            return Err(parse::Error::unsupported(
-                span,
-                format!(
-                    "binding filterability parameter `{name}` collides with the `impl Trait` type \
-                     linkage slot of the same name; use distinct names"
-                ),
-            )
-            .into());
         }
         if pack_type_slots.contains(&name) {
             return Err(parse::Error::unsupported(
@@ -408,221 +366,6 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
 
     Ok(params)
 }
-
-/// Rewrite generic linkage declarations in the input Rust module to CPU-side
-/// types that compile without module generics.
-///
-/// `impl Trait` uniform/storage/workgroup declarations become type-erased
-/// statics. Texture/sampler declarations with binding-owned filterability
-/// parameters instead retain their macro shape but substitute `true` for the
-/// unresolved const. The parsed IR is not modified.
-fn rewrite_generic_linkages(
-    input_mod: &mut syn::ItemMod,
-    wgsl_module: &parse::ItemMod,
-    crate_path: &syn::Path,
-) -> Result<(), WgslGenError> {
-    use parse::Item;
-
-    // Collect the names of generic linkage items by scanning the parsed
-    // `wgsl_module`. A linkage variable is "generic" if the user declared
-    // it with `impl Trait` syntax (e.g. `FRAME: impl Convert<f32>`); we
-    // detect this via the `impl_bounds` field on each linkage item.
-    let mut generic_uniforms: std::collections::BTreeMap<String, (syn::LitInt, syn::LitInt)> =
-        Default::default();
-    let mut generic_storages: std::collections::BTreeMap<
-        String,
-        (syn::LitInt, syn::LitInt, parse::StorageAccess),
-    > = Default::default();
-    let mut generic_workgroups: std::collections::BTreeSet<String> = Default::default();
-    type GenericFilterability = (syn::LitInt, syn::LitInt, syn::Type);
-    let mut generic_textures: std::collections::BTreeMap<String, GenericFilterability> =
-        Default::default();
-    let mut generic_samplers: std::collections::BTreeMap<String, GenericFilterability> =
-        Default::default();
-
-    for item in &wgsl_module.content {
-        match item {
-            Item::Uniform(u) if u.impl_bounds.is_some() => {
-                generic_uniforms.insert(u.name.to_string(), (u.group.clone(), u.binding.clone()));
-            }
-            Item::Storage(s) if s.impl_bounds.is_some() => {
-                generic_storages.insert(
-                    s.name.to_string(),
-                    (s.group.clone(), s.binding.clone(), s.access),
-                );
-            }
-            Item::Workgroup(w) if w.impl_bounds.is_some() => {
-                generic_workgroups.insert(w.name.to_string());
-            }
-            Item::Texture(t)
-                if matches!(
-                    &t.ty,
-                    parse::Type::Texture {
-                        filterable: wgsl_rs_ir::Filterability::Param(_),
-                        ..
-                    }
-                ) =>
-            {
-                generic_textures.insert(
-                    t.name.to_string(),
-                    (
-                        t.group.clone(),
-                        t.binding.clone(),
-                        with_default_filterability(&t.rust_ty),
-                    ),
-                );
-            }
-            Item::Sampler(s)
-                if matches!(
-                    &s.ty,
-                    parse::Type::Sampler {
-                        filterable: wgsl_rs_ir::Filterability::Param(_),
-                        ..
-                    }
-                ) =>
-            {
-                generic_samplers.insert(
-                    s.name.to_string(),
-                    (
-                        s.group.clone(),
-                        s.binding.clone(),
-                        with_default_filterability(&s.rust_ty),
-                    ),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    if generic_uniforms.is_empty()
-        && generic_storages.is_empty()
-        && generic_workgroups.is_empty()
-        && generic_textures.is_empty()
-        && generic_samplers.is_empty()
-    {
-        return Ok(());
-    }
-
-    let Some((_, items)) = input_mod.content.as_mut() else {
-        return Ok(());
-    };
-
-    for item in items.iter_mut() {
-        let syn::Item::Macro(item_macro) = item else {
-            continue;
-        };
-        let Some(macro_ident) = item_macro.mac.path.get_ident() else {
-            continue;
-        };
-        let macro_name = macro_ident.to_string();
-
-        // Find the variable name that this macro declares (the bare ident
-        // after the last `,` and before the `:`).
-        let var_name = match macro_name.as_str() {
-            "uniform" | "storage" | "workgroup" | "texture" | "sampler" => {
-                extract_linkage_var_name(item_macro.mac.tokens.clone())
-            }
-            _ => None,
-        };
-        let Some(var_name) = var_name else {
-            continue;
-        };
-
-        // Const-generic filterability is not in scope for the CPU static.
-        // Rewrite only the Rust-side macro input to the default `true`; the
-        // already-parsed IR retains the parameter for template substitution.
-        if matches!(macro_name.as_str(), "texture" | "sampler") {
-            let generic = if macro_name == "texture" {
-                generic_textures.get(&var_name)
-            } else {
-                generic_samplers.get(&var_name)
-            };
-            if let Some((group, binding, default_ty)) = generic {
-                let name = quote::format_ident!("{}", var_name);
-                item_macro.mac.tokens =
-                    quote!(group(#group), binding(#binding), #name: #default_ty);
-            }
-            continue;
-        }
-
-        let replacement: Option<proc_macro2::TokenStream> = match macro_name.as_str() {
-            "uniform" => generic_uniforms.get(&var_name).map(|_| {
-                let name = quote::format_ident!("{}", var_name);
-                quote! {
-                    pub static #name: #crate_path::std::ModuleVar =
-                        #crate_path::std::ModuleVar::new();
-                }
-            }),
-            "storage" => generic_storages.get(&var_name).map(|_| {
-                let name = quote::format_ident!("{}", var_name);
-                quote! {
-                    pub static #name: #crate_path::std::ModuleVar =
-                        #crate_path::std::ModuleVar::new();
-                }
-            }),
-            "workgroup" => generic_workgroups.get(&var_name).map(|_| {
-                let name = quote::format_ident!("{}", var_name);
-                quote! {
-                    pub static #name: #crate_path::std::ModuleVar =
-                        #crate_path::std::ModuleVar::new();
-                }
-            }),
-            _ => None,
-        };
-
-        if let Some(tokens) = replacement {
-            *item = syn::parse2::<syn::Item>(tokens)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Replace a binding-owned filterability parameter with `true` in the Rust
-/// type used for its CPU static. The WGSL-facing parse tree is not modified.
-fn with_default_filterability(ty: &syn::Type) -> syn::Type {
-    let mut default_ty = ty.clone();
-    let syn::Type::Path(type_path) = &mut default_ty else {
-        unreachable!("filterability parsing requires a path type")
-    };
-    let segment = type_path
-        .path
-        .segments
-        .iter_mut()
-        .next()
-        .expect("filterability types have one segment");
-    let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments else {
-        unreachable!("a filterability parameter has angle-bracketed arguments")
-    };
-    let name = segment.ident.to_string();
-    let index = if name == "Sampler" { 0 } else { 1 };
-    let arg = args
-        .args
-        .iter_mut()
-        .nth(index)
-        .expect("the unresolved filterability argument is present");
-    *arg = syn::parse_quote!(true);
-    default_ty
-}
-
-/// Extracts the variable name from a binding macro's token stream. Returns
-/// `None` if the tokens do not contain the expected `NAME:` separator.
-fn extract_linkage_var_name(tokens: proc_macro2::TokenStream) -> Option<String> {
-    use proc_macro2::TokenTree;
-    let mut last_ident: Option<String> = None;
-    for tt in tokens {
-        if let TokenTree::Punct(p) = &tt
-            && p.as_char() == ':'
-        {
-            return last_ident;
-        }
-        if let TokenTree::Ident(id) = &tt {
-            last_ident = Some(id.to_string());
-        }
-    }
-    None
-}
-
 /// Construct a token stream that names the IR crate via the consuming
 /// crate's wgsl-rs root path (e.g. `wgsl_rs::ir`).
 fn ir_path(crate_path: &syn::Path) -> proc_macro2::TokenStream {
@@ -1178,6 +921,13 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let crate_path = attrs.crate_path();
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    // Error on derefs of locals that provably hold pack field values (e.g.
+    // `let u = get!(pack.u); *u`) — they render invalid WGSL (wgsl-rs#153).
+    // Runs before `resource::lower_module` rewrites accessor expressions
+    // into mangled globals, otherwise value-holding locals look like plain
+    // idents and fail open. Derefs of the accessor itself are elided at IR
+    // conversion; real pointers (`&x`, `ptr!`) pass through unchanged.
+    deref_validation::validate_items(&mut wgsl_module.content)?;
     resource::lower_module(&mut wgsl_module)?;
     // `WGSL_SOURCE` and `instantiate` are the macro-emitted items; a
     // user item with either name collides with them and would fail
@@ -1202,21 +952,15 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     // Lower vector `==`/`!=` to `all(...)` wraps (#164). Runs after mono so
     // monomorphized functions have concrete param types.
     vector_cmp::rewrite(&mut wgsl_module.content);
-    // Validate `load!` targets against the module's declarations
-    // (textures/samplers, atomics, runtime arrays, unknown idents). The
-    // declaration table comes from the module body; monomorphized
-    // template bodies carry their own copies of generic functions and
-    // are checked against the same table.
-    let load_table = load_validation::ModuleVarTable::from_items(&wgsl_module.content, &crate_path);
-    load_validation::validate_items(&load_table, &mut wgsl_module.content)?;
+    // Reject bare-identifier `get!`/`get_mut!`/`load!` targets: resource
+    // packs are the only binding declaration, so the access macros accept
+    // `pack.field` (or `&pack.field`) only. Pack-target rules (handle
+    // kinds, atomics, runtime arrays, access modes, the `, T` form) are
+    // checked against the pack's fields by `resource::BodyLowerer`.
+    load_validation::validate_items(&mut wgsl_module.content)?;
     for tmpl in mono_result.template_macros.iter_mut() {
-        load_validation::validate_items(&load_table, &mut tmpl.items)?;
+        load_validation::validate_items(&mut tmpl.items)?;
     }
-    // Error on derefs of locals that provably hold module variable values
-    // (e.g. `let u = get!(U); *u`) — they render invalid WGSL (wgsl-rs#153).
-    // Derefs of linkage accessors are elided at IR conversion; real
-    // pointers (`&x`, `ptr!`) pass through unchanged.
-    deref_validation::validate_items(&mut wgsl_module.content)?;
     for tmpl in mono_result.template_macros.iter_mut() {
         deref_validation::validate_items(&mut tmpl.items)?;
     }
@@ -1225,10 +969,6 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
         reexports,
         named_exports,
     } = wgsl_module.imports_and_reexports(&crate_path);
-
-    // Rewrite generic linkage declarations to CPU-compilable types. The
-    // parsed WGSL-facing module retains all placeholders for instantiation.
-    rewrite_generic_linkages(&mut input_mod, &wgsl_module, &crate_path)?;
 
     // Compute module-level parameters from generic type linkages,
     // binding-owned filterability consts, and entry points. This same order
@@ -1642,73 +1382,67 @@ fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
 /// }
 /// ```
 ///
-/// # Resource Declarations
+/// # Resource Packs
 ///
-/// Declare GPU resources using macro invocations inside the module.
-///
-/// ## `uniform!`
-///
-/// ```ignore
-/// uniform!(group(0), binding(0), MY_UNIFORM: MyStruct);
-/// ```
-///
-/// Emits `@group(0) @binding(0) var<uniform> MY_UNIFORM: MyStruct;` in
-/// WGSL. On the Rust side, generates a thread-safe static that can be
-/// accessed with `get!` and `get_mut!`.
-///
-/// ## `storage!`
+/// Declare GPU resources as annotated pack structs. Entry points take the
+/// pack struct as a parameter, and its CPU values are constructed by hand:
+/// `Uniform::new(value)`, `Storage::new(value)`, `Workgroup::new(value)`,
+/// `Texture2D::new()`, `Sampler::new()`.
 ///
 /// ```ignore
-/// storage!(group(0), binding(1), MY_BUFFER: MyStruct);
-/// storage!(group(0), binding(1), read_only, MY_BUFFER: MyStruct);
-/// storage!(group(0), binding(1), read_write, MY_BUFFER: MyStruct);
+/// pub struct MyPack {
+///     #[uniform(group(0), binding(0))]
+///     pub uniforms: Uniform<MyStruct>,
+///
+///     #[storage(group(0), binding(1), read_only)]
+///     pub buffer: Storage<MyStruct>,
+///
+///     #[texture(group(0), binding(2))]
+///     pub diffuse: Texture2D<f32>,
+///
+///     #[sampler(group(0), binding(3))]
+///     pub tex_sampler: Sampler,
+///
+///     #[workgroup]
+///     pub shared: Workgroup<Atomic<u32>>,
+/// }
 /// ```
 ///
-/// Emits `@group(G) @binding(B) var<storage, read>` or
-/// `var<storage, read_write>` in WGSL. The default access mode is
-/// `read_only`.
+/// Field kinds and their WGSL output:
 ///
-/// ## `sampler!`
+/// **Uniform:** `#[uniform(group(G), binding(B))]` with a `Uniform<T>`
+/// field emits `@group(G) @binding(B) var<uniform> packlower__field:
+/// T;` in WGSL.
 ///
-/// ```ignore
-/// sampler!(group(0), binding(2), TEX_SAMPLER: Sampler);
-/// sampler!(group(0), binding(3), SHADOW_SAMPLER: SamplerComparison);
-/// ```
+/// **Storage:** `#[storage(group(G), binding(B))]` with a `Storage<T>`
+/// field (or `Storage<T, Read>` / `Storage<T, ReadWrite>`) emits
+/// `var<storage, read>` or `var<storage, read_write>`. The default
+/// access is read-only.
 ///
-/// Emits `@group(G) @binding(B) var NAME: sampler;` or
-/// `var NAME: sampler_comparison;` in WGSL.
+/// **Textures:** `#[texture(group(G), binding(B))]` with a sampled
+/// (`Texture1D<T>` .. `TextureMultisampled2D<T>`), depth
+/// (`TextureDepth2D` .. `TextureDepthMultisampled2D`), or storage
+/// (`TextureStorage1D<F, A>` .. `TextureStorage3D<F, A>`) texture field.
+/// The first type parameter of a sampled texture is the scalar
+/// (`f32`, `i32`, or `u32`); an optional second `bool` const sets host-side
+/// filterability. Storage textures take a texel format marker
+/// (e.g. `Rgba8unorm`, `R32float` — see WGSL §6.6.1) and an access mode
+/// (`Read`, `Write`, `ReadWrite`).
 ///
-/// ## `texture!`
+/// **Samplers:** `#[sampler(group(G), binding(B))]` with a `Sampler` or
+/// `SamplerComparison` field. `Sampler<false>` selects
+/// `SamplerBindingType::NonFiltering` on the generated wgpu layout entry,
+/// pairing with unfilterable formats such as `R32Float`; the const
+/// defaults to `true` and may be a module const parameter shared across
+/// bindings.
 ///
-/// ```ignore
-/// texture!(group(0), binding(4), DIFFUSE: Texture2D<f32>);
-/// texture!(group(0), binding(5), SHADOW_MAP: TextureDepth2D);
-/// texture!(group(0), binding(6), OUT: TextureStorage2D<Rgba8unorm, Write>);
-/// ```
-///
-/// **Sampled textures** (with type parameter `f32`, `i32`, or `u32`):
-/// `Texture1D`, `Texture2D`, `Texture2DArray`, `Texture3D`, `TextureCube`,
-/// `TextureCubeArray`, `TextureMultisampled2D`.
-///
-/// **Depth textures** (no type parameter):
-/// `TextureDepth2D`, `TextureDepth2DArray`, `TextureDepthCube`,
-/// `TextureDepthCubeArray`, `TextureDepthMultisampled2D`.
-///
-/// **Storage textures** (with texel format and access mode parameters):
-/// `TextureStorage1D`, `TextureStorage2D`, `TextureStorage2DArray`,
-/// `TextureStorage3D`. The first type parameter is a texel format marker
-/// (e.g. `Rgba8unorm`, `R32float` — see WGSL §6.6.1) and the second is an
-/// access mode (`Read`, `Write`, `ReadWrite`).
-///
-/// ## `workgroup!`
-///
-/// ```ignore
-/// workgroup!(SHARED_DATA: [f32; 64]);
-/// workgroup!(COUNTER: Atomic<u32>);
-/// ```
-///
-/// Emits `var<workgroup> NAME: TYPE;` in WGSL. Only usable in compute
+/// **Workgroup:** `#[workgroup]` with a `Workgroup<T>` field declares
+/// workgroup-scoped storage (`var<workgroup>`), usable in compute
 /// shaders.
+///
+/// Read pack fields with `load!` (by value) or `get!`/`get_mut!` (guard);
+/// texture and sampler fields pass as `&pack.field` to the texture
+/// builtins and are never loadable.
 ///
 /// # Pointer Types
 ///
@@ -1753,16 +1487,17 @@ fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
 /// These macros are available inside function bodies within `#[wgsl]`
 /// modules.
 ///
-/// ## `get!` / `get_mut!`
+/// ## `get!` / `get_mut!` / `load!`
 ///
-/// Access module-level variables declared with `uniform!`, `storage!`, or
-/// `workgroup!`. In Rust, these acquire a read or write lock on the
-/// underlying thread-safe storage. In WGSL, they are stripped and the
-/// variable name is emitted directly.
+/// Access a resource-pack parameter's fields. In Rust, these acquire a
+/// read or write lock on the underlying thread-safe storage; `load!`
+/// copies the value out so it works in expressions. In WGSL, they are
+/// stripped and the mangled pack-field global is emitted directly.
 ///
 /// ```ignore
-/// let value = get!(MY_UNIFORM).field;
-/// get_mut!(MY_BUFFER).field = 42;
+/// let value = get!(pack.uniforms).field;
+/// get_mut!(pack.buffer).field = 42;
+/// let uv = frag_coord.xy() / load!(pack.u_resolution) * 3.0;
 /// ```
 ///
 /// ## `slab_copy!`
@@ -1772,8 +1507,8 @@ fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
 /// or as the third argument to write.
 ///
 /// ```ignore
-/// slab_copy!(get!(SLAB), offset, dest_array, 0, count);
-/// slab_copy!(src_array, 0, get_mut!(SLAB), offset, count);
+/// slab_copy!(get!(pack.slab), offset, dest_array, 0, count);
+/// slab_copy!(src_array, 0, get_mut!(pack.slab), offset, count);
 /// ```
 ///
 /// Expands to an indexed `for` loop in WGSL of the form
@@ -1803,14 +1538,17 @@ fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
 ///
 /// #[wgsl]
 /// pub mod my_shader {
-///     use super::*;
+///     use wgsl_rs::std::*;
 ///
 ///     pub struct Uniforms {
 ///         pub projection: Mat4x4f,
 ///         pub modelview: Mat4x4f,
 ///     }
 ///
-///     uniform!(group(0), binding(0), UNIFORMS: Uniforms);
+///     pub struct ScenePack {
+///         #[uniform(group(0), binding(0))]
+///         pub uniforms: Uniform<Uniforms>,
+///     }
 ///
 ///     pub struct VertexOutput {
 ///         #[builtin(position)]
@@ -1824,8 +1562,9 @@ fn collect_macro_names_from_stmt(stmt: &parse::Stmt, names: &mut Vec<String>) {
 ///         #[builtin(vertex_index)] vertex_index: u32,
 ///         #[location(0)] position: Vec3f,
 ///         #[location(1)] color: Vec4f,
+///         pack: &ScenePack,
 ///     ) -> VertexOutput {
-///         let u = get!(UNIFORMS);
+///         let u = get!(pack.uniforms);
 ///         let clip = u.projection * u.modelview * vec4f(position.x, position.y, position.z, 1.0);
 ///         VertexOutput {
 ///             clip_position: clip,
@@ -2036,267 +1775,6 @@ pub fn wgsl_allow(_attr: TokenStream, token_stream: TokenStream) -> TokenStream 
 #[proc_macro_attribute]
 pub fn wgsl_ignore(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
     token_stream
-}
-
-/// Declares a uniform buffer binding.
-///
-/// Emits `@group(G) @binding(B) var<uniform> NAME: TYPE;` in WGSL.
-/// On the Rust side, generates a thread-safe static accessible via
-/// `get!` and `get_mut!`.
-///
-/// ```ignore
-/// uniform!(group(0), binding(0), MY_UNIFORM: MyStruct);
-/// ```
-///
-/// See [`wgsl`] for the full annotation reference.
-#[proc_macro]
-pub fn uniform(input: TokenStream) -> TokenStream {
-    uniform::uniform(input)
-}
-
-/// Declares a storage buffer binding.
-///
-/// Emits `@group(G) @binding(B) var<storage, read>` or
-/// `var<storage, read_write>` in WGSL depending on the access mode.
-/// The default is `read_only`.
-///
-/// ```ignore
-/// storage!(group(0), binding(1), MY_BUFFER: MyStruct);
-/// storage!(group(0), binding(1), read_write, MY_BUFFER: MyStruct);
-/// ```
-///
-/// See [`wgsl`] for the full annotation reference.
-#[proc_macro]
-pub fn storage(input: TokenStream) -> TokenStream {
-    storage::storage(input)
-}
-
-/// Defines a sampler or comparison sampler for texture sampling operations.
-///
-/// # Syntax
-/// ```ignore
-/// sampler!(group(G), binding(B), NAME: Sampler);
-/// sampler!(group(G), binding(B), NAME: Sampler<false>);
-/// sampler!(group(G), binding(B), NAME: Sampler<FILTERABLE>);
-/// sampler!(group(G), binding(B), NAME: SamplerComparison);
-/// ```
-///
-/// # Description
-/// Samplers control how textures are sampled in shaders, including filtering
-/// modes and address wrapping behavior. Comparison samplers are used for
-/// depth texture sampling operations like shadow mapping.
-///
-/// # WGSL Output
-/// The macro transpiles to:
-/// - `@group(G) @binding(B) var NAME: sampler;` for regular samplers
-/// - `@group(G) @binding(B) var NAME: sampler_comparison;` for comparison
-///   samplers
-///
-/// `Sampler<false>` does not change the WGSL output. It selects
-/// `SamplerBindingType::NonFiltering` on the generated wgpu bind group layout
-/// entry, so the sampler can pair with unfilterable texture bindings such as
-/// `R32Float`. The const defaults to `true`. Inside `#[wgsl]`, a bare
-/// identifier such as `Sampler<FILTERABLE>` introduces a binding-owned module
-/// const parameter resolved by `instantiate::<bool>()`. Reusing the identifier
-/// on multiple bindings shares the same argument.
-///
-/// The older trailing `, unfilterable` modifier remains accepted temporarily
-/// as a compatibility alias for `Sampler<false>`.
-///
-/// # Rust Expansion
-/// On the Rust side, the macro generates:
-/// - A static `Sampler` or `SamplerComparison` instance
-/// - A `SamplerDescriptor` constant for creating the sampler
-/// - A convenience function to create the sampler
-///
-/// # Example
-/// ```ignore
-/// use wgsl_rs::std::*;
-///
-/// sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
-/// sampler!(group(0), binding(2), SHADOW_SAMPLER: SamplerComparison);
-///
-/// #[fragment]
-/// pub fn main() -> Vec4f {
-///     // Use samplers for texture sampling...
-///     Vec4f::ZERO
-/// }
-/// ```
-///
-/// This transpiles to:
-/// ```wgsl
-/// @group(0) @binding(1) var TEX_SAMPLER: sampler;
-/// @group(0) @binding(2) var SHADOW_SAMPLER: sampler_comparison;
-///
-/// @fragment
-/// fn main() -> vec4<f32> {
-///     // Use samplers for texture sampling...
-///     return vec4<f32>(0.0);
-/// }
-/// ```
-#[proc_macro]
-pub fn sampler(input: TokenStream) -> TokenStream {
-    sampler::sampler(input)
-}
-
-/// Defines a texture or depth texture for sampling operations.
-///
-/// # Syntax
-/// ```ignore
-/// // Sampled textures (with type parameter: f32, i32, or u32)
-/// texture!(group(G), binding(B), NAME: Texture2D<f32>);
-/// texture!(group(G), binding(B), NAME: TextureCube<i32>);
-///
-/// // Unfilterable f32-sampled textures (non-filterable formats, e.g. R32Float)
-/// texture!(group(G), binding(B), NAME: Texture2D<f32, false>);
-///
-/// // Binding-owned template filterability inside `#[wgsl]`
-/// texture!(group(G), binding(B), NAME: Texture2D<f32, FILTERABLE>);
-///
-/// // Depth textures (no type parameter)
-/// texture!(group(G), binding(B), NAME: TextureDepth2D);
-/// texture!(group(G), binding(B), NAME: TextureDepthCube);
-///
-/// // Storage textures (texel format + access mode)
-/// texture!(group(G), binding(B), NAME: TextureStorage2D<Rgba8unorm, Write>);
-/// texture!(group(G), binding(B), NAME: TextureStorage2D<R32float, ReadWrite>);
-/// ```
-///
-/// # Supported Texture Types
-///
-/// ## Sampled Textures
-/// - `Texture1D<T>` - 1D texture
-/// - `Texture2D<T>` - 2D texture
-/// - `Texture2DArray<T>` - 2D texture array
-/// - `Texture3D<T>` - 3D texture
-/// - `TextureCube<T>` - Cube texture
-/// - `TextureCubeArray<T>` - Cube texture array
-/// - `TextureMultisampled2D<T>` - Multisampled 2D texture
-///
-/// Where `T` is one of `f32`, `i32`, or `u32`. F32-sampled textures accept an
-/// optional second bool const for host-side filterability, defaulting to
-/// `true`. Integer-sampled textures have no filterability parameter.
-///
-/// ## Depth Textures
-/// - `TextureDepth2D` - 2D depth texture
-/// - `TextureDepth2DArray` - 2D depth texture array
-/// - `TextureDepthCube` - Cube depth texture
-/// - `TextureDepthCubeArray` - Cube depth texture array
-/// - `TextureDepthMultisampled2D` - Multisampled 2D depth texture
-///
-/// ## Storage Textures
-/// - `TextureStorage1D<F, A>` - 1D storage texture
-/// - `TextureStorage2D<F, A>` - 2D storage texture
-/// - `TextureStorage2DArray<F, A>` - 2D array storage texture
-/// - `TextureStorage3D<F, A>` - 3D storage texture
-///
-/// Where `F` is a texel format marker (e.g. `Rgba8unorm`, `R32float`,
-/// `Rgba32uint`) and `A` is an access mode (`Read`, `Write`, `ReadWrite`). See
-/// WGSL §6.6.1 for the full list of texel formats and §6.6.5 for storage
-/// texture types.
-///
-/// # WGSL Output
-/// The macro transpiles to:
-/// - `@group(G) @binding(B) var NAME: texture_2d<f32>;` for sampled textures
-/// - `@group(G) @binding(B) var NAME: texture_depth_2d;` for depth textures
-/// - `@group(G) @binding(B) var NAME: texture_storage_2d<rgba8unorm, write>;`
-///   for storage textures
-///
-/// A `false` filterability const does not change the WGSL output. It only sets
-/// `filterable: false` on the generated wgpu bind group layout entry for
-/// textures backed by non-filterable formats such as `R32Float`. A bare
-/// identifier inside `#[wgsl]` introduces a binding-owned module const
-/// parameter resolved by `instantiate::<bool>()`. Reusing an identifier on
-/// multiple bindings shares one argument.
-///
-/// The older trailing `, unfilterable` modifier remains accepted temporarily
-/// as a compatibility alias for `Texture2D<f32, false>` and its equivalents.
-///
-/// # Rust Expansion
-/// On the Rust side, the macro generates:
-/// - A static texture handle instance
-/// - A `TextureViewDescriptor` constant for creating views
-/// - A convenience function to create a texture view
-///
-/// # Example
-/// ```ignore
-/// use wgsl_rs::std::*;
-///
-/// texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
-/// texture!(group(0), binding(1), SHADOW_MAP: TextureDepth2D);
-/// sampler!(group(0), binding(2), TEX_SAMPLER: Sampler);
-///
-/// #[fragment]
-/// pub fn main() -> Vec4f {
-///     // Sample the diffuse texture...
-///     Vec4f::ZERO
-/// }
-/// ```
-///
-/// This transpiles to:
-/// ```wgsl
-/// @group(0) @binding(0) var DIFFUSE_TEX: texture_2d<f32>;
-/// @group(0) @binding(1) var SHADOW_MAP: texture_depth_2d;
-/// @group(0) @binding(2) var TEX_SAMPLER: sampler;
-///
-/// @fragment
-/// fn main() -> vec4<f32> {
-///     // Sample the diffuse texture...
-///     return vec4<f32>(0.0);
-/// }
-/// ```
-#[proc_macro]
-pub fn texture(input: TokenStream) -> TokenStream {
-    texture::texture(input)
-}
-
-/// Defines a workgroup-scoped variable shared between invocations in a compute
-/// shader workgroup.
-///
-/// # Syntax
-/// ```ignore
-/// workgroup!(NAME: TYPE);
-/// ```
-///
-/// # Description
-/// Workgroup variables are shared between all invocations in a compute shader
-/// workgroup. They can only be used in compute shaders and are useful for
-/// inter-invocation communication and shared temporary storage.
-///
-/// # WGSL Output
-/// The macro transpiles to `var<workgroup> NAME: TYPE;` in WGSL.
-///
-/// # Rust Expansion
-/// On the Rust side, the variable is backed by a thread-safe `RwLock` to
-/// simulate the shared nature of workgroup memory.
-///
-/// # Example
-/// ```ignore
-/// use wgsl_rs::std::*;
-///
-/// workgroup!(SHARED_COUNTER: Atomic<u32>);
-/// workgroup!(TEMP_DATA: [f32; 64]);
-///
-/// #[compute]
-/// #[workgroup_size(64)]
-/// pub fn main(#[builtin(local_invocation_id)] local_id: Vec3u) {
-///     // Access workgroup variables...
-/// }
-/// ```
-///
-/// This transpiles to:
-/// ```wgsl
-/// var<workgroup> SHARED_COUNTER: atomic<u32>;
-/// var<workgroup> TEMP_DATA: array<f32, 64>;
-///
-/// @compute @workgroup_size(64)
-/// fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
-///     // Access workgroup variables...
-/// }
-/// ```
-#[proc_macro]
-pub fn workgroup(input: TokenStream) -> TokenStream {
-    workgroup::workgroup(input)
 }
 
 /// Defines a WGSL pointer type for function parameters.

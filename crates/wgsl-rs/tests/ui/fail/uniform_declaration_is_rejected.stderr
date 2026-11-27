@@ -1,0 +1,8 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       the standalone `uniform!` declaration macro has been removed; use an annotated pack field on a pack struct instead: `#[uniform(group(0), binding(0))] pub frame: Uniform<YourType>`.'
+ --> tests/ui/fail/uniform_declaration_is_rejected.rs:5:1
+  |
+5 | #[wgsl(crate_path = wgsl_rs, skip_validation)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `wgsl` (in Nightly builds, run with -Z macro-backtrace for more info)

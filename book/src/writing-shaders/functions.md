@@ -98,7 +98,7 @@ pub fn fs_main(
 
 WGSL functions can take pointer arguments so the callee can mutate the caller's
 local or workgroup variable. In `wgsl-rs` you express this with the
-[`ptr!`](./binding-macros/ptr.md) macro — bare `&mut T` parameters are **not**
+[`ptr!`](../examples/ptr.md) macro — bare `&mut T` parameters are **not**
 supported inside `#[wgsl]` modules.
 
 ```rust

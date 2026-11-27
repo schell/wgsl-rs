@@ -90,7 +90,7 @@ pub fn bump(x: ptr!(function, f32)) {
 }
 ```
 
-> Mutable references in function signatures must use the [`ptr!`](./binding-macros/ptr.md) macro — bare `&mut T` parameters are not supported in `#[wgsl]` modules.
+> Mutable references in function signatures must use the [`ptr!`](../examples/ptr.md) macro — bare `&mut T` parameters are not supported in `#[wgsl]` modules.
 
 ## `select`
 

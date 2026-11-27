@@ -1,16 +1,19 @@
 use wgsl_rs::wgsl;
 
-// The two-argument form of `load!` is for generic module variables. On a
-// concrete variable it is rejected with a note (the CPU side would fail
-// with a method-not-found on `get_typed` otherwise).
+// The two-argument form of `load!` no longer exists: pack fields hold
+// concrete types at their declaration, so the one-argument form is the
+// only spelling.
 #[wgsl(crate_path = wgsl_rs, skip_validation)]
 mod load_concrete_two_arg {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), U_TIME: f32);
+    pub struct TimePack {
+        #[uniform(group(0), binding(0))]
+        pub u_time: Uniform<f32>,
+    }
 
-    pub fn read_time() -> f32 {
-        load!(U_TIME, f32)
+    pub fn read_time(pack: &TimePack) -> f32 {
+        load!(pack.u_time, f32)
     }
 }
 

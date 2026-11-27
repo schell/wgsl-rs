@@ -18,7 +18,7 @@
 use crate::std::Wgsl;
 
 use super::{
-    ModuleVar, Workgroup,
+    Workgroup,
     atomic::{Atomic, atomic_load, atomic_load_i32},
 };
 
@@ -139,12 +139,15 @@ impl<T: Wgsl + Clone> WorkgroupUniformLoad for Workgroup<T> {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// workgroup!(SHARED_VALUE: u32);
+/// pub struct SharedPack {
+///     #[workgroup]
+///     pub shared_value: Workgroup<u32>,
+/// }
 ///
 /// #[compute]
 /// #[workgroup_size(64)]
-/// fn main(#[builtin(local_invocation_index)] local_idx: u32) {
-///     let value: u32 = workgroup_uniform_load(&SHARED_VALUE);
+/// fn main(#[builtin(local_invocation_index)] local_idx: u32, pack: &SharedPack) {
+///     let value: u32 = workgroup_uniform_load(&get!(pack.shared_value));
 /// }
 /// ```
 pub fn workgroup_uniform_load<W: WorkgroupUniformLoad>(p: &W) -> W::Output {
@@ -174,34 +177,6 @@ impl WorkgroupUniformLoad for Workgroup<Atomic<i32>> {
 
     fn uniform_load(&self) -> i32 {
         atomic_load_i32(&self.get())
-    }
-}
-
-/// Implementation for the statics bridge: `workgroup!` declarations expand
-/// to `ModuleVar` statics until the standalone declarations are removed.
-impl<T: Wgsl + Clone> WorkgroupUniformLoad for ModuleVar<T> {
-    type Output = T;
-
-    fn uniform_load(&self) -> T {
-        self.read().clone()
-    }
-}
-
-/// Statics-bridge implementation for `ModuleVar<Atomic<u32>>`.
-impl WorkgroupUniformLoad for ModuleVar<Atomic<u32>> {
-    type Output = u32;
-
-    fn uniform_load(&self) -> u32 {
-        atomic_load(&self.read())
-    }
-}
-
-/// Statics-bridge implementation for `ModuleVar<Atomic<i32>>`.
-impl WorkgroupUniformLoad for ModuleVar<Atomic<i32>> {
-    type Output = i32;
-
-    fn uniform_load(&self) -> i32 {
-        atomic_load_i32(&self.read())
     }
 }
 

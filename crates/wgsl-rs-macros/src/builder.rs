@@ -12,11 +12,14 @@
 //! ```ignore
 //! #[wgsl]
 //! pub mod my_shader {
-//!     uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+//!     pub struct FramePack<T> {
+//!         #[uniform(group(0), binding(0))]
+//!         pub frame: Uniform<T>,
+//!     }
 //!
 //!     #[fragment]
-//!     pub fn frag_main<T: Convert<f32> + Clone>() -> Vec4f {
-//!         vec4f(1.0, sin(f32(get!(FRAME, T)) / 128.0), 0.0, 1.0)
+//!     pub fn frag_main<T: Convert<f32> + Clone>(pack: &FramePack<T>) -> Vec4f {
+//!         vec4f(1.0, sin(f32(load!(pack.frame)) / 128.0), 0.0, 1.0)
 //!     }
 //! }
 //! ```
@@ -50,18 +53,6 @@ use quote::{format_ident, quote};
 
 use crate::parse;
 
-/// A linkage variable slot: an `impl Trait` declaration (uniform, storage, or
-/// workgroup) that becomes a generic type parameter on `instantiate`.
-struct LinkageSlot {
-    /// The variable name (e.g. `FRAME`, `BINS`). Used as the generic type
-    /// parameter ident.
-    name: syn::Ident,
-    /// The `impl Trait1 + Trait2 + ...` bounds from the declaration.
-    bounds: syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
-    /// The module-level type parameter name. For linkage variables this is
-    /// the same as the variable name (e.g. `"FRAME"`).
-    encoded_name: String,
-}
 
 /// A binding-owned const parameter used by an address or filterability value.
 struct LinkageConstSlot {
@@ -135,27 +126,10 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
     let std_p = quote! { #crate_path::std };
     let linkage_p = quote! { #crate_path::linkage };
 
-    let mut linkage_slots: Vec<LinkageSlot> = Vec::new();
     let mut linkage_const_slots: Vec<LinkageConstSlot> = Vec::new();
     let mut pack_type_slots: Vec<PackTypeSlot> = Vec::new();
     let mut ep_slots: Vec<EntryPointSlot> = Vec::new();
     let mut ep_const_slots: Vec<EntryPointConstSlot> = Vec::new();
-
-    // Collect linkage variable slots.
-    for item in &wgsl_module.content {
-        let (name, bounds_opt) = match item {
-            parse::Item::Uniform(u) => (u.name.clone(), u.impl_bounds.as_ref()),
-            parse::Item::Storage(s) => (s.name.clone(), s.impl_bounds.as_ref()),
-            parse::Item::Workgroup(w) => (w.name.clone(), w.impl_bounds.as_ref()),
-            _ => continue,
-        };
-        let Some(bounds) = bounds_opt else { continue };
-        linkage_slots.push(LinkageSlot {
-            name: name.clone(),
-            bounds: bounds.clone(),
-            encoded_name: name.to_string(),
-        });
-    }
 
     // Collect resource-pack type-parameter slots in pack declaration order,
     // then parameter declaration order. Every type parameter of a
@@ -261,8 +235,7 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         }
     }
 
-    if linkage_slots.is_empty()
-        && linkage_const_slots.is_empty()
+    if linkage_const_slots.is_empty()
         && pack_type_slots.is_empty()
         && ep_slots.is_empty()
         && ep_const_slots.is_empty()
@@ -270,10 +243,9 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         return quote! {};
     }
 
-    // Collect linkage constraints from get!/get_mut! calls and from the
-    // type arguments of entry-point pack parameters.
-    let mut constraints = collect_linkage_constraints(wgsl_module);
-    constraints.extend(collect_pack_type_constraints(wgsl_module));
+    // Collect linkage constraints from the type arguments of entry-point
+    // pack parameters.
+    let constraints = collect_pack_type_constraints(wgsl_module);
 
     // Build the generic params and where clause.
     let mut generic_params: Vec<syn::GenericParam> = Vec::new();
@@ -285,14 +257,6 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
         lifetimes: None,
         path: syn::parse2(quote! { #std_p::Wgsl }).expect("Wgsl is a valid path"),
     });
-
-    // Add linkage variable generic params (e.g. <FRAME>).
-    for slot in &linkage_slots {
-        let mut tp: syn::TypeParam = syn::TypeParam::from(slot.name.clone());
-        tp.bounds = slot.bounds.clone();
-        push_wgsl_if_missing(&mut tp.bounds, &wgsl_bound);
-        generic_params.push(syn::GenericParam::Type(tp));
-    }
 
     // Add resource-pack type parameter generic params (e.g.
     // `<FramePack_T: Convert<f32>>`), replaying the pack struct's bounds.
@@ -402,14 +366,6 @@ pub(crate) fn gen_builder(crate_path: &syn::Path, wgsl_module: &parse::ItemMod) 
 
     // Build the substitution-map entries.
     let mut subst_entries: Vec<TokenStream> = Vec::new();
-
-    for slot in &linkage_slots {
-        let name = &slot.name;
-        let encoded_name_str = &slot.encoded_name;
-        subst_entries.push(quote! {
-            (::std::string::String::from(#encoded_name_str), <#name as #std_p::Wgsl>::to_ir())
-        });
-    }
 
     for slot in &pack_type_slots {
         let name = &slot.name;
@@ -553,36 +509,6 @@ fn collect_pack_type_constraints(wgsl_module: &parse::ItemMod) -> Vec<LinkageCon
     constraints
 }
 
-/// Collect all `get!(VAR, TYPE)` / `get_mut!(VAR, TYPE)` constraints from
-/// entry-point functions in the module.
-///
-/// Only entry points are included (helper functions are deferred to a future
-/// iteration that includes call graph analysis).
-fn collect_linkage_constraints(wgsl_module: &parse::ItemMod) -> Vec<LinkageConstraint> {
-    use parse::FnAttrs;
-    let mut constraints: Vec<LinkageConstraint> = Vec::new();
-
-    for item in &wgsl_module.content {
-        let parse::Item::Fn(f) = item else { continue };
-        if matches!(f.fn_attrs, FnAttrs::None) {
-            continue;
-        }
-        let fn_name = f.ident.to_string();
-        let fn_type_params: Vec<String> = f.type_params.iter().map(|id| id.to_string()).collect();
-        walk_expr_for_linkage_constraints(
-            &f.block.stmt,
-            &fn_name,
-            true,
-            &fn_type_params,
-            &mut constraints,
-        );
-    }
-
-    constraints
-}
-
-/// A type constraint collected from a `get!(VAR, TYPE)` or `get_mut!(VAR,
-/// TYPE)` usage within a function body.
 #[allow(dead_code)]
 struct LinkageConstraint {
     /// The linkage variable name (e.g., "BINS", "FRAME").
@@ -598,435 +524,6 @@ struct LinkageConstraint {
     is_entry_point: bool,
     /// Type parameters in scope at this call site.
     fn_type_params: Vec<String>,
-}
-
-fn walk_else_for_linkage_constraints(
-    else_branch: &parse::ElseBranch,
-    fn_name: &str,
-    is_entry_point: bool,
-    fn_type_params: &[String],
-    constraints: &mut Vec<LinkageConstraint>,
-) {
-    match &else_branch.body {
-        parse::ElseBody::Block(block) => {
-            walk_expr_for_linkage_constraints(
-                &block.stmt,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::ElseBody::If(nested_if) => {
-            walk_expr_for_constraints_recursive(
-                &nested_if.condition,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-            walk_expr_for_linkage_constraints(
-                &nested_if.then_block.stmt,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-            if let Some(nested_else) = &nested_if.else_branch {
-                walk_else_for_linkage_constraints(
-                    nested_else,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-        }
-    }
-}
-
-/// Recursively walk a block of statements, collecting `LinkageAccess`
-/// constraints.
-fn walk_expr_for_linkage_constraints(
-    stmts: &[parse::Stmt],
-    fn_name: &str,
-    is_entry_point: bool,
-    fn_type_params: &[String],
-    constraints: &mut Vec<LinkageConstraint>,
-) {
-    use parse::Stmt;
-    for stmt in stmts {
-        match stmt {
-            Stmt::Local(local) => {
-                if let Some(init) = &local.init {
-                    walk_expr_for_constraints_recursive(
-                        &init.expr,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-            Stmt::Expr { expr, .. } => {
-                walk_expr_for_constraints_recursive(
-                    expr,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::If(parse_if) => {
-                walk_expr_for_constraints_recursive(
-                    &parse_if.condition,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                walk_expr_for_linkage_constraints(
-                    &parse_if.then_block.stmt,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                if let Some(else_branch) = &parse_if.else_branch {
-                    walk_else_for_linkage_constraints(
-                        else_branch,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-            Stmt::For(parse_for) => {
-                walk_expr_for_constraints_recursive(
-                    &parse_for.from,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                walk_expr_for_constraints_recursive(
-                    &parse_for.to,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                walk_expr_for_linkage_constraints(
-                    &parse_for.body.stmt,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::Return { expr, .. } => {
-                if let Some(expr) = expr {
-                    walk_expr_for_constraints_recursive(
-                        expr,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-            Stmt::Assignment { lhs, rhs, .. } => {
-                walk_expr_for_constraints_recursive(
-                    lhs,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                walk_expr_for_constraints_recursive(
-                    rhs,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::CompoundAssignment { lhs, rhs, .. } => {
-                walk_expr_for_constraints_recursive(
-                    lhs,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                walk_expr_for_constraints_recursive(
-                    rhs,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::While {
-                condition, body, ..
-            } => {
-                walk_expr_for_constraints_recursive(
-                    condition,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                walk_expr_for_linkage_constraints(
-                    &body.stmt,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::Loop { body, .. } => {
-                walk_expr_for_linkage_constraints(
-                    &body.stmt,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::Block(block) => {
-                walk_expr_for_linkage_constraints(
-                    &block.stmt,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-            Stmt::Switch(switch) => {
-                walk_expr_for_constraints_recursive(
-                    &switch.selector,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-                for arm in &switch.arms {
-                    for sel in &arm.selectors {
-                        if let parse::CaseSelector::Expr(e) = sel {
-                            walk_expr_for_constraints_recursive(
-                                e,
-                                fn_name,
-                                is_entry_point,
-                                fn_type_params,
-                                constraints,
-                            );
-                        }
-                    }
-                    walk_expr_for_linkage_constraints(
-                        &arm.body.stmt,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-            Stmt::Break { .. }
-            | Stmt::Continue { .. }
-            | Stmt::Const(_) // `get!`/`get_mut!` in const initializers would
-                            // produce invalid WGSL (const exprs can't access
-                            // storage/uniform buffers); the parser rejects this.
-            | Stmt::Discard { .. }
-            | Stmt::Macro { .. } => {}
-            Stmt::SlabCopy {
-                src,
-                src_offset,
-                dest,
-                dest_offset,
-                size,
-                ..
-            } => {
-                for expr in [src, src_offset, dest, dest_offset, size] {
-                    walk_expr_for_constraints_recursive(
-                        expr,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Walk an expression tree, collecting `LinkageAccess` constraints when we find
-/// `get!(VAR, TYPE)` or `get_mut!(VAR, TYPE)` with a type argument.
-fn walk_expr_for_constraints_recursive(
-    expr: &parse::Expr,
-    fn_name: &str,
-    is_entry_point: bool,
-    fn_type_params: &[String],
-    constraints: &mut Vec<LinkageConstraint>,
-) {
-    match expr {
-        parse::Expr::LinkageAccess {
-            ident,
-            type_arg: Some(ty),
-            ..
-        } => {
-            constraints.push(LinkageConstraint {
-                linkage_name: ident.to_string(),
-                type_expr: ty.as_ref().clone(),
-                fn_name: fn_name.to_string(),
-                is_entry_point,
-                fn_type_params: fn_type_params.to_vec(),
-            });
-        }
-        parse::Expr::Binary { lhs, rhs, .. } => {
-            walk_expr_for_constraints_recursive(
-                lhs,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-            walk_expr_for_constraints_recursive(
-                rhs,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::Unary { expr, .. } => {
-            walk_expr_for_constraints_recursive(
-                expr,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::Paren { inner, .. } => {
-            walk_expr_for_constraints_recursive(
-                inner,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::Array { elems, .. } => {
-            for elem in elems.iter() {
-                walk_expr_for_constraints_recursive(
-                    elem,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-        }
-        parse::Expr::ArrayIndexing { lhs, index, .. } => {
-            walk_expr_for_constraints_recursive(
-                lhs,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-            walk_expr_for_constraints_recursive(
-                index,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::Swizzle { lhs, params, .. } => {
-            walk_expr_for_constraints_recursive(
-                lhs,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-            if let Some(params) = params {
-                for param in params.iter() {
-                    walk_expr_for_constraints_recursive(
-                        param,
-                        fn_name,
-                        is_entry_point,
-                        fn_type_params,
-                        constraints,
-                    );
-                }
-            }
-        }
-        parse::Expr::Cast { lhs, .. } => {
-            walk_expr_for_constraints_recursive(
-                lhs,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::FnCall { params, .. } => {
-            for param in params.iter() {
-                walk_expr_for_constraints_recursive(
-                    param,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-        }
-        parse::Expr::Struct { fields, .. } => {
-            for field in fields.iter() {
-                walk_expr_for_constraints_recursive(
-                    &field.expr,
-                    fn_name,
-                    is_entry_point,
-                    fn_type_params,
-                    constraints,
-                );
-            }
-        }
-        parse::Expr::FieldAccess { base, .. } => {
-            walk_expr_for_constraints_recursive(
-                base,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::Reference { expr, .. } => {
-            walk_expr_for_constraints_recursive(
-                expr,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::ZeroValueArray { len, .. } => {
-            walk_expr_for_constraints_recursive(
-                len,
-                fn_name,
-                is_entry_point,
-                fn_type_params,
-                constraints,
-            );
-        }
-        parse::Expr::Lit(_) | parse::Expr::Ident(_) | parse::Expr::TypePath { .. } => {}
-        parse::Expr::LinkageAccess { type_arg: None, .. } => {}
-    }
 }
 
 /// Push the `Wgsl` trait bound onto `bounds` only if it isn't already present.

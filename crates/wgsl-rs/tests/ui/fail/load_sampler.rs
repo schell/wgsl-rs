@@ -5,10 +5,13 @@ use wgsl_rs::wgsl;
 mod load_sampler {
     use wgsl_rs::std::*;
 
-    sampler!(group(0), binding(0), MY_SAMPLER: Sampler);
+    pub struct SamplerPack {
+        #[sampler(group(0), binding(0))]
+        pub my_sampler: Sampler,
+    }
 
-    pub fn read_sampler() -> f32 {
-        load!(MY_SAMPLER)
+    pub fn read_sampler(pack: &SamplerPack) -> f32 {
+        load!(pack.my_sampler)
     }
 }
 

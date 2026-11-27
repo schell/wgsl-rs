@@ -81,26 +81,6 @@ fn wgsl_global_names(items: &[parse::Item]) -> Vec<GlobalName> {
                 name: c.ident.to_string(),
                 kind: "a const",
             }),
-            parse::Item::Uniform(u) => out.push(GlobalName {
-                name: u.name.to_string(),
-                kind: "a module variable",
-            }),
-            parse::Item::Storage(s) => out.push(GlobalName {
-                name: s.name.to_string(),
-                kind: "a module variable",
-            }),
-            parse::Item::Workgroup(w) => out.push(GlobalName {
-                name: w.name.to_string(),
-                kind: "a module variable",
-            }),
-            parse::Item::Sampler(s) => out.push(GlobalName {
-                name: s.name.to_string(),
-                kind: "a module variable",
-            }),
-            parse::Item::Texture(t) => out.push(GlobalName {
-                name: t.name.to_string(),
-                kind: "a module variable",
-            }),
             parse::Item::ResourcePack(pack) => {
                 for field in &pack.fields {
                     out.push(GlobalName {
@@ -211,11 +191,6 @@ pub fn items_from_parse(items: &[parse::Item]) -> Result<Vec<ir::Item>> {
 fn item_from_parse(item: &parse::Item) -> Result<Option<ir::Item>> {
     Ok(Some(match item {
         parse::Item::Const(c) => ir::Item::Const(item_const(c)?),
-        parse::Item::Uniform(u) => ir::Item::Uniform(item_uniform(u)?),
-        parse::Item::Storage(s) => ir::Item::Storage(item_storage(s)?),
-        parse::Item::Workgroup(w) => ir::Item::Workgroup(item_workgroup(w)?),
-        parse::Item::Sampler(s) => ir::Item::Sampler(item_sampler(s)?),
-        parse::Item::Texture(t) => ir::Item::Texture(item_texture(t)?),
         parse::Item::Fn(f) => ir::Item::Fn(item_fn(f)?),
         parse::Item::Struct(s) => ir::Item::Struct(item_struct(s)?),
         parse::Item::Impl(i) => ir::Item::Impl(item_impl(i)?),
@@ -339,78 +314,6 @@ fn namespace_pack_filterability(
             crate::resource::pack_slot_name(pack, &syn::Ident::new(&name, Span::call_site())),
         ),
     }
-}
-
-fn item_uniform(u: &parse::ItemUniform) -> Result<ir::ItemUniform> {
-    Ok(ir::ItemUniform {
-        group: ir::BindingAddress::Concrete(lit_int_to_u32(&u.group)?),
-        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&u.binding)?),
-        name: u.name.to_string(),
-        ty: ty_from_parse(&u.ty)?,
-        attrs: u.attrs.clone(),
-    })
-}
-
-fn item_storage(s: &parse::ItemStorage) -> Result<ir::ItemStorage> {
-    Ok(ir::ItemStorage {
-        group: ir::BindingAddress::Concrete(lit_int_to_u32(&s.group)?),
-        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&s.binding)?),
-        access: match s.access {
-            parse::StorageAccess::Read => ir::StorageAccess::Read,
-            parse::StorageAccess::ReadWrite => ir::StorageAccess::ReadWrite,
-        },
-        name: s.name.to_string(),
-        ty: ty_from_parse(&s.ty)?,
-        attrs: s.attrs.clone(),
-    })
-}
-
-fn item_workgroup(w: &parse::ItemWorkgroup) -> Result<ir::ItemWorkgroup> {
-    Ok(ir::ItemWorkgroup {
-        name: w.name.to_string(),
-        ty: ty_from_parse(&w.ty)?,
-        attrs: w.attrs.clone(),
-    })
-}
-
-fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
-    Ok(ir::ItemSampler {
-        group: ir::BindingAddress::Concrete(lit_int_to_u32(&s.group)?),
-        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&s.binding)?),
-        name: s.name.to_string(),
-        ty: ty_from_parse(&s.ty)?,
-        filterable: if s.unfilterable {
-            ir::Filterability::Concrete(false)
-        } else {
-            match &s.ty {
-                parse::Type::Sampler { filterable, .. } => filterable.clone(),
-                parse::Type::SamplerComparison { .. } => ir::Filterability::Concrete(true),
-                _ => unreachable!("ItemSampler validated the sampler type"),
-            }
-        },
-        attrs: s.attrs.clone(),
-    })
-}
-
-fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
-    Ok(ir::ItemTexture {
-        group: ir::BindingAddress::Concrete(lit_int_to_u32(&t.group)?),
-        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&t.binding)?),
-        name: t.name.to_string(),
-        ty: ty_from_parse(&t.ty)?,
-        filterable: if t.unfilterable {
-            ir::Filterability::Concrete(false)
-        } else {
-            match &t.ty {
-                parse::Type::Texture { filterable, .. } => filterable.clone(),
-                parse::Type::TextureDepth { .. } | parse::Type::TextureStorage { .. } => {
-                    ir::Filterability::Concrete(true)
-                }
-                _ => unreachable!("ItemTexture validated the texture type"),
-            }
-        },
-        attrs: t.attrs.clone(),
-    })
 }
 
 fn item_fn(f: &parse::ItemFn) -> Result<ir::ItemFn> {
@@ -1311,69 +1214,4 @@ fn case_selector(s: &parse::CaseSelector) -> Result<ir::CaseSelector> {
         parse::CaseSelector::Expr(e) => ir::CaseSelector::Expr(expr_from_parse(e)?),
         parse::CaseSelector::Default(_) => ir::CaseSelector::Default,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn type_level_unfilterable_texture_threads_into_ir() {
-        let parsed: parse::ItemTexture =
-            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32, false>").unwrap();
-        let ir_texture = item_texture(&parsed).unwrap();
-        assert_eq!(ir_texture.filterable.concrete(), Some(false));
-    }
-
-    #[test]
-    fn type_level_unfilterable_sampler_threads_into_ir() {
-        let parsed: parse::ItemSampler =
-            syn::parse_str("group(0), binding(1), MY_SMP: Sampler<false>").unwrap();
-        let ir_sampler = item_sampler(&parsed).unwrap();
-        assert_eq!(ir_sampler.filterable.concrete(), Some(false));
-    }
-
-    #[test]
-    fn unfilterable_texture_threads_into_ir() {
-        let parsed: parse::ItemTexture =
-            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>, unfilterable").unwrap();
-        let ir_texture = item_texture(&parsed).unwrap();
-        assert!(
-            ir_texture.filterable.concrete() == Some(false),
-            "expected `filterable: false` for the `, unfilterable` modifier"
-        );
-    }
-
-    #[test]
-    fn texture_defaults_to_filterable_in_ir() {
-        let parsed: parse::ItemTexture =
-            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>").unwrap();
-        let ir_texture = item_texture(&parsed).unwrap();
-        assert!(
-            ir_texture.filterable.concrete() == Some(true),
-            "expected `filterable: true` without the `, unfilterable` modifier"
-        );
-    }
-
-    #[test]
-    fn unfilterable_sampler_threads_into_ir() {
-        let parsed: parse::ItemSampler =
-            syn::parse_str("group(0), binding(1), MY_SMP: Sampler, unfilterable").unwrap();
-        let ir_sampler = item_sampler(&parsed).unwrap();
-        assert!(
-            ir_sampler.filterable.concrete() == Some(false),
-            "expected `filterable: false` for the `, unfilterable` modifier"
-        );
-    }
-
-    #[test]
-    fn sampler_defaults_to_filterable_in_ir() {
-        let parsed: parse::ItemSampler =
-            syn::parse_str("group(0), binding(1), MY_SMP: Sampler").unwrap();
-        let ir_sampler = item_sampler(&parsed).unwrap();
-        assert!(
-            ir_sampler.filterable.concrete() == Some(true),
-            "expected `filterable: true` without the `, unfilterable` modifier"
-        );
-    }
 }

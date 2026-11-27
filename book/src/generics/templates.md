@@ -200,9 +200,9 @@ let module = shader::instantiate::<Vec4f, Vec4f>();
 ```
 
 Type arguments at entry points tie to the pack slot through generated
-`linkage::Type<Is = ...>` constraints, the same mechanism `get!(VAR, T)`
-uses on an `impl Trait` linkage, so rustc rejects inconsistent instantiation.
-Writing the concrete type in the entry point signature
+`linkage::Type<Is = ...>` constraints — the same compile-time equality
+mechanism rustc needs for pack generics — so rustc rejects inconsistent
+instantiation. Writing the concrete type in the entry point signature
 (`&DataPack<Vec4f>`) keeps the entry-point slot out of the argument list.
 Helpers may use a bare type parameter in the pack parameter only; it reads
 the pack slot directly, mirroring the const aliasing, and may not appear in

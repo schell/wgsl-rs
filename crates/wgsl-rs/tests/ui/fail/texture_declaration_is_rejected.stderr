@@ -1,0 +1,8 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       the standalone `texture!` declaration macro has been removed; use an annotated pack field on a pack struct instead: `#[texture(group(0), binding(0))] pub diffuse: Texture2D<YourTexel>`.'
+ --> tests/ui/fail/texture_declaration_is_rejected.rs:5:1
+  |
+5 | #[wgsl(crate_path = wgsl_rs, skip_validation)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `wgsl` (in Nightly builds, run with -Z macro-backtrace for more info)

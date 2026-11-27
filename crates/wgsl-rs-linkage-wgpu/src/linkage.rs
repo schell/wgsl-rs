@@ -90,7 +90,7 @@ pub struct WgpuLinkage {
     /// Compute shader entry points declared in the module.
     pub compute_entries: Vec<ComputeEntryInfo>,
 
-    /// Buffer descriptors for `uniform!` and `storage!` declarations, in
+    /// Buffer descriptors for `#[uniform]` and `#[storage]` pack fields, in
     /// declaration order. Indexed by binding name via [`Self::buffer`].
     pub buffers: Vec<BufferDescriptorInfo>,
 }
@@ -194,8 +194,8 @@ impl WgpuLinkage {
         self.bind_groups.get(&group)
     }
 
-    /// Returns the buffer descriptor for a `uniform!` or `storage!`
-    /// binding by its declared name, if any.
+    /// Returns the buffer descriptor for a `#[uniform]` or `#[storage]`
+    /// pack field by its binding name, if any.
     ///
     /// Resource-pack fields may also be looked up by their friendly key,
     /// `"Pack::field"` (as emitted by the generated per-field consts);
@@ -208,8 +208,8 @@ impl WgpuLinkage {
         self.buffers.iter().find(|b| b.binding_name == normalized)
     }
 
-    /// Returns the buffer descriptor for a `uniform!` or `storage!`
-    /// binding by its declared name, if any - removing it from the linkage.
+    /// Returns the buffer descriptor for a `#[uniform]` or `#[storage]`
+    /// pack field by its binding name, if any - removing it from the linkage.
     ///
     /// Resource-pack fields may also be looked up by their friendly key,
     /// `"Pack::field"`; it is canonicalized to the mangled global name
@@ -757,8 +757,8 @@ impl EntryPointInfo {
 
 // ===== Buffer descriptors =====
 
-/// A pre-built `wgpu::BufferDescriptor` for a `uniform!` or `storage!`
-/// declaration. Sizing follows WGSL §14.4.1 ("Alignment and Size").
+/// A pre-built `wgpu::BufferDescriptor` for a `#[uniform]` or `#[storage]`
+/// pack field. Sizing follows WGSL §14.4.1 ("Alignment and Size").
 ///
 /// `size` is `0` for runtime-sized storage buffers, which signals the
 /// caller to choose a buffer size appropriate for the workload (the GPU

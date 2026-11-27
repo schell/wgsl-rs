@@ -5,10 +5,13 @@ use wgsl_rs::wgsl;
 mod load_texture {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), TEX: Texture2D<f32>);
+    pub struct TexturePack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32>,
+    }
 
-    pub fn read_tex(uv: Vec2f) -> Vec4f {
-        let t = load!(TEX);
+    pub fn read_tex(pack: &TexturePack, uv: Vec2f) -> Vec4f {
+        let t = load!(pack.tex);
         vec4f(t.x(), t.y(), 0.0, 1.0)
     }
 }

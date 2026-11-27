@@ -1,3 +1,4 @@
+#![doc = include_str!("../../../README.md")]
 //! Keep your WGSL in Rust.
 //!
 //! This crate answers the following questions:

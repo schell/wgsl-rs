@@ -26,16 +26,19 @@ use wgsl_rs_linkage_wgpu::v30::{self as wg, IrModuleExt};
 pub mod triangle {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), FRAME: u32);
+    pub struct TrianglePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<u32>,
+    }
 
     #[vertex]
-    pub fn vtx_main(#[builtin(vertex_index)] _vi: u32) -> Vec4f {
-        vec4f(0.0, 0.0, f32(get!(FRAME)) * 0.0, 1.0)
+    pub fn vtx_main(#[builtin(vertex_index)] _vi: u32, pack: &TrianglePack) -> Vec4f {
+        vec4f(0.0, 0.0, f32(*get!(pack.frame)) * 0.0, 1.0)
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        vec4f(1.0, 0.0, 0.0, f32(get!(FRAME)) * 0.0 + 1.0)
+    pub fn frag_main(pack: &TrianglePack) -> Vec4f {
+        vec4f(1.0, 0.0, 0.0, f32(*get!(pack.frame)) * 0.0 + 1.0)
     }
 }
 
@@ -45,8 +48,12 @@ pub mod triangle {
 pub mod dual_compute {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), read_only, INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 64]);
+    pub struct DualComputePack {
+        #[storage(group(0), binding(0), read_only)]
+        pub input: Storage<[f32; 64], Read>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 64], ReadWrite>,
+    }
 
     #[compute]
     #[workgroup_size(8, 4, 1)]
@@ -63,11 +70,18 @@ pub mod dual_compute {
 pub mod binding_filterability {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), UNFILTERABLE_TEX: Texture2D<f32, false>);
-    texture!(group(0), binding(1), FILTERABLE_TEX: Texture2D<f32>);
-    sampler!(group(0), binding(2), UNFILTERABLE_SMP: Sampler<false>);
-    sampler!(group(0), binding(3), FILTERABLE_SMP: Sampler);
-    sampler!(group(0), binding(4), CMP_SMP: SamplerComparison);
+    pub struct BindingFilterabilityPack {
+        #[texture(group(0), binding(0))]
+        pub unfilterable_tex: Texture2D<f32, false>,
+        #[texture(group(0), binding(1))]
+        pub filterable_tex: Texture2D<f32>,
+        #[sampler(group(0), binding(2))]
+        pub unfilterable_smp: Sampler<false>,
+        #[sampler(group(0), binding(3))]
+        pub filterable_smp: Sampler,
+        #[sampler(group(0), binding(4))]
+        pub cmp_smp: SamplerComparison,
+    }
 
     #[compute]
     #[workgroup_size(1)]
@@ -82,17 +96,25 @@ pub mod binding_filterability_template {
 
     const FILTERABLE_TRUE: bool = true;
 
-    texture!(group(0), binding(0), TEX: Texture2D<f32, FILTERABLE>);
-    sampler!(group(0), binding(1), SMP: Sampler<FILTERABLE>);
+    pub struct BindingFilterabilityTemplatePack<const FILTERABLE: bool> {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32, FILTERABLE>,
+        #[sampler(group(0), binding(1))]
+        pub smp: Sampler<FILTERABLE>,
+    }
 
     #[vertex]
-    pub fn vtx_main() -> Vec4f {
-        texture_sample_level(TEX, SMP, vec2f(0.0, 0.0), 0.0)
+    pub fn vtx_main<const FILTERABLE: bool>(
+        pack: &BindingFilterabilityTemplatePack<FILTERABLE>,
+    ) -> Vec4f {
+        texture_sample_level(&pack.tex, &pack.smp, vec2f(0.0, 0.0), 0.0)
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        texture_sample(TEX, SMP, vec2f(0.0, 0.0))
+    pub fn frag_main<const FILTERABLE: bool>(
+        pack: &BindingFilterabilityTemplatePack<FILTERABLE>,
+    ) -> Vec4f {
+        texture_sample(&pack.tex, &pack.smp, vec2f(0.0, 0.0))
     }
 }
 
@@ -102,15 +124,30 @@ pub mod binding_filterability_template {
 pub mod binding_filterability_order {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
-    texture!(group(0), binding(1), TEX: Texture2D<f32, TEX_FILTERABLE>);
-    sampler!(group(0), binding(2), SMP: Sampler<SMP_FILTERABLE>);
+    pub struct BindingFilterabilityOrderPack<
+        T,
+        const TEX_FILTERABLE: bool,
+        const SMP_FILTERABLE: bool,
+    > {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<T>,
+        #[texture(group(0), binding(1))]
+        pub tex: Texture2D<f32, TEX_FILTERABLE>,
+        #[sampler(group(0), binding(2))]
+        pub smp: Sampler<SMP_FILTERABLE>,
+    }
 
     #[fragment]
-    pub fn main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
-        let sampled = texture_sample(TEX, SMP, vec2f(0.0, 0.0));
+    pub fn main<
+        T: Convert<f32> + Wgsl + Copy,
+        const TEX_FILTERABLE: bool,
+        const SMP_FILTERABLE: bool,
+    >(
+        pack: &BindingFilterabilityOrderPack<T, TEX_FILTERABLE, SMP_FILTERABLE>,
+    ) -> Vec4f {
+        let sampled = texture_sample(&pack.tex, &pack.smp, vec2f(0.0, 0.0));
         vec4f(
-            sampled.x() + f32(get!(FRAME, T)),
+            sampled.x() + f32(*get!(pack.frame)),
             sampled.y(),
             sampled.z(),
             sampled.w(),
@@ -131,11 +168,14 @@ pub mod struct_uniform {
         pub view_proj: Mat4x4f,
     }
 
-    uniform!(group(0), binding(0), CAMERA: Camera);
+    pub struct StructUniformPack {
+        #[uniform(group(0), binding(0))]
+        pub camera: Uniform<Camera>,
+    }
 
     #[fragment]
-    pub fn fs_main() -> Vec4f {
-        vec4f(0.0, 0.0, 0.0, get!(CAMERA).fov * 0.0 + 1.0)
+    pub fn fs_main(pack: &StructUniformPack) -> Vec4f {
+        vec4f(0.0, 0.0, 0.0, get!(pack.camera).fov * 0.0 + 1.0)
     }
 }
 
@@ -151,7 +191,10 @@ pub mod shape_provider {
         pub radius: f32,
     }
 
-    storage!(group(0), binding(0), read_write, CIRCLES: [Circle; 16]);
+    pub struct ShapeProviderPack {
+        #[storage(group(0), binding(0), read_write)]
+        pub circles: Storage<[Circle; 16], ReadWrite>,
+    }
 
     #[compute]
     #[workgroup_size(4)]
@@ -163,16 +206,19 @@ pub mod shape_consumer {
     use super::shape_provider::*;
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), HIGHLIGHT: u32);
+    pub struct ShapeConsumerPack {
+        #[uniform(group(0), binding(0))]
+        pub highlight: Uniform<u32>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
-    pub fn highlight() {
+    pub fn highlight(pack: &ShapeConsumerPack) {
         let c: Circle = Circle {
             center: vec2f(0.0, 0.0),
             radius: 1.0,
         };
-        let v: Vec4f = vec4f(0.0, 0.0, 0.0, f32(get!(HIGHLIGHT)));
+        let v: Vec4f = vec4f(0.0, 0.0, 0.0, f32(*get!(pack.highlight)));
         let w: Vec4f = vec4f(c.center.x, c.center.y, c.radius, v.z);
         let _u: Vec4f = vec4f(w.x, w.y, w.z, w.w);
     }
@@ -185,7 +231,10 @@ pub mod shape_consumer {
 pub mod generic_triangle {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+    pub struct GenericTrianglePack<T> {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<T>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] _vi: u32) -> Vec4f {
@@ -193,8 +242,8 @@ pub mod generic_triangle {
     }
 
     #[fragment]
-    pub fn frag_main<T: Convert<f32> + Wgsl>() -> Vec4f {
-        let _t = get!(FRAME, T);
+    pub fn frag_main<T: Convert<f32> + Wgsl + Copy>(pack: &GenericTrianglePack<T>) -> Vec4f {
+        let _t = *get!(pack.frame);
         vec4f(1.0, 0.0, 0.0, 1.0)
     }
 }
@@ -233,7 +282,10 @@ pub mod linkage_consumer {
     use super::linkage_provider::*;
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), FRAME: u32);
+    pub struct LinkageConsumerPack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<u32>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vi: u32) -> Vec4f {
@@ -242,11 +294,11 @@ pub mod linkage_consumer {
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
+    pub fn frag_main(pack: &LinkageConsumerPack) -> Vec4f {
         let q: Quad = Quad {
             uv: vec2f(0.0, 0.0),
         };
-        let ul = Quad::upper_left(q, f32(get!(FRAME)) * 0.0 + 1.0);
+        let ul = Quad::upper_left(q, f32(*get!(pack.frame)) * 0.0 + 1.0);
         vec4f(ul.x, ul.y, 0.0, 1.0)
     }
 }
@@ -259,11 +311,14 @@ pub mod generic_importer {
     use super::linkage_provider::*;
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), SCALE: impl Convert<f32>);
+    pub struct GenericImporterPack<T> {
+        #[uniform(group(0), binding(0))]
+        pub scale: Uniform<T>,
+    }
 
     #[fragment]
-    pub fn fs_main<T: Convert<f32> + Wgsl>() -> Vec4f {
-        let _s = get!(SCALE, T);
+    pub fn fs_main<T: Convert<f32> + Wgsl + Copy>(pack: &GenericImporterPack<T>) -> Vec4f {
+        let _s = *get!(pack.scale);
         let uv = QUAD_CCW[0];
         let q: Quad = Quad {
             uv: vec2f(0.0, 0.0),
@@ -282,7 +337,10 @@ pub mod generic_importer {
 pub mod tier1_provider {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), SCRATCH: TextureStorage2D<Rgba16unorm, Write>);
+    pub struct Tier1ProviderPack {
+        #[texture(group(0), binding(0))]
+        pub scratch: TextureStorage2D<Rgba16unorm, Write>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
@@ -298,11 +356,14 @@ pub mod tier1_consumer {
     use super::tier1_provider::*;
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(1), FRAME: u32);
+    pub struct Tier1ConsumerPack {
+        #[uniform(group(0), binding(1))]
+        pub frame: Uniform<u32>,
+    }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        vec4f(f32(get!(FRAME)) * 0.0, 0.0, 0.0, 1.0)
+    pub fn frag_main(pack: &Tier1ConsumerPack) -> Vec4f {
+        vec4f(f32(*get!(pack.frame)) * 0.0, 0.0, 0.0, 1.0)
     }
 }
 
@@ -319,6 +380,12 @@ pub mod shadowing_consumer {
 
 /// The vertex half of a composed pipeline (wgsl-rs#114): one entry
 /// plus a binding shared with the fragment stage.
+///
+/// Legacy-statics fixture: `pipeline_compose` imports this module's
+/// binding as a module VARIABLE, and pack types are not yet
+/// importable as parameters (V1 registers packs per-module only).
+/// Stays on statics until the removal bead decides the cross-module
+/// pack story.
 #[wgsl]
 pub mod pipeline_vertex {
     use wgsl_rs::std::*;
@@ -396,6 +463,11 @@ pub mod generic_named_consumer {
 /// `BUFFER` binding; its module variables are invisible to the
 /// validator's table, so the table must fail open — not reject
 /// `load!(BUFFER)` as if the module had no imports.
+///
+/// Legacy-statics fixture: the named import brings a module VARIABLE,
+/// and pack types are not yet importable as parameters (V1 registers
+/// packs per-module only). Stays on statics until the removal bead
+/// decides the cross-module pack story.
 #[wgsl]
 pub mod load_provider {
     // The std glob also brings the linkage macros into scope.
@@ -447,7 +519,7 @@ fn analyze_triangle_finds_bind_group_and_entries() {
     assert_eq!(bg.group, 0);
     assert_eq!(bg.entries.len(), 1);
     assert_eq!(bg.bindings.len(), 1);
-    assert_eq!(bg.bindings[0].name, "FRAME");
+    assert_eq!(bg.bindings[0].name, "trianglepack__frame");
     assert_eq!(bg.bindings[0].binding, 0);
     assert!(matches!(bg.bindings[0].kind, wg::BindingKind::Uniform));
 
@@ -458,8 +530,10 @@ fn analyze_triangle_finds_bind_group_and_entries() {
     assert_eq!(linkage.fragment_entries[0].name, "frag_main");
     assert!(linkage.compute_entries.is_empty());
 
-    // One buffer descriptor for FRAME, sized to a u32.
-    let buf = linkage.buffer("FRAME").expect("expected FRAME buffer");
+    // One buffer descriptor for the pack's frame field, sized to a u32.
+    let buf = linkage
+        .buffer("trianglepack__frame")
+        .expect("expected trianglepack__frame buffer");
     assert_eq!(buf.group, 0);
     assert_eq!(buf.binding, 0);
     assert!(matches!(buf.kind, wg::BufferKind::Uniform));
@@ -480,12 +554,12 @@ fn analyze_dual_compute_groups_workgroup_sizes() {
     let b = linkage.compute_entry("b").unwrap();
     assert_eq!(b.workgroup_size, (64, 1, 1));
 
-    let input = linkage.buffer("INPUT").unwrap();
+    let input = linkage.buffer("dualcomputepack__input").unwrap();
     assert!(matches!(
         input.kind,
         wg::BufferKind::Storage { read_only: true }
     ));
-    let output = linkage.buffer("OUTPUT").unwrap();
+    let output = linkage.buffer("dualcomputepack__output").unwrap();
     assert!(matches!(
         output.kind,
         wg::BufferKind::Storage { read_only: false }
@@ -503,9 +577,12 @@ fn display_summarizes_entries_groups_buffers_and_cache() {
         text.contains("@group(0) triangle::bind_group_0"),
         "got:\n{text}"
     );
-    assert!(text.contains("@binding(0) FRAME (uniform)"), "got:\n{text}");
     assert!(
-        text.contains("@binding(0): FRAME (uniform, 4 bytes, u32)"),
+        text.contains("@binding(0) trianglepack__frame (uniform)"),
+        "got:\n{text}"
+    );
+    assert!(
+        text.contains("@binding(0): trianglepack__frame (uniform, 4 bytes, u32)"),
         "got:\n{text}"
     );
     assert!(text.contains("pipeline layout not built"), "got:\n{text}");
@@ -526,11 +603,13 @@ fn display_summarizes_entries_groups_buffers_and_cache() {
         "got:\n{text}"
     );
     assert!(
-        text.contains("@binding(0) INPUT (storage, read-only)"),
+        text.contains("@binding(0) dualcomputepack__input (storage, read-only)"),
         "got:\n{text}"
     );
     assert!(
-        text.contains("@binding(0): INPUT (storage, read-only, 256 bytes, array<f32, 64>)"),
+        text.contains(
+            "@binding(0): dualcomputepack__input (storage, read-only, 256 bytes, array<f32, 64>)"
+        ),
         "got:\n{text}"
     );
     assert!(
@@ -556,7 +635,9 @@ fn shader_module_descriptor_borrows_module_label() {
 #[test]
 fn uniform_with_struct_is_sized_by_wgsl_rules() {
     let linkage = wg::analyze_wgsl_module(&struct_uniform::WGSL_SOURCE).unwrap();
-    let cam = linkage.buffer("CAMERA").expect("CAMERA binding");
+    let cam = linkage
+        .buffer("structuniformpack__camera")
+        .expect("structuniformpack__camera binding");
     // WGSL §14.4.1 for the `Camera` struct:
     //   position: Vec3f -> offset 0,  size 12, align 16
     //   fov:      f32    -> offset 12, size 4,  align 4
@@ -568,7 +649,9 @@ fn uniform_with_struct_is_sized_by_wgsl_rules() {
 #[test]
 fn storage_array_size_uses_wgsl_array_strides() {
     let linkage = wg::analyze_wgsl_module(&shape_provider::WGSL_SOURCE).unwrap();
-    let circles = linkage.buffer("CIRCLES").expect("CIRCLES binding");
+    let circles = linkage
+        .buffer("shapeproviderpack__circles")
+        .expect("shapeproviderpack__circles binding");
     // Circle is { center: Vec2f (align 8, size 8), radius: f32 (align 4, size
     // 4) }   struct align = 8, size = roundUp(12, 8) = 16
     // array<[16], 16>: align 8, size = 16 * roundUp(16, 8) = 16 * 16 = 256
@@ -585,13 +668,15 @@ fn analyze_walks_imports_for_struct_lookup() {
     // findable with its WGSL-sized buffer descriptor.
     let linkage = wg::analyze_wgsl_module(&shape_consumer::WGSL_SOURCE).unwrap();
     // HIGHLIGHT is in shape_consumer itself.
-    let highlight = linkage.buffer("HIGHLIGHT").expect("HIGHLIGHT binding");
+    let highlight = linkage
+        .buffer("shapeconsumerpack__highlight")
+        .expect("shapeconsumerpack__highlight binding");
     assert_eq!(highlight.size, 4);
 
-    // The imported shape_provider's CIRCLES is also in the linkage.
+    // The imported shape_provider's circles storage is also in the linkage.
     let circles = linkage
-        .buffer("CIRCLES")
-        .expect("CIRCLES from imported shape_provider");
+        .buffer("shapeproviderpack__circles")
+        .expect("shapeproviderpack__circles from imported shape_provider");
     assert_eq!(circles.size, 256);
 }
 
@@ -615,7 +700,9 @@ fn analyze_module_after_instantiate_works() {
     let linkage = m.generate_linkage();
 
     assert_eq!(linkage.bind_groups.len(), 1);
-    let frame = linkage.buffer("FRAME").expect("FRAME binding");
+    let frame = linkage
+        .buffer("generictrianglepack__frame")
+        .expect("generictrianglepack__frame binding");
     assert_eq!(frame.size, 4, "f32 is 4 bytes");
 
     assert_eq!(linkage.vertex_entries.len(), 1);
@@ -642,8 +729,8 @@ fn linkage_renders_valid_wgsl_for_instantiated_template() {
         "wgsl_source() should render valid WGSL with no placeholders, got:\n{source}"
     );
     assert!(
-        source.contains("FRAME") && source.contains("f32"),
-        "expected FRAME bound to f32 in source, got:\n{source}"
+        source.contains("generictrianglepack__frame") && source.contains("f32"),
+        "expected generictrianglepack__frame bound to f32 in source, got:\n{source}"
     );
 }
 
@@ -934,7 +1021,10 @@ fn analyze_binding_filterability_flags() {
 fn analyze_template_binding_filterability() {
     use binding_filterability_template as template;
 
-    assert_eq!(template::WGSL_SOURCE.module_type_params, &["FILTERABLE"]);
+    assert_eq!(
+        template::WGSL_SOURCE.module_type_params,
+        &["BindingFilterabilityTemplatePack_FILTERABLE"]
+    );
     let true_ir = template::instantiate::<true>();
     let false_ir = template::instantiate::<false>();
     assert_eq!(ir::render_module(&true_ir), ir::render_module(&false_ir));
@@ -986,7 +1076,12 @@ fn binding_filterability_params_have_stable_order() {
 
     assert_eq!(
         template::WGSL_SOURCE.module_type_params,
-        &["FRAME", "TEX_FILTERABLE", "SMP_FILTERABLE", "main_0"]
+        &[
+            "BindingFilterabilityOrderPack_T",
+            "BindingFilterabilityOrderPack_TEX_FILTERABLE",
+            "BindingFilterabilityOrderPack_SMP_FILTERABLE",
+            "main_0"
+        ]
     );
     let module = template::instantiate::<f32, false, true, f32>();
     let texture = module
@@ -1723,7 +1818,7 @@ fn instantiate_based_linkage_enables_tier1() {
         "the tier-1 enable directive must lead the assembled source, got:\n{source}"
     );
     assert!(
-        source.contains("SCRATCH"),
+        source.contains("tier1providerpack__scratch"),
         "the imported tier-1 texture must be assembled in, got:\n{source}"
     );
 }
@@ -1911,7 +2006,7 @@ fn instantiate_wgsl_source_enables_tier1() {
         "the tier-1 enable directive must lead the assembled source, got:\n{source}"
     );
     assert!(
-        source.contains("SCRATCH"),
+        source.contains("tier1providerpack__scratch"),
         "the imported tier-1 texture must be assembled in, got:\n{source}"
     );
 }

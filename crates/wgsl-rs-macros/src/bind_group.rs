@@ -142,9 +142,14 @@ pub(crate) fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
     }
     // `create_bind_group_named_with_label` takes `group: u32`; `usize`
     // address constants (accepted by resource-pack parsing) narrow here.
-    // A truncating instantiation value is still caught after substitution
-    // by the binding-address range checks. Literals re-emit bare digits so
-    // suffixes like `0usize` cannot leak into the argument position.
+    // Standalone derives have no `#[wgsl]` `instantiate` pass, so the
+    // value cannot be range-checked after substitution; convert with
+    // `u32::try_from` and reject oversized values at bind time instead of
+    // truncating (pack-backed derives keep their substitution check in
+    // `wgsl_rs_ir`'s binding-address range checks). Literals re-emit bare
+    // digits so suffixes like `0usize` cannot leak into the argument
+    // position.
+    let pack_name = input.ident.to_string();
     let group_expr = match &first_group {
         AddressValue::Literal(lit) => {
             let digits = syn::LitInt::new(lit.base10_digits(), lit.span());
@@ -152,7 +157,14 @@ pub(crate) fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
         }
         AddressValue::Param(param) => match const_params.get(&param.to_string()) {
             Some(syn::Type::Path(path)) if path.qself.is_none() && path.path.is_ident("usize") => {
-                quote! { #param as u32 }
+                quote! {
+                    <u32 as ::core::convert::TryFrom<usize>>::try_from(#param).unwrap_or_else(
+                        |_| panic!(
+                            "bind group creation for `{}` failed: group index does not fit in u32",
+                            #pack_name
+                        ),
+                    )
+                }
             }
             _ => quote! { #param },
         },
@@ -172,7 +184,6 @@ pub(crate) fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
         let wrap = &plan.wrap;
         quote! { (#key, #wrap(resources.#field)), }
     });
-    let pack_name = ident.to_string();
 
     // The impl mirrors the pack's generics (const params select the group,
     // layout-only consts ride along) with a leading `'a` for the borrowed

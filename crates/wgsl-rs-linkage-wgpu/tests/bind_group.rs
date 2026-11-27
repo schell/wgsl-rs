@@ -60,6 +60,16 @@ pub struct MyBg<const GROUP: u32> {
     pub slab: Storage<[Vec4f; 4], Read>,
 }
 
+/// The `usize` flavor of the standalone descriptor. Standalone derives
+/// skip the `#[wgsl]` `instantiate` pass, so an oversized group value
+/// must be rejected at bind time instead of truncating.
+#[allow(dead_code)]
+#[derive(BindGroup)]
+pub struct MyBgUsize<const GROUP: usize> {
+    #[storage(group(GROUP), binding(0), read_only)]
+    pub slab: Storage<[Vec4f; 4], Read>,
+}
+
 /// The three-slabs driver: one group-param pack instantiated at three
 /// groups, driven through the typed path by the same `Resources` struct.
 #[wgsl(validate_with_instantiation_types(SLAB_GROUP))]
@@ -316,6 +326,36 @@ fn usize_group_params_narrow_to_u32_and_bind_on_device() {
             slab: buffer.as_entire_buffer_binding(),
         },
         Some("usize_group"),
+    );
+    let _ = bind_group;
+}
+
+#[test]
+#[should_panic(expected = "group index does not fit in u32")]
+fn oversized_usize_group_panics_instead_of_truncating() {
+    let Some((device, _queue)) = test_device() else {
+        eprintln!("[skip] no GPU available");
+        return;
+    };
+
+    // Standalone derives skip the `#[wgsl]` `instantiate` pass, so the
+    // bind-time conversion must be checked: an `as u32` cast would
+    // truncate `u32::MAX as usize + 1` to 0 and silently bind the wrong
+    // group.
+    let module = slabs::instantiate::<0>();
+    let mut linkage = wg::analyze_ir_module(module);
+    let buffer = linkage
+        .buffer(slabs::MyBg::<0>::SLAB)
+        .expect("slab buffer descriptor")
+        .create_buffer(&device);
+    const HUGE: usize = u32::MAX as usize + 1;
+    let bind_group = <MyBgUsize<HUGE> as BindGroup>::create_bind_group(
+        &mut linkage,
+        &device,
+        MyBgUsizeResources {
+            slab: buffer.as_entire_buffer_binding(),
+        },
+        None,
     );
     let _ = bind_group;
 }

@@ -60,11 +60,18 @@ Yes! This is the canonical `hello_triangle` shader — ordinary Rust that the
 unit test, and run on the CPU:
 
 ```rust
+use wgsl_rs::wgsl;
+
 #[wgsl]
 pub mod hello_triangle {
+    // Glob and named imports work, but hey, imports work!
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), FRAME: u32);
+    // Define a uniform in both Rust and WGSL as a pack field.
+    pub struct HelloTrianglePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<u32>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -74,8 +81,8 @@ pub mod hello_triangle {
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(get!(FRAME)) / 128.0), 0.0, 1.0)
+    pub fn frag_main(pack: &HelloTrianglePack) -> Vec4f {
+        vec4f(1.0, sin(f32(load!(pack.frame)) / 128.0), 0.0, 1.0)
     }
 }
 ```

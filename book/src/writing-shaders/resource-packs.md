@@ -80,21 +80,22 @@ the type marker; `read` is the default when neither names one.
 ## Constructing packs and making direct CPU calls
 
 No constructors are generated. Hosts construct packs by hand over `pub`
-fields, seeding values with `set` and textures with `init`:
+fields, passing real values to the runtime wrappers: buffers take their
+data at construction, textures and samplers start empty and are filled
+with `init`/`set_pixel`:
 
 ```rust
 use wgsl_rs::std::*;
 
 let storage = render::SlabBindGroup::<1> {
-    slab: Storage::new(1, 0),
+    slab: Storage::new(RuntimeArray {
+        data: vec![vec4f(0.0, 0.0, 0.0, 1.0)],
+    }),
 };
-storage.slab.set(RuntimeArray {
-    data: vec![vec4f(0.0, 0.0, 0.0, 1.0)],
-});
 
 let textures = render::TextureBindGroup::<0, false> {
-    heights: Texture2D::new(0, 0),
-    heights_smp: Sampler::new(0, 1),
+    heights: Texture2D::new(),
+    heights_smp: Sampler::new(),
 };
 textures.heights.init(1, 1);
 textures.heights.set_pixel(0, 0, [0.25, 0.5, 0.75, 1.0]);

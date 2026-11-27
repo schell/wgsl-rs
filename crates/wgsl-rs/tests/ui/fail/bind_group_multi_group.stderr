@@ -1,0 +1,5 @@
+error: `BindGroup` requires every field to select the same group; split multi-group packs into one pack per group
+ --> tests/ui/fail/bind_group_multi_group.rs:9:9
+  |
+9 |     pub b: Sampler,
+  |         ^

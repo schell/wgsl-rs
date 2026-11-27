@@ -157,6 +157,44 @@ mod fixed {
     }
 }
 
+/// Concrete const arguments specialize immediately: a pack used at a
+/// concrete GROUP supplies no generic slot, and its address value must
+/// reach the assembled IR as a literal (not an unresolved parameter).
+#[wgsl]
+mod concrete_group {
+    use wgsl_rs::std::*;
+
+    pub struct GroupedPack<const GROUP: u32> {
+        #[storage(group(GROUP), binding(0), read_only)]
+        pub data: Storage<[Vec4f; 4], Read>,
+    }
+
+    #[fragment]
+    pub fn shade(#[location(0)] position: Vec4f, pack: &GroupedPack<3>) -> Vec4f {
+        let data = get!(pack.data);
+        position + data[0] * 0.0
+    }
+}
+
+#[test]
+fn concrete_group_addresses_specialize_into_the_ir() {
+    assert!(concrete_group::WGSL_SOURCE.module_type_params.is_empty());
+    let module = concrete_group::instantiate();
+    let source = module.wgsl_source();
+    assert!(
+        source.contains("@group(3) @binding(0) var<storage, read> groupedpack__data:"),
+        "expected the concrete group to reach the rendered source, got:\n{source}"
+    );
+    wgsl_rs::validate_wgsl_source(&source).unwrap();
+
+    // The CPU pack still constructs and runs at its concrete layout.
+    let pack = concrete_group::GroupedPack::<3> {
+        data: Storage::new([vec4f(0.0, 0.0, 0.0, 0.0); 4]),
+    };
+    let color = concrete_group::shade(vec4f(1.0, 2.0, 3.0, 4.0), &pack);
+    assert_eq!(color, vec4f(1.0, 2.0, 3.0, 4.0));
+}
+
 #[test]
 fn matching_concrete_uses_need_no_generic_slot() {
     assert!(fixed::WGSL_SOURCE.module_type_params.is_empty());

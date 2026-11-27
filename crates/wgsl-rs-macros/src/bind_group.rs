@@ -66,17 +66,27 @@ pub(crate) fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
 
     let mut plans: Vec<FieldPlan> = Vec::new();
     for field in &fields.named {
-        let Some(attr) = field
+        let binding_attrs = field
             .attrs
             .iter()
-            .find(|attr| ResourceKind::from_attr(attr).is_some())
-        else {
+            .filter(|attr| ResourceKind::from_attr(attr).is_some())
+            .collect::<Vec<_>>();
+        let Some(attr) = binding_attrs.first().copied() else {
             return Err(syn::Error::new(
                 field.ident.span(),
                 "`BindGroup` requires every field to carry a resource annotation (`#[uniform]`, \
                  `#[storage]`, `#[texture]`, `#[sampler]`, or `#[workgroup]`)",
             ));
         };
+        // Standalone structs bypass the `#[wgsl]` resource-pack parser, so
+        // the duplicate-annotation rejection lives here too.
+        if binding_attrs.len() > 1 {
+            return Err(syn::Error::new(
+                field.ident.span(),
+                "`BindGroup` field carries multiple resource annotations; keep exactly one per \
+                 field",
+            ));
+        }
         let kind = ResourceKind::from_attr(attr).expect("checked above");
         if kind == ResourceKind::Workgroup {
             // Workgroup storage is workgroup-scoped: no host resource.
@@ -130,9 +140,22 @@ pub(crate) fn expand(input: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
             ));
         }
     }
+    // `create_bind_group_named_with_label` takes `group: u32`; `usize`
+    // address constants (accepted by resource-pack parsing) narrow here.
+    // A truncating instantiation value is still caught after substitution
+    // by the binding-address range checks. Literals re-emit bare digits so
+    // suffixes like `0usize` cannot leak into the argument position.
     let group_expr = match &first_group {
-        AddressValue::Literal(lit) => quote! { #lit },
-        AddressValue::Param(param) => quote! { #param },
+        AddressValue::Literal(lit) => {
+            let digits = syn::LitInt::new(lit.base10_digits(), lit.span());
+            quote! { #digits }
+        }
+        AddressValue::Param(param) => match const_params.get(&param.to_string()) {
+            Some(syn::Type::Path(path)) if path.qself.is_none() && path.path.is_ident("usize") => {
+                quote! { #param as u32 }
+            }
+            _ => quote! { #param },
+        },
     };
 
     let ident = &input.ident;

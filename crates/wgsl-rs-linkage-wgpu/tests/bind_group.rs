@@ -76,6 +76,24 @@ mod slabs {
     }
 }
 
+/// The `usize` flavor: WGSL group addresses accept `usize` consts for
+/// native-Rust compatibility. Everything downstream (the generated group
+/// key const and the typed bind-group call) must stay `u32`, so a `usize`
+/// suffix on the instantiation value cannot leak into address positions.
+#[wgsl(validate_with_instantiation_types(SLAB_GROUP))]
+mod slabs_usize {
+    use wgsl_rs::std::*;
+
+    pub const SLAB_GROUP: usize = 0;
+
+    #[allow(dead_code)]
+    #[derive(wgsl_rs_linkage_wgpu::BindGroup)]
+    pub struct SlabBg<const GROUP: usize> {
+        #[storage(group(GROUP), binding(0), read_only)]
+        pub slab: Storage<[Vec4f; 4], Read>,
+    }
+}
+
 /// Returns a `wgpu::Device` and `Queue` for tests, or `None` if no GPU is
 /// available.
 fn test_device() -> Option<(wg::wgpu::Device, wg::wgpu::Queue)> {
@@ -268,6 +286,38 @@ fn typed_path_binds_three_slabs_by_the_same_resources() {
     let _slab0 = bind_at::<0>(&device);
     let _slab1 = bind_at::<1>(&device);
     let _slab2 = bind_at::<2>(&device);
+}
+
+#[test]
+fn usize_group_params_narrow_to_u32_and_bind_on_device() {
+    let Some((device, _queue)) = test_device() else {
+        eprintln!("[skip] no GPU available");
+        return;
+    };
+
+    // The generated group key const stays `u32` even though the pack's
+    // parameter is `usize`, and it carries the instantiation value.
+    let _: u32 = slabs_usize::SlabBg::<3>::GROUP_N;
+    assert_eq!(slabs_usize::SlabBg::<3>::GROUP_N, 3u32);
+    assert_eq!(slabs_usize::SlabBg::<0>::GROUP_N, 0u32);
+
+    // The typed path binds at that group on device: the IR carries
+    // `@group(3)` and the derive's narrowed `3u32` matches it.
+    let module = slabs_usize::instantiate::<3>();
+    let mut linkage = wg::analyze_ir_module(module);
+    let buffer = linkage
+        .buffer(slabs_usize::SlabBg::<3>::SLAB)
+        .expect("slab buffer descriptor")
+        .create_buffer(&device);
+    let bind_group = <slabs_usize::SlabBg<3> as BindGroup>::create_bind_group(
+        &mut linkage,
+        &device,
+        slabs_usize::SlabBgResources {
+            slab: buffer.as_entire_buffer_binding(),
+        },
+        Some("usize_group"),
+    );
+    let _ = bind_group;
 }
 
 #[test]

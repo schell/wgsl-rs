@@ -934,6 +934,7 @@ pub(crate) fn rewrite_rust_module(
         return Ok(());
     };
     let mut key_impls: Vec<syn::Item> = Vec::new();
+    let mut key_packs: Vec<&ItemResourcePack> = Vec::new();
     for item in items.iter_mut() {
         let syn::Item::Struct(item_struct) = item else {
             continue;
@@ -966,9 +967,103 @@ pub(crate) fn rewrite_rust_module(
                 insert_access_marker(&mut field.ty, resource.access);
             }
         }
+        key_packs.push(pack);
         key_impls.push(pack_key_impl(item_struct, pack));
     }
+    // Validate after the mutable pass so the generated names can be checked
+    // against the module's own associated items.
+    for pack in key_packs {
+        validate_key_impl_names(items, pack)?;
+    }
     items.extend(key_impls);
+    Ok(())
+}
+
+/// Reject generated binding-key consts whose names collide. SCREAMING_CASE
+/// is not injective (`foo` and `FOO` both key as `FOO`), a field can be
+/// spelled like a generated `{PARAM}_N` value const (`group_n` vs `GROUP`),
+/// and the user's own associated items may already occupy a name. Any of
+/// those would fail with a duplicate-associated-item error in the emitted
+/// impl; reject them here with a targeted message instead.
+fn validate_key_impl_names(items: &[syn::Item], pack: &ItemResourcePack) -> parse::Result<()> {
+    use std::collections::hash_map::Entry;
+
+    // First occurrence wins; a colliding later name points at itself.
+    let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut record =
+        |name: String, span: proc_macro2::Span, describes: String| -> parse::Result<()> {
+            match names.entry(name.clone()) {
+                Entry::Occupied(first) => Err(parse::Error::unsupported(
+                    span,
+                    format!(
+                        "binding-key const `{name}` for {describes} collides with the const for \
+                         {}; rename one so each generated key stays unique",
+                        first.get()
+                    ),
+                )),
+                Entry::Vacant(slot) => {
+                    slot.insert(describes);
+                    Ok(())
+                }
+            }
+        };
+    for field in &pack.fields {
+        let field_ident = &field.ident;
+        record(
+            field_ident.to_string().to_uppercase(),
+            field_ident.span(),
+            format!("field `{field_ident}`"),
+        )?;
+    }
+    for (param, _) in &pack.const_params {
+        let selects_group = pack
+            .fields
+            .iter()
+            .any(|field| matches!(&field.group, AddressValue::Param(name) if name == param));
+        if !selects_group {
+            continue;
+        }
+        record(
+            format!("{param}_N"),
+            param.span(),
+            format!("group const parameter `{param}`"),
+        )?;
+    }
+    // The user's own associated items occupy the same namespace as the
+    // generated consts within any impl of this pack.
+    let pack_ident = pack.ident.to_string();
+    for item in items {
+        let syn::Item::Impl(impl_item) = item else {
+            continue;
+        };
+        let syn::Type::Path(self_ty) = &*impl_item.self_ty else {
+            continue;
+        };
+        if self_ty.qself.is_some()
+            || self_ty
+                .path
+                .get_ident()
+                .is_none_or(|ident| *ident != pack_ident)
+        {
+            continue;
+        }
+        for assoc in &impl_item.items {
+            let (name, span) = match assoc {
+                syn::ImplItem::Const(item) => (item.ident.to_string(), item.ident.span()),
+                syn::ImplItem::Fn(item) => (item.sig.ident.to_string(), item.sig.ident.span()),
+                _ => continue,
+            };
+            if let Some(first) = names.get(&name) {
+                return Err(parse::Error::unsupported(
+                    span,
+                    format!(
+                        "associated item `{name}` collides with the const for {first}; rename it \
+                         so the generated keys stay unique"
+                    ),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1010,9 +1105,19 @@ fn pack_key_impl(item_struct: &syn::ItemStruct, pack: &ItemResourcePack) -> syn:
             continue;
         }
         let const_ident = format_ident!("{}_N", param, span = param.span());
+        // The design keys the group axis as `u32`; `usize` address
+        // constants narrow here (a truncating instantiation value is
+        // still caught after substitution by the binding-address range
+        // checks).
+        let is_usize = matches!(ty, syn::Type::Path(path) if path.qself.is_none() && path.path.is_ident("usize"));
+        let value = if is_usize {
+            quote! { #param as u32 }
+        } else {
+            quote! { #param }
+        };
         consts.push(quote! {
             /// The group index this instantiation binds at.
-            pub const #const_ident: #ty = #param;
+            pub const #const_ident: u32 = #value;
         });
     }
     syn::parse_quote! {

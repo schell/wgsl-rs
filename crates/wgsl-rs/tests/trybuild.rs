@@ -395,6 +395,30 @@ fn resource_pack_slot_filterability_collision_is_rejected() {
 }
 
 #[test]
+fn resource_pack_key_name_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_key_name_collision.rs");
+}
+
+#[test]
+fn bind_group_duplicate_annotation_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/bind_group_duplicate_annotation.rs");
+}
+
+#[test]
+fn bind_group_multi_group_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/bind_group_multi_group.rs");
+}
+
+#[test]
+fn bind_group_unannotated_field_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/bind_group_unannotated_field.rs");
+}
+
+#[test]
 fn resource_pack_unused_type_param_is_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/resource_pack_unused_type_param.rs");

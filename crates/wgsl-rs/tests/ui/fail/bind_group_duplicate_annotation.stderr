@@ -1,0 +1,5 @@
+error: `BindGroup` field carries multiple resource annotations; keep exactly one per field
+ --> tests/ui/fail/bind_group_duplicate_annotation.rs:8:9
+  |
+8 |     pub a: Sampler,
+  |         ^

@@ -70,10 +70,10 @@ entry that knows the buffer's WGSL size and usage. Find a buffer by its
 generated friendly key (preferred) or by its mangled global name:
 
 ```rust
-let frame_buf_info = linkage
-    .buffer(AtlasBindGroup::FRAME)
-    .expect("AtlasBindGroup::frame buffer exists");
-let frame_buffer = frame_buf_info.create_buffer(&device);
+let slab_buf_info = linkage
+    .buffer(AtlasBindGroup::SLAB)
+    .expect("AtlasBindGroup::slab buffer exists");
+let slab_buffer = slab_buf_info.create_buffer(&device);
 ```
 
 `BufferDescriptorInfo::create_buffer(device)` returns a `wgpu::Buffer`

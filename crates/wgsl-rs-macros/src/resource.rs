@@ -1483,7 +1483,11 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
         }
 
         // The complete `&pack.field` expression is replaced, not merely its
-        // base. This leaves the global resource identifier expected by WGSL.
+        // base. Handle-typed resources (textures, samplers) render as value
+        // handles in WGSL, so their borrows drop the `&`; value resources
+        // (storage, uniform, workgroup) keep it: WGSL pointers to those
+        // globals are written `&name`, e.g. for `workgroupUniformLoad` and
+        // `arrayLength`.
         if let parse::Expr::Reference { expr: inner, .. } = expr
             && let parse::Expr::FieldAccess { base, field, .. } = inner.as_ref()
             && let parse::Expr::Ident(base) = base.as_ref()
@@ -1498,10 +1502,18 @@ impl crate::parse_visitor::ParseVisitorMut for BodyLowerer<'_> {
                     ),
                 ));
             };
-            *expr = parse::Expr::Ident(Ident::new(
+            let mangled = Ident::new(
                 &mangle_resource_name(&param.pack.ident, &resource.ident),
                 resource.ident.span(),
-            ));
+            );
+            match resource.kind {
+                ResourceKind::Texture | ResourceKind::Sampler => {
+                    *expr = parse::Expr::Ident(mangled);
+                }
+                _ => {
+                    **inner = parse::Expr::Ident(mangled);
+                }
+            }
             return Ok(());
         }
 

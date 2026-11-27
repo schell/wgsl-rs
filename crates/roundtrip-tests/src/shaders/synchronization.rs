@@ -14,9 +14,15 @@ const INVOCATIONS: usize = WG_SIZE * WG_COUNT;
 pub mod workgroup_barrier_sum {
     use wgsl_rs::std::*;
 
-    workgroup!(SHARED: [u32; 64]);
-    storage!(group(0), binding(0), INPUT: [u32; 1]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 128]);
+    pub struct BarrierPack {
+        #[workgroup]
+        pub shared: Workgroup<[u32; 64]>,
+        #[allow(dead_code)]
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 1]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 128]>,
+    }
 
     /// Writes local values to workgroup memory, barriers, then sums the group.
     #[compute]
@@ -24,10 +30,11 @@ pub mod workgroup_barrier_sum {
     pub fn main(
         #[builtin(global_invocation_id)] global_id: Vec3u,
         #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &BarrierPack,
     ) {
         let idx = global_id.x as usize;
         // Each lane writes a unique value into shared workgroup memory.
-        get_mut!(SHARED)[local_idx as usize] = local_idx + 1u32;
+        get_mut!(pack.shared)[local_idx as usize] = local_idx + 1u32;
         // Barrier is required so all lanes see all writes before summing.
         // Passing case: every lane reads full [1..=64], so all outputs are 2080.
         // Failing case: some lanes read stale zeros/partials and produce smaller sums.
@@ -35,9 +42,9 @@ pub mod workgroup_barrier_sum {
 
         let mut sum = 0u32;
         for i in 0..64 {
-            sum += get!(SHARED)[i];
+            sum += get!(pack.shared)[i];
         }
-        get_mut!(OUTPUT)[idx] = sum;
+        get_mut!(pack.output)[idx] = sum;
     }
 }
 
@@ -45,8 +52,13 @@ pub mod workgroup_barrier_sum {
 pub mod storage_barrier_sum {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), INPUT: [u32; 1]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 256]);
+    pub struct StorageBarrierPack {
+        #[allow(dead_code)]
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 1]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 256]>,
+    }
 
     /// Writes to storage, barriers, then reads the workgroup chunk and sums it.
     #[compute]
@@ -54,10 +66,11 @@ pub mod storage_barrier_sum {
     pub fn main(
         #[builtin(global_invocation_id)] global_id: Vec3u,
         #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &StorageBarrierPack,
     ) {
         let idx = global_id.x as usize;
-        // Each lane writes one value into its workgroup chunk of OUTPUT.
-        get_mut!(OUTPUT)[idx] = local_idx + 1u32;
+        // Each lane writes one value into its workgroup chunk of output.
+        get_mut!(pack.output)[idx] = local_idx + 1u32;
         // storage_barrier should make those storage writes visible to peers.
         // Passing case: all lanes sum the same complete 64-lane chunk (2080).
         // Failing case: lanes observe incomplete writes and sums diverge or shrink.
@@ -66,10 +79,10 @@ pub mod storage_barrier_sum {
         let group_base = global_id.x - local_idx;
         let mut sum = 0u32;
         for i in 0u32..64u32 {
-            sum += get!(OUTPUT)[(group_base + i) as usize];
+            sum += get!(pack.output)[(group_base + i) as usize];
         }
 
-        get_mut!(OUTPUT)[128 + idx] = sum;
+        get_mut!(pack.output)[128 + idx] = sum;
     }
 }
 
@@ -77,9 +90,15 @@ pub mod storage_barrier_sum {
 pub mod workgroup_uniform_load_scalar {
     use wgsl_rs::std::*;
 
-    workgroup!(GROUP_VALUE: [u32; 1]);
-    storage!(group(0), binding(0), INPUT: [u32; 1]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 128]);
+    pub struct UniformLoadPack {
+        #[workgroup]
+        pub group_value: Workgroup<[u32; 1]>,
+        #[allow(dead_code)]
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 1]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 128]>,
+    }
 
     /// Stores one scalar per workgroup, then uniformly loads it for all lanes.
     #[compute]
@@ -87,19 +106,20 @@ pub mod workgroup_uniform_load_scalar {
     pub fn main(
         #[builtin(global_invocation_id)] global_id: Vec3u,
         #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &UniformLoadPack,
     ) {
         if local_idx == 0u32 {
             // One lane seeds a workgroup-wide value unique to this workgroup.
             let group_id_x = global_id.x / 64u32;
-            get_mut!(GROUP_VALUE)[0] = 1000u32 + group_id_x;
+            get_mut!(pack.group_value)[0] = 1000u32 + group_id_x;
         }
 
         // Barrier ensures lane 0's write is visible before uniform load.
         // Passing case: all 64 lanes in a workgroup read identical value.
         // Failing case: some lanes read old/default value, causing mixed outputs.
         workgroup_barrier();
-        let uniform = workgroup_uniform_load(&GROUP_VALUE);
-        get_mut!(OUTPUT)[global_id.x as usize] = uniform[0];
+        let uniform = workgroup_uniform_load(&pack.group_value);
+        get_mut!(pack.output)[global_id.x as usize] = uniform[0];
     }
 }
 
@@ -137,13 +157,15 @@ impl RoundtripTest for SynchronizationTest {
             });
             let gpu: Vec<u32> = bytemuck::cast_slice(&gpu_bytes).to_vec();
 
-            workgroup_barrier_sum::INPUT.set(input);
-            workgroup_barrier_sum::SHARED.set([0u32; WG_SIZE]);
-            workgroup_barrier_sum::OUTPUT.set([0u32; INVOCATIONS]);
+            let pack = workgroup_barrier_sum::BarrierPack {
+                shared: Workgroup::new([0u32; WG_SIZE]),
+                input: Storage::new(input),
+                output: Storage::new([0u32; INVOCATIONS]),
+            };
             dispatch_workgroups((WG_COUNT as u32, 1, 1), (WG_SIZE as u32, 1, 1), |b| {
-                workgroup_barrier_sum::main(b.global_invocation_id, b.local_invocation_index)
+                workgroup_barrier_sum::main(b.global_invocation_id, b.local_invocation_index, &pack)
             });
-            let cpu = workgroup_barrier_sum::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
 
             push_u32_result(&mut results, "workgroup_barrier_sum", &gpu, &cpu);
         }
@@ -165,12 +187,14 @@ impl RoundtripTest for SynchronizationTest {
             });
             let gpu: Vec<u32> = bytemuck::cast_slice(&gpu_bytes).to_vec();
 
-            storage_barrier_sum::INPUT.set(input);
-            storage_barrier_sum::OUTPUT.set([0u32; INVOCATIONS * 2]);
+            let pack = storage_barrier_sum::StorageBarrierPack {
+                input: Storage::new(input),
+                output: Storage::new([0u32; INVOCATIONS * 2]),
+            };
             dispatch_workgroups((WG_COUNT as u32, 1, 1), (WG_SIZE as u32, 1, 1), |b| {
-                storage_barrier_sum::main(b.global_invocation_id, b.local_invocation_index)
+                storage_barrier_sum::main(b.global_invocation_id, b.local_invocation_index, &pack)
             });
-            let cpu_all = storage_barrier_sum::OUTPUT.get().to_vec();
+            let cpu_all = pack.output.get().to_vec();
             let gpu_slice = &gpu[INVOCATIONS..INVOCATIONS * 2];
             let cpu_slice = &cpu_all[INVOCATIONS..INVOCATIONS * 2];
 
@@ -195,16 +219,19 @@ impl RoundtripTest for SynchronizationTest {
             });
             let gpu: Vec<u32> = bytemuck::cast_slice(&gpu_bytes).to_vec();
 
-            workgroup_uniform_load_scalar::INPUT.set(input);
-            workgroup_uniform_load_scalar::GROUP_VALUE.set([0u32; 1]);
-            workgroup_uniform_load_scalar::OUTPUT.set([0u32; INVOCATIONS]);
+            let pack = workgroup_uniform_load_scalar::UniformLoadPack {
+                group_value: Workgroup::new([0u32; 1]),
+                input: Storage::new(input),
+                output: Storage::new([0u32; INVOCATIONS]),
+            };
             dispatch_workgroups((WG_COUNT as u32, 1, 1), (WG_SIZE as u32, 1, 1), |b| {
                 workgroup_uniform_load_scalar::main(
                     b.global_invocation_id,
                     b.local_invocation_index,
+                    &pack,
                 )
             });
-            let cpu = workgroup_uniform_load_scalar::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
 
             push_u32_result(&mut results, "workgroup_uniform_load_scalar", &gpu, &cpu);
         }

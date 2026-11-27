@@ -343,6 +343,42 @@ impl WgpuLinkage {
         info.create_named(self.module_label, device, layout, resources)
     }
 
+    /// Creates a bind group for `group` with one resource per binding, in
+    /// binding-number order. This is the positional counterpart to
+    /// [`Self::create_bind_group_named`]: pack fields mangle their resource
+    /// names, so callers that bind by slot avoid embedding mangled names.
+    pub fn create_bind_group<'a>(
+        &mut self,
+        group: u32,
+        device: &wgpu::Device,
+        resources: &[wgpu::BindingResource<'a>],
+    ) -> Result<wgpu::BindGroup, Error> {
+        if !self.bind_group_layouts.contains_key(&group) {
+            let Some(info) = self.bind_groups.get(&group) else {
+                let mut available: Vec<u32> = self.bind_groups.keys().copied().collect();
+                available.sort_unstable();
+                return NoSuchBindGroupSnafu {
+                    module: self.module_label,
+                    group,
+                    available,
+                }
+                .fail();
+            };
+            self.bind_group_layouts.insert(group, info.layout(device));
+        }
+        let info = self
+            .bind_groups
+            .get(&group)
+            .expect("just inserted or found");
+        let layout = self
+            .bind_group_layouts
+            .get(&group)
+            .expect("just inserted or found");
+        // `BindGroupInfo::create` asserts the resource count matches the
+        // entry count, labeling the panic with the bind group's label.
+        Ok(info.create(device, layout, resources))
+    }
+
     /// Returns the cached `wgpu::PipelineLayout` for this module,
     /// building and caching it (and all bind group layouts it
     /// references) on first access. Subsequent calls return a cheap

@@ -17,14 +17,19 @@ const N: usize = 64;
 pub mod abs_f32 {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 scalars + 64 vec4s = 320 floats
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 320]);
+    pub struct AbsF32Pack {
+        // 64 scalars + 64 vec4s = 320 floats
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AbsF32Pack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         // Scalar abs
         let scalar_input = input[idx];
@@ -41,12 +46,12 @@ pub mod abs_f32 {
         let vec_result = abs(vec_input);
 
         // Write results
-        get_mut!(OUTPUT)[idx] = scalar_result;
+        get_mut!(pack.output)[idx] = scalar_result;
         let out_base = 64 + idx * 4;
-        get_mut!(OUTPUT)[out_base] = vec_result.x;
-        get_mut!(OUTPUT)[out_base + 1] = vec_result.y;
-        get_mut!(OUTPUT)[out_base + 2] = vec_result.z;
-        get_mut!(OUTPUT)[out_base + 3] = vec_result.w;
+        get_mut!(pack.output)[out_base] = vec_result.x;
+        get_mut!(pack.output)[out_base + 1] = vec_result.y;
+        get_mut!(pack.output)[out_base + 2] = vec_result.z;
+        get_mut!(pack.output)[out_base + 3] = vec_result.w;
     }
 }
 
@@ -58,14 +63,19 @@ pub mod abs_f32 {
 pub mod abs_i32 {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), INPUT: [i32; 320]); // 64 scalars + 64 vec4s
-    storage!(group(0), binding(1), read_write, OUTPUT: [i32; 320]);
+    pub struct AbsI32Pack {
+        // 64 scalars + 64 vec4s
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 320]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[i32; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &AbsI32Pack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         // Scalar abs
         let scalar_input = input[idx];
@@ -82,12 +92,12 @@ pub mod abs_i32 {
         let vec_result = abs(vec_input);
 
         // Write results
-        get_mut!(OUTPUT)[idx] = scalar_result;
+        get_mut!(pack.output)[idx] = scalar_result;
         let out_base = 64 + idx * 4;
-        get_mut!(OUTPUT)[out_base] = vec_result.x;
-        get_mut!(OUTPUT)[out_base + 1] = vec_result.y;
-        get_mut!(OUTPUT)[out_base + 2] = vec_result.z;
-        get_mut!(OUTPUT)[out_base + 3] = vec_result.w;
+        get_mut!(pack.output)[out_base] = vec_result.x;
+        get_mut!(pack.output)[out_base + 1] = vec_result.y;
+        get_mut!(pack.output)[out_base + 2] = vec_result.z;
+        get_mut!(pack.output)[out_base + 3] = vec_result.w;
     }
 }
 
@@ -98,14 +108,18 @@ pub mod abs_i32 {
 pub mod sign_f32 {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), INPUT: [f32; 320]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 320]);
+    pub struct SignF32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SignF32Pack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         // Scalar sign
         let scalar_input = input[idx];
@@ -122,12 +136,12 @@ pub mod sign_f32 {
         let vec_result = sign(vec_input);
 
         // Write results
-        get_mut!(OUTPUT)[idx] = scalar_result;
+        get_mut!(pack.output)[idx] = scalar_result;
         let out_base = 64 + idx * 4;
-        get_mut!(OUTPUT)[out_base] = vec_result.x;
-        get_mut!(OUTPUT)[out_base + 1] = vec_result.y;
-        get_mut!(OUTPUT)[out_base + 2] = vec_result.z;
-        get_mut!(OUTPUT)[out_base + 3] = vec_result.w;
+        get_mut!(pack.output)[out_base] = vec_result.x;
+        get_mut!(pack.output)[out_base + 1] = vec_result.y;
+        get_mut!(pack.output)[out_base + 2] = vec_result.z;
+        get_mut!(pack.output)[out_base + 3] = vec_result.w;
     }
 }
 
@@ -142,14 +156,18 @@ pub mod sign_f32 {
 pub mod degrees_f32 {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), INPUT: [f32; 320]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 320]);
+    pub struct DegreesF32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &DegreesF32Pack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         // Scalar degrees
         let scalar_input = input[idx];
@@ -166,12 +184,12 @@ pub mod degrees_f32 {
         let vec_result = degrees(vec_input);
 
         // Write results
-        get_mut!(OUTPUT)[idx] = scalar_result;
+        get_mut!(pack.output)[idx] = scalar_result;
         let out_base = 64 + idx * 4;
-        get_mut!(OUTPUT)[out_base] = vec_result.x;
-        get_mut!(OUTPUT)[out_base + 1] = vec_result.y;
-        get_mut!(OUTPUT)[out_base + 2] = vec_result.z;
-        get_mut!(OUTPUT)[out_base + 3] = vec_result.w;
+        get_mut!(pack.output)[out_base] = vec_result.x;
+        get_mut!(pack.output)[out_base + 1] = vec_result.y;
+        get_mut!(pack.output)[out_base + 2] = vec_result.z;
+        get_mut!(pack.output)[out_base + 3] = vec_result.w;
     }
 }
 
@@ -182,14 +200,18 @@ pub mod degrees_f32 {
 pub mod radians_f32 {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), INPUT: [f32; 320]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 320]);
+    pub struct RadiansF32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &RadiansF32Pack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         // Scalar radians
         let scalar_input = input[idx];
@@ -206,12 +228,12 @@ pub mod radians_f32 {
         let vec_result = radians(vec_input);
 
         // Write results
-        get_mut!(OUTPUT)[idx] = scalar_result;
+        get_mut!(pack.output)[idx] = scalar_result;
         let out_base = 64 + idx * 4;
-        get_mut!(OUTPUT)[out_base] = vec_result.x;
-        get_mut!(OUTPUT)[out_base + 1] = vec_result.y;
-        get_mut!(OUTPUT)[out_base + 2] = vec_result.z;
-        get_mut!(OUTPUT)[out_base + 3] = vec_result.w;
+        get_mut!(pack.output)[out_base] = vec_result.x;
+        get_mut!(pack.output)[out_base + 1] = vec_result.y;
+        get_mut!(pack.output)[out_base + 2] = vec_result.z;
+        get_mut!(pack.output)[out_base + 3] = vec_result.w;
     }
 }
 
@@ -447,13 +469,14 @@ impl RoundtripTest for BasicNumericTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            abs_f32::INPUT.set(flattened);
-            abs_f32::OUTPUT.set([0.0f32; 320]);
+            let pack = abs_f32::AbsF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([0.0f32; 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                abs_f32::main(builtins.global_invocation_id);
+                abs_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = abs_f32::OUTPUT.get();
-            let cpu_floats: Vec<f32> = cpu_output_guard.to_vec();
+            let cpu_floats: Vec<f32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..320).map(|i| format!("abs_f32[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -498,13 +521,14 @@ impl RoundtripTest for BasicNumericTest {
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            abs_i32::INPUT.set(flattened);
-            abs_i32::OUTPUT.set([0i32; 320]);
+            let pack = abs_i32::AbsI32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([0i32; 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                abs_i32::main(builtins.global_invocation_id);
+                abs_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = abs_i32::OUTPUT.get();
-            let cpu_i32s: Vec<i32> = cpu_output_guard.to_vec();
+            let cpu_i32s: Vec<i32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..320).map(|i| format!("abs_i32[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -552,13 +576,14 @@ impl RoundtripTest for BasicNumericTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            sign_f32::INPUT.set(flattened);
-            sign_f32::OUTPUT.set([0.0f32; 320]);
+            let pack = sign_f32::SignF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([0.0f32; 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                sign_f32::main(builtins.global_invocation_id);
+                sign_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = sign_f32::OUTPUT.get();
-            let cpu_floats: Vec<f32> = cpu_output_guard.to_vec();
+            let cpu_floats: Vec<f32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..320).map(|i| format!("sign_f32[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -605,13 +630,14 @@ impl RoundtripTest for BasicNumericTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            degrees_f32::INPUT.set(flattened);
-            degrees_f32::OUTPUT.set([0.0f32; 320]);
+            let pack = degrees_f32::DegreesF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([0.0f32; 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                degrees_f32::main(builtins.global_invocation_id);
+                degrees_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = degrees_f32::OUTPUT.get();
-            let cpu_floats: Vec<f32> = cpu_output_guard.to_vec();
+            let cpu_floats: Vec<f32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..320).map(|i| format!("degrees_f32[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -656,13 +682,14 @@ impl RoundtripTest for BasicNumericTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            radians_f32::INPUT.set(flattened);
-            radians_f32::OUTPUT.set([0.0f32; 320]);
+            let pack = radians_f32::RadiansF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([0.0f32; 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                radians_f32::main(builtins.global_invocation_id);
+                radians_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = radians_f32::OUTPUT.get();
-            let cpu_floats: Vec<f32> = cpu_output_guard.to_vec();
+            let cpu_floats: Vec<f32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..320).map(|i| format!("radians_f32[{}]", i)).collect();
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();

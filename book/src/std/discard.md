@@ -39,14 +39,20 @@ pub mod discard_example {
     pub struct Material {
         pub alpha_cutoff: f32,
     }
-    uniform!(MATERIAL, Material);
-    texture!(ALBEDO_TEX, Texture2d);
-    sampler!(ALBEDO_SMP, Sampler);
+
+    pub struct DiscardExamplePack {
+        #[uniform(group(0), binding(0))]
+        pub material: Uniform<Material>,
+        #[texture(group(0), binding(1))]
+        pub albedo_tex: Texture2D<f32>,
+        #[sampler(group(0), binding(2))]
+        pub albedo_smp: Sampler,
+    }
 
     #[fragment]
-    pub fn fs(in: VertexOutput) -> Vec4f {
-        let albedo = textureSample(ALBEDO_TEX, ALBEDO_SMP, in.uv);
-        if albedo.w() < MATERIAL.alpha_cutoff {
+    pub fn fs(in: VertexOutput, pack: &DiscardExamplePack) -> Vec4f {
+        let albedo = texture_sample(&pack.albedo_tex, &pack.albedo_smp, in.uv);
+        if albedo.w() < get!(pack.material).alpha_cutoff {
             discard!();
         }
         albedo

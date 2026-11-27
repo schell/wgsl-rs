@@ -51,11 +51,17 @@ pub mod slab_read_write {
         }
     }
 
-    storage!(group(0), binding(0), read_write, SLAB: RuntimeArray<u32>);
+    pub struct SlabReadWritePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub slab: Storage<RuntimeArray<u32>, ReadWrite>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn slab_example(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn slab_example(
+        #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &SlabReadWritePack,
+    ) {
         let index = local_idx;
 
         // Create our `Data` struct from extracted data from the slab
@@ -63,7 +69,7 @@ pub mod slab_read_write {
         {
             // Extract the u32 data from the slab
             let mut array_data = Data::array_container();
-            slab_copy!(get!(SLAB), index, array_data, 0, Data::SLAB_SIZE);
+            slab_copy!(get!(pack.slab), index, array_data, 0, Data::SLAB_SIZE);
             data = Data::from_array(array_data);
         }
 
@@ -72,7 +78,7 @@ pub mod slab_read_write {
 
         // Write the modified `Data` struct back to the slab
         let out_array = Data::to_array(data);
-        slab_copy!(out_array, 0, get_mut!(SLAB), index, Data::SLAB_SIZE);
+        slab_copy!(out_array, 0, get_mut!(pack.slab), index, Data::SLAB_SIZE);
     }
 }
 ```
@@ -98,7 +104,7 @@ fn Data__1from_array(arr: array<u32, Data__1SLAB_SIZE>) -> Data {
 fn Data__1to_array(data: Data) -> array<u32, Data__1SLAB_SIZE> {
     return array(bitcast<u32>(data.one), data.two, bitcast<u32>(data.three_four.x), bitcast<u32>(data.three_four.y));
 }
-@group(0) @binding(0) var<storage, read_write> SLAB: array<u32>;
+@group(0) @binding(0) var<storage, read_write> slabreadwritepack__slab: array<u32>;
 
 @compute @workgroup_size(8) fn slab_example(@builtin(local_invocation_index) local_idx: u32) {
     let index = local_idx;
@@ -106,14 +112,14 @@ fn Data__1to_array(data: Data) -> array<u32, Data__1SLAB_SIZE> {
     {
         var array_data = Data__1array_container();
         for (var _i: u32 = 0u; _i < Data__1SLAB_SIZE; _i++) {
-            array_data[0 + _i] = SLAB[index + _i];
+            array_data[0 + _i] = slabreadwritepack__slab[index + _i];
         }
         data = Data__1from_array(array_data);
     }
     data.three_four.x = 123.0;
     let out_array = Data__1to_array(data);
     for (var _i: u32 = 0u; _i < Data__1SLAB_SIZE; _i++) {
-        SLAB[index + _i] = out_array[0 + _i];
+        slabreadwritepack__slab[index + _i] = out_array[0 + _i];
     }
 }
 ```

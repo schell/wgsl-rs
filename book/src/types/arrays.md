@@ -60,7 +60,10 @@ pub struct ParticleSystem {
     pub particles: RuntimeArray<Particle>,
 }
 
-storage!(group(0), binding(0), read_write, PARTICLES: ParticleSystem);
+pub struct ParticlesPack {
+    #[storage(group(0), binding(0), read_write)]
+    pub particles: Storage<ParticleSystem, ReadWrite>,
+}
 ```
 
 ```wgsl
@@ -69,7 +72,7 @@ struct ParticleSystem {
   particles: array<Particle>,
 };
 
-@group(0) @binding(0) var<storage, read_write> PARTICLES: ParticleSystem;
+@group(0) @binding(0) var<storage, read_write> particlespack__particles: ParticleSystem;
 ```
 
 ## `array_length`
@@ -77,11 +80,11 @@ struct ParticleSystem {
 Query the length of a runtime array with `array_length(&arr)`. Pass the array field by reference:
 
 ```rust
-let n = array_length(&get!(PARTICLES).particles);
+let n = array_length(&get!(pack.particles).particles);
 ```
 
 ```wgsl
-let n = arrayLength(&PARTICLES.particles);
+let n = arrayLength(&particlespack__particles.particles);
 ```
 
 For fixed-size arrays the length is known statically; use `arr.len()` or the `N` from the type where convenient, but prefer `array_length` only for runtime arrays.

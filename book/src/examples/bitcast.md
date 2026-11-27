@@ -23,11 +23,15 @@ pub mod bitcast_example {
     //!   - `bitcast_vec2f(e)` → `bitcast<vec2<f32>>(e)`, etc.
     use wgsl_rs::std::*;
 
-    // Input: raw u32 data representing packed floats
-    storage!(group(0), binding(0), INPUT: [u32; 256]);
+    pub struct BitcastExamplePack {
+        // Input: raw u32 data representing packed floats
+        #[storage(group(0), binding(0), read_only)]
+        pub input: Storage<[u32; 256], Read>,
 
-    // Output: reinterpreted as floats
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+        // Output: reinterpreted as floats
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256], ReadWrite>,
+    }
 
     // Reinterpret a u32 bit pattern as an f32 value.
     pub fn reinterpret_as_float(bits: u32) -> f32 {
@@ -46,11 +50,11 @@ pub mod bitcast_example {
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitcastExamplePack) {
         let idx = global_id.x() as usize;
         // Read raw u32 bits from input and reinterpret as f32
-        let raw_bits = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = bitcast_f32(raw_bits);
+        let raw_bits = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = bitcast_f32(raw_bits);
     }
 }
 ```
@@ -58,8 +62,8 @@ pub mod bitcast_example {
 ## Generated WGSL
 
 ```wgsl
-@group(0) @binding(0) var<storage, read> INPUT: array<u32, 256>;
-@group(0) @binding(1) var<storage, read_write> OUTPUT: array<f32, 256>;
+@group(0) @binding(0) var<storage, read> bitcastexamplepack__input: array<u32, 256>;
+@group(0) @binding(1) var<storage, read_write> bitcastexamplepack__output: array<f32, 256>;
 
 fn reinterpret_as_float(bits: u32) -> f32 {
     return bitcast<f32>(bits);
@@ -75,8 +79,8 @@ fn reinterpret_vec_as_signed(v: vec4u) -> vec4i {
 
 @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) global_id: vec3u) {
     let idx = u32(global_id.x);
-    let raw_bits = INPUT[idx];
-    OUTPUT[idx] = bitcast<f32>(raw_bits);
+    let raw_bits = bitcastexamplepack__input[idx];
+    bitcastexamplepack__output[idx] = bitcast<f32>(raw_bits);
 }
 ```
 

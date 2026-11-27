@@ -221,13 +221,16 @@ pub fn run_gpu_compute_linked(params: &mut GpuComputeParamsLinked<'_>) -> Vec<u8
     let zeros = vec![0u8; output_size as usize];
     queue.write_buffer(&output_buffer, 0, &zeros);
 
+    // Bind positionally: one resource per binding, in binding-number
+    // order. The simple storage fixtures put INPUT at binding 0 and
+    // OUTPUT at binding 1, and pack-mangled names stay out of the hosts.
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
             &[
-                ("INPUT", input_buffer.as_entire_binding()),
-                ("OUTPUT", output_buffer.as_entire_binding()),
+                input_buffer.as_entire_binding(),
+                output_buffer.as_entire_binding(),
             ],
         )
         .expect("roundtrip_test bind group");

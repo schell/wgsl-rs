@@ -10,6 +10,7 @@ use syn::{
 
 use crate::parse::InterStageIo;
 
+mod bind_group;
 mod builder;
 mod builtins;
 mod deref_validation;
@@ -22,6 +23,7 @@ mod monomorphize;
 mod parse;
 mod parse_visitor;
 mod ptr;
+mod resource;
 mod sampler;
 mod storage;
 mod swizzle;
@@ -29,6 +31,20 @@ mod texture;
 mod uniform;
 mod vector_cmp;
 mod workgroup;
+
+/// Derives `wgsl_rs_linkage_wgpu::BindGroup` for one annotated pack
+/// struct: typed resources, zero string keys. Works on `#[wgsl]`-module
+/// packs and standalone annotated Rust structs alike; the generated
+/// `Resources` struct maps each field by annotation kind, and bindings
+/// resolve through the generated `"Pack::field"` keys, never declaration
+/// order. See `bind_group.rs` for the expansion.
+#[proc_macro_derive(BindGroup, attributes(storage, texture, sampler, uniform, workgroup))]
+pub fn bind_group_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let derive_input: syn::DeriveInput = syn::parse_macro_input!(input as syn::DeriveInput);
+    bind_group::expand(&derive_input)
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
 
 /// Visitor that strips `#[wgsl_allow(...)]` attributes from expressions.
 /// These attributes are used by wgsl-rs during parsing but should not appear
@@ -258,6 +274,7 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
     use parse::{FnAttrs, Item};
     use std::collections::HashSet;
 
+    let pack_plans = resource::pack_const_plans(wgsl_module)?;
     let mut params: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     let mut type_slots = HashSet::new();
@@ -276,16 +293,62 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
         }
     }
 
-    // Pass 2: binding-owned filterability consts. A name may repeat only
-    // because another binding intentionally shares the same const.
     let mut binding_slots = HashSet::new();
-    for (name, span) in parse::binding_filterability_params(wgsl_module) {
+
+    // Pass 1.5: resource-pack type parameters. Each pack-owned slot is a
+    // module-level type parameter, in pack declaration order then parameter
+    // declaration order, before every binding const.
+    let mut pack_type_slots = HashSet::new();
+    for pack in wgsl_module.resource_packs() {
+        for param in &pack.type_params {
+            let encoded = resource::pack_slot_name(&pack.ident, &param.ident);
+            if type_slots.contains(&encoded) {
+                return Err(parse::Error::unsupported(
+                    param.ident.span(),
+                    format!(
+                        "resource-pack type slot `{encoded}` collides with the `impl Trait` type \
+                         linkage slot of the same name; use distinct names"
+                    ),
+                )
+                .into());
+            }
+            pack_type_slots.insert(encoded.clone());
+            binding_slots.insert(encoded.clone());
+            if seen.insert(encoded.clone()) {
+                params.push(encoded);
+            }
+        }
+    }
+
+    // Pass 2: binding-owned address and filterability consts. Repeated
+    // standalone filterability names intentionally share the same const.
+    for (name, _ty, span, pack) in parse::binding_const_params(wgsl_module) {
+        let fixed = pack.as_ref().is_some_and(|pack_name| {
+            pack_plans.iter().any(|plan| {
+                plan.pack == *pack_name
+                    && plan.source == name
+                    && matches!(plan.kind, resource::PackConstKind::Fixed(_))
+            })
+        });
+        if fixed {
+            continue;
+        }
         if type_slots.contains(&name) {
             return Err(parse::Error::unsupported(
                 span,
                 format!(
                     "binding filterability parameter `{name}` collides with the `impl Trait` type \
                      linkage slot of the same name; use distinct names"
+                ),
+            )
+            .into());
+        }
+        if pack_type_slots.contains(&name) {
+            return Err(parse::Error::unsupported(
+                span,
+                format!(
+                    "binding const parameter `{name}` collides with a resource-pack type slot of \
+                     the same name; use distinct names"
                 ),
             )
             .into());
@@ -324,6 +387,9 @@ fn collect_module_params(wgsl_module: &parse::ItemMod) -> Result<Vec<String>, Wg
         // Entry-point const params use a separate `{fn}_c{i}` namespace.
         for (i, _cp) in f.const_params.iter().enumerate() {
             let encoded = format!("{fn_name}_c{i}");
+            if resource::is_shared_pack_alias(&pack_plans, &encoded) {
+                continue;
+            }
             if binding_slots.contains(&encoded) {
                 return Err(parse::Error::unsupported(
                     f.ident.span(),
@@ -480,33 +546,25 @@ fn rewrite_generic_linkages(
         }
 
         let replacement: Option<proc_macro2::TokenStream> = match macro_name.as_str() {
-            "uniform" => generic_uniforms.get(&var_name).map(|(group, binding)| {
+            "uniform" => generic_uniforms.get(&var_name).map(|_| {
                 let name = quote::format_ident!("{}", var_name);
                 quote! {
-                    pub static #name: #crate_path::std::Uniform =
-                        #crate_path::std::Uniform::new(#group, #binding);
+                    pub static #name: #crate_path::std::ModuleVar =
+                        #crate_path::std::ModuleVar::new();
                 }
             }),
-            "storage" => generic_storages
-                .get(&var_name)
-                .map(|(group, binding, access)| {
-                    let name = quote::format_ident!("{}", var_name);
-                    let access_mode = match access {
-                        parse::StorageAccess::Read => quote!(#crate_path::std::Read),
-                        parse::StorageAccess::ReadWrite => quote!(#crate_path::std::ReadWrite),
-                    };
-                    quote! {
-                        pub static #name: #crate_path::std::Storage<
-                            #crate_path::std::WgslTypeVariable,
-                            #access_mode,
-                        > = #crate_path::std::Storage::new(#group, #binding);
-                    }
-                }),
+            "storage" => generic_storages.get(&var_name).map(|_| {
+                let name = quote::format_ident!("{}", var_name);
+                quote! {
+                    pub static #name: #crate_path::std::ModuleVar =
+                        #crate_path::std::ModuleVar::new();
+                }
+            }),
             "workgroup" => generic_workgroups.get(&var_name).map(|_| {
                 let name = quote::format_ident!("{}", var_name);
                 quote! {
-                    pub static #name: #crate_path::std::Workgroup =
-                        #crate_path::std::Workgroup::new();
+                    pub static #name: #crate_path::std::ModuleVar =
+                        #crate_path::std::ModuleVar::new();
                 }
             }),
             _ => None,
@@ -603,11 +661,34 @@ fn gen_wgsl_module(
 
     // Convert the parse module's items to IR items once; both emission
     // paths consume the same owned IR.
-    let ir_items = ir_convert::items_from_parse(&wgsl_module.content).map_err(|e| {
+    let mut ir_items = ir_convert::items_from_parse(&wgsl_module.content).map_err(|e| {
         WgslGenError::WgslParse {
             source: e.into_parse(),
         }
     })?;
+    let pack_plans = resource::pack_const_plans(wgsl_module)?;
+    let fixed_consts: std::collections::HashMap<String, wgsl_rs_ir::ConstValue> = pack_plans
+        .iter()
+        .filter_map(|plan| match plan.kind {
+            resource::PackConstKind::Fixed(value) => Some((plan.source.clone(), value)),
+            resource::PackConstKind::Shared => None,
+        })
+        .collect();
+    if !fixed_consts.is_empty() {
+        wgsl_rs_ir::substitute_consts_in_items(&mut ir_items, &fixed_consts);
+        let module = wgsl_rs_ir::Module {
+            name: "resource-pack-validation",
+            items: ir_items.clone(),
+            attrs: Vec::new(),
+        };
+        if let Err(error) = wgsl_rs_ir::validate_binding_addresses(&module) {
+            let span = pack_plans
+                .first()
+                .map(|plan| plan.span)
+                .unwrap_or_else(proc_macro2::Span::call_site);
+            return Err(parse::Error::unsupported(span, error).into());
+        }
+    }
 
     let module_ctor_ident = quote::format_ident!("__wgsl_module_ctor");
 
@@ -1097,6 +1178,7 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     let crate_path = attrs.crate_path();
 
     let mut wgsl_module = parse::ItemMod::try_from(&input_mod)?;
+    resource::lower_module(&mut wgsl_module)?;
     // `WGSL_SOURCE` and `instantiate` are the macro-emitted items; a
     // user item with either name collides with them and would fail
     // with a duplicate-definition error deep in the consumer crate.
@@ -1273,6 +1355,11 @@ fn go_wgsl(attr: TokenStream, mut input_mod: syn::ItemMod) -> Result<TokenStream
     {
         content.push(item);
     }
+
+    // Resource packs stay ordinary Rust values. Rewrite storage/uniform fields
+    // to their runtime resource types and append annotation-driven constructors
+    // only after WGSL parsing, so these CPU-only functions are never emitted.
+    resource::rewrite_rust_module(&mut input_mod, &wgsl_module)?;
 
     // Strip #[wgsl_allow] attributes before emitting Rust code.
     // These attributes are used during parsing but must be removed from the
@@ -1790,7 +1877,10 @@ pub fn vertex(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
                 if let Some(ident) = attr.path().get_ident() {
-                    !matches!(ident.to_string().as_str(), "builtin")
+                    !matches!(
+                        ident.to_string().as_str(),
+                        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+                    )
                 } else {
                     true
                 }
@@ -1818,7 +1908,10 @@ pub fn fragment(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
                 if let Some(ident) = attr.path().get_ident() {
-                    !matches!(ident.to_string().as_str(), "builtin")
+                    !matches!(
+                        ident.to_string().as_str(),
+                        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+                    )
                 } else {
                     true
                 }
@@ -1843,7 +1936,10 @@ pub fn compute(_attr: TokenStream, token_stream: TokenStream) -> TokenStream {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
                 if let Some(ident) = attr.path().get_ident() {
-                    !matches!(ident.to_string().as_str(), "builtin")
+                    !matches!(
+                        ident.to_string().as_str(),
+                        "builtin" | "location" | "blend_src" | "interpolate" | "invariant"
+                    )
                 } else {
                     true
                 }

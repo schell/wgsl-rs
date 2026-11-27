@@ -62,19 +62,23 @@ owns it the same way.
 pub mod tinted_output {
     use wgsl_rs::std::*;
 
-    // The uniform's concrete type is chosen at instantiation time.
-    uniform!(group(0), binding(0), TINT: impl Convert<f32>);
+    // The pack's type slot chooses the uniform's concrete type at
+    // instantiation time.
+    pub struct TintedOutputPack<T> {
+        #[uniform(group(0), binding(0))]
+        pub tint: Uniform<T>,
+    }
 
     #[fragment]
-    pub fn fs<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
-        let tint = get!(TINT, T);
+    pub fn fs<T: Convert<f32> + Wgsl + Clone + Copy>(pack: &TintedOutputPack<T>) -> Vec4f {
+        let tint = *get!(pack.tint);
         vec4f(f32(tint), f32(tint) * 0.5, 0.0, 1.0)
     }
 }
 
-// In application code: arguments follow `module_type_params` order. Type
-// linkage variables come first, then any binding-owned filterability consts,
-// then entry point parameters. Here: TINT, then fs's `T`, both f32.
+// In application code: arguments follow `module_type_params` order. Pack
+// type parameters come first, then pack const parameters, then non-aliased
+// entry-point parameters. Here: the pack's `T`, then fs's `T`, both f32.
 use wgsl_rs_linkage_wgpu::IrModuleExt;
 
 let mut linkage = tinted_output::instantiate::<f32, f32>().generate_linkage();
@@ -92,6 +96,23 @@ let linkage = heightmap::instantiate::<false>().generate_linkage();
 ```
 
 The bool resolves both the texture's `TextureSampleType::Float { filterable }` and the sampler's `SamplerBindingType`. It does not change the rendered WGSL. Repeated identifiers on multiple bindings share one argument; distinct identifiers add separate arguments in declaration order. See [texture and sampler template parameters](../generics/templates.md#const-parameters-on-texture-and-sampler-bindings).
+
+
+## Resource-pack layouts
+
+Instantiate [resource packs](../writing-shaders/resource-packs.md) before
+analysis just like other templates. Pack-owned group, binding, and
+filterability slots appear in `WGSL_SOURCE.module_type_params` order. Entry
+points sharing a pack alias one set of values, so the WGSL and wgpu layouts
+cannot drift between stages. Separate packs retain independent slots.
+
+```rust
+let linkage = render::instantiate::<1, 0, false>().generate_linkage();
+```
+
+The resulting analysis includes global resources named after pack fields, with
+resolved storage access, texture sample types, and sampler binding types.
+Duplicate addresses are checked again after instantiation.
 
 ## Summary
 

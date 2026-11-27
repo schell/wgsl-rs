@@ -84,30 +84,31 @@ impl FbmPipeline {
         let mut linkage = analyze_wgsl_module(&fbm_shader::WGSL_SOURCE)?;
 
         // Pull each uniform's buffer descriptor out by binding name.
-        // The `uniform!` macro preserves the identifier case, so we
-        // must match the SCREAMING_CASE names as declared in the shader.
+        // Pack fields mangle into `packlower__field` WGSL globals, so we
+        // match the lowercase mangled names.
         let resolution_buffer = linkage
-            .buffer("U_RESOLUTION")
-            .expect("U_RESOLUTION binding present")
+            .buffer("fbmshaderpack__u_resolution")
+            .expect("fbmshaderpack__u_resolution binding present")
             .create_buffer(device);
         let mouse_buffer = linkage
-            .buffer("U_MOUSE")
-            .expect("U_MOUSE binding present")
+            .buffer("fbmshaderpack__u_mouse")
+            .expect("fbmshaderpack__u_mouse binding present")
             .create_buffer(device);
         let time_buffer = linkage
-            .buffer("U_TIME")
-            .expect("U_TIME binding present")
+            .buffer("fbmshaderpack__u_time")
+            .expect("fbmshaderpack__u_time binding present")
             .create_buffer(device);
 
-        // Bind group layout and bind group from the analyzer.
+        // Bind group layout and bind group from the analyzer. Binding is
+        // positional: one resource per binding, in binding-number order.
         let pipeline_layout = linkage.pipeline_layout(device, Some("fbm"));
-        let bind_group = linkage.create_bind_group_named(
+        let bind_group = linkage.create_bind_group(
             0,
             device,
             &[
-                ("U_RESOLUTION", resolution_buffer.as_entire_binding()),
-                ("U_MOUSE", mouse_buffer.as_entire_binding()),
-                ("U_TIME", time_buffer.as_entire_binding()),
+                resolution_buffer.as_entire_binding(),
+                mouse_buffer.as_entire_binding(),
+                time_buffer.as_entire_binding(),
             ],
         )?;
 

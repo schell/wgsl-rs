@@ -19,16 +19,19 @@ const N: usize = 64;
 #[wgsl]
 pub mod bit_count_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct BitCountU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitCountU32Pack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4u(
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4u(
             count_leading_zeros(x),
             count_one_bits(x),
             count_trailing_zeros(x),
@@ -42,16 +45,19 @@ pub mod bit_count_u32 {
 #[wgsl]
 pub mod bit_first_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct BitFirstU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitFirstU32Pack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4u(first_leading_bit(x), first_trailing_bit(x), 0, 0);
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4u(first_leading_bit(x), first_trailing_bit(x), 0, 0);
     }
 }
 
@@ -59,16 +65,19 @@ pub mod bit_first_u32 {
 #[wgsl]
 pub mod bit_extract_insert_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct BitExtractInsertU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitExtractInsertU32Pack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4u(
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4u(
             extract_bits(x, 4u32, 8u32),
             extract_bits(x, 0u32, 16u32),
             insert_bits(x, 255u32, 8u32, 8u32),
@@ -85,16 +94,19 @@ pub mod bit_extract_insert_u32 {
 #[wgsl]
 pub mod bit_precedence_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct BitPrecedenceU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitPrecedenceU32Pack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4u(
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4u(
             select(0u32, 1u32, x & 3 == 3),
             select(0u32, 1u32, x | 1 == 1),
             select(0u32, 1u32, x ^ 2 != 2),
@@ -112,16 +124,21 @@ pub mod bit_precedence_u32 {
 #[wgsl]
 pub mod bit_vector_binary_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 512]); // 64 vec4u pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 256]); // 4 results * 64
+    pub struct BitVectorBinaryU32Pack {
+        // 64 vec4u pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 512]>,
+        // 4 results * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitVectorBinaryU32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4u(
             input[base],
@@ -142,10 +159,10 @@ pub mod bit_vector_binary_u32 {
         let and2 = a.xy() & b.yx();
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base] = a & b;
-        get_mut!(OUTPUT)[out_base + 1] = a | b;
-        get_mut!(OUTPUT)[out_base + 2] = a ^ b;
-        get_mut!(OUTPUT)[out_base + 3] = vec4u(mixed.x(), mixed.y(), and2.x(), and2.y());
+        get_mut!(pack.output)[out_base] = a & b;
+        get_mut!(pack.output)[out_base + 1] = a | b;
+        get_mut!(pack.output)[out_base + 2] = a ^ b;
+        get_mut!(pack.output)[out_base + 3] = vec4u(mixed.x(), mixed.y(), and2.x(), and2.y());
     }
 }
 
@@ -158,16 +175,24 @@ pub mod bit_vector_binary_u32 {
 #[wgsl]
 pub mod bit_vector_swizzle_cmp_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 512]); // 64 vec4u pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 256]); // 4 results * 64
+    pub struct BitVectorSwizzleCmpU32Pack {
+        // 64 vec4u pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 512]>,
+        // 4 results * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &BitVectorSwizzleCmpU32Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4u(
             input[base],
@@ -193,10 +218,10 @@ pub mod bit_vector_swizzle_cmp_u32 {
         let cmp2 = select(0u32, 1u32, a.xy() & b.xy() == b.yx());
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base] = vec4u(or3.x(), or3.y(), or3.z(), 0u32);
-        get_mut!(OUTPUT)[out_base + 1] = vec4u(xor3.x(), xor3.y(), xor3.z(), 0u32);
-        get_mut!(OUTPUT)[out_base + 2] = vec4u(cmp4, 0u32, 0u32, 0u32);
-        get_mut!(OUTPUT)[out_base + 3] = vec4u(cmp2, 0u32, 0u32, 0u32);
+        get_mut!(pack.output)[out_base] = vec4u(or3.x(), or3.y(), or3.z(), 0u32);
+        get_mut!(pack.output)[out_base + 1] = vec4u(xor3.x(), xor3.y(), xor3.z(), 0u32);
+        get_mut!(pack.output)[out_base + 2] = vec4u(cmp4, 0u32, 0u32, 0u32);
+        get_mut!(pack.output)[out_base + 3] = vec4u(cmp2, 0u32, 0u32, 0u32);
     }
 }
 
@@ -206,16 +231,21 @@ pub mod bit_vector_swizzle_cmp_u32 {
 #[wgsl]
 pub mod bit_vector_assign_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 512]); // 64 vec4u pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 256]); // 4 results * 64
+    pub struct BitVectorAssignU32Pack {
+        // 64 vec4u pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 512]>,
+        // 4 results * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitVectorAssignU32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4u(
             input[base],
@@ -241,10 +271,10 @@ pub mod bit_vector_assign_u32 {
         f ^= b.yx();
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base] = c;
-        get_mut!(OUTPUT)[out_base + 1] = d;
-        get_mut!(OUTPUT)[out_base + 2] = e;
-        get_mut!(OUTPUT)[out_base + 3] = vec4u(f.x(), f.y(), 0u32, 0u32);
+        get_mut!(pack.output)[out_base] = c;
+        get_mut!(pack.output)[out_base + 1] = d;
+        get_mut!(pack.output)[out_base + 2] = e;
+        get_mut!(pack.output)[out_base + 3] = vec4u(f.x(), f.y(), 0u32, 0u32);
     }
 }
 
@@ -254,16 +284,21 @@ pub mod bit_vector_assign_u32 {
 #[wgsl]
 pub mod bit_vector_ops_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [i32; 512]); // 64 vec4i pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 320]); // 5 results * 64
+    pub struct BitVectorOpsI32Pack {
+        // 64 vec4i pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 512]>,
+        // 5 results * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4i; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitVectorOpsI32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4i(
             input[base],
@@ -285,11 +320,11 @@ pub mod bit_vector_ops_i32 {
         g |= b.zyx();
 
         let out_base = idx * 5;
-        get_mut!(OUTPUT)[out_base] = a & b;
-        get_mut!(OUTPUT)[out_base + 1] = a | b;
-        get_mut!(OUTPUT)[out_base + 2] = a ^ b;
-        get_mut!(OUTPUT)[out_base + 3] = c;
-        get_mut!(OUTPUT)[out_base + 4] = vec4i(g.x(), g.y(), g.z(), 0);
+        get_mut!(pack.output)[out_base] = a & b;
+        get_mut!(pack.output)[out_base + 1] = a | b;
+        get_mut!(pack.output)[out_base + 2] = a ^ b;
+        get_mut!(pack.output)[out_base + 3] = c;
+        get_mut!(pack.output)[out_base + 4] = vec4i(g.x(), g.y(), g.z(), 0);
     }
 }
 
@@ -399,12 +434,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_count_u32::INPUT.set(inputs);
-            bit_count_u32::OUTPUT.set([Vec4u::default(); N]);
+            let pack = bit_count_u32::BitCountU32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4u::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_count_u32::main(builtins.global_invocation_id);
+                bit_count_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_count_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -443,12 +480,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_first_u32::INPUT.set(inputs);
-            bit_first_u32::OUTPUT.set([Vec4u::default(); N]);
+            let pack = bit_first_u32::BitFirstU32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4u::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_first_u32::main(builtins.global_invocation_id);
+                bit_first_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_first_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -488,12 +527,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_extract_insert_u32::INPUT.set(inputs);
-            bit_extract_insert_u32::OUTPUT.set([Vec4u::default(); N]);
+            let pack = bit_extract_insert_u32::BitExtractInsertU32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4u::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_extract_insert_u32::main(builtins.global_invocation_id);
+                bit_extract_insert_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_extract_insert_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -534,12 +575,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_precedence_u32::INPUT.set(inputs);
-            bit_precedence_u32::OUTPUT.set([Vec4u::default(); N]);
+            let pack = bit_precedence_u32::BitPrecedenceU32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4u::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_precedence_u32::main(builtins.global_invocation_id);
+                bit_precedence_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_precedence_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -584,12 +627,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_vector_binary_u32::INPUT.set(flattened);
-            bit_vector_binary_u32::OUTPUT.set([Vec4u::default(); 256]);
+            let pack = bit_vector_binary_u32::BitVectorBinaryU32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4u::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_vector_binary_u32::main(builtins.global_invocation_id);
+                bit_vector_binary_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_vector_binary_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             const OPS: [&str; 4] = ["and", "or", "xor", "mixed+and2"];
@@ -631,12 +676,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_vector_swizzle_cmp_u32::INPUT.set(flattened);
-            bit_vector_swizzle_cmp_u32::OUTPUT.set([Vec4u::default(); 256]);
+            let pack = bit_vector_swizzle_cmp_u32::BitVectorSwizzleCmpU32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4u::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_vector_swizzle_cmp_u32::main(builtins.global_invocation_id);
+                bit_vector_swizzle_cmp_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_vector_swizzle_cmp_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             const OPS: [&str; 4] = ["or_assign3", "xor3", "eq4", "eq2"];
@@ -678,12 +725,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_vector_assign_u32::INPUT.set(flattened);
-            bit_vector_assign_u32::OUTPUT.set([Vec4u::default(); 256]);
+            let pack = bit_vector_assign_u32::BitVectorAssignU32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4u::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_vector_assign_u32::main(builtins.global_invocation_id);
+                bit_vector_assign_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_vector_assign_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             const OPS: [&str; 4] = ["and_assign", "or_assign", "xor_assign", "xor_assign2"];
@@ -725,12 +774,14 @@ impl RoundtripTest for BitManipulationTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bit_vector_ops_i32::INPUT.set(flattened);
-            bit_vector_ops_i32::OUTPUT.set([Vec4i::default(); 320]);
+            let pack = bit_vector_ops_i32::BitVectorOpsI32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4i::default(); 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bit_vector_ops_i32::main(builtins.global_invocation_id);
+                bit_vector_ops_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bit_vector_ops_i32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             // i32 and u32 bit patterns compare identically; reinterpret so
             // the shared u32 comparison helper applies.
             let cpu_u32s: Vec<u32> = cpu_output

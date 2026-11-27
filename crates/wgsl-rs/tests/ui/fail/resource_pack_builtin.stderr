@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       resource-pack fields cannot combine binding annotations with interstage IO annotations; move builtin or location data into a separate IO struct.'
+ --> tests/ui/fail/resource_pack_builtin.rs:9:9
+  |
+9 |         #[builtin(vertex_index)]
+  |         ^

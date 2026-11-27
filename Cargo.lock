@@ -4090,6 +4090,7 @@ dependencies = [
  "wgpu 30.0.1",
  "wgsl-rs",
  "wgsl-rs-ir",
+ "wgsl-rs-macros",
 ]
 
 [[package]]

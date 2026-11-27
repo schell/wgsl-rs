@@ -101,6 +101,14 @@ fn wgsl_global_names(items: &[parse::Item]) -> Vec<GlobalName> {
                 name: t.name.to_string(),
                 kind: "a module variable",
             }),
+            parse::Item::ResourcePack(pack) => {
+                for field in &pack.fields {
+                    out.push(GlobalName {
+                        name: field.ident.to_string(),
+                        kind: "a resource-pack field",
+                    });
+                }
+            }
             parse::Item::Struct(s) if s.type_params.is_empty() && s.const_params.is_empty() => {
                 out.push(GlobalName {
                     name: s.ident.to_string(),
@@ -176,6 +184,12 @@ fn ensure_default_name_is_free(items: &[parse::Item], e: &parse::ItemEnum) -> Re
 pub fn items_from_parse(items: &[parse::Item]) -> Result<Vec<ir::Item>> {
     let mut out = Vec::new();
     for item in items {
+        if let parse::Item::ResourcePack(pack) = item {
+            for field in &pack.fields {
+                out.push(resource_field(&pack.ident, field)?);
+            }
+            continue;
+        }
         if let Some(ir_item) = item_from_parse(item)? {
             out.push(ir_item);
         }
@@ -209,6 +223,7 @@ fn item_from_parse(item: &parse::Item) -> Result<Option<ir::Item>> {
         // Items that produce no WGSL output are skipped.
         parse::Item::Mod(_)
         | parse::Item::Use(_)
+        | parse::Item::ResourcePack(_)
         | parse::Item::MacroRules
         | parse::Item::Trait
         | parse::Item::Ignored => return Ok(None),
@@ -231,10 +246,105 @@ fn lit_int_to_u32(lit: &syn::LitInt) -> Result<u32> {
     })
 }
 
+fn resource_address(
+    pack: &syn::Ident,
+    address: &crate::resource::AddressValue,
+) -> Result<ir::BindingAddress> {
+    match address {
+        crate::resource::AddressValue::Literal(lit) => {
+            Ok(ir::BindingAddress::Concrete(lit_int_to_u32(lit)?))
+        }
+        crate::resource::AddressValue::Param(ident) => Ok(ir::BindingAddress::Param(
+            crate::resource::pack_slot_name(pack, ident),
+        )),
+    }
+}
+
+/// Lower one annotated pack field to its deterministic global resource name.
+fn resource_field(pack: &syn::Ident, field: &crate::resource::ResourceField) -> Result<ir::Item> {
+    use crate::resource::ResourceKind;
+
+    let group = resource_address(pack, &field.group)?;
+    let binding = resource_address(pack, &field.binding)?;
+    let name = crate::resource::mangle_resource_name(pack, &field.ident);
+    let ty = ty_from_parse(&field.ty)?;
+    Ok(match field.kind {
+        ResourceKind::Uniform => ir::Item::Uniform(ir::ItemUniform {
+            group,
+            binding,
+            name,
+            ty,
+            attrs: vec![],
+        }),
+        ResourceKind::Storage => ir::Item::Storage(ir::ItemStorage {
+            group,
+            binding,
+            access: match field.access {
+                parse::StorageAccess::Read => ir::StorageAccess::Read,
+                parse::StorageAccess::ReadWrite => ir::StorageAccess::ReadWrite,
+            },
+            name,
+            ty,
+            attrs: vec![],
+        }),
+        ResourceKind::Sampler => {
+            let filterable = match &field.ty {
+                parse::Type::Sampler { filterable, .. } => filterable.clone(),
+                parse::Type::SamplerComparison { .. } => ir::Filterability::Concrete(true),
+                _ => unreachable!("resource-pack validation checked the sampler type"),
+            };
+            let filterable = namespace_pack_filterability(pack, filterable);
+            ir::Item::Sampler(ir::ItemSampler {
+                group,
+                binding,
+                name,
+                ty,
+                filterable,
+                attrs: vec![],
+            })
+        }
+        ResourceKind::Workgroup => ir::Item::Workgroup(ir::ItemWorkgroup {
+            name,
+            ty,
+            attrs: vec![],
+        }),
+        ResourceKind::Texture => {
+            let filterable = match &field.ty {
+                parse::Type::Texture { filterable, .. } => filterable.clone(),
+                parse::Type::TextureDepth { .. } | parse::Type::TextureStorage { .. } => {
+                    ir::Filterability::Concrete(true)
+                }
+                _ => unreachable!("resource-pack validation checked the texture type"),
+            };
+            let filterable = namespace_pack_filterability(pack, filterable);
+            ir::Item::Texture(ir::ItemTexture {
+                group,
+                binding,
+                name,
+                ty,
+                filterable,
+                attrs: vec![],
+            })
+        }
+    })
+}
+
+fn namespace_pack_filterability(
+    pack: &syn::Ident,
+    filterable: ir::Filterability,
+) -> ir::Filterability {
+    match filterable {
+        ir::Filterability::Concrete(value) => ir::Filterability::Concrete(value),
+        ir::Filterability::Param(name) => ir::Filterability::Param(
+            crate::resource::pack_slot_name(pack, &syn::Ident::new(&name, Span::call_site())),
+        ),
+    }
+}
+
 fn item_uniform(u: &parse::ItemUniform) -> Result<ir::ItemUniform> {
     Ok(ir::ItemUniform {
-        group: lit_int_to_u32(&u.group)?,
-        binding: lit_int_to_u32(&u.binding)?,
+        group: ir::BindingAddress::Concrete(lit_int_to_u32(&u.group)?),
+        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&u.binding)?),
         name: u.name.to_string(),
         ty: ty_from_parse(&u.ty)?,
         attrs: u.attrs.clone(),
@@ -243,8 +353,8 @@ fn item_uniform(u: &parse::ItemUniform) -> Result<ir::ItemUniform> {
 
 fn item_storage(s: &parse::ItemStorage) -> Result<ir::ItemStorage> {
     Ok(ir::ItemStorage {
-        group: lit_int_to_u32(&s.group)?,
-        binding: lit_int_to_u32(&s.binding)?,
+        group: ir::BindingAddress::Concrete(lit_int_to_u32(&s.group)?),
+        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&s.binding)?),
         access: match s.access {
             parse::StorageAccess::Read => ir::StorageAccess::Read,
             parse::StorageAccess::ReadWrite => ir::StorageAccess::ReadWrite,
@@ -265,8 +375,8 @@ fn item_workgroup(w: &parse::ItemWorkgroup) -> Result<ir::ItemWorkgroup> {
 
 fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
     Ok(ir::ItemSampler {
-        group: lit_int_to_u32(&s.group)?,
-        binding: lit_int_to_u32(&s.binding)?,
+        group: ir::BindingAddress::Concrete(lit_int_to_u32(&s.group)?),
+        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&s.binding)?),
         name: s.name.to_string(),
         ty: ty_from_parse(&s.ty)?,
         filterable: if s.unfilterable {
@@ -284,8 +394,8 @@ fn item_sampler(s: &parse::ItemSampler) -> Result<ir::ItemSampler> {
 
 fn item_texture(t: &parse::ItemTexture) -> Result<ir::ItemTexture> {
     Ok(ir::ItemTexture {
-        group: lit_int_to_u32(&t.group)?,
-        binding: lit_int_to_u32(&t.binding)?,
+        group: ir::BindingAddress::Concrete(lit_int_to_u32(&t.group)?),
+        binding: ir::BindingAddress::Concrete(lit_int_to_u32(&t.binding)?),
         name: t.name.to_string(),
         ty: ty_from_parse(&t.ty)?,
         filterable: if t.unfilterable {
@@ -719,6 +829,14 @@ pub fn ty_from_parse(t: &parse::Type) -> Result<ir::Type> {
             format: format.to_ir(),
             access: storage_access_from_parse(*access),
         },
+        parse::Type::ResourcePack { ident, .. } => {
+            return Err(ConvertError::Unsupported {
+                span: ident.span(),
+                note: "resource-pack types must be removed by resource lowering before IR \
+                       conversion"
+                    .to_string(),
+            });
+        }
         parse::Type::TypeParam { ident } => ir::Type::TypeParam {
             name: ident.to_string(),
         },

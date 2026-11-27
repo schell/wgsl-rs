@@ -26,6 +26,7 @@
   - [`texture!` & `sampler!`](./writing-shaders/binding-macros/texture-sampler.md)
   - [`ptr!`](./writing-shaders/binding-macros/ptr.md)
   - [`discard!`](./writing-shaders/binding-macros/discard.md)
+- [Resource Pack Structs](./writing-shaders/resource-packs.md)
 
 # Types
 

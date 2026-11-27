@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       `#[texture]` requires `group(...)`.'
+ --> tests/ui/fail/resource_pack_missing_group.rs:8:9
+  |
+8 |         #[texture(binding(0))]
+  |         ^

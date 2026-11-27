@@ -18,15 +18,18 @@ const N: usize = 64;
 #[wgsl]
 pub mod bool_vec_annotations {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 192]);
+    pub struct BoolVecAnnotationsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 192]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BoolVecAnnotationsPack) {
         let idx = global_id.x as usize;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let base = idx * 9;
         // The wgsl-rs#169 repro shape: bool vectors in explicit type
@@ -47,19 +50,19 @@ pub mod bool_vec_annotations {
         );
 
         if all(x) {
-            get_mut!(OUTPUT)[idx * 3] = 1u32;
+            get_mut!(pack.output)[idx * 3] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx * 3] = 0u32;
+            get_mut!(pack.output)[idx * 3] = 0u32;
         }
         if any(y) {
-            get_mut!(OUTPUT)[idx * 3 + 1] = 1u32;
+            get_mut!(pack.output)[idx * 3 + 1] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx * 3 + 1] = 0u32;
+            get_mut!(pack.output)[idx * 3 + 1] = 0u32;
         }
         if all(z) {
-            get_mut!(OUTPUT)[idx * 3 + 2] = 1u32;
+            get_mut!(pack.output)[idx * 3 + 2] = 1u32;
         } else {
-            get_mut!(OUTPUT)[idx * 3 + 2] = 0u32;
+            get_mut!(pack.output)[idx * 3 + 2] = 0u32;
         }
     }
 }
@@ -144,8 +147,10 @@ impl RoundtripTest for BoolVectorTypesTest {
 
             let gpu_results = bytemuck::cast_slice::<u8, u32>(&gpu_output);
 
-            bool_vec_annotations::INPUT.set(inputs);
-            bool_vec_annotations::OUTPUT.set([0u32; N * 3]);
+            let pack = bool_vec_annotations::BoolVecAnnotationsPack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; N * 3]),
+            };
             dispatch_workgroups(
                 (1, 1, 1),
                 linkage
@@ -153,10 +158,10 @@ impl RoundtripTest for BoolVectorTypesTest {
                     .expect("main entry present")
                     .workgroup_size,
                 |builtins| {
-                    bool_vec_annotations::main(builtins.global_invocation_id);
+                    bool_vec_annotations::main(builtins.global_invocation_id, &pack);
                 },
             );
-            let cpu_results: Vec<u32> = bool_vec_annotations::OUTPUT.get().to_vec();
+            let cpu_results: Vec<u32> = pack.output.get().to_vec();
 
             let labels: Vec<String> = (0..N * 3)
                 .map(|i| format!("bool_vec_annotations[{i}]"))

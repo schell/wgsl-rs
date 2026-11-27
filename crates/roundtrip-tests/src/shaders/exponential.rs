@@ -12,18 +12,21 @@ const N: usize = 64;
 #[wgsl]
 pub mod exp_basic {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct ExpBasicPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ExpBasicPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         // log/log2 need positive input
         let pos = max(x, 0.001);
-        get_mut!(OUTPUT)[idx] = vec4f(exp(x), exp2(x), log(pos), log2(pos));
+        get_mut!(pack.output)[idx] = vec4f(exp(x), exp2(x), log(pos), log2(pos));
     }
 }
 
@@ -31,17 +34,21 @@ pub mod exp_basic {
 #[wgsl]
 pub mod exp_power {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct ExpPowerPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ExpPowerPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         let pos = max(x, 0.001);
-        get_mut!(OUTPUT)[idx] = vec4f(pow(pos, 2.0), pow(pos, 0.5), sqrt(pos), inverse_sqrt(pos));
+        get_mut!(pack.output)[idx] =
+            vec4f(pow(pos, 2.0), pow(pos, 0.5), sqrt(pos), inverse_sqrt(pos));
     }
 }
 
@@ -94,12 +101,14 @@ impl RoundtripTest for ExponentialTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            exp_basic::INPUT.set(inputs);
-            exp_basic::OUTPUT.set([Vec4f::default(); N]);
+            let pack = exp_basic::ExpBasicPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                exp_basic::main(builtins.global_invocation_id);
+                exp_basic::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = exp_basic::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -139,12 +148,14 @@ impl RoundtripTest for ExponentialTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            exp_power::INPUT.set(inputs);
-            exp_power::OUTPUT.set([Vec4f::default(); N]);
+            let pack = exp_power::ExpPowerPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                exp_power::main(builtins.global_invocation_id);
+                exp_power::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = exp_power::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)

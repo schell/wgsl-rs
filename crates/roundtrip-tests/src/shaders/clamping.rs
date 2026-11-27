@@ -12,16 +12,20 @@ const N: usize = 64;
 #[wgsl]
 pub mod clamp_basic {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct ClampBasicPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ClampBasicPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4f(clamp(x, -1.0, 1.0), min(x, 0.5), max(x, -0.5), step(0.0, x));
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] =
+            vec4f(clamp(x, -1.0, 1.0), min(x, 0.5), max(x, -0.5), step(0.0, x));
     }
 }
 
@@ -29,21 +33,24 @@ pub mod clamp_basic {
 #[wgsl]
 pub mod clamp_interp {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct ClampInterpPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ClampInterpPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         // mix between 0.0 and 10.0 using x as blend factor (clamped 0..1)
         let t = clamp(x, 0.0, 1.0);
         let mixed = mix(0.0, 10.0, t);
         let smoothed = smoothstep(0.0, 1.0, t);
         let selected = select(1.0, 2.0, x > 0.0);
-        get_mut!(OUTPUT)[idx] = vec4f(mixed, smoothed, selected, 0.0);
+        get_mut!(pack.output)[idx] = vec4f(mixed, smoothed, selected, 0.0);
     }
 }
 
@@ -93,12 +100,14 @@ impl RoundtripTest for ClampingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            clamp_basic::INPUT.set(inputs);
-            clamp_basic::OUTPUT.set([Vec4f::default(); N]);
+            let pack = clamp_basic::ClampBasicPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                clamp_basic::main(builtins.global_invocation_id);
+                clamp_basic::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = clamp_basic::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -139,12 +148,14 @@ impl RoundtripTest for ClampingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            clamp_interp::INPUT.set(inputs);
-            clamp_interp::OUTPUT.set([Vec4f::default(); N]);
+            let pack = clamp_interp::ClampInterpPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                clamp_interp::main(builtins.global_invocation_id);
+                clamp_interp::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = clamp_interp::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)

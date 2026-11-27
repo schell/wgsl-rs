@@ -15,20 +15,23 @@ const N: usize = 8;
 #[wgsl]
 pub mod glm_matrix_ops {
     use wgsl_rs::glm::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 32]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 8]);
+    pub struct GlmMatrixOpsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 32]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 8]>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GlmMatrixOpsPack) {
         let idx = global_id.x as usize;
         let base = idx * 4;
         let p = vec4f(
-            get!(INPUT)[base],
-            get!(INPUT)[base + 1],
-            get!(INPUT)[base + 2],
-            get!(INPUT)[base + 3],
+            get!(pack.input)[base],
+            get!(pack.input)[base + 1],
+            get!(pack.input)[base + 2],
+            get!(pack.input)[base + 3],
         );
 
         // Model: rotate around Y by p.w radians, translate by p.xyz,
@@ -49,7 +52,7 @@ pub mod glm_matrix_ops {
         let clip = vp * vec4f(moved.x, moved.y, moved.z, 1.0);
         let recovered = inverse4x4(vp) * vp;
 
-        get_mut!(OUTPUT)[idx] = vec4f(
+        get_mut!(pack.output)[idx] = vec4f(
             clip.x / clip.w,
             clip.y / clip.w,
             transform_vector3(m, vec3f(0.0, 0.0, 1.0)).z,
@@ -62,20 +65,23 @@ pub mod glm_matrix_ops {
 #[wgsl]
 pub mod glm_matrix_ops_23 {
     use wgsl_rs::glm::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 32]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 8]);
+    pub struct GlmMatrixOps23Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 32]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 8]>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GlmMatrixOps23Pack) {
         let idx = global_id.x as usize;
         let base = idx * 4;
         let p = vec4f(
-            get!(INPUT)[base],
-            get!(INPUT)[base + 1],
-            get!(INPUT)[base + 2],
-            get!(INPUT)[base + 3],
+            get!(pack.input)[base],
+            get!(pack.input)[base + 1],
+            get!(pack.input)[base + 2],
+            get!(pack.input)[base + 3],
         );
 
         let m2 = inverse2x2(mat2x2f(vec2f(4.0, 1.0), vec2f(2.0, 2.0 + p.x)));
@@ -91,7 +97,7 @@ pub mod glm_matrix_ops_23 {
             vec3f(0.0, 0.0, 1.0),
         );
 
-        get_mut!(OUTPUT)[idx] = vec4f(
+        get_mut!(pack.output)[idx] = vec4f(
             (m2 * vec2f(2.0, 3.0)).x,
             (m3 * vec3f(1.0, 1.0, 1.0)).y,
             (o * vec4f(0.5, 0.25, -5.0, 1.0)).z,
@@ -150,12 +156,14 @@ impl RoundtripTest for GlmMatrixHelpersTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            glm_matrix_ops::INPUT.set(inputs);
-            glm_matrix_ops::OUTPUT.set([Vec4f::default(); N]);
+            let pack = glm_matrix_ops::GlmMatrixOpsPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                glm_matrix_ops::main(builtins.global_invocation_id);
+                glm_matrix_ops::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = glm_matrix_ops::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -194,12 +202,14 @@ impl RoundtripTest for GlmMatrixHelpersTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            glm_matrix_ops_23::INPUT.set(inputs);
-            glm_matrix_ops_23::OUTPUT.set([Vec4f::default(); N]);
+            let pack = glm_matrix_ops_23::GlmMatrixOps23Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                glm_matrix_ops_23::main(builtins.global_invocation_id);
+                glm_matrix_ops_23::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = glm_matrix_ops_23::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)

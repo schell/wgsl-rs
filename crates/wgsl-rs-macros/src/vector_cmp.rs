@@ -311,6 +311,17 @@ impl Symbols {
                 Item::Workgroup(wg) => {
                     linkage.insert(wg.name.to_string(), wg.ty.clone());
                 }
+                // Pack fields lower to mangled globals before this pass
+                // runs, so comparisons on pack-derived values look up the
+                // mangled resource name here.
+                Item::ResourcePack(pack) => {
+                    for field in &pack.fields {
+                        linkage.insert(
+                            crate::resource::mangle_resource_name(&pack.ident, &field.ident),
+                            field.ty.clone(),
+                        );
+                    }
+                }
                 // Nested modules are deliberately NOT collected into the
                 // enclosing table: their names must not shadow the
                 // enclosing module's (lexical scoping). `rewrite` builds
@@ -362,7 +373,10 @@ impl Symbols {
             Expr::Ident(id) => locals
                 .get(&id.to_string())
                 .cloned()
-                .or_else(|| self.consts.get(&id.to_string()).cloned()),
+                .or_else(|| self.consts.get(&id.to_string()).cloned())
+                // Pack fields lower to bare mangled globals before this
+                // pass; a local initialized from one carries its type.
+                .or_else(|| self.linkage.get(&id.to_string()).cloned()),
             Expr::Paren { inner, .. } => self.infer(inner, locals),
             Expr::Reference { expr, .. } => self.infer(expr, locals),
             Expr::Unary { op, expr } => match op {

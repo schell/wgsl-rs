@@ -1,6 +1,6 @@
 # Binding Macros
 
-wgsl-rs provides declarative macros for declaring GPU bindings. Each macro emits both the WGSL binding declaration and a Rust-side static so the same code works on CPU and GPU. To auto-generate `wgpu` bind group layouts and buffer descriptors from these bindings, see [wgpu Linkage](../linkage/overview.md).
+wgsl-rs provides declarative macros for declaring GPU bindings. Each macro emits both the WGSL binding declaration and a Rust-side static so the same code works on CPU and GPU. To auto-generate `wgpu` bind group layouts and buffer descriptors from these bindings, see [wgpu Linkage](../linkage/overview.md). To group related bindings in an ordinary Rust struct with annotated fields, see [Resource Pack Structs](./resource-packs.md).
 
 ## Overview
 

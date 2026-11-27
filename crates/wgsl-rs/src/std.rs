@@ -200,9 +200,11 @@ impl Wgsl for WgslTypeVariable {
     }
 }
 
-/// Thread-safe module level variable that can be read from or written
-/// to from anywhere.
-struct ModuleVar<T = WgslTypeVariable> {
+/// Thread-safe module-level variable backing the standalone declaration
+/// statics (`uniform!`, `storage!`, `workgroup!`): lazily allocated,
+/// type-erased storage that is set before first read. Pack fields use the
+/// value-holding `Uniform`/`Storage`/`Workgroup` types instead.
+pub struct ModuleVar<T = WgslTypeVariable> {
     inner: LazyLock<Arc<RwLock<TypeMap>>>,
     _phantom: PhantomData<T>,
 }
@@ -214,7 +216,7 @@ impl ModuleVar {
     /// - Panics if the underlying lock has been poisoned.
     /// - Dereferencing the returned guard will panic if it has not previously
     ///   been set.
-    pub fn get<T: AnySendSync>(&self) -> ModuleVarReadGuard<'_, T> {
+    pub fn get_typed<T: AnySendSync>(&self) -> ModuleVarReadGuard<'_, T> {
         let lock = self
             .inner
             .read()
@@ -231,7 +233,7 @@ impl ModuleVar {
     /// - Panics if the underlying lock has been poisoned.
     /// - Dereferencing the returned guard will panic if it has not previously
     ///   been set.
-    pub fn get_mut<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
+    pub fn get_mut_typed<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
         let lock = self
             .inner
             .write()
@@ -256,6 +258,8 @@ impl ModuleVar {
 }
 
 impl<T: AnySendSync> ModuleVar<T> {
+    /// Creates a new, empty module variable.
+    #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             inner: LazyLock::new(Default::default),
@@ -331,106 +335,114 @@ impl<T: AnySendSync> ModuleVar<T> {
             .unwrap_or_else(|_| panic!("could not acquire a write lock on a module variable"));
         map.insert(TypeId::of::<T>(), Box::new(data));
     }
+
+    /// Alias of [`Self::read`] matching the `get!`/`load!` macro surface.
+    ///
+    /// ## Panics
+    /// - Panics if the variable has not been monomorphized.
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
+    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
+        self.read()
+    }
+
+    /// Alias of [`Self::write`] matching the `get_mut!` macro surface.
+    ///
+    /// ## Panics
+    /// - Panics if the variable has not been monomorphized.
+    /// - Panics if the underlying lock has been poisoned.
+    /// - Dereferencing the returned guard will panic if it has not previously
+    ///   been set.
+    pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
+        self.write()
+    }
 }
 
 /// A workgroup variable.
-pub struct Workgroup<T = WgslTypeVariable> {
-    data: ModuleVar<T>,
+/// A workgroup variable, holding its value directly behind a `RwLock` on
+/// the CPU.
+pub struct Workgroup<T> {
+    data: RwLock<T>,
 }
 
 impl<T: Wgsl> Workgroup<T> {
-    /// Creates a new workgroup variable.
+    /// Creates a new workgroup variable holding `value`.
+    ///
+    /// Values are constructed, never defaulted: workgroup variables are
+    /// instance-owned, so the caller supplies the seed.
     #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
+    pub fn new(value: T) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(value),
         }
     }
 
-    /// Get a reference to the inner `T`.
+    /// Get a guard to the inner `T`.
     ///
     /// Not available in WGSL.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
-        self.data.read()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on a workgroup variable"))
     }
 
-    /// Get a mutable reference to the inner `T`.
+    /// Get a mutable guard to the inner `T`.
     ///
     /// Not available in WGSL.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.data.write()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get_mut(&self) -> std::sync::RwLockWriteGuard<'_, T> {
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a workgroup variable"))
     }
 
     /// Set the inner `T`.
     ///
     /// Not available in WGSL.
-    pub fn set(&self, data: T) {
-        self.data.set(data);
-    }
-}
-
-impl Workgroup<WgslTypeVariable> {
-    /// Get a reference to the inner data, as a concrete type `T`.
-    ///
-    /// This is the dynamic accessor for a "generic" workgroup variable
-    /// (one whose type was a type parameter of an entry point).
     ///
     /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard panics if no value has been set for
-    ///   `T`.
-    pub fn get_typed<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
-        self.data.get::<T>()
-    }
-
-    /// Get a mutable reference to the inner data, as a concrete type `T`.
-    ///
-    /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard panics if no value has been set for
-    ///   `T`.
-    pub fn get_mut_typed<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.data.get_mut::<T>()
-    }
-
-    /// Set the inner data for type `T` on a generic workgroup variable.
-    pub fn set_typed<T: Wgsl>(&self, data: T) {
-        self.data.set_typed::<T>(data);
+    /// Panics if the underlying lock has been poisoned.
+    pub fn set(&self, value: T) {
+        let mut lock = self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a workgroup variable"));
+        *lock = value;
     }
 }
 
 /// A shader uniform, backed by a `RwLock<T>` on the CPU.
-pub struct Uniform<T = WgslTypeVariable> {
-    pub group: u32,
-    pub binding: u32,
-    data: ModuleVar<T>,
+/// A shader uniform, holding its value directly behind a `RwLock` on the CPU.
+pub struct Uniform<T> {
+    data: RwLock<T>,
 }
 
 impl<T: Wgsl> Uniform<T> {
-    /// Creates a new uniform.
-    pub const fn new(group: u32, binding: u32) -> Self {
+    /// Creates a new uniform holding `value`.
+    ///
+    /// Values are constructed, never defaulted: uniform values are
+    /// instance-owned, so the caller supplies the data.
+    #[allow(clippy::new_without_default)]
+    pub fn new(value: T) -> Self {
         Self {
-            group,
-            binding,
-            data: ModuleVar::new(),
+            data: RwLock::new(value),
         }
     }
 
-    /// Returns a reference to the inner `T`.
+    /// Returns a guard to the inner `T`.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
-        self.data.read()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on a uniform"))
     }
 
     /// Set the inner `T`.
@@ -444,31 +456,15 @@ impl<T: Wgsl> Uniform<T> {
     /// This is fine because uniform values are read-only from a shader.
     ///
     /// This method still exists to set the value for Rust CPU shader testing.
-    pub fn set(&self, data: T) {
-        self.data.set(data);
-    }
-}
-
-impl Uniform<WgslTypeVariable> {
-    /// Get a reference to the inner data, as a concrete type `T`.
-    ///
-    /// This is the dynamic accessor for a "generic" uniform (one whose type
-    /// was a type parameter of an entry point). Use the two-arg form of the
-    /// `get!` macro: `get!(FRAME, T)`.
     ///
     /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard panics if no value has been set for
-    ///   `T`.
-    pub fn get_typed<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
-        self.data.get::<T>()
-    }
-
-    /// Set the inner data for type `T` on a generic uniform variable.
-    ///
-    /// Not available in WGSL.
-    pub fn set_typed<T: Wgsl>(&self, data: T) {
-        self.data.set_typed::<T>(data);
+    /// Panics if the underlying lock has been poisoned.
+    pub fn set(&self, value: T) {
+        let mut lock = self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a uniform"));
+        *lock = value;
     }
 }
 
@@ -481,12 +477,11 @@ pub struct Write;
 /// Marker type for readwrite access-mode.
 pub struct ReadWrite;
 
-/// A shader storage buffer, backed by a `T`.
-pub struct Storage<T = WgslTypeVariable, AM = Read> {
-    group: u32,
-    binding: u32,
-    access_mode: PhantomData<AM>,
-    data: ModuleVar<T>,
+/// A shader storage buffer, holding its value directly behind a `RwLock` on
+/// the CPU.
+pub struct Storage<T, AM = Read> {
+    data: RwLock<T>,
+    _access: PhantomData<AM>,
 }
 
 /// Marker trait for read or readwrite storage.
@@ -496,87 +491,55 @@ impl AccessMode for Read {}
 impl AccessMode for ReadWrite {}
 
 impl<T: Wgsl, AM: AccessMode> Storage<T, AM> {
-    pub const fn new(group: u32, binding: u32) -> Self {
+    /// Creates a new storage buffer holding `value`.
+    ///
+    /// Values are constructed, never defaulted: storage values are
+    /// instance-owned, so the caller supplies the data.
+    #[allow(clippy::new_without_default)]
+    pub fn new(value: T) -> Self {
         Storage {
-            data: ModuleVar::new(),
-            group,
-            binding,
-            access_mode: PhantomData,
+            data: RwLock::new(value),
+            _access: PhantomData,
         }
     }
 
-    /// Returns a reference to the inner `T`.
+    /// Returns a guard to the inner `T`.
     ///
     /// Not available in WGSL. Use [`get!`] instead.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, T> {
-        self.data.read()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, T> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on a storage variable"))
     }
 
-    /// Returns a mutable reference to the inner `T`.
+    /// Returns a mutable guard to the inner `T`.
     ///
     /// Not available in WGSL. Use [`get_mut!`] instead.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get_mut(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.data.write()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get_mut(&self) -> std::sync::RwLockWriteGuard<'_, T> {
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a storage variable"))
     }
 
     /// Set the inner `T`.
     ///
     /// Not available in WGSL. Used for CPU-side shader testing to
     /// populate storage buffers before calling compute entry points.
-    pub fn set(&self, data: T) {
-        self.data.set(data);
-    }
-
-    /// Returns the group index of this storage variable.
-    pub fn group(&self) -> u32 {
-        self.group
-    }
-
-    /// Returns the binding index within its group of this storage variable.
-    pub fn binding(&self) -> u32 {
-        self.binding
-    }
-}
-
-impl<AM: AccessMode> Storage<WgslTypeVariable, AM> {
-    /// Get a reference to the inner data, as a concrete type `T`.
-    ///
-    /// This is the dynamic accessor for a "generic" storage variable (one
-    /// whose type was a type parameter of an entry point). Use the two-arg
-    /// form of the `get!` macro: `get!(BUFFER, T)`.
     ///
     /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard panics if no value has been set for
-    ///   `T`.
-    pub fn get_typed<T: Wgsl>(&self) -> ModuleVarReadGuard<'_, T> {
-        self.data.get::<T>()
-    }
-
-    /// Get a mutable reference to the inner data, as a concrete type `T`.
-    ///
-    /// This is the dynamic accessor for a "generic" storage variable. Use
-    /// the two-arg form of the `get_mut!` macro: `get_mut!(BUFFER, T)`.
-    ///
-    /// ## Panics
-    /// - Panics if the underlying lock has been poisoned.
-    /// - Dereferencing the returned guard panics if no value has been set for
-    ///   `T`.
-    pub fn get_mut_typed<T: Wgsl>(&self) -> ModuleVarWriteGuard<'_, T> {
-        self.data.get_mut::<T>()
-    }
-
-    /// Set the inner data for type `T` on a generic storage variable.
-    pub fn set_typed<T: Wgsl>(&self, data: T) {
-        self.data.set_typed::<T>(data);
+    /// Panics if the underlying lock has been poisoned.
+    pub fn set(&self, value: T) {
+        let mut lock = self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on a storage variable"));
+        *lock = value;
     }
 }
 
@@ -613,6 +576,12 @@ macro_rules! get {
     ($var:ident) => {
         $var.get()
     };
+    (&$pack:ident . $field:ident) => {
+        (&$pack.$field).get()
+    };
+    ($pack:ident . $field:ident) => {
+        $pack.$field.get()
+    };
     ($var:ident, $ty:ty) => {
         $var.get_typed::<$ty>()
     };
@@ -642,6 +611,12 @@ macro_rules! get {
 macro_rules! get_mut {
     ($var:ident) => {
         $var.get_mut()
+    };
+    (&$pack:ident . $field:ident) => {
+        (&$pack.$field).get_mut()
+    };
+    ($pack:ident . $field:ident) => {
+        $pack.$field.get_mut()
     };
     ($var:ident, $ty:ty) => {
         $var.get_mut_typed::<$ty>()
@@ -676,6 +651,14 @@ macro_rules! load {
         // The `let` binding forces the copy into an owned value; `*$var.get()`
         // alone would be a place expression that still borrows the guard.
         let v = *$var.get();
+        v
+    }};
+    (&$pack:ident . $field:ident) => {{
+        let v = *(&$pack.$field).get();
+        v
+    }};
+    ($pack:ident . $field:ident) => {{
+        let v = *$pack.$field.get();
         v
     }};
     ($var:ident, $ty:ty) => {{
@@ -946,6 +929,12 @@ impl<T> ArrayLength for &RuntimeArray<T> {
     }
 }
 
+impl<T: Wgsl, A: AccessMode> ArrayLength for &Storage<RuntimeArray<T>, A> {
+    fn array_length(self) -> u32 {
+        self.get().len()
+    }
+}
+
 /// Returns the number of elements in a runtime-sized array.
 ///
 /// This is the Rust-side equivalent of the WGSL `arrayLength` builtin function.
@@ -980,9 +969,9 @@ mod tests {
 
     #[test]
     fn load_copies_concrete_module_var_values() {
-        static U: Uniform<f32> = Uniform::new(0, 0);
-        static S: Storage<f32, Read> = Storage::new(0, 1);
-        static W: Workgroup<f32> = Workgroup::new();
+        static U: ModuleVar<f32> = ModuleVar::new();
+        static S: ModuleVar<f32> = ModuleVar::new();
+        static W: ModuleVar<f32> = ModuleVar::new();
 
         U.set(1.5_f32);
         S.set(2.5_f32);
@@ -995,8 +984,22 @@ mod tests {
 
     #[test]
     fn load_typed_copies_generic_module_var_values() {
-        static G: Uniform = Uniform::new(0, 0);
+        static G: ModuleVar = ModuleVar::new();
         G.set_typed(4.5_f32);
         assert_eq!(load!(G, f32), 4.5_f32);
+    }
+
+    #[test]
+    fn value_holders_construct_with_values() {
+        let uniform = Uniform::new(1.5_f32);
+        let storage = Storage::<[f32; 4], ReadWrite>::new([0.0, 0.0, 0.0, 0.0]);
+        let workgroup = Workgroup::new(3.5_f32);
+
+        assert_eq!(*uniform.get(), 1.5_f32);
+        assert_eq!(*storage.get(), [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(*workgroup.get(), 3.5_f32);
+
+        storage.get_mut()[1] = 7.0;
+        assert_eq!(*storage.get(), [0.0, 7.0, 0.0, 0.0]);
     }
 }

@@ -38,21 +38,26 @@ the choice matters for your application.
 pub mod derivatives_example {
     use wgsl_rs::std::*;
 
-    uniform!(FRAME, Frame);
-    texture!(COLOR_TEX, Texture2d);
-    sampler!(COLOR_SMP, Sampler);
-
     pub struct Frame {
         pub time: f32,
     }
 
+    pub struct DerivativesExamplePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<Frame>,
+        #[texture(group(0), binding(1))]
+        pub color_tex: Texture2D<f32>,
+        #[sampler(group(0), binding(2))]
+        pub color_smp: Sampler,
+    }
+
     #[fragment]
-    pub fn fs(in: VertexOutput) -> Vec4f {
+    pub fn fs(in: VertexOutput, pack: &DerivativesExamplePack) -> Vec4f {
         let uv = in.uv;
         let dx = dpdx_fine(uv);
         let dy = dpdy_fine(uv);
         let w = fwidth_fine(uv);
-        let color = textureSampleGrad(COLOR_TEX, COLOR_SMP, uv, dx, dy);
+        let color = texture_sample_grad(&pack.color_tex, &pack.color_smp, uv, dx, dy);
         color
     }
 }

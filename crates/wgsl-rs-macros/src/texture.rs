@@ -10,12 +10,7 @@ use crate::parse::{
 
 pub fn texture(input: TokenStream) -> TokenStream {
     let ItemTexture {
-        group,
-        binding,
-        name,
-        ty,
-        rust_ty,
-        ..
+        name, ty, rust_ty, ..
     } = parse_macro_input!(input as ItemTexture);
 
     // Generate a hidden inner static and a public const reference.
@@ -32,7 +27,7 @@ pub fn texture(input: TokenStream) -> TokenStream {
 
             quote! {
                 #[doc(hidden)]
-                static #inner_name: #rust_ty = #rust_type::new(#group, #binding);
+                static #inner_name: #rust_ty = #rust_type::new();
                 pub const #name: &'static #rust_ty = &#inner_name;
             }
         }
@@ -41,7 +36,7 @@ pub fn texture(input: TokenStream) -> TokenStream {
 
             quote! {
                 #[doc(hidden)]
-                static #inner_name: #rust_type = #rust_type::new(#group, #binding);
+                static #inner_name: #rust_type = #rust_type::new();
                 pub const #name: &'static #rust_type = &#inner_name;
             }
         }
@@ -58,7 +53,7 @@ pub fn texture(input: TokenStream) -> TokenStream {
             quote! {
                 #[doc(hidden)]
                 static #inner_name: #rust_type<#format_type, #access_type> =
-                    #rust_type::new(#group, #binding);
+                    #rust_type::new();
                 pub const #name: &'static #rust_type<#format_type, #access_type> = &#inner_name;
             }
         }

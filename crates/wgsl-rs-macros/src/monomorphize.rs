@@ -2469,6 +2469,12 @@ pub(crate) fn mangle_type(ty: &Type) -> Result<String, crate::parse::Error> {
             let elem_m = mangle_type(elem)?;
             mangle(&["ptr", space, &elem_m])
         }
+        Type::ResourcePack { ident, .. } => {
+            return Err(crate::parse::Error::unsupported(
+                ident.span(),
+                "resource-pack types do not have WGSL names",
+            ));
+        }
         Type::TypeParam { ident } => {
             // Case-preserving: substitution keys on the param name as
             // written (e.g. "T"), so mangling must not destroy a
@@ -2565,6 +2571,12 @@ fn type_to_key(ty: &Type) -> Result<TypeKey, crate::parse::Error> {
             elem,
             ..
         } => TypeKey::Ptr(format!("{:?}", address_space), Box::new(type_to_key(elem)?)),
+        Type::ResourcePack { ident, .. } => {
+            return Err(crate::parse::Error::unsupported(
+                ident.span(),
+                "resource-pack types do not have WGSL type keys",
+            ));
+        }
         Type::TypeParam { ident } => TypeKey::TypeParam(ident.to_string()),
         // Reuse the inner type's key: two instantiations are distinct iff
         // their inner types are distinct. The phantom wrapper adds no
@@ -2587,6 +2599,7 @@ pub(crate) fn contains_type_param(ty: &Type) -> bool {
         | Type::Phantom { elem, .. } => contains_type_param(elem),
         Type::AssocType { ty, .. } => contains_type_param(ty),
         Type::Struct { type_args, .. } => type_args.iter().any(contains_type_param),
+        Type::ResourcePack { .. } => false,
         Type::Scalar { .. }
         | Type::Vector { .. }
         | Type::Matrix { .. }

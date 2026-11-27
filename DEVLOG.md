@@ -2386,3 +2386,229 @@ are not inferred for an otherwise unconstrained bare `Sampler::new()` call.
 Direct CPU callers annotate `Sampler` or write `Sampler::<true>::new()`;
 macro-generated statics always have explicit types. This does not affect the
 binding declaration syntax.
+
+### 2026-11-26: Resource packs use annotated ordinary Rust structs
+
+**Problem.** Related resources need a Rust-level container that can be passed
+through entry points and helpers, but WGSL has no resource structs or resource
+references. The CPU side still needs real resource values and addresses, and
+the GPU side needs global bindings with coherent generic layouts. An earlier
+wrapper-based direction would have split those responsibilities across
+`Binding<B, T>`, a `#[bindings]` marker, and an `import()` API.
+
+**Decision.** Any public struct with `#[texture]`, `#[sampler]`, `#[storage]`,
+or `#[uniform]` fields is registered as a resource pack. No marker on the
+struct or parameter is needed. The emitted Rust keeps an ordinary struct and a
+generated `new()` constructs its resources from the annotated addresses.
+Storage and uniform declarations name their inner value types, while their
+Rust fields use the existing runtime `Storage` and `Uniform` resources. The
+WGSL-facing parse keeps no struct item: each field becomes a global IR resource
+named after the field.
+
+Entry points and helpers explicitly accept `&Pack<...>`. WGSL lowering removes
+those parameters and their call arguments. The only resource-access form is a
+direct field borrow such as `&pack.field`; it resolves to the global resource.
+This deliberately rejects destructuring and local aliases rather than growing
+a second alias-resolution system. Existing receiver rules remain unchanged,
+including associated functions with an explicit pack parameter but no new
+`self` support.
+
+Each pack const has a deterministic pack-owned module slot. Entry-point consts
+used in its type are aliases, so every stage sharing a pack receives one value
+for body code and layout metadata. Separate packs namespace their slots and
+remain independent. Matching concrete uses specialize immediately; conflicting
+concrete or concrete/generic uses are errors. Address and name validation runs
+again after substitution, including u32 range checks for group and binding.
+
+**Why the exclusions.** `Binding<B, T>` and `import()` introduce a second
+resource declaration model even though field annotations already carry the
+same information as the existing IO model. Destructuring would require local
+resource aliases and statement removal, which are separable from the core
+lowering. Combined builtin/resource structs would obscure WGSL's strict split
+between invocation IO and global resources. V1 keeps both kinds of struct
+annotation-driven without making only resources type-driven.
+
+**Future direction.** A later phase may make resource packs and interstage IO
+structs type-driven together. That is a broader, coherent design change;
+changing only bindings would create two incompatible ways to describe shader
+data. The current direct-field-borrow boundary leaves that future work open
+without committing to wrappers, `import()`, destructuring, or receiver
+lowering.
+
+### 2026-11-26: Pack const slots reject collisions instead of re-encoding
+
+**Problem.** Pack-owned const slots are encoded as `{pack}_{param}`
+(`pack_const_slot_name`), which is not injective: `PackA_B::<const C>` and
+`PackA::<const B_C>` both produce `PackA_B_C`. Distinct packs sharing a slot
+key collapse to one entry in the generated `instantiate` const-substitution
+map, silently pointing one pack's addresses or filterability at the other
+pack's values, with no diagnostic anywhere.
+
+**Decision.** Reject the collision at the second pack's declaration
+(`validate_pack_const_slots`, run next to `validate_resources`) instead of
+re-encoding the key. The error names both producers and the shared slot and
+suggests a rename.
+
+**Why not an injective encoding.** No underscore-joining scheme can be
+unambiguous because `_` is legal inside Rust identifiers. Length-prefixed
+keys (e.g. `5_PackA_B_C`) are injective but stop being valid WGSL
+identifiers, and slot names are user-facing in rendered template source
+(`@group(SharedPack_GROUP)`) and in `Source::module_type_params`. Rejection
+keeps the readable encoding for every realistic module and costs only a
+targeted error in the pathological case. Collisions between pack slots and
+the other substitution-namespace members (`impl Trait` linkage slots,
+entry-point positional keys) were already rejected in
+`collect_module_params`; this closes the pack-vs-pack pair. A pack slot
+colliding with a user-authored module const of the same name remains
+unchecked; that edge predates packs and is inherited from the standalone
+declaration world.
+
+### 2026-11-26: Type-generic resource packs substitute through pack-owned slots
+
+**Problem.** Resource packs are becoming the canonical binding model, but
+packs rejected type parameters while the legacy `impl Trait` linkage style
+provided generic bindings. Rust struct fields cannot use `impl Trait`, so
+the generic form of the pack model needed pack type parameters.
+
+**Decision.** `parse_resource_pack` accepts type parameters and renames them
+to pack-owned slots (`Pack_T`) at field parse time, exactly the namespacing
+const parameters use. Every type parameter of a pack becomes one
+module-level generic: a pack declaring `DataPack<T>` is a template by
+declaration, with no concrete-use specialization. Entry-point type arguments
+generate `linkage::Type<Is = ...>` constraints — the same machinery as
+`get!(VAR, T)` — so rustc rejects inconsistent instantiations; helpers with
+a type parameter used only in the pack parameter read the slot directly
+(the type-parameter mirror of const aliasing) and may not use it in other
+parameter or return positions. The generated CPU constructor replays the
+struct's declared bounds plus `Wgsl` on every type parameter.
+
+**Why.** A type slot cannot mirror the const Fixed/Shared split: one
+parameterized binding used as several concrete types across entry points is
+the legacy linkage pattern (`generic_linkage_specialization`), and
+Fixed-style rejection would break it. Always-generic slots plus constraints
+preserve that behavior with the pack spelling. The bare-or-nested-element
+field-type restriction follows the IR: composite field types like `Vec4<T>`
+have no TypeParam-bearing representation, matching the `impl Trait` world,
+while `RuntimeArray<T>` and other nested `Type` positions carry the slot
+through.
+
+**Slot encoding note.** Type and const parameters share the `{pack}_{param}`
+encoding and one namespace; `validate_pack_param_slots` rejects collisions
+across both kinds together.
+
+### 2026-11-26: Pack fields declare their runtime wrapper types
+
+**Problem.** Pack uniform/storage fields declared their WGSL inner types
+(`slab: RuntimeArray<Vec4f>`) and the macro rewrote the emitted Rust field
+types to `Storage<...>` wrappers and generated a `new()` constructor. The
+macro mutated user code, hid the CPU representation hosts reason about, and
+the `impl Trait` statics world still supplied the access story.
+
+**Decision (user, 2026-11-26).** Fields declare the runtime wrapper types
+(`Uniform<T>`, `Storage<T, AM>`); the transpiler extracts the WGSL inner type
+from the wrapper's first generic argument. No constructors are generated and
+the `new`-collision check is deleted: hosts construct packs by hand over
+non-private fields, and user-written constructors are free (typically
+`#[wgsl_ignore]`-ed inherent impls). Storage access may come from the
+annotation, the type marker, or both; when both are present they must agree,
+and an annotation-named access whose marker is absent is inserted into the
+emitted Rust so CPU capability follows the annotation.
+
+**Why.** The CPU side of a pack is now exactly what the user wrote; emission
+touches pack structs only for attribute stripping and marker insertion,
+restoring the strictly-additive charter (2025-12-08) for everything else.
+Hand construction also makes value-taking resource constructors natural:
+the host supplies values where it constructs.
+
+### 2026-11-26: Resource values are constructed, never deferred
+
+**Problem.** Pack `Uniform`/`Storage`/`Workgroup` fields wrapped the
+type-erased `ModuleVar` (`LazyLock<Arc<RwLock<TypeMap>>>`): reads panicked
+until the host called `set`, every access downcast, and CPU resource types
+carried address metadata that duplicated what annotations already state.
+
+**Decision (user, 2026-11-26).** The three wrappers hold `RwLock<T>` directly
+and take their value at construction (`Uniform::new(value)`,
+`Storage::new(value)`, `Workgroup::new(value)`); no `Default` bounds, no
+unset-read panics, and no address metadata on CPU resources (annotations are
+the single source of group/binding; `group()`/`binding()` accessors are
+deleted, as are their fields on texture and sampler types, whose
+constructors take no arguments).
+
+**Statics bridge.** Standalone declarations cannot take construction values
+(statics), which is exactly why `ModuleVar` exists. The declaration macros
+(`uniform!`, `storage!`, `workgroup!`) re-point their expansions to
+`ModuleVar` statics, whose accessors are renamed `get_typed`/`get_mut_typed`
+with `get`/`get_mut` aliases matching the access-macro surface; the
+`WorkgroupUniformLoad` CPU builtin gains `ModuleVar` impls so statics keep
+working through the same builtins. The bridge keeps the 359 unmigrated sites
+green until the removal pass deletes the declaration macros and the
+`ModuleVar` layer with them. Textures and samplers keep their lazy
+`ModuleVar` storage for now (their pixel data cannot be const-constructed in
+statics); their value-holding form is a decision for the removal pass.
+
+### 2026-11-27: Binding keys are two axes, canonicalized at lookup
+
+**Problem.** Pack fields mangle into WGSL global names (`atlasbindgroup__slab`),
+so every host that binds by name has to hand-mangle strings, and the mangled
+spelling leaks into error messages and user code (the renderling atlas port
+hit exactly this with `MissingBinding { name: "atlasbindgroup__slab" }`).
+
+**Decision.** A binding is keyed by two axes, `(group, "Pack::field")`, using
+the Rust path spelling as the canonical key. The linkage does not store the
+friendly form: lookups canonicalize `"Pack::field"` to the mangled name at
+match time (lowercased pack segment joined to the field with `__`, mirroring
+the macro's `mangle_resource_name`), so the IR and the analysis are
+unchanged and both spellings resolve in `create_bind_group_named`,
+`BindGroupInfo::create_named`, and `buffer`/`take_buffer`.
+
+Per-field key consts are generated onto the pack, and layout-only consts
+(`FILTERABLE`) vanish from the key: the spelling is parameter-independent,
+so every instantiation shares one const value. Consts that select the group
+axis cannot be formatted into a string at compile time, so the group rides a
+`{PARAM}_N` value const instead (`MyBg::<1>::GROUP_N == 1`); the group is
+always the positional argument, never part of the name. One name therefore
+resolves in any number of groups without collision (the "three slabs" driver).
+
+**Why canonicalization over storage.** Storing a second friendly name per
+binding in the IR would touch the IR, the analyzer, and the Display output
+for a spelling that is derivable from the mangled name. The `::` separator
+cannot appear in a WGSL identifier, so friendly keys can never collide with
+legacy or mangled names; mixing both spellings of one field is detected as a
+duplicate. This keeps Phase A a small, reversible change on top of the
+positional `create_bind_group`, while the later typed `BindGroup` derive
+sits on the same canonical keys.
+
+### 2026-11-27: Typed bind groups via an opt-in derive, not auto-apply
+
+**Problem.** The binding-key design called for `#[derive(BindGroup)]` to be
+"auto-applied inside `#[wgsl]`" - every pack silently gaining the typed impl.
+But the generated impl references `::wgsl_rs_linkage_wgpu::...`, and
+`wgsl-rs` is deliberately wgpu-free (a documented crate boundary; the
+linkage crate depends on wgsl-rs, never the reverse). Eager path resolution
+means auto-apply would break every CPU-only pack user - including wgsl-rs's
+own test suite - unless they add a wgpu dependency they do not use.
+
+**Decision.** The derive is opt-in: one `#[derive(BindGroup)]` line per pack,
+spelled with a path inside `#[wgsl]` modules
+(`#[derive(wgsl_rs_linkage_wgpu::BindGroup)]`) and usable on standalone
+annotated structs in host crates. When the `#[wgsl]` macro sees the derive
+on a pack it stops stripping the field annotations, so the derive re-reads
+them from the emitted struct (the derive registers them as helper
+attributes, keeping them legal Rust); both entry points share one expansion
+in `bind_group.rs`. This preserves the zero-ceremony property where it is
+free (no wgsl attribute, no constructor call, just the derive) while keeping
+CPU-only crates link-clean.
+
+The generated shape follows the agreed design: a NAMED `{Pack}Resources<'a>`
+struct forbids the silent same-kind swaps a tuple would allow; resource kinds
+map by annotation (`Storage`/`Uniform` -> `BufferBinding`, textures ->
+`&TextureView`, samplers -> `&Sampler`, `#[workgroup]` skipped); bindings
+resolve from field attributes and generated keys, never declaration order;
+layout-only consts leave `Resources` flavor-agnostic; the group rides the
+pack's const parameter, so `MyBg::<1>` *is* group 1. One call builds one
+bind group, so the derive rejects packs whose fields select different
+groups. The trait lives inside `linkage.rs` (compiled per wgpu major, like
+the rest of the linkage) and creation panics on instantiation mismatch
+with the linkage's own error - the accepted gap, since nothing statically
+ties a pack instantiation to a module instantiation's linkage.

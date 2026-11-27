@@ -196,26 +196,36 @@ impl WgpuLinkage {
 
     /// Returns the buffer descriptor for a `uniform!` or `storage!`
     /// binding by its declared name, if any.
+    ///
+    /// Resource-pack fields may also be looked up by their friendly key,
+    /// `"Pack::field"` (as emitted by the generated per-field consts);
+    /// it is canonicalized to the mangled global name automatically.
     pub fn buffer(&self, name: &str) -> Option<&BufferDescriptorInfo> {
-        self.buffers.iter().find(|b| b.binding_name == name)
+        if let Some(info) = self.buffers.iter().find(|b| b.binding_name == name) {
+            return Some(info);
+        }
+        let normalized = normalize_binding_key(name)?;
+        self.buffers.iter().find(|b| b.binding_name == normalized)
     }
 
     /// Returns the buffer descriptor for a `uniform!` or `storage!`
     /// binding by its declared name, if any - removing it from the linkage.
     ///
+    /// Resource-pack fields may also be looked up by their friendly key,
+    /// `"Pack::field"`; it is canonicalized to the mangled global name
+    /// automatically.
+    ///
     /// Use this to ensure that you provide data for all buffers in your
     /// program.
     pub fn take_buffer(&mut self, name: &str) -> Option<BufferDescriptorInfo> {
-        let mut info = None;
-        self.buffers.retain(|bi| {
-            if bi.binding_name == name {
-                info = Some(bi.clone());
-                false
-            } else {
-                true
+        let index = match self.buffers.iter().position(|bi| bi.binding_name == name) {
+            Some(index) => index,
+            None => {
+                let normalized = normalize_binding_key(name)?;
+                self.buffers.iter().position(|bi| bi.binding_name == normalized)?
             }
-        });
-        info
+        };
+        Some(self.buffers.remove(index))
     }
 
     /// Returns the WGSL source for this linkage's source, rendered from
@@ -296,6 +306,10 @@ impl WgpuLinkage {
     /// `BindGroupEntry` list is sorted by binding number, matching the
     /// cached layout.
     ///
+    /// Resource-pack fields accept their friendly key,
+    /// `"Pack::field"` (as emitted by the generated per-field consts),
+    /// in addition to the mangled binding name.
+    ///
     /// Looks up (and builds+caches on first access) the bind group
     /// layout for `group`, then delegates to
     /// [`BindGroupInfo::create_named`].
@@ -341,6 +355,80 @@ impl WgpuLinkage {
             .get(&group)
             .expect("just inserted or found");
         info.create_named(self.module_label, device, layout, resources)
+    }
+
+    /// The labeled counterpart to [`Self::create_bind_group_named`]:
+    /// `label` overrides the created bind group's wgpu diagnostic
+    /// label, falling back to the linkage-derived default when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::create_bind_group_named`].
+    pub fn create_bind_group_named_with_label<'a>(
+        &mut self,
+        group: u32,
+        device: &wgpu::Device,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'a>)],
+    ) -> Result<wgpu::BindGroup, Error> {
+        if !self.bind_group_layouts.contains_key(&group) {
+            let Some(info) = self.bind_groups.get(&group) else {
+                let mut available: Vec<u32> = self.bind_groups.keys().copied().collect();
+                available.sort_unstable();
+                return NoSuchBindGroupSnafu {
+                    module: self.module_label,
+                    group,
+                    available,
+                }
+                .fail();
+            };
+            self.bind_group_layouts.insert(group, info.layout(device));
+        }
+        let info = self
+            .bind_groups
+            .get(&group)
+            .expect("just inserted or found");
+        let layout = self
+            .bind_group_layouts
+            .get(&group)
+            .expect("just inserted or found");
+        info.create_named_with_label(self.module_label, device, layout, label, resources)
+    }
+
+    /// Creates a bind group for `group` with one resource per binding, in
+    /// binding-number order. This is the positional counterpart to
+    /// [`Self::create_bind_group_named`]: pack fields mangle their resource
+    /// names, so callers that bind by slot avoid embedding mangled names.
+    pub fn create_bind_group<'a>(
+        &mut self,
+        group: u32,
+        device: &wgpu::Device,
+        resources: &[wgpu::BindingResource<'a>],
+    ) -> Result<wgpu::BindGroup, Error> {
+        if !self.bind_group_layouts.contains_key(&group) {
+            let Some(info) = self.bind_groups.get(&group) else {
+                let mut available: Vec<u32> = self.bind_groups.keys().copied().collect();
+                available.sort_unstable();
+                return NoSuchBindGroupSnafu {
+                    module: self.module_label,
+                    group,
+                    available,
+                }
+                .fail();
+            };
+            self.bind_group_layouts.insert(group, info.layout(device));
+        }
+        let info = self
+            .bind_groups
+            .get(&group)
+            .expect("just inserted or found");
+        let layout = self
+            .bind_group_layouts
+            .get(&group)
+            .expect("just inserted or found");
+        // `BindGroupInfo::create` asserts the resource count matches the
+        // entry count, labeling the panic with the bind group's label.
+        Ok(info.create(device, layout, resources))
     }
 
     /// Returns the cached `wgpu::PipelineLayout` for this module,
@@ -499,6 +587,12 @@ impl BindGroupInfo {
     /// the binding declaration order; the produced `BindGroupEntry`
     /// list is sorted by binding number, matching the layout.
     ///
+    /// Resource-pack fields accept their friendly key,
+    /// `"Pack::field"` (as emitted by the generated per-field consts),
+    /// in addition to the mangled binding name: the key is canonicalized
+    /// automatically, and mixing both spellings of one field is a
+    /// duplicate-name error.
+    ///
     /// `module_label` is the linkage's `module_label`, used to build
     /// helpful error messages. It is not borrowed into the returned
     /// bind group.
@@ -518,13 +612,53 @@ impl BindGroupInfo {
         layout: &wgpu::BindGroupLayout,
         resources: &[(&str, wgpu::BindingResource<'a>)],
     ) -> Result<wgpu::BindGroup, Error> {
+        self.create_named_inner(module_label, device, layout, None, resources)
+    }
+
+    /// The labeled counterpart to [`Self::create_named`]: `label` overrides
+    /// the bind group's wgpu diagnostic label, falling back to the
+    /// linkage-derived default when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::create_named`].
+    pub fn create_named_with_label<'a>(
+        &self,
+        module_label: &'static str,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'a>)],
+    ) -> Result<wgpu::BindGroup, Error> {
+        self.create_named_inner(module_label, device, layout, label, resources)
+    }
+
+    /// The shared implementation of [`Self::create_named`] and
+    /// [`Self::create_named_with_label`].
+    fn create_named_inner<'a>(
+        &self,
+        module_label: &'static str,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        label: Option<&str>,
+        resources: &[(&str, wgpu::BindingResource<'a>)],
+    ) -> Result<wgpu::BindGroup, Error> {
         use std::collections::HashMap;
 
-        // Build a name → resource map. Detect duplicates as we go.
-        let mut by_name: HashMap<&str, wgpu::BindingResource<'a>> =
+        // Build a canonical name → resource map. Friendly keys
+        // (`"Pack::field"`, as emitted by the generated per-field consts)
+        // are canonicalized to the mangled binding names they select.
+        // Detect duplicates as we go.
+        let mut by_name: HashMap<String, wgpu::BindingResource<'a>> =
             HashMap::with_capacity(resources.len());
         for &(name, ref resource) in resources {
-            if by_name.insert(name, resource.clone()).is_some() {
+            let canonical = match normalize_binding_key(name) {
+                Some(normalized) if self.bindings.iter().any(|b| b.name == normalized) => {
+                    normalized
+                }
+                _ => name.to_string(),
+            };
+            if by_name.insert(canonical, resource.clone()).is_some() {
                 return DuplicateBindingNameSnafu {
                     module: module_label,
                     group: self.group,
@@ -563,12 +697,12 @@ impl BindGroupInfo {
             });
         }
         for name in by_name.keys() {
-            if !hit.contains_key(name) {
+            if !hit.contains_key(name.as_str()) {
                 let declared: Vec<String> = self.bindings.iter().map(|b| b.name.clone()).collect();
                 return UnknownBindingNameSnafu {
                     module: module_label,
                     group: self.group,
-                    name: (*name).to_string(),
+                    name: name.clone(),
                     declared,
                 }
                 .fail();
@@ -576,7 +710,7 @@ impl BindGroupInfo {
         }
 
         Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&self.label),
+            label: label.or(Some(self.label.as_str())),
             layout,
             entries: &entries,
         }))
@@ -718,7 +852,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
             ir::Item::Uniform(u) => {
                 let size = type_byte_size(&u.ty, &linkage.ir);
                 let entry = wgpu::BindGroupLayoutEntry {
-                    binding: u.binding,
+                    binding: u.binding.expect_concrete(&u.name, "binding"),
                     visibility: visibility_for(&referenced, &u.name),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -729,29 +863,29 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 };
                 linkage
                     .bind_groups
-                    .entry(u.group)
+                    .entry(u.group.expect_concrete(&u.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: u.group,
+                        group: u.group.expect_concrete(&u.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, u.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, u.group.expect_concrete(&u.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&u.group)
+                    .get_mut(&u.group.expect_concrete(&u.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: u.name.clone(),
-                        binding: u.binding,
+                        binding: u.binding.expect_concrete(&u.name, "binding"),
                         kind: BindingKind::Uniform,
                     });
                 linkage.buffers.push(BufferDescriptorInfo {
                     binding_name: u.name.clone(),
-                    group: u.group,
-                    binding: u.binding,
+                    group: u.group.expect_concrete(&u.name, "group"),
+                    binding: u.binding.expect_concrete(&u.name, "binding"),
                     kind: BufferKind::Uniform,
                     size,
                     usage: wgpu::BufferUsages::UNIFORM
@@ -764,7 +898,7 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 let read_only = matches!(s.access, ir::StorageAccess::Read);
                 let size = type_byte_size(&s.ty, &linkage.ir);
                 let entry = wgpu::BindGroupLayoutEntry {
-                    binding: s.binding,
+                    binding: s.binding.expect_concrete(&s.name, "binding"),
                     visibility: visibility_for(&referenced, &s.name),
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only },
@@ -775,29 +909,29 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 };
                 linkage
                     .bind_groups
-                    .entry(s.group)
+                    .entry(s.group.expect_concrete(&s.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: s.group,
+                        group: s.group.expect_concrete(&s.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, s.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, s.group.expect_concrete(&s.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&s.group)
+                    .get_mut(&s.group.expect_concrete(&s.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: s.name.clone(),
-                        binding: s.binding,
+                        binding: s.binding.expect_concrete(&s.name, "binding"),
                         kind: BindingKind::Storage { read_only },
                     });
                 linkage.buffers.push(BufferDescriptorInfo {
                     binding_name: s.name.clone(),
-                    group: s.group,
-                    binding: s.binding,
+                    group: s.group.expect_concrete(&s.name, "group"),
+                    binding: s.binding.expect_concrete(&s.name, "binding"),
                     kind: BufferKind::Storage { read_only },
                     size,
                     usage: wgpu::BufferUsages::STORAGE
@@ -816,30 +950,30 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                     wgpu::SamplerBindingType::Filtering
                 };
                 let entry = wgpu::BindGroupLayoutEntry {
-                    binding: s.binding,
+                    binding: s.binding.expect_concrete(&s.name, "binding"),
                     visibility: visibility_for(&referenced, &s.name),
                     ty: wgpu::BindingType::Sampler(sampler_ty),
                     count: None,
                 };
                 linkage
                     .bind_groups
-                    .entry(s.group)
+                    .entry(s.group.expect_concrete(&s.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: s.group,
+                        group: s.group.expect_concrete(&s.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, s.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, s.group.expect_concrete(&s.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&s.group)
+                    .get_mut(&s.group.expect_concrete(&s.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: s.name.clone(),
-                        binding: s.binding,
+                        binding: s.binding.expect_concrete(&s.name, "binding"),
                         kind: BindingKind::Sampler { comparison },
                     });
             }
@@ -848,23 +982,23 @@ pub fn analyze_ir_module(mut ir_module: wgsl_rs_ir::Module) -> WgpuLinkage {
                 entry.visibility = visibility_for(&referenced, &t.name);
                 linkage
                     .bind_groups
-                    .entry(t.group)
+                    .entry(t.group.expect_concrete(&t.name, "group"))
                     .or_insert_with(|| BindGroupInfo {
-                        group: t.group,
+                        group: t.group.expect_concrete(&t.name, "group"),
                         entries: Vec::new(),
                         bindings: Vec::new(),
-                        label: format!("{}::bind_group_{}", linkage.module_label, t.group),
+                        label: format!("{}::bind_group_{}", linkage.module_label, t.group.expect_concrete(&t.name, "group")),
                     })
                     .entries
                     .push(entry);
                 linkage
                     .bind_groups
-                    .get_mut(&t.group)
+                    .get_mut(&t.group.expect_concrete(&t.name, "group"))
                     .unwrap()
                     .bindings
                     .push(BindingMeta {
                         name: t.name.clone(),
-                        binding: t.binding,
+                        binding: t.binding.expect_concrete(&t.name, "binding"),
                         kind,
                     });
             }
@@ -1012,7 +1146,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
             };
             (
                 wgpu::BindGroupLayoutEntry {
-                    binding: item.binding,
+                    binding: item.binding.expect_concrete(&item.name, "binding"),
                     visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::Texture {
                         sample_type: sample,
@@ -1026,7 +1160,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
         }
         ir::Type::TextureDepth { .. } => (
             wgpu::BindGroupLayoutEntry {
-                binding: item.binding,
+                binding: item.binding.expect_concrete(&item.name, "binding"),
                 visibility: wgpu::ShaderStages::all(),
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Depth,
@@ -1047,7 +1181,7 @@ fn texture_layout_entry(item: &ir::ItemTexture) -> (wgpu::BindGroupLayoutEntry, 
             let read_write = matches!(access, ir::StorageTextureAccess::ReadWrite);
             (
                 wgpu::BindGroupLayoutEntry {
-                    binding: item.binding,
+                    binding: item.binding.expect_concrete(&item.name, "binding"),
                     visibility: wgpu::ShaderStages::all(),
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu_access,
@@ -1143,6 +1277,58 @@ fn texture_depth_view_dimension(kind: ir::TextureDepthKind) -> wgpu::TextureView
     }
 }
 
+// ===== Typed bind-group creation =====
+
+/// Typed, string-free bind-group creation for one resource pack.
+///
+/// Implemented by the `#[derive(BindGroup)]` macro (`wgsl_rs_linkage_wgpu::BindGroup`)
+/// for both `#[wgsl]`-module packs and standalone annotated Rust structs.
+/// The derive emits a companion `Resources` struct whose **named** fields
+/// carry one wgpu resource per pack field, mapped by field kind:
+/// `Storage<..>`/`Uniform<..>` → [`wgpu::BindingResource::Buffer`] via a
+/// [`wgpu::BufferBinding`], texture kinds → a borrowed
+/// [`wgpu::TextureView`], `Sampler`/`SamplerComparison` → a borrowed
+/// [`wgpu::Sampler`]. `#[workgroup]` fields are workgroup-scoped and take
+/// no host resource, so they are skipped. Named fields forbid the silent
+/// same-kind swaps a tuple would allow.
+///
+/// Binding indices resolve from the field **attributes** (`binding(N)`),
+/// never from declaration order, so reordering pack fields cannot rebind
+/// anything. The group axis resolves from the pack's own value: a literal
+/// `group(N)` or the const parameter a `group(PARAM)` field selects, so
+/// `MyBg::<1>` *is* group 1. Layout-only consts (filterability) leave
+/// `Resources` flavor-agnostic: one resource struct feeds every
+/// instantiation.
+///
+/// # Known gap
+///
+/// Nothing statically ties a pack instantiation (`AtlasBindGroup::<true>`)
+/// to the linkage of the matching module instantiation
+/// (`instantiate::<true>()`). A mismatched pair panics here with the
+/// linkage's own error (a missing binding or group), and wgpu itself
+/// rejects mismatches at `set_bind_group` time via bind group layout
+/// identity. This is the accepted cost of keeping the linkage a runtime
+/// analysis rather than a compile-time type.
+pub trait BindGroup<'a> {
+    /// The named-struct resource bundle for this pack's bind group.
+    type Resources;
+
+    /// Creates the bind group for this pack instantiation from its
+    /// resources, using the generated `"Pack::field"` keys.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the linkage does not declare the bindings this pack
+    /// expects (a pack/linkage instantiation mismatch; see the
+    /// [known gap](Self) above).
+    fn create_bind_group(
+        linkage: &mut WgpuLinkage,
+        device: &wgpu::Device,
+        resources: Self::Resources,
+        label: Option<&str>,
+    ) -> wgpu::BindGroup;
+}
+
 #[cfg(test)]
 mod binding_visibility {
     //! Tests for per-binding `ShaderStages` visibility, including the
@@ -1164,8 +1350,8 @@ mod binding_visibility {
 
     fn uniform(name: &str, group: u32, binding: u32) -> ir::Item {
         ir::Item::Uniform(ir::ItemUniform {
-            group,
-            binding,
+            group: group.into(),
+            binding: binding.into(),
             name: name.to_string(),
             ty: f32_ty(),
             attrs: Vec::new(),
@@ -1472,5 +1658,52 @@ mod binding_visibility {
             visibility_of(&linkage, "MY_UNIFORM"),
             wgpu::ShaderStages::VERTEX
         );
+    }
+}
+
+/// Canonicalize a friendly binding key to the mangled binding name.
+///
+/// Pack fields are keyed `"Pack::field"` (the Rust path form emitted by
+/// the generated per-field consts), while the linkage stores the mangled
+/// WGSL global name `pack__field` (the macro's `mangle_resource_name`:
+/// the lowercased pack name joined to the field name). Keys without `::`
+/// (legacy names and mangled names) yield `None` and are matched exactly.
+fn normalize_binding_key(key: &str) -> Option<String> {
+    let mut segments = key.rsplit("::");
+    let field = segments.next()?;
+    let pack = segments.next()?;
+    if field.is_empty() || pack.is_empty() {
+        return None;
+    }
+    Some(format!("{}__{}", pack.to_lowercase(), field))
+}
+
+#[cfg(test)]
+mod normalize_binding_key_tests {
+    use super::normalize_binding_key;
+
+    #[test]
+    fn friendly_keys_canonicalize_to_mangled_names() {
+        assert_eq!(
+            normalize_binding_key("AtlasBindGroup::slab").as_deref(),
+            Some("atlasbindgroup__slab")
+        );
+        assert_eq!(
+            normalize_binding_key("My_Bg::heights_smp").as_deref(),
+            Some("my_bg__heights_smp")
+        );
+        // Qualified paths use the last two segments.
+        assert_eq!(
+            normalize_binding_key("crate::shaders::Pack::tex").as_deref(),
+            Some("pack__tex")
+        );
+    }
+
+    #[test]
+    fn mangled_and_legacy_names_stay_exact() {
+        assert_eq!(normalize_binding_key("atlasbindgroup__slab"), None);
+        assert_eq!(normalize_binding_key("FRAME"), None);
+        assert_eq!(normalize_binding_key(""), None);
+        assert_eq!(normalize_binding_key("only::"), None);
     }
 }

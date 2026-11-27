@@ -18,9 +18,12 @@ const N: usize = 64;
 #[wgsl]
 pub mod signed_const_clamp {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [i32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 64]);
+    pub struct SignedConstClampPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4i; 64]>,
+    }
 
     pub fn clamp_to<const MIN: i32, const MAX: i32>(x: i32) -> i32 {
         max(min(x, MAX), MIN)
@@ -36,10 +39,10 @@ pub mod signed_const_clamp {
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &SignedConstClampPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4i(
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4i(
             clamp_to::<-8, 8>(x),
             clamp_to::<0, 100>(x),
             sum_to::<-4>(x),
@@ -93,12 +96,14 @@ impl RoundtripTest for SignedConstGenericsTest {
             let gpu_u32s: Vec<u32> = gpu_i32s.iter().map(|&x| x as u32).collect();
 
             use wgsl_rs::std::*;
-            signed_const_clamp::INPUT.set(inputs);
-            signed_const_clamp::OUTPUT.set([Vec4i::default(); N]);
+            let pack = signed_const_clamp::SignedConstClampPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4i::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                signed_const_clamp::main(builtins.global_invocation_id);
+                signed_const_clamp::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = signed_const_clamp::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_i32s: Vec<i32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
             let cpu_u32s: Vec<u32> = cpu_i32s.iter().map(|&x| x as u32).collect();
 

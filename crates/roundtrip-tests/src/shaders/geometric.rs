@@ -13,16 +13,19 @@ const N: usize = 64;
 #[wgsl]
 pub mod geo_scalar {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct GeoScalarPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GeoScalarPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4f(degrees(x), radians(x), sign(x), abs(x));
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4f(degrees(x), radians(x), sign(x), abs(x));
     }
 }
 
@@ -30,18 +33,21 @@ pub mod geo_scalar {
 #[wgsl]
 pub mod geo_fma {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct GeoFmaPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GeoFmaPack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         // fma(x, 2.0, 1.0) = x * 2.0 + 1.0
         // distance(x, 0.0) = abs(x) for scalars
-        get_mut!(OUTPUT)[idx] = vec4f(fma(x, 2.0, 1.0), distance(x, 0.0), length(x), 0.0);
+        get_mut!(pack.output)[idx] = vec4f(fma(x, 2.0, 1.0), distance(x, 0.0), length(x), 0.0);
     }
 }
 
@@ -53,15 +59,19 @@ pub mod geo_vector {
     use wgsl_rs::std::*;
 
     // 64 floats = 16 Vec4f inputs, producing 16 result Vec4f outputs
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 16]);
+    pub struct GeoVectorPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 16]>,
+    }
 
     #[compute]
     #[workgroup_size(16)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GeoVectorPack) {
         let idx = global_id.x as usize;
         let base = idx * 4;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
         let a = vec3f(input[base], input[base + 1], input[base + 2]);
         let b = vec3f(input[base + 3], input[base + 2], input[base + 1]);
 
@@ -72,7 +82,7 @@ pub mod geo_vector {
         let safe_a = vec3f(a.x + 0.001, a.y + 0.001, a.z + 0.001);
         let norm = normalize(safe_a);
 
-        get_mut!(OUTPUT)[idx] = vec4f(d, len_a, dist, length(norm));
+        get_mut!(pack.output)[idx] = vec4f(d, len_a, dist, length(norm));
     }
 }
 
@@ -80,18 +90,22 @@ pub mod geo_vector {
 #[wgsl]
 pub mod geo_cross_reflect {
     use wgsl_rs::std::*;
+    pub struct GeoCrossReflectPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 16]>,
+    }
 
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
     // 8 result vec4s (2 per test case: cross xyz + reflect x, reflect yz +
     // face_forward x + padding)
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 16]);
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GeoCrossReflectPack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec3f(input[base], input[base + 1], input[base + 2]);
         let b = vec3f(input[base + 3], input[base + 4], input[base + 5]);
@@ -104,9 +118,9 @@ pub mod geo_cross_reflect {
         let ff = face_forward(a, b, safe_n);
 
         // Pack results: first vec4 = cross.xyz + reflect.x
-        get_mut!(OUTPUT)[idx * 2] = vec4f(c.x, c.y, c.z, r.x);
+        get_mut!(pack.output)[idx * 2] = vec4f(c.x, c.y, c.z, r.x);
         // Second vec4 = reflect.yz + face_forward.x + face_forward.y
-        get_mut!(OUTPUT)[idx * 2 + 1] = vec4f(r.y, r.z, ff.x, ff.y);
+        get_mut!(pack.output)[idx * 2 + 1] = vec4f(r.y, r.z, ff.x, ff.y);
     }
 }
 
@@ -157,12 +171,14 @@ impl RoundtripTest for GeometricTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            geo_scalar::INPUT.set(inputs);
-            geo_scalar::OUTPUT.set([Vec4f::default(); N]);
+            let pack = geo_scalar::GeoScalarPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                geo_scalar::main(builtins.global_invocation_id);
+                geo_scalar::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = geo_scalar::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -203,12 +219,14 @@ impl RoundtripTest for GeometricTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            geo_fma::INPUT.set(inputs);
-            geo_fma::OUTPUT.set([Vec4f::default(); N]);
+            let pack = geo_fma::GeoFmaPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                geo_fma::main(builtins.global_invocation_id);
+                geo_fma::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = geo_fma::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -250,12 +268,14 @@ impl RoundtripTest for GeometricTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            geo_vector::INPUT.set(inputs);
-            geo_vector::OUTPUT.set([Vec4f::default(); OUTPUT_COUNT]);
+            let pack = geo_vector::GeoVectorPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); OUTPUT_COUNT]),
+            };
             dispatch_workgroups((1, 1, 1), (OUTPUT_COUNT as u32, 1, 1), |builtins| {
-                geo_vector::main(builtins.global_invocation_id);
+                geo_vector::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = geo_vector::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..OUTPUT_COUNT)
@@ -296,12 +316,14 @@ impl RoundtripTest for GeometricTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            geo_cross_reflect::INPUT.set(inputs);
-            geo_cross_reflect::OUTPUT.set([Vec4f::default(); OUTPUT_COUNT]);
+            let pack = geo_cross_reflect::GeoCrossReflectPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); OUTPUT_COUNT]),
+            };
             dispatch_workgroups((1, 1, 1), (8, 1, 1), |builtins| {
-                geo_cross_reflect::main(builtins.global_invocation_id);
+                geo_cross_reflect::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = geo_cross_reflect::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..8)

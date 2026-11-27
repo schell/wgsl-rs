@@ -261,3 +261,177 @@ fn reserved_generated_names_are_rejected() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/fail/reserved_generated_names.rs");
 }
+
+#[test]
+fn resource_pack_mixed_io_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_mixed_io.rs");
+}
+
+#[test]
+fn resource_pack_non_resource_field_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_non_resource_field.rs");
+}
+
+#[test]
+fn resource_pack_multiple_bindings_are_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_multiple_bindings.rs");
+}
+
+#[test]
+fn resource_pack_builtin_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_builtin.rs");
+}
+
+#[test]
+fn resource_pack_duplicate_address_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_duplicate_address.rs");
+}
+
+#[test]
+fn resource_pack_field_name_reuse_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/resource_pack_field_name_reuse.rs");
+}
+
+#[test]
+fn resource_pack_user_constructor_compiles() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/pass/resource_pack_user_constructor.rs");
+}
+
+#[test]
+fn resource_pack_wrapper_required_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_wrapper_required.rs");
+}
+
+#[test]
+fn resource_pack_access_mismatch_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_access_mismatch.rs");
+}
+
+#[test]
+fn resource_pack_workgroup_args_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_workgroup_args.rs");
+}
+
+#[test]
+fn resource_pack_workgroup_wrapper_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_workgroup_wrapper.rs");
+}
+
+#[test]
+fn resource_pack_get_mut_on_uniform_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_get_mut_uniform.rs");
+}
+
+#[test]
+fn resource_pack_missing_group_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_missing_group.rs");
+}
+
+#[test]
+fn resource_pack_duplicate_parameter_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_duplicate_parameter.rs");
+}
+
+#[test]
+fn resource_pack_local_alias_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_local_alias.rs");
+}
+
+#[test]
+fn resource_pack_mismatched_call_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_mismatched_call.rs");
+}
+
+#[test]
+fn resource_pack_by_value_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_by_value.rs");
+}
+
+#[test]
+fn resource_pack_unknown_reference_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_unknown_reference.rs");
+}
+
+#[test]
+fn resource_pack_conflicting_consts_are_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_conflicting_consts.rs");
+}
+
+#[test]
+fn resource_pack_reused_const_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_reused_const.rs");
+}
+
+#[test]
+fn resource_pack_slot_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_slot_collision.rs");
+}
+
+#[test]
+fn resource_pack_slot_filterability_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_slot_filterability_collision.rs");
+}
+
+#[test]
+fn resource_pack_key_name_collision_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_key_name_collision.rs");
+}
+
+#[test]
+fn bind_group_duplicate_annotation_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/bind_group_duplicate_annotation.rs");
+}
+
+#[test]
+fn bind_group_multi_group_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/bind_group_multi_group.rs");
+}
+
+#[test]
+fn bind_group_unannotated_field_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/bind_group_unannotated_field.rs");
+}
+
+#[test]
+fn resource_pack_unused_type_param_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_unused_type_param.rs");
+}
+
+#[test]
+fn resource_pack_tied_type_param_misuse_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_tied_type_param_misuse.rs");
+}
+
+#[test]
+fn resource_pack_type_arg_count_is_rejected() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/fail/resource_pack_type_arg_count.rs");
+}

@@ -757,8 +757,8 @@ mod stage_analysis {
 
     fn uniform(name: &str, group: u32, binding: u32) -> ir::Item {
         ir::Item::Uniform(ir::ItemUniform {
-            group,
-            binding,
+            group: group.into(),
+            binding: binding.into(),
             name: name.to_string(),
             ty: f32_ty(),
             attrs: Vec::new(),

@@ -72,8 +72,11 @@ pub mod hello_triangle {
     // Glob and named imports work, but hey, imports work!
     use wgsl_rs::std::*;
 
-    // Define a uniform in both Rust and WGSL using the uniform! macro.
-    uniform!(group(0), binding(0), FRAME: u32);
+    // Define a uniform in both Rust and WGSL as a pack field.
+    pub struct HelloTrianglePack {
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<u32>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -84,8 +87,8 @@ pub mod hello_triangle {
     }
 
     #[fragment]
-    pub fn frag_main() -> Vec4f {
-        vec4f(1.0, sin(f32(load!(FRAME)) / 128.0), 0.0, 1.0)
+    pub fn frag_main(pack: &HelloTrianglePack) -> Vec4f {
+        vec4f(1.0, sin(f32(load!(pack.frame)) / 128.0), 0.0, 1.0)
     }
 }
 
@@ -172,7 +175,12 @@ pub mod compute_shader {
     use wgsl_rs::std::*;
 
     // Read-only input buffer
-    storage!(group(0), binding(0), INPUT: [f32; 256]);
+    pub struct ComputeShaderPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 256]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<Output>,
+    }
 
     #[derive(Wgsl)]
     pub struct Output {
@@ -180,17 +188,16 @@ pub mod compute_shader {
     }
 
     // Read-write output buffer
-    storage!(group(0), binding(1), read_write, OUTPUT: Output);
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ComputeShaderPack) {
         // Compute the index from global invocation ID
         let idx = global_id.x() as usize;
         // Use the `get!` macro to access the storage
-        let input = get!(INPUT)[idx];
+        let input = get!(pack.input)[idx];
         // Use the `get_mut!` macro to access the storage mutably
-        get_mut!(OUTPUT).inner = input;
+        get_mut!(pack.output).inner = input;
     }
 }
 
@@ -301,15 +308,20 @@ pub mod enum_example {
         AprilFoolsDay,
         WaitangiDay,
     }
-
-    storage!(group(0), binding(0), read_write, INPUT: [Holidays; 256]);
+    pub struct EnumExamplePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub input: Storage<[Holidays; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(16)]
-    pub fn compute_holidays(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn compute_holidays(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &EnumExamplePack,
+    ) {
         let index = global_id.x();
 
-        let holiday = &mut get_mut!(INPUT)[index as usize];
+        let holiday = &mut get_mut!(pack.input)[index as usize];
 
         #[wgsl_allow(non_literal_match_statement_patterns)]
         match *holiday {
@@ -1034,17 +1046,19 @@ pub mod runtime_array_example {
         pub count: u32,
         pub particles: RuntimeArray<Particle>,
     }
-
-    storage!(group(0), binding(0), read_write, PARTICLES: ParticleSystem);
+    pub struct RuntimeArrayExamplePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub particles: Storage<ParticleSystem>,
+    }
 
     #[compute]
     #[workgroup_size(16, 16, 1)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
-        let num_particles = array_length(&get!(PARTICLES).particles);
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &RuntimeArrayExamplePack) {
+        let num_particles = array_length(&get!(pack.particles).particles);
         let index = global_id.y() * 16 + global_id.x();
         if num_particles < index {
-            let velocity = get!(PARTICLES).particles[index].velocity;
-            let position = &mut get_mut!(PARTICLES).particles[index].position;
+            let velocity = get!(pack.particles).particles[index].velocity;
+            let position = &mut get_mut!(pack.particles).particles[index].position;
             *position += velocity;
         }
     }
@@ -1107,10 +1121,16 @@ pub mod atomic_example {
     use wgsl_rs::std::*;
 
     // Workgroup variable with atomic counter - shared between all invocations
-    workgroup!(COUNTER: Atomic<u32>);
+    pub struct AtomicExamplePack {
+        #[allow(dead_code)]
+        #[workgroup]
+        pub counter: Workgroup<Atomic<u32>>,
+        #[allow(dead_code)]
+        #[workgroup]
+        pub flags: Workgroup<Atomic<i32>>,
+    }
 
     // Workgroup variable with atomic flags
-    workgroup!(FLAGS: Atomic<i32>);
 
     #[compute]
     #[workgroup_size(64)]
@@ -1137,14 +1157,22 @@ pub mod texture_example {
     use wgsl_rs::std::*;
 
     // A 2D texture for color/albedo
-    texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
+    pub struct TextureExamplePack {
+        #[texture(group(0), binding(0))]
+        pub diffuse_tex: Texture2D<f32>,
+        #[sampler(group(0), binding(1))]
+        pub tex_sampler: Sampler,
+        #[texture(group(1), binding(0))]
+        pub skybox: TextureCube<f32>,
+        #[texture(group(1), binding(1))]
+        pub skybox_array: TextureCubeArray<f32>,
+        #[texture(group(1), binding(2))]
+        pub skybox_i: TextureCube<i32>,
+    }
+
     // A sampler for filtering the texture
-    sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
     // A cube texture (e.g. skybox) and its array sibling
-    texture!(group(1), binding(0), SKYBOX: TextureCube<f32>);
-    texture!(group(1), binding(1), SKYBOX_ARRAY: TextureCubeArray<f32>);
     // Cube gather also works on integer-sampled cube textures (WGSL 17.7.2)
-    texture!(group(1), binding(2), SKYBOX_I: TextureCube<i32>);
 
     // Fragment input with texture coordinates
     pub struct FragmentInput {
@@ -1160,26 +1188,26 @@ pub mod texture_example {
 
     // Main fragment shader demonstrating texture operations.
     #[fragment]
-    pub fn frag_main(input: FragmentInput) -> FragmentOutput {
+    pub fn frag_main(input: FragmentInput, pack: &TextureExamplePack) -> FragmentOutput {
         // Sample the diffuse texture
-        let albedo = texture_sample(DIFFUSE_TEX, TEX_SAMPLER, input.uv);
+        let albedo = texture_sample(&pack.diffuse_tex, &pack.tex_sampler, input.uv);
 
         FragmentOutput { color: albedo }
     }
 
     // Gather one component from the 4 texels around the skybox direction.
-    pub fn skybox_gather(dir: Vec3f) -> Vec4f {
-        texture_gather(0u32, SKYBOX, TEX_SAMPLER, dir)
+    pub fn skybox_gather(dir: Vec3f, pack: &TextureExamplePack) -> Vec4f {
+        texture_gather(0u32, &pack.skybox, &pack.tex_sampler, dir)
     }
 
     // Gather from a cube array layer with an i32 array index.
-    pub fn skybox_array_gather(dir: Vec3f, layer: i32) -> Vec4f {
-        texture_gather_array(1u32, SKYBOX_ARRAY, TEX_SAMPLER, dir, layer)
+    pub fn skybox_array_gather(dir: Vec3f, layer: i32, pack: &TextureExamplePack) -> Vec4f {
+        texture_gather_array(1u32, &pack.skybox_array, &pack.tex_sampler, dir, layer)
     }
 
     // Gather the red channel of an integer-sampled cube, converted to f32.
-    pub fn skybox_gather_i32(dir: Vec3f) -> Vec4f {
-        let g = texture_gather(0u32, SKYBOX_I, TEX_SAMPLER, dir);
+    pub fn skybox_gather_i32(dir: Vec3f, pack: &TextureExamplePack) -> Vec4f {
+        let g = texture_gather(0u32, &pack.skybox_i, &pack.tex_sampler, dir);
         vec4f(f32(g.x()), f32(g.y()), f32(g.z()), f32(g.w()))
     }
 }
@@ -1203,10 +1231,14 @@ pub mod bitcast_example {
     use wgsl_rs::std::*;
 
     // Input: raw u32 data representing packed floats
-    storage!(group(0), binding(0), INPUT: [u32; 256]);
+    pub struct BitcastExamplePack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 256]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256]>,
+    }
 
     // Output: reinterpreted as floats
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
 
     // Reinterpret a u32 bit pattern as an f32 value.
     pub fn reinterpret_as_float(bits: u32) -> f32 {
@@ -1225,11 +1257,11 @@ pub mod bitcast_example {
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &BitcastExamplePack) {
         let idx = global_id.x() as usize;
         // Read raw u32 bits from input and reinterpret as f32
-        let raw_bits = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = bitcast_f32(raw_bits);
+        let raw_bits = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = bitcast_f32(raw_bits);
     }
 }
 
@@ -1368,17 +1400,23 @@ pub mod synchronization_example {
     //! across invocations within a workgroup. They must only be called from
     //! compute shader entry points in uniform control flow.
     use wgsl_rs::std::*;
-
-    workgroup!(SCRATCH: [u32; 64]);
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct SynchronizationExamplePack {
+        #[workgroup]
+        pub scratch: Workgroup<[u32; 64]>,
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn main(
+        #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &SynchronizationExamplePack,
+    ) {
         // Copy input data into workgroup-shared memory.
-        get_mut!(SCRATCH)[local_idx as usize] = get!(INPUT)[local_idx as usize];
+        get_mut!(pack.scratch)[local_idx as usize] = get!(pack.input)[local_idx as usize];
 
         // Ensure all workgroup memory writes are visible to every invocation.
         workgroup_barrier();
@@ -1386,28 +1424,31 @@ pub mod synchronization_example {
         // Read from a neighbor's slot (with wrap-around) to demonstrate
         // that the barrier made all writes visible.
         let neighbor_idx: u32 = (local_idx + 1u32) % 64u32;
-        let neighbor_val: u32 = get!(SCRATCH)[neighbor_idx as usize];
+        let neighbor_val: u32 = get!(pack.scratch)[neighbor_idx as usize];
 
         // Ensure all storage writes from the workgroup are complete
         // before writing results.
         storage_barrier();
 
-        get_mut!(OUTPUT)[local_idx as usize] = neighbor_val;
+        get_mut!(pack.output)[local_idx as usize] = neighbor_val;
     }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn uniform_load_example(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn uniform_load_example(
+        #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &SynchronizationExamplePack,
+    ) {
         // Each invocation writes its index into shared memory.
-        get_mut!(SCRATCH)[local_idx as usize] = local_idx;
+        get_mut!(pack.scratch)[local_idx as usize] = local_idx;
 
         // Ensure all writes are visible before uniform load.
         workgroup_barrier();
 
         // Uniformly load the first element across the entire workgroup.
         // All invocations receive the same value.
-        let first: [u32; 64] = workgroup_uniform_load(&SCRATCH);
-        get_mut!(OUTPUT)[local_idx as usize] = first[0];
+        let first: [u32; 64] = workgroup_uniform_load(&pack.scratch);
+        get_mut!(pack.output)[local_idx as usize] = first[0];
     }
 }
 
@@ -1482,12 +1523,17 @@ pub mod slab_read_write {
             ]
         }
     }
-
-    storage!(group(0), binding(0), read_write, SLAB: RuntimeArray<u32>);
+    pub struct SlabReadWritePack {
+        #[storage(group(0), binding(0), read_write)]
+        pub slab: Storage<RuntimeArray<u32>>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn slab_example(#[builtin(local_invocation_index)] local_idx: u32) {
+    pub fn slab_example(
+        #[builtin(local_invocation_index)] local_idx: u32,
+        pack: &SlabReadWritePack,
+    ) {
         let index = local_idx;
 
         // Create our `Data` struct from extracted data from the slab
@@ -1495,7 +1541,7 @@ pub mod slab_read_write {
         {
             // Extract the u32 data from the slab
             let mut array_data = Data::array_container();
-            slab_copy!(get!(SLAB), index, array_data, 0, Data::SLAB_SIZE);
+            slab_copy!(get!(pack.slab), index, array_data, 0, Data::SLAB_SIZE);
             data = Data::from_array(array_data);
         }
 
@@ -1504,7 +1550,7 @@ pub mod slab_read_write {
 
         // Write the modified `Data` struct back to the slab
         let out_array = Data::to_array(data);
-        slab_copy!(out_array, 0, get_mut!(SLAB), index, Data::SLAB_SIZE);
+        slab_copy!(out_array, 0, get_mut!(pack.slab), index, Data::SLAB_SIZE);
     }
 }
 
@@ -1702,9 +1748,12 @@ pub mod feature_flag {
     use wgsl_rs::std::*;
 
     pub const APPLY_FOG_TRUE: bool = true;
-
-    storage!(group(0), binding(0), INPUT: [u32; 4]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 4]);
+    pub struct FeatureFlagPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 4]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 4]>,
+    }
 
     /// The feature-flag helper: doubles `x` when the flag is on.
     /// `fog_scale::<true>` renders `_1fog_scale_true` and
@@ -1728,10 +1777,13 @@ pub mod feature_flag {
     /// produce concrete modules whose entry point is still named `main`.
     #[compute]
     #[workgroup_size(4)]
-    pub fn main<const APPLY_FOG: bool>(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main<const APPLY_FOG: bool>(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &FeatureFlagPack,
+    ) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = vec4u(
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = vec4u(
             flagged::<true>(x),
             flagged::<false>(x),
             fog_scale::<true>(x),
@@ -2060,14 +2112,16 @@ pub mod hello_triangle_generic {
     //! color. It has been modified to be polymorphic.
     use wgsl_rs::std::*;
 
-    // Define a uniform in both Rust and WGSL using the `uniform!` macro.
+    // Define a uniform in both Rust and WGSL as a pack field.
     //
-    // The `impl Convert<f32>` syntax declares that `FRAME` carries some
-    // concrete type chosen at instantiation time which can be converted
-    // into an `f32` on the WGSL side. The trait bounds are replayed on
-    // the typestate builder's `set_frame` method so a caller can only
-    // bind FRAME to a type that implements them.
-    uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
+    // The pack's `T` slot declares that `frame` carries some concrete
+    // type chosen at instantiation time which can be converted into an
+    // `f32` on the WGSL side.
+    pub struct HelloTriangleGenericPack<T> {
+        #[allow(dead_code)]
+        #[uniform(group(0), binding(0))]
+        pub frame: Uniform<T>,
+    }
 
     #[vertex]
     pub fn vtx_main(#[builtin(vertex_index)] vertex_index: u32) -> Vec4f {
@@ -2078,12 +2132,14 @@ pub mod hello_triangle_generic {
     }
 
     /// Here we define a polymorphic fragment stage. Its `T` is connected
-    /// to the linkage variable's type via `get!(FRAME, T)`, which generates
-    /// a `FRAME: linkage::Type<Is = T>` constraint on the `instantiate`
-    /// function.
+    /// to the pack's type slot through the `&HelloTriangleGenericPack<T>`
+    /// parameter, which generates a `Type<Is = T>` constraint tying the
+    /// slot to the `instantiate` function.
     #[fragment]
-    pub fn frag_main<T: Convert<f32> + Wgsl + Clone>() -> Vec4f {
-        let frame_t = get!(FRAME, T);
+    pub fn frag_main<T: Convert<f32> + Wgsl + Clone + Copy>(
+        pack: &HelloTriangleGenericPack<T>,
+    ) -> Vec4f {
+        let frame_t = *get!(pack.frame);
         vec4f(1.0, sin(f32(frame_t) / 128.0), 0.0, 1.0)
     }
 }

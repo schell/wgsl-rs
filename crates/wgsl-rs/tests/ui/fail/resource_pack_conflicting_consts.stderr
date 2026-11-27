@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       conflicting const values for `FILTERABLE` in resource pack `TextureBindGroup`: previous and new values `Bool(true) versus Bool(false)`; affected resources: heights, heights_smp. All uses of one pack layout must share compatible values.'
+  --> tests/ui/fail/resource_pack_conflicting_consts.rs:20:19
+   |
+20 |     pub fn second(pack: &TextureBindGroup<false>) -> Vec4f {
+   |                   ^^^^

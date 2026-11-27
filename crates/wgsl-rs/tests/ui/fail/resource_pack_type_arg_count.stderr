@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       resource pack `PackA` expects 2 generic arguments, but 1 were supplied.'
+  --> tests/ui/fail/resource_pack_type_arg_count.rs:12:31
+   |
+12 |     pub fn helper(pack: &PackA<0>) -> u32 {
+   |                               ^

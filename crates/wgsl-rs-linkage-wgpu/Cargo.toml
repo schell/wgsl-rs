@@ -29,6 +29,9 @@ snafu.workspace = true
 # (no naga validation, no rayon dispatch runtime).
 wgsl-rs = { version = "0.1.0-beta.6", path = "../wgsl-rs", default-features = false }
 wgsl-rs-ir = { version = "0.1.0-beta.6", path = "../wgsl-rs-ir" }
+# The `BindGroup` derive; re-exported at the crate root so users spell
+# `use wgsl_rs_linkage_wgpu::BindGroup;` next to the trait it implements.
+wgsl-rs-macros = { version = "0.1.0-beta.6", path = "../wgsl-rs-macros" }
 # Renamed per-major entries: cargo resolves semver-incompatible majors
 # as distinct graph nodes, so the features above can select between
 # them. Local (non-workspace) pins: the workspace `wgpu` entry tracks

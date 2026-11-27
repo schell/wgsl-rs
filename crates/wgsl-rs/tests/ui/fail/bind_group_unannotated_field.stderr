@@ -1,0 +1,5 @@
+error: `BindGroup` requires every field to carry a resource annotation (`#[uniform]`, `#[storage]`, `#[texture]`, `#[sampler]`, or `#[workgroup]`)
+ --> tests/ui/fail/bind_group_unannotated_field.rs:8:9
+  |
+8 |     pub b: Sampler,
+  |         ^

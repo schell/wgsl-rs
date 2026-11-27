@@ -13,16 +13,19 @@ const N: usize = 8;
 #[wgsl]
 pub mod glm_quat_ops {
     use wgsl_rs::glm::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 32]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 8]);
+    pub struct GlmQuatOpsPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 32]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 8]>,
+    }
 
     #[compute]
     #[workgroup_size(8)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &GlmQuatOpsPack) {
         let idx = global_id.x as usize;
         let base = idx * 4;
-        let angle = get!(INPUT)[base];
+        let angle = get!(pack.input)[base];
 
         let a = from_axis_angle(Vec3f::Y, angle);
         let b = from_axis_angle(Vec3f::X, 0.5);
@@ -31,7 +34,8 @@ pub mod glm_quat_ops {
         let back = rotate_vec3(quat_mul(q, inverse(q)), vec3f(1.0, 2.0, 3.0));
         let mid = quat_slerp(Quat::IDENTITY, a, 0.25);
 
-        get_mut!(OUTPUT)[idx] = vec4f(v.x, back.z, mid.y, quat_angle_between(Quat::IDENTITY, a));
+        get_mut!(pack.output)[idx] =
+            vec4f(v.x, back.z, mid.y, quat_angle_between(Quat::IDENTITY, a));
     }
 }
 
@@ -80,12 +84,14 @@ impl RoundtripTest for GlmQuatHelpersTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            glm_quat_ops::INPUT.set(inputs);
-            glm_quat_ops::OUTPUT.set([Vec4f::default(); N]);
+            let pack = glm_quat_ops::GlmQuatOpsPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                glm_quat_ops::main(builtins.global_invocation_id);
+                glm_quat_ops::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = glm_quat_ops::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)

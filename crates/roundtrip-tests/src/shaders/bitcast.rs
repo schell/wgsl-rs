@@ -22,15 +22,21 @@ const N: usize = 64;
 #[wgsl]
 pub mod bitcast_scalar_roundtrip {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct BitcastScalarRoundtripPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &BitcastScalarRoundtripPack,
+    ) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         // u32 -> f32 -> u32 roundtrip
         let as_f32 = bitcast_f32(x);
         let rt_f32 = bitcast_u32(as_f32);
@@ -40,7 +46,7 @@ pub mod bitcast_scalar_roundtrip {
         // i32 -> f32 -> i32 roundtrip (via u32 output)
         let as_f32_from_i32 = bitcast_f32(as_i32);
         let rt_i32_via_f32 = bitcast_u32(as_f32_from_i32);
-        get_mut!(OUTPUT)[idx] = vec4u(rt_f32, rt_i32, rt_i32_via_f32, 0);
+        get_mut!(pack.output)[idx] = vec4u(rt_f32, rt_i32, rt_i32_via_f32, 0);
     }
 }
 
@@ -48,19 +54,25 @@ pub mod bitcast_scalar_roundtrip {
 #[wgsl]
 pub mod bitcast_vec4_roundtrip {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [Vec4u; 16]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 16]);
+    pub struct BitcastVec4RoundtripPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4u; 16]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 16]>,
+    }
 
     #[compute]
     #[workgroup_size(16)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &BitcastVec4RoundtripPack,
+    ) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         // Vec4u -> Vec4f -> Vec4u roundtrip
         let as_f = bitcast_vec4f(x);
         let back = bitcast_vec4u(as_f);
-        get_mut!(OUTPUT)[idx] = back;
+        get_mut!(pack.output)[idx] = back;
     }
 }
 
@@ -139,12 +151,14 @@ impl RoundtripTest for BitcastTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            bitcast_scalar_roundtrip::INPUT.set(inputs);
-            bitcast_scalar_roundtrip::OUTPUT.set([Vec4u::default(); N]);
+            let pack = bitcast_scalar_roundtrip::BitcastScalarRoundtripPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4u::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                bitcast_scalar_roundtrip::main(builtins.global_invocation_id);
+                bitcast_scalar_roundtrip::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bitcast_scalar_roundtrip::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -195,12 +209,14 @@ impl RoundtripTest for BitcastTest {
                     inputs[i * 4 + 3],
                 )
             });
-            bitcast_vec4_roundtrip::INPUT.set(vec4_inputs);
-            bitcast_vec4_roundtrip::OUTPUT.set([Vec4u::default(); VEC4_COUNT]);
+            let pack = bitcast_vec4_roundtrip::BitcastVec4RoundtripPack {
+                input: Storage::new(vec4_inputs),
+                output: Storage::new([Vec4u::default(); VEC4_COUNT]),
+            };
             dispatch_workgroups((1, 1, 1), (VEC4_COUNT as u32, 1, 1), |builtins| {
-                bitcast_vec4_roundtrip::main(builtins.global_invocation_id);
+                bitcast_vec4_roundtrip::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = bitcast_vec4_roundtrip::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..VEC4_COUNT)

@@ -21,16 +21,19 @@ const N: usize = 64;
 #[wgsl]
 pub mod convert_f32_to_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct ConvertF32ToU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ConvertF32ToU32Pack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
-        get_mut!(OUTPUT)[idx] = u32(x);
+        let x = get!(pack.input)[idx];
+        get_mut!(pack.output)[idx] = u32(x);
     }
 }
 
@@ -41,18 +44,21 @@ pub mod convert_f32_to_u32 {
 #[wgsl]
 pub mod convert_f32_to_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct ConvertF32ToI32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ConvertF32ToI32Pack) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         let result = i32(x);
         // Bitcast i32 to u32 for storage
-        get_mut!(OUTPUT)[idx] = bitcast_u32(result);
+        get_mut!(pack.output)[idx] = bitcast_u32(result);
     }
 }
 
@@ -63,16 +69,20 @@ pub mod convert_f32_to_i32 {
 #[wgsl]
 pub mod convert_u32_to_f32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]); // u32 bits stored as f32
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 64]);
+    pub struct ConvertU32ToF32Pack {
+        // u32 bits stored as f32
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ConvertU32ToF32Pack) {
         let idx = global_id.x as usize;
-        let x = bitcast_u32(get!(INPUT)[idx]);
-        get_mut!(OUTPUT)[idx] = f32(x);
+        let x = bitcast_u32(get!(pack.input)[idx]);
+        get_mut!(pack.output)[idx] = f32(x);
     }
 }
 
@@ -83,16 +93,20 @@ pub mod convert_u32_to_f32 {
 #[wgsl]
 pub mod convert_i32_to_f32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]); // i32 bits stored as f32
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 64]);
+    pub struct ConvertI32ToF32Pack {
+        // i32 bits stored as f32
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ConvertI32ToF32Pack) {
         let idx = global_id.x as usize;
-        let x = bitcast_i32(get!(INPUT)[idx]);
-        get_mut!(OUTPUT)[idx] = f32(x);
+        let x = bitcast_i32(get!(pack.input)[idx]);
+        get_mut!(pack.output)[idx] = f32(x);
     }
 }
 
@@ -103,18 +117,22 @@ pub mod convert_i32_to_f32 {
 #[wgsl]
 pub mod convert_u32_to_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 64]); // u32 bits stored as f32
-    storage!(group(0), binding(1), read_write, OUTPUT: [u32; 64]);
+    pub struct ConvertU32ToI32Pack {
+        // u32 bits stored as f32
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[u32; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &ConvertU32ToI32Pack) {
         let idx = global_id.x as usize;
-        let x = bitcast_u32(get!(INPUT)[idx]);
+        let x = bitcast_u32(get!(pack.input)[idx]);
         let result = i32(x);
         // Bitcast i32 to u32 for storage
-        get_mut!(OUTPUT)[idx] = bitcast_u32(result);
+        get_mut!(pack.output)[idx] = bitcast_u32(result);
     }
 }
 
@@ -252,12 +270,14 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            convert_f32_to_u32::INPUT.set(inputs);
-            convert_f32_to_u32::OUTPUT.set([0u32; 64]);
+            let pack = convert_f32_to_u32::ConvertF32ToU32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                convert_f32_to_u32::main(builtins.global_invocation_id);
+                convert_f32_to_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = convert_f32_to_u32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("u32({:.4})", inputs[i])).collect();
@@ -292,12 +312,14 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            convert_f32_to_i32::INPUT.set(inputs);
-            convert_f32_to_i32::OUTPUT.set([0u32; 64]);
+            let pack = convert_f32_to_i32::ConvertF32ToI32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([0u32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                convert_f32_to_i32::main(builtins.global_invocation_id);
+                convert_f32_to_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = convert_f32_to_i32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("i32({:.4})", inputs[i])).collect();
@@ -332,18 +354,20 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_f32s: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            convert_u32_to_f32::INPUT.set({
-                let mut as_f32 = [0.0f32; 64];
-                for (i, &val) in inputs.iter().enumerate() {
-                    as_f32[i] = f32::from_bits(val);
-                }
-                as_f32
-            });
-            convert_u32_to_f32::OUTPUT.set([0.0f32; 64]);
+            let pack = convert_u32_to_f32::ConvertU32ToF32Pack {
+                input: Storage::new({
+                    let mut as_f32 = [0.0f32; 64];
+                    for (i, &val) in inputs.iter().enumerate() {
+                        as_f32[i] = f32::from_bits(val);
+                    }
+                    as_f32
+                }),
+                output: Storage::new([0.0f32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                convert_u32_to_f32::main(builtins.global_invocation_id);
+                convert_u32_to_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = convert_u32_to_f32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_f32s: Vec<f32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("f32({}u)", inputs[i])).collect();
@@ -380,18 +404,20 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_f32s: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            convert_i32_to_f32::INPUT.set({
-                let mut as_f32 = [0.0f32; 64];
-                for (i, &val) in inputs.iter().enumerate() {
-                    as_f32[i] = f32::from_ne_bytes(val.to_ne_bytes());
-                }
-                as_f32
-            });
-            convert_i32_to_f32::OUTPUT.set([0.0f32; 64]);
+            let pack = convert_i32_to_f32::ConvertI32ToF32Pack {
+                input: Storage::new({
+                    let mut as_f32 = [0.0f32; 64];
+                    for (i, &val) in inputs.iter().enumerate() {
+                        as_f32[i] = f32::from_ne_bytes(val.to_ne_bytes());
+                    }
+                    as_f32
+                }),
+                output: Storage::new([0.0f32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                convert_i32_to_f32::main(builtins.global_invocation_id);
+                convert_i32_to_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = convert_i32_to_f32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_f32s: Vec<f32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("f32({}i)", inputs[i])).collect();
@@ -428,18 +454,20 @@ impl RoundtripTest for TypeConversionsTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            convert_u32_to_i32::INPUT.set({
-                let mut as_f32 = [0.0f32; 64];
-                for (i, &val) in inputs.iter().enumerate() {
-                    as_f32[i] = f32::from_bits(val);
-                }
-                as_f32
-            });
-            convert_u32_to_i32::OUTPUT.set([0u32; 64]);
+            let pack = convert_u32_to_i32::ConvertU32ToI32Pack {
+                input: Storage::new({
+                    let mut as_f32 = [0.0f32; 64];
+                    for (i, &val) in inputs.iter().enumerate() {
+                        as_f32[i] = f32::from_bits(val);
+                    }
+                    as_f32
+                }),
+                output: Storage::new([0u32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                convert_u32_to_i32::main(builtins.global_invocation_id);
+                convert_u32_to_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = convert_u32_to_i32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N).map(|i| format!("i32({:#x}u)", inputs[i])).collect();

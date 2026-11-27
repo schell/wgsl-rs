@@ -656,22 +656,95 @@ fn sub_filterability_const(filterable: &mut Filterability, consts: &HashMap<Stri
     }
 }
 
+/// Resolve one parameterized address component, enforcing WGSL's u32 address
+/// range and rejecting boolean substitutions.
+fn sub_binding_address_const(
+    address: &mut BindingAddress,
+    resource_name: &str,
+    component: &str,
+    consts: &HashMap<String, ConstValue>,
+) {
+    let BindingAddress::Param(name) = address else {
+        return;
+    };
+    let Some(value) = consts.get(name) else {
+        return;
+    };
+    let ConstValue::Int(value) = value else {
+        panic!(
+            "bool const generic value cannot substitute {component} parameter {name} on binding \
+             {resource_name:?}; addresses require integers"
+        );
+    };
+    let concrete = u32::try_from(*value).unwrap_or_else(|_| {
+        panic!(
+            "const generic value {value} for {component} parameter {name} on binding \
+             {resource_name:?} is outside the u32 address range"
+        )
+    });
+    *address = BindingAddress::Concrete(concrete);
+}
+
+/// Validate global binding names and every concrete `(group, binding)` pair.
+/// Parameterized pairs are checked again after const substitution.
+pub fn validate_binding_addresses(module: &Module) -> Result<(), String> {
+    let mut names = HashMap::<&str, &str>::new();
+    let mut addresses = HashMap::<(u32, u32), &str>::new();
+    for item in &module.items {
+        let (name, group, binding) = match item {
+            Item::Uniform(item) => (&item.name, &item.group, &item.binding),
+            Item::Storage(item) => (&item.name, &item.group, &item.binding),
+            Item::Sampler(item) => (&item.name, &item.group, &item.binding),
+            Item::Texture(item) => (&item.name, &item.group, &item.binding),
+            _ => continue,
+        };
+        if let Some(previous) = names.insert(name, name) {
+            return Err(format!(
+                "duplicate resource name {name:?}: global resource names must be unique (first \
+                 declared as {previous:?})"
+            ));
+        }
+        let (Some(group), Some(binding)) = (group.concrete(), binding.concrete()) else {
+            continue;
+        };
+        if let Some(previous) = addresses.insert((group, binding), name) {
+            return Err(format!(
+                "duplicate resource address @group({group}) @binding({binding}): resources \
+                 {previous:?} and {name:?} conflict"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn sub_item_const(item: &mut Item, consts: &HashMap<String, ConstValue>) {
     match item {
         Item::Const(c) => {
             sub_type_const(&mut c.ty, consts);
             sub_expr_const(&mut c.expr, consts);
         }
-        Item::Uniform(u) => sub_type_const(&mut u.ty, consts),
-        Item::Storage(st) => sub_type_const(&mut st.ty, consts),
+        Item::Uniform(u) => {
+            sub_type_const(&mut u.ty, consts);
+            sub_binding_address_const(&mut u.group, &u.name, "group", consts);
+            sub_binding_address_const(&mut u.binding, &u.name, "binding", consts);
+        }
+        Item::Storage(st) => {
+            sub_type_const(&mut st.ty, consts);
+            sub_binding_address_const(&mut st.group, &st.name, "group", consts);
+            sub_binding_address_const(&mut st.binding, &st.name, "binding", consts);
+        }
         Item::Workgroup(w) => sub_type_const(&mut w.ty, consts),
         Item::Sampler(sa) => {
             sub_type_const(&mut sa.ty, consts);
             sub_filterability_const(&mut sa.filterable, consts);
+            sub_binding_address_const(&mut sa.group, &sa.name, "group", consts);
+            sub_binding_address_const(&mut sa.binding, &sa.name, "binding", consts);
         }
         Item::Texture(t) => {
             sub_type_const(&mut t.ty, consts);
             sub_filterability_const(&mut t.filterable, consts);
+            sub_binding_address_const(&mut t.group, &t.name, "group", consts);
+            sub_binding_address_const(&mut t.binding, &t.name, "binding", consts);
         }
         Item::Fn(f) => sub_fn_const(f, consts),
         Item::Struct(st) => {

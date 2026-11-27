@@ -17,16 +17,21 @@ const N: usize = 64;
 #[wgsl]
 pub mod vec_binary_f32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]); // Flattened: 64 vec4 pairs = 512 floats
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 320]); // 5 ops * 64
+    pub struct VecBinaryF32Pack {
+        // Flattened: 64 vec4 pairs = 512 floats
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        // 5 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 320]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecBinaryF32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8; // 8 floats per pair of vec4s
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4f(
             input[base],
@@ -42,11 +47,11 @@ pub mod vec_binary_f32 {
         );
 
         let out_base = idx * 5;
-        get_mut!(OUTPUT)[out_base] = a + b;
-        get_mut!(OUTPUT)[out_base + 1] = a - b;
-        get_mut!(OUTPUT)[out_base + 2] = a * b; // component-wise multiplication
-        get_mut!(OUTPUT)[out_base + 3] = a / b;
-        get_mut!(OUTPUT)[out_base + 4] = a % b;
+        get_mut!(pack.output)[out_base] = a + b;
+        get_mut!(pack.output)[out_base + 1] = a - b;
+        get_mut!(pack.output)[out_base + 2] = a * b; // component-wise multiplication
+        get_mut!(pack.output)[out_base + 3] = a / b;
+        get_mut!(pack.output)[out_base + 4] = a % b;
     }
 }
 
@@ -54,16 +59,20 @@ pub mod vec_binary_f32 {
 #[wgsl]
 pub mod vec_binary_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [i32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 256]); // 4 ops * 64
+    pub struct VecBinaryI32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 512]>,
+        // 4 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4i; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecBinaryI32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4i(
             input[base],
@@ -79,10 +88,10 @@ pub mod vec_binary_i32 {
         );
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base] = a + b;
-        get_mut!(OUTPUT)[out_base + 1] = a - b;
-        get_mut!(OUTPUT)[out_base + 2] = a * b;
-        get_mut!(OUTPUT)[out_base + 3] = a / b;
+        get_mut!(pack.output)[out_base] = a + b;
+        get_mut!(pack.output)[out_base + 1] = a - b;
+        get_mut!(pack.output)[out_base + 2] = a * b;
+        get_mut!(pack.output)[out_base + 3] = a / b;
     }
 }
 
@@ -90,16 +99,20 @@ pub mod vec_binary_i32 {
 #[wgsl]
 pub mod vec_binary_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 256]); // 4 ops * 64
+    pub struct VecBinaryU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 512]>,
+        // 4 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecBinaryU32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4u(
             input[base],
@@ -115,10 +128,10 @@ pub mod vec_binary_u32 {
         );
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base] = a + b;
-        get_mut!(OUTPUT)[out_base + 1] = a - b;
-        get_mut!(OUTPUT)[out_base + 2] = a * b;
-        get_mut!(OUTPUT)[out_base + 3] = a / b;
+        get_mut!(pack.output)[out_base] = a + b;
+        get_mut!(pack.output)[out_base + 1] = a - b;
+        get_mut!(pack.output)[out_base + 2] = a * b;
+        get_mut!(pack.output)[out_base + 3] = a / b;
     }
 }
 
@@ -128,16 +141,21 @@ pub mod vec_binary_u32 {
 #[wgsl]
 pub mod vec_scalar_f32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 vec4s + 64 scalars = 320
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 512]); // 8 ops * 64
+    pub struct VecScalarF32Pack {
+        // 64 vec4s + 64 scalars = 320
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        // 8 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 512]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecScalarF32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 5; // 4 for vec4 + 1 for scalar
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let v = vec4f(
             input[base],
@@ -149,15 +167,15 @@ pub mod vec_scalar_f32 {
 
         let out_base = idx * 8;
         // v ⊗ s
-        get_mut!(OUTPUT)[out_base] = v + s;
-        get_mut!(OUTPUT)[out_base + 1] = v - s;
-        get_mut!(OUTPUT)[out_base + 2] = v * s;
-        get_mut!(OUTPUT)[out_base + 3] = v / s;
+        get_mut!(pack.output)[out_base] = v + s;
+        get_mut!(pack.output)[out_base + 1] = v - s;
+        get_mut!(pack.output)[out_base + 2] = v * s;
+        get_mut!(pack.output)[out_base + 3] = v / s;
         // s ⊗ v
-        get_mut!(OUTPUT)[out_base + 4] = s + v;
-        get_mut!(OUTPUT)[out_base + 5] = s - v;
-        get_mut!(OUTPUT)[out_base + 6] = s * v;
-        get_mut!(OUTPUT)[out_base + 7] = s / v;
+        get_mut!(pack.output)[out_base + 4] = s + v;
+        get_mut!(pack.output)[out_base + 5] = s - v;
+        get_mut!(pack.output)[out_base + 6] = s * v;
+        get_mut!(pack.output)[out_base + 7] = s / v;
     }
 }
 
@@ -165,16 +183,20 @@ pub mod vec_scalar_f32 {
 #[wgsl]
 pub mod vec_scalar_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [i32; 320]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 512]); // 8 ops * 64
+    pub struct VecScalarI32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 320]>,
+        // 8 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4i; 512]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecScalarI32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 5;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let v = vec4i(
             input[base],
@@ -185,14 +207,14 @@ pub mod vec_scalar_i32 {
         let s = input[base + 4];
 
         let out_base = idx * 8;
-        get_mut!(OUTPUT)[out_base] = v + s;
-        get_mut!(OUTPUT)[out_base + 1] = v - s;
-        get_mut!(OUTPUT)[out_base + 2] = v * s;
-        get_mut!(OUTPUT)[out_base + 3] = v / s;
-        get_mut!(OUTPUT)[out_base + 4] = s + v;
-        get_mut!(OUTPUT)[out_base + 5] = s - v;
-        get_mut!(OUTPUT)[out_base + 6] = s * v;
-        get_mut!(OUTPUT)[out_base + 7] = s / v;
+        get_mut!(pack.output)[out_base] = v + s;
+        get_mut!(pack.output)[out_base + 1] = v - s;
+        get_mut!(pack.output)[out_base + 2] = v * s;
+        get_mut!(pack.output)[out_base + 3] = v / s;
+        get_mut!(pack.output)[out_base + 4] = s + v;
+        get_mut!(pack.output)[out_base + 5] = s - v;
+        get_mut!(pack.output)[out_base + 6] = s * v;
+        get_mut!(pack.output)[out_base + 7] = s / v;
     }
 }
 
@@ -200,16 +222,20 @@ pub mod vec_scalar_i32 {
 #[wgsl]
 pub mod vec_scalar_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 320]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 512]); // 8 ops * 64
+    pub struct VecScalarU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 320]>,
+        // 8 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 512]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecScalarU32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 5;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let v = vec4u(
             input[base],
@@ -220,14 +246,14 @@ pub mod vec_scalar_u32 {
         let s = input[base + 4];
 
         let out_base = idx * 8;
-        get_mut!(OUTPUT)[out_base] = v + s;
-        get_mut!(OUTPUT)[out_base + 1] = v - s;
-        get_mut!(OUTPUT)[out_base + 2] = v * s;
-        get_mut!(OUTPUT)[out_base + 3] = v / s;
-        get_mut!(OUTPUT)[out_base + 4] = s + v;
-        get_mut!(OUTPUT)[out_base + 5] = s - v;
-        get_mut!(OUTPUT)[out_base + 6] = s * v;
-        get_mut!(OUTPUT)[out_base + 7] = s / v;
+        get_mut!(pack.output)[out_base] = v + s;
+        get_mut!(pack.output)[out_base + 1] = v - s;
+        get_mut!(pack.output)[out_base + 2] = v * s;
+        get_mut!(pack.output)[out_base + 3] = v / s;
+        get_mut!(pack.output)[out_base + 4] = s + v;
+        get_mut!(pack.output)[out_base + 5] = s - v;
+        get_mut!(pack.output)[out_base + 6] = s * v;
+        get_mut!(pack.output)[out_base + 7] = s / v;
     }
 }
 
@@ -237,17 +263,22 @@ pub mod vec_scalar_u32 {
 #[wgsl]
 pub mod vec_unary {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]); // 64 vec4f + 64 vec4i (as f32 bits)
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 512]); // Same layout
+    pub struct VecUnaryPack {
+        // 64 vec4f + 64 vec4i (as f32 bits)
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        // Same layout
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 512]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecUnaryPack) {
         let idx = global_id.x as usize;
         let base_f = idx * 4;
         let base_i = 256 + idx * 4; // Second half of input
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let vf = vec4f(
             input[base_f],
@@ -271,15 +302,15 @@ pub mod vec_unary {
         let neg_vf = -vf;
         let neg_vi = -vi;
 
-        get_mut!(OUTPUT)[base_f] = neg_vf.x;
-        get_mut!(OUTPUT)[base_f + 1] = neg_vf.y;
-        get_mut!(OUTPUT)[base_f + 2] = neg_vf.z;
-        get_mut!(OUTPUT)[base_f + 3] = neg_vf.w;
+        get_mut!(pack.output)[base_f] = neg_vf.x;
+        get_mut!(pack.output)[base_f + 1] = neg_vf.y;
+        get_mut!(pack.output)[base_f + 2] = neg_vf.z;
+        get_mut!(pack.output)[base_f + 3] = neg_vf.w;
 
-        get_mut!(OUTPUT)[base_i] = bitcast_f32(neg_vi.x);
-        get_mut!(OUTPUT)[base_i + 1] = bitcast_f32(neg_vi.y);
-        get_mut!(OUTPUT)[base_i + 2] = bitcast_f32(neg_vi.z);
-        get_mut!(OUTPUT)[base_i + 3] = bitcast_f32(neg_vi.w);
+        get_mut!(pack.output)[base_i] = bitcast_f32(neg_vi.x);
+        get_mut!(pack.output)[base_i + 1] = bitcast_f32(neg_vi.y);
+        get_mut!(pack.output)[base_i + 2] = bitcast_f32(neg_vi.z);
+        get_mut!(pack.output)[base_i + 3] = bitcast_f32(neg_vi.w);
     }
 }
 
@@ -287,17 +318,22 @@ pub mod vec_unary {
 #[wgsl]
 pub mod vec_mixed_dims {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 vec2 + 64 vec3 = 320
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 384]); // 3 ops each = 384
+    pub struct VecMixedDimsPack {
+        // 64 vec2 + 64 vec3 = 320
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        // 3 ops each = 384
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 384]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecMixedDimsPack) {
         let idx = global_id.x as usize;
         let base2 = idx * 2;
         let base3 = 128 + idx * 3;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let v2 = vec2f(input[base2], input[base2 + 1]);
         let v3 = vec3f(input[base3], input[base3 + 1], input[base3 + 2]);
@@ -309,18 +345,18 @@ pub mod vec_mixed_dims {
         let v2_doubled = v2 + v2;
         let v2_scaled = v2 * 2.0;
 
-        get_mut!(OUTPUT)[out_base2] = v2_doubled.x;
-        get_mut!(OUTPUT)[out_base2 + 1] = v2_doubled.y;
-        get_mut!(OUTPUT)[out_base2 + 2] = v2_scaled.x;
+        get_mut!(pack.output)[out_base2] = v2_doubled.x;
+        get_mut!(pack.output)[out_base2 + 1] = v2_doubled.y;
+        get_mut!(pack.output)[out_base2 + 2] = v2_scaled.x;
 
         // Vec3f operations
         let v3_doubled = v3 + v3;
         let v3_scaled = v3 * 2.0;
         let v3_neg = -v3;
 
-        get_mut!(OUTPUT)[out_base3] = v3_doubled.x;
-        get_mut!(OUTPUT)[out_base3 + 1] = v3_scaled.y;
-        get_mut!(OUTPUT)[out_base3 + 2] = v3_neg.z;
+        get_mut!(pack.output)[out_base3] = v3_doubled.x;
+        get_mut!(pack.output)[out_base3 + 1] = v3_scaled.y;
+        get_mut!(pack.output)[out_base3 + 2] = v3_neg.z;
     }
 }
 
@@ -678,12 +714,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_binary_f32::INPUT.set(flattened);
-            vec_binary_f32::OUTPUT.set([Vec4f::default(); 320]);
+            let pack = vec_binary_f32::VecBinaryF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4f::default(); 320]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_binary_f32::main(builtins.global_invocation_id);
+                vec_binary_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_binary_f32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -743,12 +781,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_binary_i32::INPUT.set(flattened);
-            vec_binary_i32::OUTPUT.set([Vec4i::default(); 256]);
+            let pack = vec_binary_i32::VecBinaryI32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4i::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_binary_i32::main(builtins.global_invocation_id);
+                vec_binary_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_binary_i32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_i32s: Vec<i32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..1024).map(|i| format!("vec4i[{}]", i)).collect();
@@ -786,12 +826,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_binary_u32::INPUT.set(flattened);
-            vec_binary_u32::OUTPUT.set([Vec4u::default(); 256]);
+            let pack = vec_binary_u32::VecBinaryU32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4u::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_binary_u32::main(builtins.global_invocation_id);
+                vec_binary_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_binary_u32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..1024).map(|i| format!("vec4u[{}]", i)).collect();
@@ -825,12 +867,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_scalar_f32::INPUT.set(flattened);
-            vec_scalar_f32::OUTPUT.set([Vec4f::default(); 512]);
+            let pack = vec_scalar_f32::VecScalarF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4f::default(); 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_scalar_f32::main(builtins.global_invocation_id);
+                vec_scalar_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_scalar_f32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..2048)
@@ -867,12 +911,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_scalar_i32::INPUT.set(flattened);
-            vec_scalar_i32::OUTPUT.set([Vec4i::default(); 512]);
+            let pack = vec_scalar_i32::VecScalarI32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4i::default(); 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_scalar_i32::main(builtins.global_invocation_id);
+                vec_scalar_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_scalar_i32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_i32s: Vec<i32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..2048)
@@ -911,12 +957,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_scalar_u32::INPUT.set(flattened);
-            vec_scalar_u32::OUTPUT.set([Vec4u::default(); 512]);
+            let pack = vec_scalar_u32::VecScalarU32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4u::default(); 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_scalar_u32::main(builtins.global_invocation_id);
+                vec_scalar_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_scalar_u32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..2048)
@@ -967,12 +1015,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_unary::INPUT.set(flattened);
-            vec_unary::OUTPUT.set([0.0f32; 512]);
+            let pack = vec_unary::VecUnaryPack {
+                input: Storage::new(flattened),
+                output: Storage::new([0.0f32; 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_unary::main(builtins.global_invocation_id);
+                vec_unary::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_unary::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N)
@@ -1036,12 +1086,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_mixed_dims::INPUT.set(flattened);
-            vec_mixed_dims::OUTPUT.set([0.0f32; 384]);
+            let pack = vec_mixed_dims::VecMixedDimsPack {
+                input: Storage::new(flattened),
+                output: Storage::new([0.0f32; 384]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_mixed_dims::main(builtins.global_invocation_id);
+                vec_mixed_dims::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_mixed_dims::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output_guard.to_vec();
 
             let labels: Vec<String> = (0..N * 6)
@@ -1090,12 +1142,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_overflow_u32::INPUT.set(flattened);
-            vec_overflow_u32::OUTPUT.set([vec4u(0, 0, 0, 0); 384]);
+            let pack = vec_overflow_u32::VecOverflowU32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([vec4u(0, 0, 0, 0); 384]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_overflow_u32::main(builtins.global_invocation_id);
+                vec_overflow_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_overflow_u32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output_guard
                 .iter()
                 .flat_map(|v| [v.x, v.y, v.z, v.w])
@@ -1146,12 +1200,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_i32s_raw: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_overflow_i32::INPUT.set(flattened);
-            vec_overflow_i32::OUTPUT.set([vec4i(0, 0, 0, 0); 448]);
+            let pack = vec_overflow_i32::VecOverflowI32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([vec4i(0, 0, 0, 0); 448]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_overflow_i32::main(builtins.global_invocation_id);
+                vec_overflow_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_overflow_i32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_i32s: Vec<i32> = cpu_output_guard
                 .iter()
                 .flat_map(|v| [v.x, v.y, v.z, v.w])
@@ -1195,12 +1251,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_compound_assign_f32::INPUT.set(flattened);
-            vec_compound_assign_f32::OUTPUT.set([Vec4f::default(); 256]);
+            let pack = vec_compound_assign_f32::VecCompoundAssignF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4f::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_compound_assign_f32::main(builtins.global_invocation_id);
+                vec_compound_assign_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_compound_assign_f32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N * 4 * 4)
@@ -1239,12 +1297,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_compound_assign_scalar_f32::INPUT.set(flattened);
-            vec_compound_assign_scalar_f32::OUTPUT.set([Vec4f::default(); 256]);
+            let pack = vec_compound_assign_scalar_f32::VecCompoundAssignScalarF32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([Vec4f::default(); 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_compound_assign_scalar_f32::main(builtins.global_invocation_id);
+                vec_compound_assign_scalar_f32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_compound_assign_scalar_f32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output_guard.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N * 4 * 4)
@@ -1282,12 +1342,14 @@ impl RoundtripTest for VectorArithmeticTest {
             });
             let gpu_i32s: &[i32] = bytemuck::cast_slice(&gpu_bytes);
 
-            vec_compound_assign_i32::INPUT.set(flattened);
-            vec_compound_assign_i32::OUTPUT.set([vec4i(0, 0, 0, 0); 192]);
+            let pack = vec_compound_assign_i32::VecCompoundAssignI32Pack {
+                input: Storage::new(flattened),
+                output: Storage::new([vec4i(0, 0, 0, 0); 192]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                vec_compound_assign_i32::main(builtins.global_invocation_id);
+                vec_compound_assign_i32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output_guard = vec_compound_assign_i32::OUTPUT.get();
+            let cpu_output_guard = pack.output.get();
             let cpu_i32s: Vec<i32> = cpu_output_guard
                 .iter()
                 .flat_map(|v| [v.x, v.y, v.z, v.w])
@@ -1322,16 +1384,21 @@ impl RoundtripTest for VectorArithmeticTest {
 #[wgsl]
 pub mod vec_overflow_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [u32; 512]); // 64 vec4 pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 384]); // 6 ops * 64
+    pub struct VecOverflowU32Pack {
+        // 64 vec4 pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 512]>,
+        // 6 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 384]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecOverflowU32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4u(
             input[base],
@@ -1347,12 +1414,12 @@ pub mod vec_overflow_u32 {
         );
 
         let out_base = idx * 6;
-        get_mut!(OUTPUT)[out_base] = a + b; // May overflow
-        get_mut!(OUTPUT)[out_base + 1] = a - b; // May underflow
-        get_mut!(OUTPUT)[out_base + 2] = a * b; // May overflow
-        get_mut!(OUTPUT)[out_base + 3] = a / b;
-        get_mut!(OUTPUT)[out_base + 4] = a + a; // Self-addition overflow test
-        get_mut!(OUTPUT)[out_base + 5] = b - a; // Reversed subtraction
+        get_mut!(pack.output)[out_base] = a + b; // May overflow
+        get_mut!(pack.output)[out_base + 1] = a - b; // May underflow
+        get_mut!(pack.output)[out_base + 2] = a * b; // May overflow
+        get_mut!(pack.output)[out_base + 3] = a / b;
+        get_mut!(pack.output)[out_base + 4] = a + a; // Self-addition overflow test
+        get_mut!(pack.output)[out_base + 5] = b - a; // Reversed subtraction
         // underflow test
     }
 }
@@ -1364,16 +1431,21 @@ pub mod vec_overflow_u32 {
 #[wgsl]
 pub mod vec_overflow_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [i32; 512]); // 64 vec4 pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 448]); // 7 ops * 64
+    pub struct VecOverflowI32Pack {
+        // 64 vec4 pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 512]>,
+        // 7 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4i; 448]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &VecOverflowI32Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = vec4i(
             input[base],
@@ -1389,13 +1461,13 @@ pub mod vec_overflow_i32 {
         );
 
         let out_base = idx * 7;
-        get_mut!(OUTPUT)[out_base] = a + b; // May overflow
-        get_mut!(OUTPUT)[out_base + 1] = a - b; // May underflow
-        get_mut!(OUTPUT)[out_base + 2] = a * b; // May overflow
-        get_mut!(OUTPUT)[out_base + 3] = a / b;
-        get_mut!(OUTPUT)[out_base + 4] = -a; // Negation overflow (i32::MIN wraps)
-        get_mut!(OUTPUT)[out_base + 5] = a + a; // Self-addition overflow
-        get_mut!(OUTPUT)[out_base + 6] = b - a; // Reversed subtraction
+        get_mut!(pack.output)[out_base] = a + b; // May overflow
+        get_mut!(pack.output)[out_base + 1] = a - b; // May underflow
+        get_mut!(pack.output)[out_base + 2] = a * b; // May overflow
+        get_mut!(pack.output)[out_base + 3] = a / b;
+        get_mut!(pack.output)[out_base + 4] = -a; // Negation overflow (i32::MIN wraps)
+        get_mut!(pack.output)[out_base + 5] = a + a; // Self-addition overflow
+        get_mut!(pack.output)[out_base + 6] = b - a; // Reversed subtraction
         // underflow
     }
 }
@@ -1407,16 +1479,24 @@ pub mod vec_overflow_i32 {
 #[wgsl]
 pub mod vec_compound_assign_f32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]); // 64 vec4 pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 256]); // 4 ops * 64
+    pub struct VecCompoundAssignF32Pack {
+        // 64 vec4 pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        // 4 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &VecCompoundAssignF32Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let v0 = vec4f(
             input[base],
@@ -1437,19 +1517,19 @@ pub mod vec_compound_assign_f32 {
         // sequentially-rounded results the CPU world produces.
         let mut v_add = v0;
         v_add += b;
-        get_mut!(OUTPUT)[idx * 4] = v_add;
+        get_mut!(pack.output)[idx * 4] = v_add;
 
         let mut v_sub = v0;
         v_sub -= b;
-        get_mut!(OUTPUT)[idx * 4 + 1] = v_sub;
+        get_mut!(pack.output)[idx * 4 + 1] = v_sub;
 
         let mut v_mul = v0;
         v_mul *= b;
-        get_mut!(OUTPUT)[idx * 4 + 2] = v_mul;
+        get_mut!(pack.output)[idx * 4 + 2] = v_mul;
 
         let mut v_div = v0;
         v_div /= b;
-        get_mut!(OUTPUT)[idx * 4 + 3] = v_div;
+        get_mut!(pack.output)[idx * 4 + 3] = v_div;
     }
 }
 
@@ -1461,16 +1541,24 @@ pub mod vec_compound_assign_f32 {
 #[wgsl]
 pub mod vec_compound_assign_scalar_f32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 * (vec4 + scalar)
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 256]); // 4 ops * 64
+    pub struct VecCompoundAssignScalarF32Pack {
+        // 64 * (vec4 + scalar)
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        // 4 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 256]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &VecCompoundAssignScalarF32Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 5;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let v0 = vec4f(
             input[base],
@@ -1484,19 +1572,19 @@ pub mod vec_compound_assign_scalar_f32 {
         // cannot algebraically simplify chains like (v + s) - s.
         let mut v_add = v0;
         v_add += s;
-        get_mut!(OUTPUT)[idx * 4] = v_add;
+        get_mut!(pack.output)[idx * 4] = v_add;
 
         let mut v_sub = v0;
         v_sub -= s;
-        get_mut!(OUTPUT)[idx * 4 + 1] = v_sub;
+        get_mut!(pack.output)[idx * 4 + 1] = v_sub;
 
         let mut v_mul = v0;
         v_mul *= s;
-        get_mut!(OUTPUT)[idx * 4 + 2] = v_mul;
+        get_mut!(pack.output)[idx * 4 + 2] = v_mul;
 
         let mut v_div = v0;
         v_div /= s;
-        get_mut!(OUTPUT)[idx * 4 + 3] = v_div;
+        get_mut!(pack.output)[idx * 4 + 3] = v_div;
     }
 }
 
@@ -1507,16 +1595,24 @@ pub mod vec_compound_assign_scalar_f32 {
 #[wgsl]
 pub mod vec_compound_assign_i32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [i32; 512]); // 64 vec4 pairs
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4i; 192]); // 3 ops * 64
+    pub struct VecCompoundAssignI32Pack {
+        // 64 vec4 pairs
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[i32; 512]>,
+        // 3 ops * 64
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4i; 192]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &VecCompoundAssignI32Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let mut v = vec4i(
             input[base],
@@ -1532,13 +1628,13 @@ pub mod vec_compound_assign_i32 {
         );
 
         v += b; // May overflow
-        get_mut!(OUTPUT)[idx * 3] = v;
+        get_mut!(pack.output)[idx * 3] = v;
 
         v -= b;
-        get_mut!(OUTPUT)[idx * 3 + 1] = v;
+        get_mut!(pack.output)[idx * 3 + 1] = v;
 
         v *= b; // May overflow
-        get_mut!(OUTPUT)[idx * 3 + 2] = v;
+        get_mut!(pack.output)[idx * 3 + 2] = v;
     }
 }
 

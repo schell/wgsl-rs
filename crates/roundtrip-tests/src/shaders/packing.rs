@@ -20,16 +20,20 @@ const N: usize = 64;
 #[wgsl]
 pub mod pack_unpack_4x8 {
     use wgsl_rs::std::*;
+    pub struct PackUnpack4x8Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4f; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 128]>,
+    }
 
-    storage!(group(0), binding(0), INPUT: [Vec4f; 64]);
     // Output layout: [snorm_unpacked, unorm_unpacked] alternating = 128 Vec4f
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 128]);
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &PackUnpack4x8Pack) {
         let idx = global_id.x as usize;
-        let v = get!(INPUT)[idx];
+        let v = get!(pack.input)[idx];
 
         // snorm: pack then unpack
         let packed_snorm = pack4x8snorm(v);
@@ -45,8 +49,8 @@ pub mod pack_unpack_4x8 {
         let packed_unorm = pack4x8unorm(clamped);
         let unpacked_unorm = unpack4x8unorm(packed_unorm);
 
-        get_mut!(OUTPUT)[idx * 2] = unpacked_snorm;
-        get_mut!(OUTPUT)[idx * 2 + 1] = unpacked_unorm;
+        get_mut!(pack.output)[idx * 2] = unpacked_snorm;
+        get_mut!(pack.output)[idx * 2 + 1] = unpacked_unorm;
     }
 }
 
@@ -54,15 +58,18 @@ pub mod pack_unpack_4x8 {
 #[wgsl]
 pub mod pack_unpack_2x16_norm {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [Vec4f; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct PackUnpack2x16NormPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4f; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &PackUnpack2x16NormPack) {
         let idx = global_id.x as usize;
-        let v = get!(INPUT)[idx];
+        let v = get!(pack.input)[idx];
 
         // snorm using xy
         let packed_snorm = pack2x16snorm(vec2f(v.x, v.y));
@@ -72,7 +79,7 @@ pub mod pack_unpack_2x16_norm {
         let packed_unorm = pack2x16unorm(vec2f(clamp(v.z, 0.0, 1.0), clamp(v.w, 0.0, 1.0)));
         let unpacked_unorm = unpack2x16unorm(packed_unorm);
 
-        get_mut!(OUTPUT)[idx] = vec4f(
+        get_mut!(pack.output)[idx] = vec4f(
             unpacked_snorm.x,
             unpacked_snorm.y,
             unpacked_unorm.x,
@@ -85,20 +92,23 @@ pub mod pack_unpack_2x16_norm {
 #[wgsl]
 pub mod pack_unpack_2x16_float {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [Vec4f; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4f; 64]);
+    pub struct PackUnpack2x16FloatPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4f; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4f; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &PackUnpack2x16FloatPack) {
         let idx = global_id.x as usize;
-        let v = get!(INPUT)[idx];
+        let v = get!(pack.input)[idx];
 
         let packed = pack2x16float(vec2f(v.x, v.y));
         let unpacked = unpack2x16float(packed);
 
-        get_mut!(OUTPUT)[idx] = vec4f(unpacked.x, unpacked.y, 0.0, 0.0);
+        get_mut!(pack.output)[idx] = vec4f(unpacked.x, unpacked.y, 0.0, 0.0);
     }
 }
 
@@ -107,20 +117,23 @@ pub mod pack_unpack_2x16_float {
 #[wgsl]
 pub mod pack_raw_u32 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [Vec4f; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct PackRawU32Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[Vec4f; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &PackRawU32Pack) {
         let idx = global_id.x as usize;
-        let v = get!(INPUT)[idx];
+        let v = get!(pack.input)[idx];
         let p_snorm4 = pack4x8snorm(v);
         let p_unorm4 = pack4x8unorm(v);
         let p_snorm2 = pack2x16snorm(vec2f(v.x, v.y));
         let p_unorm2 = pack2x16unorm(vec2f(v.z, v.w));
-        get_mut!(OUTPUT)[idx] = vec4u(p_snorm4, p_unorm4, p_snorm2, p_unorm2);
+        get_mut!(pack.output)[idx] = vec4u(p_snorm4, p_unorm4, p_snorm2, p_unorm2);
     }
 }
 
@@ -188,12 +201,14 @@ impl RoundtripTest for PackingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            pack_unpack_4x8::INPUT.set(inputs);
-            pack_unpack_4x8::OUTPUT.set([Vec4f::default(); N * 2]);
+            let pack = pack_unpack_4x8::PackUnpack4x8Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N * 2]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                pack_unpack_4x8::main(builtins.global_invocation_id);
+                pack_unpack_4x8::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = pack_unpack_4x8::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -241,12 +256,14 @@ impl RoundtripTest for PackingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            pack_unpack_2x16_norm::INPUT.set(inputs);
-            pack_unpack_2x16_norm::OUTPUT.set([Vec4f::default(); N]);
+            let pack = pack_unpack_2x16_norm::PackUnpack2x16NormPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                pack_unpack_2x16_norm::main(builtins.global_invocation_id);
+                pack_unpack_2x16_norm::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = pack_unpack_2x16_norm::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -289,12 +306,14 @@ impl RoundtripTest for PackingTest {
             let gpu_floats: &[f32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            pack_unpack_2x16_float::INPUT.set(inputs);
-            pack_unpack_2x16_float::OUTPUT.set([Vec4f::default(); N]);
+            let pack = pack_unpack_2x16_float::PackUnpack2x16FloatPack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4f::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                pack_unpack_2x16_float::main(builtins.global_invocation_id);
+                pack_unpack_2x16_float::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = pack_unpack_2x16_float::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_floats: Vec<f32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)
@@ -336,12 +355,14 @@ impl RoundtripTest for PackingTest {
             let gpu_u32s: &[u32] = bytemuck::cast_slice(&gpu_bytes);
 
             use wgsl_rs::std::*;
-            pack_raw_u32::INPUT.set(inputs);
-            pack_raw_u32::OUTPUT.set([Vec4u::default(); N]);
+            let pack = pack_raw_u32::PackRawU32Pack {
+                input: Storage::new(inputs),
+                output: Storage::new([Vec4u::default(); N]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
-                pack_raw_u32::main(builtins.global_invocation_id);
+                pack_raw_u32::main(builtins.global_invocation_id, &pack);
             });
-            let cpu_output = pack_raw_u32::OUTPUT.get();
+            let cpu_output = pack.output.get();
             let cpu_u32s: Vec<u32> = cpu_output.iter().flat_map(|v| v.to_array()).collect();
 
             let labels: Vec<String> = (0..N)

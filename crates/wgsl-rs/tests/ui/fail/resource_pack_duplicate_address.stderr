@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       duplicate resource address @group(0) @binding(0) on `invalidpack__second`.'
+  --> tests/ui/fail/resource_pack_duplicate_address.rs:11:13
+   |
+11 |         pub second: Sampler,
+   |             ^^^^^^

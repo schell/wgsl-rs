@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       every field of a resource pack must have exactly one `#[texture]`, `#[sampler]`, `#[storage]`, or `#[uniform]` annotation; non-resource fields are not supported.'
+  --> tests/ui/fail/resource_pack_non_resource_field.rs:10:9
+   |
+10 |         pub not_a_resource: f32,
+   |         ^^^

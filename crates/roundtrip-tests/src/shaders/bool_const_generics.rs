@@ -30,8 +30,12 @@ pub mod bool_feature_flag {
 
     pub const APPLY_TRUE: bool = true;
 
-    storage!(group(0), binding(0), INPUT: [u32; 64]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [Vec4u; 64]);
+    pub struct BoolFeatureFlagPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[u32; 64]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[Vec4u; 64]>,
+    }
 
     /// The feature-flag helper: doubles `x` when the flag is on.
     /// `fog_scale::<true>` monomorphizes to `fog_scale_true` and
@@ -55,14 +59,17 @@ pub mod bool_feature_flag {
     /// point keeps the Rust name `main` in both concrete modules.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main<const APPLY_FOG: bool>(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main<const APPLY_FOG: bool>(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &BoolFeatureFlagPack,
+    ) {
         let idx = global_id.x as usize;
-        let x = get!(INPUT)[idx];
+        let x = get!(pack.input)[idx];
         let mut lane0 = x;
         if APPLY_FOG {
             lane0 = x * 2u32;
         }
-        get_mut!(OUTPUT)[idx] = vec4u(
+        get_mut!(pack.output)[idx] = vec4u(
             lane0,
             scale_on(x),
             scale_off(x),
@@ -84,16 +91,18 @@ fn bool_flag_inputs() -> [u32; N] {
 fn cpu_run(flag: bool, inputs: &[u32; N]) -> Vec<u32> {
     use wgsl_rs::std::*;
 
-    bool_feature_flag::INPUT.set(*inputs);
-    bool_feature_flag::OUTPUT.set([Vec4u::default(); N]);
+    let pack = bool_feature_flag::BoolFeatureFlagPack {
+        input: Storage::new(*inputs),
+        output: Storage::new([Vec4u::default(); N]),
+    };
     dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |builtins| {
         if flag {
-            bool_feature_flag::main::<true>(builtins.global_invocation_id);
+            bool_feature_flag::main::<true>(builtins.global_invocation_id, &pack);
         } else {
-            bool_feature_flag::main::<false>(builtins.global_invocation_id);
+            bool_feature_flag::main::<false>(builtins.global_invocation_id, &pack);
         }
     });
-    bool_feature_flag::OUTPUT
+    pack.output
         .get()
         .iter()
         .flat_map(|v| v.to_array())

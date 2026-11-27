@@ -20,20 +20,26 @@ const HEIGHT: u32 = 8;
 #[wgsl]
 pub mod storage_texture_compute {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), INPUT: TextureStorage2D<Rgba8unorm, Read>);
-    texture!(group(0), binding(1), OUTPUT: TextureStorage2D<Rgba8unorm, Write>);
+    pub struct StorageTextureComputePack {
+        #[texture(group(0), binding(0))]
+        pub input: TextureStorage2D<Rgba8unorm, Read>,
+        #[texture(group(0), binding(1))]
+        pub output: TextureStorage2D<Rgba8unorm, Write>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
-    pub fn compute_main(#[builtin(global_invocation_id)] gid: Vec3u) {
-        let dims = texture_dimensions(OUTPUT);
+    pub fn compute_main(
+        #[builtin(global_invocation_id)] gid: Vec3u,
+        pack: &StorageTextureComputePack,
+    ) {
+        let dims = texture_dimensions(&pack.output);
         if gid.x() >= dims.x() || gid.y() >= dims.y() {
             return;
         }
-        let value = texture_load_storage(INPUT, vec2u(gid.x(), gid.y()));
+        let value = texture_load_storage(&pack.input, vec2u(gid.x(), gid.y()));
         let halved = value * 0.5;
-        texture_store(OUTPUT, vec2u(gid.x(), gid.y()), halved);
+        texture_store(&pack.output, vec2u(gid.x(), gid.y()), halved);
     }
 }
 
@@ -158,12 +164,12 @@ fn run_gpu_compute(
     });
 
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
             &[
-                ("INPUT", wgpu::BindingResource::TextureView(&input_view)),
-                ("OUTPUT", wgpu::BindingResource::TextureView(&output_view)),
+                wgpu::BindingResource::TextureView(&input_view),
+                wgpu::BindingResource::TextureView(&output_view),
             ],
         )
         .expect("storage texture bind group");
@@ -260,12 +266,17 @@ fn run_gpu_compute(
 fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     use wgsl_rs::std::*;
 
+    let pack = storage_texture_compute::StorageTextureComputePack {
+        input: TextureStorage2D::new(),
+        output: TextureStorage2D::new(),
+    };
+
     // Initialize input texture.
-    storage_texture_compute::INPUT.init(WIDTH, HEIGHT);
+    pack.input.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let idx = (y * WIDTH + x) as usize;
-            storage_texture_compute::INPUT.set_pixel(
+            pack.input.set_pixel(
                 x,
                 y,
                 vec4f(
@@ -279,16 +290,16 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     }
 
     // Initialize output texture.
-    storage_texture_compute::OUTPUT.init(WIDTH, HEIGHT);
+    pack.output.init(WIDTH, HEIGHT);
 
     // Run the compute shader.
     dispatch_workgroups((WIDTH, HEIGHT, 1), (1, 1, 1), |builtins| {
-        storage_texture_compute::compute_main(builtins.global_invocation_id);
+        storage_texture_compute::compute_main(builtins.global_invocation_id, &pack);
     });
 
     // Read back output directly from CPU-side data (OUTPUT is write-only,
     // so we can't use texture_load_storage — read the ModuleVar directly).
-    let data = storage_texture_compute::OUTPUT.get();
+    let data = pack.output.get();
     let mut output = vec![[0.0f32; 4]; (WIDTH * HEIGHT) as usize];
     for y in 0..HEIGHT {
         for x in 0..WIDTH {

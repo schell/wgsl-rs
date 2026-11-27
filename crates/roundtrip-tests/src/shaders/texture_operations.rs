@@ -19,8 +19,10 @@ const DEPTH: u32 = 2;
 #[wgsl]
 pub mod texture_load_2d {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2D<f32>);
+    pub struct TextureLoad2dPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32>,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -35,9 +37,9 @@ pub mod texture_load_2d {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
+    pub fn frag_main(input: FragInput, pack: &TextureLoad2dPack) -> Vec4f {
         let p = input.position;
-        texture_load(TEX, vec2i(p.x as i32, p.y as i32), 0u32)
+        texture_load(&pack.tex, vec2i(p.x as i32, p.y as i32), 0u32)
     }
 }
 
@@ -48,8 +50,10 @@ pub mod texture_load_2d {
 #[wgsl]
 pub mod texture_load_2d_unfilterable {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2D<f32, false>);
+    pub struct TextureLoad2dUnfilterablePack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32, false>,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -64,9 +68,9 @@ pub mod texture_load_2d_unfilterable {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
+    pub fn frag_main(input: FragInput, pack: &TextureLoad2dUnfilterablePack) -> Vec4f {
         let p = input.position;
-        texture_load(TEX, vec2i(p.x as i32, p.y as i32), 0u32)
+        texture_load(&pack.tex, vec2i(p.x as i32, p.y as i32), 0u32)
     }
 }
 
@@ -78,9 +82,12 @@ pub mod texture_load_2d_unfilterable {
 #[wgsl]
 pub mod texture_sample_2d_unfilterable {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2D<f32, false>);
-    sampler!(group(0), binding(1), SMP: Sampler<false>);
+    pub struct TextureSample2dUnfilterablePack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32, false>,
+        #[sampler(group(0), binding(1))]
+        pub smp: Sampler<false>,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -95,22 +102,25 @@ pub mod texture_sample_2d_unfilterable {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &TextureSample2dUnfilterablePack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
         );
-        texture_sample(TEX, SMP, uv)
+        texture_sample(&pack.tex, &pack.smp, uv)
     }
 }
 
 #[wgsl]
 pub mod texture_sample_2d {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture2D<f32>);
-    sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+    pub struct TextureSample2dPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture2D<f32>,
+        #[sampler(group(0), binding(1))]
+        pub tex_sampler: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -125,22 +135,25 @@ pub mod texture_sample_2d {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &TextureSample2dPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec2f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
         );
-        texture_sample(TEX, TEX_SAMPLER, uv)
+        texture_sample(&pack.tex, &pack.tex_sampler, uv)
     }
 }
 
 #[wgsl]
 pub mod texture_sample_3d {
     use wgsl_rs::std::*;
-
-    texture!(group(0), binding(0), TEX: Texture3D<f32>);
-    sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+    pub struct TextureSample3dPack {
+        #[texture(group(0), binding(0))]
+        pub tex: Texture3D<f32>,
+        #[sampler(group(0), binding(1))]
+        pub tex_sampler: Sampler,
+    }
 
     pub struct FragInput {
         #[builtin(position)]
@@ -155,15 +168,15 @@ pub mod texture_sample_3d {
     }
 
     #[fragment]
-    pub fn frag_main(input: FragInput) -> Vec4f {
-        let dims = texture_dimensions(TEX);
+    pub fn frag_main(input: FragInput, pack: &TextureSample3dPack) -> Vec4f {
+        let dims = texture_dimensions(&pack.tex);
         let uv = vec3f(
             input.position.x / dims.x() as f32,
             input.position.y / dims.y() as f32,
             // Cycle through depth slices based on x position.
             (input.position.x % 2.0) / dims.z() as f32,
         );
-        texture_sample(TEX, TEX_SAMPLER, uv)
+        texture_sample(&pack.tex, &pack.tex_sampler, uv)
     }
 }
 
@@ -404,10 +417,10 @@ fn render_texture_load_gpu(
     });
 
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
-            &[("TEX", wgpu::BindingResource::TextureView(&source_view))],
+            &[wgpu::BindingResource::TextureView(&source_view)],
         )
         .expect("texture_load bind group");
 
@@ -491,10 +504,10 @@ fn render_texture_load_unfilterable_gpu(
     });
 
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
-            &[("TEX", wgpu::BindingResource::TextureView(&source_view))],
+            &[wgpu::BindingResource::TextureView(&source_view)],
         )
         .expect("unfilterable texture_load bind group");
 
@@ -586,12 +599,12 @@ fn render_texture_sample_unfilterable_gpu(
     });
 
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
             &[
-                ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                ("SMP", wgpu::BindingResource::Sampler(&sampler)),
+                wgpu::BindingResource::TextureView(&source_view),
+                wgpu::BindingResource::Sampler(&sampler),
             ],
         )
         .expect("texture_sample_unfilterable bind group");
@@ -675,12 +688,12 @@ fn render_texture_sample_gpu(
     });
 
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
             &[
-                ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                ("TEX_SAMPLER", wgpu::BindingResource::Sampler(&sampler)),
+                wgpu::BindingResource::TextureView(&source_view),
+                wgpu::BindingResource::Sampler(&sampler),
             ],
         )
         .expect("texture_sample bind group");
@@ -861,12 +874,12 @@ fn render_texture_sample_3d_gpu(
     });
 
     let bind_group = linkage
-        .create_bind_group_named(
+        .create_bind_group(
             0,
             device,
             &[
-                ("TEX", wgpu::BindingResource::TextureView(&source_view)),
-                ("TEX_SAMPLER", wgpu::BindingResource::Sampler(&sampler)),
+                wgpu::BindingResource::TextureView(&source_view),
+                wgpu::BindingResource::Sampler(&sampler),
             ],
         )
         .expect("texture_sample_3d bind group");
@@ -918,16 +931,22 @@ impl RoundtripTest for TextureOperationsTest {
         let pixels = build_rgba8_pixels();
         let gpu_source_texture = create_gpu_source_texture(device, queue, &pixels);
 
-        write_cpu_texture(texture_load_2d::TEX, &pixels);
+        let load_pack = texture_load_2d::TextureLoad2dPack {
+            tex: Texture2D::new(),
+        };
+        write_cpu_texture(&load_pack.tex, &pixels);
         let gpu_load_pixels = render_texture_load_gpu(device, queue, &gpu_source_texture);
         let cpu_load_grid = dispatch_fragments(
             WIDTH,
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let result = texture_load_2d::frag_main(texture_load_2d::FragInput {
-                    position: builtins.position,
-                });
+                let result = texture_load_2d::frag_main(
+                    texture_load_2d::FragInput {
+                        position: builtins.position,
+                    },
+                    &load_pack,
+                );
                 [result.x, result.y, result.z, result.w]
             },
         );
@@ -951,7 +970,10 @@ impl RoundtripTest for TextureOperationsTest {
         let r32_values = build_r32_values();
         let gpu_r32_texture = create_gpu_r32float_texture(device, queue, &r32_values);
 
-        write_cpu_texture_r32(texture_load_2d_unfilterable::TEX, &r32_values);
+        let load_unfilterable_pack = texture_load_2d_unfilterable::TextureLoad2dUnfilterablePack {
+            tex: Texture2D::new(),
+        };
+        write_cpu_texture_r32(&load_unfilterable_pack.tex, &r32_values);
         let gpu_load_unfilterable_pixels =
             render_texture_load_unfilterable_gpu(device, queue, &gpu_r32_texture);
         let cpu_load_unfilterable_grid = dispatch_fragments(
@@ -963,6 +985,7 @@ impl RoundtripTest for TextureOperationsTest {
                     texture_load_2d_unfilterable::FragInput {
                         position: builtins.position,
                     },
+                    &load_unfilterable_pack,
                 );
                 [result.x, result.y, result.z, result.w]
             },
@@ -987,8 +1010,13 @@ impl RoundtripTest for TextureOperationsTest {
         // non-filtering sampler (wgsl-rs#201). wgpu only accepts the
         // pairing when the layout declares `NonFiltering`, and the CPU
         // (nearest-only) sampler must produce the same samples.
-        write_cpu_texture_r32(texture_sample_2d_unfilterable::TEX, &r32_values);
-        texture_sample_2d_unfilterable::SMP.set(SamplerState::default());
+        let sample_unfilterable_pack =
+            texture_sample_2d_unfilterable::TextureSample2dUnfilterablePack {
+                tex: Texture2D::new(),
+                smp: Sampler::new(),
+            };
+        write_cpu_texture_r32(&sample_unfilterable_pack.tex, &r32_values);
+        sample_unfilterable_pack.smp.set(SamplerState::default());
         let gpu_sample_unfilterable_pixels =
             render_texture_sample_unfilterable_gpu(device, queue, &gpu_r32_texture);
         let cpu_sample_unfilterable_grid = dispatch_fragments(
@@ -1000,6 +1028,7 @@ impl RoundtripTest for TextureOperationsTest {
                     texture_sample_2d_unfilterable::FragInput {
                         position: builtins.position,
                     },
+                    &sample_unfilterable_pack,
                 );
                 [result.x, result.y, result.z, result.w]
             },
@@ -1020,17 +1049,24 @@ impl RoundtripTest for TextureOperationsTest {
             epsilon,
         ));
 
-        write_cpu_texture(texture_sample_2d::TEX, &pixels);
-        texture_sample_2d::TEX_SAMPLER.set(SamplerState::default());
+        let sample_pack = texture_sample_2d::TextureSample2dPack {
+            tex: Texture2D::new(),
+            tex_sampler: Sampler::new(),
+        };
+        write_cpu_texture(&sample_pack.tex, &pixels);
+        sample_pack.tex_sampler.set(SamplerState::default());
         let gpu_sample_pixels = render_texture_sample_gpu(device, queue, &gpu_source_texture);
         let cpu_sample_grid = dispatch_fragments(
             WIDTH,
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let result = texture_sample_2d::frag_main(texture_sample_2d::FragInput {
-                    position: builtins.position,
-                });
+                let result = texture_sample_2d::frag_main(
+                    texture_sample_2d::FragInput {
+                        position: builtins.position,
+                    },
+                    &sample_pack,
+                );
                 [result.x, result.y, result.z, result.w]
             },
         );
@@ -1051,8 +1087,12 @@ impl RoundtripTest for TextureOperationsTest {
         let pixels_3d = build_rgba8_pixels_3d();
         let gpu_source_texture_3d = create_gpu_source_texture_3d(device, queue, &pixels_3d);
 
-        write_cpu_texture_3d(texture_sample_3d::TEX, &pixels_3d);
-        texture_sample_3d::TEX_SAMPLER.set(SamplerState::default());
+        let sample_3d_pack = texture_sample_3d::TextureSample3dPack {
+            tex: Texture3D::new(),
+            tex_sampler: Sampler::new(),
+        };
+        write_cpu_texture_3d(&sample_3d_pack.tex, &pixels_3d);
+        sample_3d_pack.tex_sampler.set(SamplerState::default());
         let gpu_sample_3d_pixels = render_texture_sample_3d_gpu(
             device,
             queue,
@@ -1064,9 +1104,12 @@ impl RoundtripTest for TextureOperationsTest {
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let result = texture_sample_3d::frag_main(texture_sample_3d::FragInput {
-                    position: builtins.position,
-                });
+                let result = texture_sample_3d::frag_main(
+                    texture_sample_3d::FragInput {
+                        position: builtins.position,
+                    },
+                    &sample_3d_pack,
+                );
                 [result.x, result.y, result.z, result.w]
             },
         );
@@ -1087,7 +1130,7 @@ impl RoundtripTest for TextureOperationsTest {
         // This exercises the trilinear interpolation path in the CPU
         // implementation against the GPU, verifying the 8-texel blend and
         // half-texel coordinate offset logic.
-        texture_sample_3d::TEX_SAMPLER.set(SamplerState::linear());
+        sample_3d_pack.tex_sampler.set(SamplerState::linear());
         let gpu_sample_3d_linear_pixels = render_texture_sample_3d_gpu(
             device,
             queue,
@@ -1099,9 +1142,12 @@ impl RoundtripTest for TextureOperationsTest {
             HEIGHT,
             |_, _| (),
             |builtins, _| {
-                let result = texture_sample_3d::frag_main(texture_sample_3d::FragInput {
-                    position: builtins.position,
-                });
+                let result = texture_sample_3d::frag_main(
+                    texture_sample_3d::FragInput {
+                        position: builtins.position,
+                    },
+                    &sample_3d_pack,
+                );
                 [result.x, result.y, result.z, result.w]
             },
         );

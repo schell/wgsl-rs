@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       `#[workgroup]` field types must use the `Workgroup<T>` wrapper type; the WGSL type is extracted from its type argument, got `Uniform < i32 >`.'
+ --> tests/ui/fail/resource_pack_workgroup_wrapper.rs:9:26
+  |
+9 |         pub accumulator: Uniform<i32>,
+  |                          ^^^^^^^

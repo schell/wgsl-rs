@@ -1,0 +1,6 @@
+error: Parsing error: 'Encountered unsupported Rust syntax:
+       binding-key const `FOO` for field `FOO` collides with the const for field `foo`; rename one so each generated key stays unique.'
+  --> tests/ui/fail/resource_pack_key_name_collision.rs:11:13
+   |
+11 |         pub FOO: Sampler,
+   |             ^^^

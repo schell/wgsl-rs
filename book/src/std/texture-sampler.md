@@ -1,7 +1,7 @@
 # Texture & Sampler Functions
 
 `wgsl_rs::std` provides the WGSL texture and sampler builtins plus the
-`sampler!` and `texture!` binding macros used to declare them.
+`Sampler` and texture types used to declare them.
 
 ## Sampler types
 
@@ -10,7 +10,7 @@
 | `Sampler` | `sampler` | Filtering sampler. |
 | `SamplerComparison` | `sampler_comparison` | Comparison sampler for shadow/PCF sampling. |
 
-See [Binding Macros: `texture!` & `sampler!`](../writing-shaders/binding-macros/texture-sampler.md)
+See [Resource Pack Structs](../writing-shaders/resource-packs.md)
 for declaration syntax.
 
 ## Sampling functions
@@ -99,8 +99,12 @@ A separate `texture_load_storage` function (rather than overloading `texture_loa
 pub mod texture_example {
     use wgsl_rs::std::*;
 
-    texture!(group(0), binding(0), COLOR_TEX: Texture2D<f32>);
-    sampler!(group(0), binding(1), COLOR_SMP: Sampler);
+    pub struct TextureExamplePack {
+        #[texture(group(0), binding(0))]
+        pub color_tex: Texture2D<f32>,
+        #[sampler(group(0), binding(1))]
+        pub color_smp: Sampler,
+    }
 
     pub struct FragmentInput {
         #[location(0)]
@@ -108,10 +112,10 @@ pub mod texture_example {
     }
 
     #[fragment]
-    pub fn fs_main(input: FragmentInput) -> Vec4f {
+    pub fn fs_main(input: FragmentInput, pack: &TextureExamplePack) -> Vec4f {
         let uv = input.uv;
-        let color = texture_sample(COLOR_TEX, COLOR_SMP, uv);
-        let dim = texture_dimensions(COLOR_TEX);
+        let color = texture_sample(&pack.color_tex, &pack.color_smp, uv);
+        let dim = texture_dimensions(&pack.color_tex);
         color
     }
 }

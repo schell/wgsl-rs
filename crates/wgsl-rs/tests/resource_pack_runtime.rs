@@ -76,7 +76,7 @@ fn post_instantiation_addresses_are_range_checked_and_deduplicated() {
 #[test]
 fn packs_construct_by_hand_with_values() {
     let _textures = packs::TexturePack::<2, false> {
-        heights: Texture2D::new(),
+        heights: Texture2D::new(1, 1),
         heights_smp: Sampler::new(),
     };
 
@@ -98,12 +98,10 @@ fn packs_construct_by_hand_with_values() {
 #[test]
 fn constructed_texture_pack_works_with_cpu_builtins() {
     let textures = packs::TexturePack::<0, false> {
-        heights: Texture2D::new(),
+        heights: Texture2D::new(1, 1),
         heights_smp: Sampler::new(),
     };
-    textures.heights.init(1, 1);
     textures.heights.set_pixel(0, 0, [0.25, 0.5, 0.75, 1.0]);
-    textures.heights_smp.init();
 
     let color = texture_sample(&textures.heights, &textures.heights_smp, vec2f(0.0, 0.0));
     assert_eq!(color, vec4f(0.25, 0.5, 0.75, 1.0));

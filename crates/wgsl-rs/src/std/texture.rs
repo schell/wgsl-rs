@@ -14,11 +14,12 @@
 #![allow(clippy::new_without_default)]
 
 use crate::std::{
-    ModuleVar, ModuleVarReadGuard, Vec2f, Vec2i, Vec2u, Vec3f, Vec3i, Vec3u, Vec4f, Vec4i, Vec4u,
-    Wgsl, WgslTextureScalar, vec2f, vec2u, vec3u, vec4f, vec4i, vec4u,
+    Vec2f, Vec2i, Vec2u, Vec3f, Vec3i, Vec3u, Vec4f, Vec4i, Vec4u, Wgsl, WgslTextureScalar, vec2f,
+    vec2u, vec3u, vec4f, vec4i, vec4u,
 };
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::RwLock};
+
 
 mod builtins;
 pub use builtins::*;
@@ -41,20 +42,23 @@ use wgsl_rs_ir as ir;
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+/// pub struct MyPack {
+///     #[sampler(group(0), binding(1))]
+///     pub tex_sampler: Sampler,
+/// }
 ///
 /// // In WGSL, you would use the sampler with texture sampling functions:
-/// // let color = textureSample(my_texture, TEX_SAMPLER, uv);
+/// // let color = textureSample(&pack.my_texture, &pack.tex_sampler, uv);
 /// ```
 ///
 /// # WGSL Output
 ///
 /// ```wgsl
-/// @group(0) @binding(1) var TEX_SAMPLER: sampler;
+/// @group(0) @binding(1) var mypack__tex_sampler: sampler;
 /// ```
 pub struct Sampler<const FILTERABLE: bool = true> {
     /// CPU-side sampler state
-    data: ModuleVar<SamplerState>,
+    data: RwLock<SamplerState>,
 }
 
 impl<const FILTERABLE: bool> Wgsl for Sampler<FILTERABLE> {
@@ -69,34 +73,31 @@ impl<const FILTERABLE: bool> Sampler<FILTERABLE> {
     /// When calling this without an expected type, write
     /// `Sampler::<true>::new(...)` or annotate the binding as `Sampler`.
     /// Rust does not use the default const parameter to infer an otherwise
-    /// unconstrained `Sampler::new(...)` call.
-    pub const fn new() -> Self {
+    /// Creates a new sampler with default CPU-side state.
+    pub fn new() -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(SamplerState::default()),
         }
     }
 
     /// Returns a reference to the sampler state for CPU-side sampling.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, SamplerState> {
-        self.data.read()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, SamplerState> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the sampler state for CPU-side sampling.
     ///
     /// Not available in WGSL.
     pub fn set(&self, state: SamplerState) {
-        self.data.set(state);
-    }
-
-    /// Initialize the sampler with a default value.
-    ///
-    /// Not available in WGSL.
-    pub fn init(&self) {
-        self.set(SamplerState::default());
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = state;
     }
 }
 
@@ -114,20 +115,23 @@ impl<const FILTERABLE: bool> Sampler<FILTERABLE> {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// sampler!(group(0), binding(2), SHADOW_SAMPLER: SamplerComparison);
+/// pub struct MyPack {
+///     #[sampler(group(0), binding(2))]
+///     pub shadow_sampler: SamplerComparison,
+/// }
 ///
 /// // In WGSL, you would use the sampler with comparison sampling functions:
-/// // let shadow = textureSampleCompare(shadow_map, SHADOW_SAMPLER, uv, depth);
+/// // let shadow = textureSampleCompare(&pack.shadow_map, &pack.shadow_sampler, uv, depth);
 /// ```
 ///
 /// # WGSL Output
 ///
 /// ```wgsl
-/// @group(0) @binding(2) var SHADOW_SAMPLER: sampler_comparison;
+/// @group(0) @binding(2) var mypack__shadow_sampler: sampler_comparison;
 /// ```
 pub struct SamplerComparison {
     /// CPU-side comparison sampler state
-    data: ModuleVar<SamplerComparisonState>,
+    data: RwLock<SamplerComparisonState>,
 }
 
 impl Wgsl for SamplerComparison {
@@ -137,11 +141,10 @@ impl Wgsl for SamplerComparison {
 }
 
 impl SamplerComparison {
-    /// Creates a new comparison sampler with the given group and binding
-    /// indices.
-    pub const fn new() -> Self {
+    /// Creates a new comparison sampler with default CPU-side state.
+    pub fn new() -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(SamplerComparisonState::default()),
         }
     }
 
@@ -151,17 +154,21 @@ impl SamplerComparison {
     /// Not available in WGSL.
     ///
     /// ## Panics
-    /// Dereferencing the returned guard will panic if it has not previously
-    /// been set.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, SamplerComparisonState> {
-        self.data.read()
+    /// Panics if the underlying lock has been poisoned.
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, SamplerComparisonState> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the comparison sampler state for CPU-side sampling.
     ///
     /// Not available in WGSL.
     pub fn set(&self, state: SamplerComparisonState) {
-        self.data.set(state);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = state;
     }
 }
 
@@ -174,10 +181,13 @@ impl SamplerComparison {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), LUT_TEX: Texture1D<f32>);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub lut_tex: Texture1D<f32>,
+/// }
 /// ```
 pub struct Texture1D<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureData1D<T>>,
+    data: RwLock<TextureData1D<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture1D<T, FILTERABLE> {
@@ -190,33 +200,31 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture1D<T, FILTERA
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture1D<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData1D<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData1D<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData1D<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture1D<T, FILTERABLE> {
-    /// Initialize the texture with the given width.
-    ///
-    /// Not available in WGSL.
-    pub fn init(&self, width: u32) {
-        self.set(TextureData1D::new(width));
+    pub fn new(width: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureData1D::new(width)),
+        }
     }
 }
 
@@ -403,15 +411,19 @@ impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
 /// mod tex {
 ///     use wgsl_rs::std::*;
 ///
-///     texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
-///     sampler!(group(0), binding(1), TEX_SAMPLER: Sampler);
+///     pub struct TexPack {
+///         #[texture(group(0), binding(0))]
+///         pub diffuse_tex: Texture2D<f32>,
+///         #[sampler(group(0), binding(1))]
+///         pub tex_sampler: Sampler,
+///     }
 ///
 ///     // In shader code, you would sample like:
-///     // let color = textureSample(DIFFUSE_TEX, TEX_SAMPLER, uv);
+///     // let color = textureSample(&pack.diffuse_tex, &pack.tex_sampler, uv);
 /// }
 /// ```
 pub struct Texture2D<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureData2D<T>>,
+    data: RwLock<TextureData2D<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture2D<T, FILTERABLE> {
@@ -424,40 +436,41 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture2D<T, FILTERA
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture2D<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData2D<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData2D<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData2D<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture2D<T, FILTERABLE> {
-    /// Initialize the texture with the given dimensions.
-    ///
-    /// Not available in WGSL.
-    pub fn init(&self, width: u32, height: u32) {
-        self.set(TextureData2D::new(width, height));
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureData2D::new(width, height)),
+        }
     }
 
     /// Set a pixel at the given coordinates.
     ///
     /// Not available in WGSL.
     pub fn set_pixel(&self, x: u32, y: u32, value: [T; 4]) {
-        self.data.write().set_pixel(x, y, 0, value);
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
+            .set_pixel(x, y, 0, value);
     }
 }
 
@@ -896,10 +909,13 @@ impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), TEXTURE_ARRAY: Texture2DArray<f32>);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub texture_array: Texture2DArray<f32>,
+/// }
 /// ```
 pub struct Texture2DArray<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureData2DArray<T>>,
+    data: RwLock<TextureData2DArray<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture2DArray<T, FILTERABLE> {
@@ -912,31 +928,31 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture2DArray<T, FI
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture2DArray<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData2DArray<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData2DArray<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData2DArray<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture2DArray<T, FILTERABLE> {
-    /// Initialize the texture with the given dimensions.
-    pub fn init(&self, width: u32, height: u32, layers: u32) {
-        self.set(TextureData2DArray::new(width, height, layers))
+    pub fn new(width: u32, height: u32, layers: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureData2DArray::new(width, height, layers)),
+        }
     }
 }
 
@@ -1500,10 +1516,13 @@ impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), VOLUME_TEX: Texture3D<f32>);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub volume_tex: Texture3D<f32>,
+/// }
 /// ```
 pub struct Texture3D<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureData3D<T>>,
+    data: RwLock<TextureData3D<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture3D<T, FILTERABLE> {
@@ -1515,25 +1534,21 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for Texture3D<T, FILTERA
     }
 }
 
-impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture3D<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-}
-
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> Texture3D<T, FILTERABLE> {
-    /// Initialize the texture with the given dimensions.
-    pub fn init(&self, width: u32, height: u32, depth: u32) {
-        self.set(TextureData3D::new(width, height, depth))
+    pub fn new(width: u32, height: u32, depth: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureData3D::new(width, height, depth)),
+        }
     }
 
     /// Set a pixel at the given coordinates.
     ///
     /// Not available in WGSL.
     pub fn set_pixel(&self, x: u32, y: u32, z: u32, value: [T; 4]) {
-        self.data.write().set_pixel(x, y, z, 0, value);
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
+            .set_pixel(x, y, z, 0, value);
     }
 }
 
@@ -1541,15 +1556,20 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Texture3D<T, FILTERABLE> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData3D<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData3D<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData3D<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
@@ -1827,10 +1847,13 @@ impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), SKYBOX: TextureCube<f32>);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub skybox: TextureCube<f32>,
+/// }
 /// ```
 pub struct TextureCube<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureDataCube<T>>,
+    data: RwLock<TextureDataCube<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureCube<T, FILTERABLE> {
@@ -1843,31 +1866,31 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureCube<T, FILTE
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureCube<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataCube<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataCube<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataCube<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool> TextureCube<T, FILTERABLE> {
-    /// Initialize the texture with the given face size.
-    pub fn init(&self, size: u32) {
-        self.set(TextureDataCube::new(size))
+    pub fn new(size: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureDataCube::new(size)),
+        }
     }
 }
 
@@ -2054,10 +2077,13 @@ impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), CUBE_ARRAY: TextureCubeArray<f32>);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub cube_array: TextureCubeArray<f32>,
+/// }
 /// ```
 pub struct TextureCubeArray<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureDataCubeArray<T>>,
+    data: RwLock<TextureDataCubeArray<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureCubeArray<T, FILTERABLE> {
@@ -2070,33 +2096,33 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureCubeArray<T, 
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureCubeArray<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataCubeArray<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataCubeArray<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataCubeArray<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool>
     TextureCubeArray<T, FILTERABLE>
 {
-    /// Initialize the texture with the given face size and layer count.
-    pub fn init(&self, size: u32, layers: u32) {
-        self.set(TextureDataCubeArray::new(size, layers))
+    pub fn new(size: u32, layers: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureDataCubeArray::new(size, layers)),
+        }
     }
 }
 
@@ -2445,10 +2471,13 @@ impl<const FILTERABLE: bool, const SAMPLER_FILTERABLE: bool>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), MSAA_TEX: TextureMultisampled2D<f32>);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub msaa_tex: TextureMultisampled2D<f32>,
+/// }
 /// ```
 pub struct TextureMultisampled2D<T, const FILTERABLE: bool = true> {
-    data: ModuleVar<TextureDataMultisampled2D<T>>,
+    data: RwLock<TextureDataMultisampled2D<T>>,
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureMultisampled2D<T, FILTERABLE> {
@@ -2461,33 +2490,33 @@ impl<T: WgslTextureScalar, const FILTERABLE: bool> Wgsl for TextureMultisampled2
 }
 
 impl<T: WgslTextureScalar, const FILTERABLE: bool> TextureMultisampled2D<T, FILTERABLE> {
-    pub const fn new() -> Self {
-        Self {
-            data: ModuleVar::new(),
-        }
-    }
-
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataMultisampled2D<T>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataMultisampled2D<T>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataMultisampled2D<T>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 impl<T: WgslTextureScalar + Default + Copy, const FILTERABLE: bool>
     TextureMultisampled2D<T, FILTERABLE>
 {
-    /// Initialize the texture with the given dimensions and sample count.
-    pub fn init(&self, width: u32, height: u32, sample_count: u32) {
-        self.set(TextureDataMultisampled2D::new(width, height, sample_count));
+    pub fn new(width: u32, height: u32, sample_count: u32) -> Self {
+        Self {
+            data: RwLock::new(TextureDataMultisampled2D::new(width, height, sample_count)),
+        }
     }
 }
 
@@ -2661,14 +2690,18 @@ impl<const FILTERABLE: bool> TextureLoadMultisampled<Vec2i, i32>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), SHADOW_MAP: TextureDepth2D);
-/// sampler!(group(0), binding(1), SHADOW_SAMPLER: SamplerComparison);
+/// pub struct ShadowPack {
+///     #[texture(group(0), binding(0))]
+///     pub shadow_map: TextureDepth2D,
+///     #[sampler(group(0), binding(1))]
+///     pub shadow_sampler: SamplerComparison,
+/// }
 ///
 /// // In shader code, you would sample like:
-/// // let shadow = textureSampleCompare(SHADOW_MAP, SHADOW_SAMPLER, uv, depth);
+/// // let shadow = textureSampleCompare(&pack.shadow_map, &pack.shadow_sampler, uv, depth);
 /// ```
 pub struct TextureDepth2D {
-    data: ModuleVar<TextureDataDepth2D>,
+    data: RwLock<TextureDataDepth2D>,
 }
 
 impl Wgsl for TextureDepth2D {
@@ -2680,29 +2713,30 @@ impl Wgsl for TextureDepth2D {
 }
 
 impl TextureDepth2D {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled depth texture of the given dimensions.
+    pub fn new(width: u32, height: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureDataDepth2D::new(width, height)),
         }
     }
 
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataDepth2D> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataDepth2D> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataDepth2D) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given dimensions.
-    pub fn init(&self, width: u32, height: u32) {
-        self.set(TextureDataDepth2D::new(width, height))
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
@@ -2900,10 +2934,13 @@ impl TextureGatherCompareOffset<Vec2f, f32, Vec2i> for TextureDepth2D {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), CASCADE_SHADOW_MAP: TextureDepth2DArray);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub cascade_shadow_map: TextureDepth2DArray,
+/// }
 /// ```
 pub struct TextureDepth2DArray {
-    data: ModuleVar<TextureDataDepth2DArray>,
+    data: RwLock<TextureDataDepth2DArray>,
 }
 
 impl Wgsl for TextureDepth2DArray {
@@ -2915,29 +2952,30 @@ impl Wgsl for TextureDepth2DArray {
 }
 
 impl TextureDepth2DArray {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled depth texture array of the given dimensions.
+    pub fn new(width: u32, height: u32, layers: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureDataDepth2DArray::new(width, height, layers)),
         }
     }
 
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataDepth2DArray> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataDepth2DArray> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataDepth2DArray) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given dimensions.
-    pub fn init(&self, width: u32, height: u32, layers: u32) {
-        self.set(TextureDataDepth2DArray::new(width, height, layers))
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
@@ -3259,10 +3297,13 @@ impl<const SAMPLER_FILTERABLE: bool>
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), POINT_SHADOW: TextureDepthCube);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub point_shadow: TextureDepthCube,
+/// }
 /// ```
 pub struct TextureDepthCube {
-    data: ModuleVar<TextureDataDepthCube>,
+    data: RwLock<TextureDataDepthCube>,
 }
 
 impl Wgsl for TextureDepthCube {
@@ -3274,29 +3315,30 @@ impl Wgsl for TextureDepthCube {
 }
 
 impl TextureDepthCube {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled cube depth texture of the given face size.
+    pub fn new(size: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureDataDepthCube::new(size)),
         }
     }
 
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataDepthCube> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataDepthCube> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataDepthCube) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given face size.
-    pub fn init(&self, size: u32) {
-        self.set(TextureDataDepthCube::new(size))
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 impl TextureDimensionsQuery for TextureDepthCube {
@@ -3324,10 +3366,13 @@ impl TextureNumLevelsQuery for TextureDepthCube {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), POINT_SHADOWS: TextureDepthCubeArray);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub point_shadows: TextureDepthCubeArray,
+/// }
 /// ```
 pub struct TextureDepthCubeArray {
-    data: ModuleVar<TextureDataDepthCubeArray>,
+    data: RwLock<TextureDataDepthCubeArray>,
 }
 
 impl Wgsl for TextureDepthCubeArray {
@@ -3339,29 +3384,30 @@ impl Wgsl for TextureDepthCubeArray {
 }
 
 impl TextureDepthCubeArray {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled cube depth texture array of the given dimensions.
+    pub fn new(size: u32, layers: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureDataDepthCubeArray::new(size, layers)),
         }
     }
 
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataDepthCubeArray> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataDepthCubeArray> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataDepthCubeArray) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given face size and layer count.
-    pub fn init(&self, size: u32, layers: u32) {
-        self.set(TextureDataDepthCubeArray::new(size, layers));
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
@@ -3503,10 +3549,13 @@ impl TextureGatherCompareArray<Vec3f, i32, f32> for TextureDepthCubeArray {
 /// ```ignore
 /// use wgsl_rs::std::*;
 ///
-/// texture!(group(0), binding(0), MSAA_DEPTH: TextureDepthMultisampled2D);
+/// pub struct MyPack {
+///     #[texture(group(0), binding(0))]
+///     pub msaa_depth: TextureDepthMultisampled2D,
+/// }
 /// ```
 pub struct TextureDepthMultisampled2D {
-    data: ModuleVar<TextureDataDepthMultisampled2D>,
+    data: RwLock<TextureDataDepthMultisampled2D>,
 }
 
 impl Wgsl for TextureDepthMultisampled2D {
@@ -3518,33 +3567,34 @@ impl Wgsl for TextureDepthMultisampled2D {
 }
 
 impl TextureDepthMultisampled2D {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled multisampled depth texture.
+    pub fn new(width: u32, height: u32, sample_count: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureDataDepthMultisampled2D::new(
+                width,
+                height,
+                sample_count,
+            )),
         }
     }
 
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureDataDepthMultisampled2D> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureDataDepthMultisampled2D> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureDataDepthMultisampled2D) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given dimensions and sample count.
-    pub fn init(&self, width: u32, height: u32, sample_count: u32) {
-        self.set(TextureDataDepthMultisampled2D::new(
-            width,
-            height,
-            sample_count,
-        ))
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
@@ -3696,7 +3746,7 @@ impl_texel_format!(Rg11b10ufloat, Vec4f, f32, true);
 /// Parameterized by a texel format marker (`F`) and an access mode marker
 /// (`A`). See WGSL §6.6.5.
 pub struct TextureStorage1D<F: WgslTexelFormat, A: WgslStorageAccess> {
-    data: ModuleVar<TextureData1D<F::Scalar>>,
+    data: RwLock<TextureData1D<F::Scalar>>,
     _phantom: PhantomData<A>,
 }
 
@@ -3711,9 +3761,10 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage1D<F, A> {
 }
 
 impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage1D<F, A> {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled storage texture of the given width.
+    pub fn new(width: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureData1D::new(width)),
             _phantom: PhantomData,
         }
     }
@@ -3721,26 +3772,26 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage1D<F, A> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData1D<F::Scalar>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData1D<F::Scalar>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData1D<F::Scalar>) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given width.
-    pub fn init(&self, width: u32) {
-        self.set(TextureData1D::new(width));
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 /// A 2D storage texture. WGSL `texture_storage_2d<F, A>`.
 pub struct TextureStorage2D<F: WgslTexelFormat, A: WgslStorageAccess> {
-    data: ModuleVar<TextureData2D<F::Scalar>>,
+    data: RwLock<TextureData2D<F::Scalar>>,
     _phantom: PhantomData<A>,
 }
 
@@ -3755,9 +3806,10 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage2D<F, A> {
 }
 
 impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2D<F, A> {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled storage texture of the given dimensions.
+    pub fn new(width: u32, height: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureData2D::new(width, height)),
             _phantom: PhantomData,
         }
     }
@@ -3765,34 +3817,37 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2D<F, A> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData2D<F::Scalar>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData2D<F::Scalar>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData2D<F::Scalar>) {
-        self.data.set(data);
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 
-    /// Initialize the texture with the given dimensions.
-    pub fn init(&self, width: u32, height: u32) {
-        self.set(TextureData2D::new(width, height));
-    }
 
     /// Set a pixel value on the CPU side.
     ///
     /// Not available in WGSL.
     pub fn set_pixel(&self, x: u32, y: u32, value: F::Value) {
-        let mut data = self.data.write();
-        data.set_pixel(x, y, 0, value.into());
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
+            .set_pixel(x, y, 0, value.into());
     }
 }
 
 /// A 2D array storage texture. WGSL `texture_storage_2d_array<F, A>`.
 pub struct TextureStorage2DArray<F: WgslTexelFormat, A: WgslStorageAccess> {
-    data: ModuleVar<TextureData2DArray<F::Scalar>>,
+    data: RwLock<TextureData2DArray<F::Scalar>>,
     _phantom: PhantomData<A>,
 }
 
@@ -3807,9 +3862,10 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage2DArray<F,
 }
 
 impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2DArray<F, A> {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled storage texture array of the given dimensions.
+    pub fn new(width: u32, height: u32, layers: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureData2DArray::new(width, height, layers)),
             _phantom: PhantomData,
         }
     }
@@ -3817,26 +3873,26 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage2DArray<F, A> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData2DArray<F::Scalar>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData2DArray<F::Scalar>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData2DArray<F::Scalar>) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given dimensions and layer count.
-    pub fn init(&self, width: u32, height: u32, layers: u32) {
-        self.set(TextureData2DArray::new(width, height, layers));
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
 /// A 3D storage texture. WGSL `texture_storage_3d<F, A>`.
 pub struct TextureStorage3D<F: WgslTexelFormat, A: WgslStorageAccess> {
-    data: ModuleVar<TextureData3D<F::Scalar>>,
+    data: RwLock<TextureData3D<F::Scalar>>,
     _phantom: PhantomData<A>,
 }
 
@@ -3851,9 +3907,10 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> Wgsl for TextureStorage3D<F, A> {
 }
 
 impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage3D<F, A> {
-    pub const fn new() -> Self {
+    /// Creates a zero-filled volumetric storage texture.
+    pub fn new(width: u32, height: u32, depth: u32) -> Self {
         Self {
-            data: ModuleVar::new(),
+            data: RwLock::new(TextureData3D::new(width, height, depth)),
             _phantom: PhantomData,
         }
     }
@@ -3861,20 +3918,20 @@ impl<F: WgslTexelFormat, A: WgslStorageAccess> TextureStorage3D<F, A> {
     /// Returns a reference to the inner texture data.
     ///
     /// Not available in WGSL.
-    pub fn get(&self) -> ModuleVarReadGuard<'_, TextureData3D<F::Scalar>> {
-        self.data.read()
+    pub fn get(&self) -> std::sync::RwLockReadGuard<'_, TextureData3D<F::Scalar>> {
+        self.data
+            .read()
+            .unwrap_or_else(|_| panic!("could not acquire a read lock on texture data"))
     }
 
     /// Set the texture data.
     ///
     /// Not available in WGSL.
     pub fn set(&self, data: TextureData3D<F::Scalar>) {
-        self.data.set(data);
-    }
-
-    /// Initialize the texture with the given dimensions.
-    pub fn init(&self, width: u32, height: u32, depth: u32) {
-        self.set(TextureData3D::new(width, height, depth));
+        *self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data")) = data;
     }
 }
 
@@ -4007,7 +4064,10 @@ where
     A: WritableStorageAccess,
 {
     fn store(&self, coords: u32, value: F::Value) {
-        self.data.write().set_pixel(coords, 0, value.into());
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
+            .set_pixel(coords, 0, value.into());
     }
 }
 
@@ -4018,7 +4078,10 @@ where
 {
     fn store(&self, coords: i32, value: F::Value) {
         let x = coords.max(0) as u32;
-        self.data.write().set_pixel(x, 0, value.into());
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
+            .set_pixel(x, 0, value.into());
     }
 }
 
@@ -4030,6 +4093,7 @@ where
     fn store(&self, coords: Vec2u, value: F::Value) {
         self.data
             .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
             .set_pixel(coords.x(), coords.y(), 0, value.into());
     }
 }
@@ -4042,7 +4106,10 @@ where
     fn store(&self, coords: Vec2i, value: F::Value) {
         let x = coords.x().max(0) as u32;
         let y = coords.y().max(0) as u32;
-        self.data.write().set_pixel(x, y, 0, value.into());
+        self.data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"))
+            .set_pixel(x, y, 0, value.into());
     }
 }
 
@@ -4052,7 +4119,10 @@ where
     A: WritableStorageAccess,
 {
     fn store_array(&self, coords: Vec2u, array_index: u32, value: F::Value) {
-        let mut data = self.data.write();
+        let mut data = self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"));
         if let Some(layer) = data.layers.get_mut(array_index as usize) {
             layer.set_pixel(coords.x(), coords.y(), 0, value.into());
         }
@@ -4068,7 +4138,10 @@ where
         let x = coords.x().max(0) as u32;
         let y = coords.y().max(0) as u32;
         let layer = array_index.max(0) as u32;
-        let mut data = self.data.write();
+        let mut data = self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"));
         if let Some(l) = data.layers.get_mut(layer as usize) {
             l.set_pixel(x, y, 0, value.into());
         }
@@ -4081,7 +4154,10 @@ where
     A: WritableStorageAccess,
 {
     fn store(&self, coords: Vec3u, value: F::Value) {
-        let mut data = self.data.write();
+        let mut data = self
+            .data
+            .write()
+            .unwrap_or_else(|_| panic!("could not acquire a write lock on texture data"));
         if let Some(mip) = data.mips.first_mut()
             && let Some(slice) = mip.get_mut(coords.z() as usize)
             && let Some(row) = slice.get_mut(coords.y() as usize)
@@ -4147,8 +4223,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_dimensions() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(64, 32);
+        let tex: Texture2D<f32> = Texture2D::new(64, 32);
 
         let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 64);
@@ -4157,8 +4232,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_num_levels() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(64, 32);
+        let tex: Texture2D<f32> = Texture2D::new(64, 32);
 
         let levels = texture_num_levels(&tex);
         assert_eq!(levels, 1);
@@ -4166,8 +4240,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_load_f32() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(4, 4);
+        let tex: Texture2D<f32> = Texture2D::new(4, 4);
 
         // Set a pixel
         tex.set_pixel(1, 2, [0.5, 0.25, 0.125, 1.0]);
@@ -4186,8 +4259,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_load_i32() {
-        let tex: Texture2D<i32> = Texture2D::new();
-        tex.init(4, 4);
+        let tex: Texture2D<i32> = Texture2D::new(4, 4);
 
         tex.set_pixel(1, 2, [10, 20, 30, 40]);
 
@@ -4200,8 +4272,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_load_u32() {
-        let tex: Texture2D<u32> = Texture2D::new();
-        tex.init(4, 4);
+        let tex: Texture2D<u32> = Texture2D::new(4, 4);
 
         tex.set_pixel(1, 2, [100, 200, 150, 255]);
 
@@ -4214,10 +4285,12 @@ mod tests {
 
     #[test]
     fn test_texture_1d_load_f32() {
-        let tex: Texture1D<f32> = Texture1D::new();
-        tex.init(8);
+        let tex: Texture1D<f32> = Texture1D::new(8);
 
-        tex.data.write().set_pixel(3, 0, [0.1, 0.2, 0.3, 0.4]);
+        tex.data
+            .write()
+            .unwrap()
+            .set_pixel(3, 0, [0.1, 0.2, 0.3, 0.4]);
 
         let pixel = texture_load(&tex, 3u32, 0u32);
         assert!((pixel.x() - 0.1).abs() < 0.001);
@@ -4226,8 +4299,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_sample() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(2, 2);
+        let tex: Texture2D<f32> = Texture2D::new(2, 2);
 
         // Set all 4 pixels to different values
         tex.set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]); // Red
@@ -4236,7 +4308,6 @@ mod tests {
         tex.set_pixel(1, 1, [1.0, 1.0, 0.0, 1.0]); // Yellow
 
         let sampler: Sampler = Sampler::new();
-        sampler.init(); // Nearest filtering by default
 
         // Sample at (0.25, 0.25) - should be near top-left (red)
         let color = texture_sample(&tex, &sampler, vec2f(0.25, 0.25));
@@ -4247,13 +4318,11 @@ mod tests {
 
     #[test]
     fn test_texture_2d_sample_level() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(2, 2);
+        let tex: Texture2D<f32> = Texture2D::new(2, 2);
 
         tex.set_pixel(0, 0, [0.5, 0.5, 0.5, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Sample at level 0
         let color = texture_sample_level(&tex, &sampler, vec2f(0.25, 0.25), 0.0f32);
@@ -4271,12 +4340,10 @@ mod tests {
             <Sampler<true> as Wgsl>::to_ir()
         );
 
-        let unfilterable: Texture2D<f32, false> = Texture2D::new();
-        unfilterable.init(2, 2);
+        let unfilterable: Texture2D<f32, false> = Texture2D::new(2, 2);
         unfilterable.set_pixel(0, 0, [0.75, 0.5, 0.25, 1.0]);
 
         let sampler: Sampler<false> = Sampler::new();
-        sampler.init();
 
         let loaded = texture_load(&unfilterable, vec2u(0, 0), 0u32);
         assert!((loaded.x() - 0.75).abs() < 0.001);
@@ -4286,8 +4353,7 @@ mod tests {
         assert!((level.x() - 0.75).abs() < 0.001);
 
         // Non-filtering samplers are also valid with filterable textures.
-        let filterable: Texture2D<f32> = Texture2D::new();
-        filterable.init(2, 2);
+        let filterable: Texture2D<f32> = Texture2D::new(2, 2);
         filterable.set_pixel(0, 0, [0.125, 0.0, 0.0, 1.0]);
         let sampled = texture_sample(&filterable, &sampler, vec2f(0.25, 0.25));
         assert!((sampled.x() - 0.125).abs() < 0.001);
@@ -4295,11 +4361,10 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_load() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.mips[0][2][1] = 0.75; // y=2, x=1
         }
 
@@ -4309,12 +4374,11 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_sample_compare() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
             // Set all depth values to 0.5
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             for row in guard.mips[0].iter_mut() {
                 for depth in row.iter_mut() {
                     *depth = 0.5;
@@ -4340,8 +4404,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_array_queries() {
-        let tex: Texture2DArray<f32> = Texture2DArray::new();
-        tex.init(16, 8, 4);
+        let tex: Texture2DArray<f32> = Texture2DArray::new(16, 8, 4);
 
         let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 16);
@@ -4356,8 +4419,7 @@ mod tests {
 
     #[test]
     fn test_texture_3d_queries() {
-        let tex: Texture3D<f32> = Texture3D::new();
-        tex.init(8, 4, 2);
+        let tex: Texture3D<f32> = Texture3D::new(8, 4, 2);
 
         let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 8);
@@ -4367,8 +4429,7 @@ mod tests {
 
     #[test]
     fn test_texture_cube_queries() {
-        let tex: TextureCube<f32> = TextureCube::new();
-        tex.init(32);
+        let tex: TextureCube<f32> = TextureCube::new(32);
 
         let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 32);
@@ -4377,8 +4438,7 @@ mod tests {
 
     #[test]
     fn test_texture_multisampled_queries() {
-        let tex: TextureMultisampled2D<f32> = TextureMultisampled2D::new();
-        tex.init(64, 64, 4);
+        let tex: TextureMultisampled2D<f32> = TextureMultisampled2D::new(64, 64, 4);
 
         let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 64);
@@ -4429,8 +4489,7 @@ mod tests {
 
     #[test]
     fn test_texture_sample_base_clamp_to_edge() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(4, 4);
+        let tex: Texture2D<f32> = Texture2D::new(4, 4);
 
         // Set corner pixels to distinct colors
         tex.set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]); // top-left: red
@@ -4439,7 +4498,6 @@ mod tests {
         tex.set_pixel(3, 3, [1.0, 1.0, 0.0, 1.0]); // bottom-right: yellow
 
         let sampler: Sampler = Sampler::new();
-        sampler.init(); // Nearest filtering
 
         // Sampling at (-0.5, -0.5) — far out of bounds — should clamp to near
         // top-left rather than wrapping. With a 4-wide texture,
@@ -4469,11 +4527,10 @@ mod tests {
 
     #[test]
     fn test_texture_gather_compare() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             // Set a 2x2 block with varying depths:
             //   (0,0)=0.2  (1,0)=0.4
             //   (0,1)=0.6  (1,1)=0.8
@@ -4523,14 +4580,12 @@ mod tests {
 
     #[test]
     fn test_texture_2d_sample_offset() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(4, 4);
+        let tex: Texture2D<f32> = Texture2D::new(4, 4);
 
         // Set pixel at (2, 1) to a distinct color
         tex.set_pixel(2, 1, [0.8, 0.6, 0.4, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init(); // Nearest filtering
 
         // Sample at (0.25, 0.25) which maps to texel (1, 1) on a 4x4 texture.
         // With offset (1, 0), the effective texel is (2, 1).
@@ -4542,13 +4597,11 @@ mod tests {
 
     #[test]
     fn test_texture_2d_sample_level_offset() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(4, 4);
+        let tex: Texture2D<f32> = Texture2D::new(4, 4);
 
         tex.set_pixel(3, 2, [0.1, 0.2, 0.3, 0.4]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Sample at texel (2, 2) with offset (1, 0) -> texel (3, 2), at level 0
         let color =
@@ -4559,13 +4612,11 @@ mod tests {
 
     #[test]
     fn test_texture_2d_sample_bias() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(2, 2);
+        let tex: Texture2D<f32> = Texture2D::new(2, 2);
 
         tex.set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // On CPU, bias is ignored, so this should behave like a regular sample.
         let color = texture_sample_bias(&tex, &sampler, vec2f(0.25, 0.25), 2.0f32);
@@ -4574,13 +4625,11 @@ mod tests {
 
     #[test]
     fn test_texture_2d_sample_grad() {
-        let tex: Texture2D<f32> = Texture2D::new();
-        tex.init(2, 2);
+        let tex: Texture2D<f32> = Texture2D::new(2, 2);
 
         tex.set_pixel(1, 1, [0.5, 0.5, 0.5, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // On CPU, gradients sample at level 0, so this behaves like a regular
         // sample.
@@ -4596,17 +4645,15 @@ mod tests {
 
     #[test]
     fn test_texture_2d_array_sample_array() {
-        let tex: Texture2DArray<f32> = Texture2DArray::new();
-        tex.init(2, 2, 3);
+        let tex: Texture2DArray<f32> = Texture2DArray::new(2, 2, 3);
 
         // Set a pixel on layer 1
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.layers[1].set_pixel(0, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Sample layer 1 at top-left
         let color = texture_sample_array(&tex, &sampler, vec2f(0.25, 0.25), 1u32);
@@ -4616,17 +4663,15 @@ mod tests {
 
     #[test]
     fn test_texture_2d_array_sample_array_offset() {
-        let tex: Texture2DArray<f32> = Texture2DArray::new();
-        tex.init(4, 4, 2);
+        let tex: Texture2DArray<f32> = Texture2DArray::new(4, 4, 2);
 
         // Set pixel at (2, 1) on layer 0
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.layers[0].set_pixel(2, 1, 0, [0.3, 0.6, 0.9, 1.0]);
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Sample layer 0 at texel (1, 1) with offset (1, 0) -> texel (2, 1)
         let color =
@@ -4638,11 +4683,10 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_sample_compare_offset() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             // Set all depths to 0.5
             for row in guard.mips[0].iter_mut() {
                 for depth in row.iter_mut() {
@@ -4671,11 +4715,10 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_sample_compare_level() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             for row in guard.mips[0].iter_mut() {
                 for depth in row.iter_mut() {
                     *depth = 0.5;
@@ -4700,11 +4743,10 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_gather_depth() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             // Set a 2x2 block of depth values
             guard.mips[0][0][0] = 0.1;
             guard.mips[0][0][1] = 0.2;
@@ -4713,7 +4755,6 @@ mod tests {
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Gather the 2x2 block of depth values.
         // The result components follow the WGSL gather pattern:
@@ -4728,11 +4769,10 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_gather_depth_offset() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             // Set depths at a shifted 2x2 block at (1,0),(2,0),(1,1),(2,1)
             guard.mips[0][0][1] = 0.15;
             guard.mips[0][0][2] = 0.25;
@@ -4741,7 +4781,6 @@ mod tests {
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Sample at (0.25, 0.25) with offset (1, 0) shifts the gather window
         // by 1 texel to the right.
@@ -4754,11 +4793,10 @@ mod tests {
 
     #[test]
     fn test_texture_depth_2d_array_sample_compare_array() {
-        let tex: TextureDepth2DArray = TextureDepth2DArray::new();
-        tex.init(4, 4, 2);
+        let tex: TextureDepth2DArray = TextureDepth2DArray::new(4, 4, 2);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             // Set all depths on layer 1 to 0.6
             for row in guard.layers[1].mips[0].iter_mut() {
                 for depth in row.iter_mut() {
@@ -4784,11 +4822,10 @@ mod tests {
 
     #[test]
     fn test_texture_gather_compare_offset() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             // Set a 2x2 block at (1,0),(2,0),(1,1),(2,1)
             guard.mips[0][0][1] = 0.2;
             guard.mips[0][0][2] = 0.4;
@@ -4818,12 +4855,11 @@ mod tests {
 
     #[test]
     fn test_texture_load_multisampled() {
-        let tex: TextureMultisampled2D<f32> = TextureMultisampled2D::new();
-        tex.init(4, 4, 4);
+        let tex: TextureMultisampled2D<f32> = TextureMultisampled2D::new(4, 4, 4);
 
         // Set sample 2 at pixel (1, 2) to a distinct color
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.samples[2][1][2] = [0.7, 0.3, 0.1, 1.0]; // [y][x][sample]
         }
 
@@ -4845,11 +4881,10 @@ mod tests {
 
     #[test]
     fn test_texture_sample_compare_level_offset() {
-        let tex: TextureDepth2D = TextureDepth2D::new();
-        tex.init(4, 4);
+        let tex: TextureDepth2D = TextureDepth2D::new(4, 4);
 
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             for row in guard.mips[0].iter_mut() {
                 for depth in row.iter_mut() {
                     *depth = 0.5;
@@ -4871,8 +4906,7 @@ mod tests {
 
     #[test]
     fn test_storage_texture_2d_store_and_load() {
-        let tex: TextureStorage2D<Rgba8unorm, ReadWrite> = TextureStorage2D::new();
-        tex.init(4, 4);
+        let tex: TextureStorage2D<Rgba8unorm, ReadWrite> = TextureStorage2D::new(4, 4);
 
         // Store a value
         texture_store(&tex, vec2u(1, 2), vec4f(0.5, 0.25, 0.125, 1.0));
@@ -4887,8 +4921,7 @@ mod tests {
 
     #[test]
     fn test_storage_texture_2d_dimensions() {
-        let tex: TextureStorage2D<Rgba8unorm, Write> = TextureStorage2D::new();
-        tex.init(8, 4);
+        let tex: TextureStorage2D<Rgba8unorm, Write> = TextureStorage2D::new(8, 4);
 
         let dims = texture_dimensions(&tex);
         assert_eq!(dims.x(), 8);
@@ -4897,8 +4930,7 @@ mod tests {
 
     #[test]
     fn test_storage_texture_2d_store_i32_coords() {
-        let tex: TextureStorage2D<Rgba8uint, ReadWrite> = TextureStorage2D::new();
-        tex.init(4, 4);
+        let tex: TextureStorage2D<Rgba8uint, ReadWrite> = TextureStorage2D::new(4, 4);
 
         texture_store(&tex, vec2i(1, 2), vec4u(10, 20, 30, 40));
 
@@ -4911,8 +4943,7 @@ mod tests {
 
     #[test]
     fn test_storage_texture_2d_array_store_and_load() {
-        let tex: TextureStorage2DArray<Rgba8sint, ReadWrite> = TextureStorage2DArray::new();
-        tex.init(4, 4, 2);
+        let tex: TextureStorage2DArray<Rgba8sint, ReadWrite> = TextureStorage2DArray::new(4, 4, 2);
 
         texture_store_array(&tex, vec2u(1, 2), 0u32, vec4i(10, -20, 30, -40));
         texture_store_array(&tex, vec2u(3, 0), 1u32, vec4i(100, 200, -300, 400));
@@ -4934,8 +4965,7 @@ mod tests {
 
     #[test]
     fn test_storage_texture_3d_store_and_load() {
-        let tex: TextureStorage3D<Rgba32float, ReadWrite> = TextureStorage3D::new();
-        tex.init(4, 4, 4);
+        let tex: TextureStorage3D<Rgba32float, ReadWrite> = TextureStorage3D::new(4, 4, 4);
 
         texture_store(&tex, vec3u(1, 2, 3), vec4f(0.1, 0.2, 0.3, 0.4));
 
@@ -4948,8 +4978,7 @@ mod tests {
 
     #[test]
     fn test_storage_texture_1d_store_and_load() {
-        let tex: TextureStorage1D<Rgba8uint, ReadWrite> = TextureStorage1D::new();
-        tex.init(8);
+        let tex: TextureStorage1D<Rgba8uint, ReadWrite> = TextureStorage1D::new(8);
 
         texture_store(&tex, 3u32, vec4u(10, 20, 30, 40));
 
@@ -4962,15 +4991,25 @@ mod tests {
 
     #[test]
     fn test_texture_1d_sample() {
-        let tex: Texture1D<f32> = Texture1D::new();
-        tex.init(4);
-        tex.data.write().set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
-        tex.data.write().set_pixel(1, 0, [0.0, 1.0, 0.0, 1.0]);
-        tex.data.write().set_pixel(2, 0, [0.0, 0.0, 1.0, 1.0]);
-        tex.data.write().set_pixel(3, 0, [1.0, 1.0, 0.0, 1.0]);
+        let tex: Texture1D<f32> = Texture1D::new(4);
+        tex.data
+            .write()
+            .unwrap()
+            .set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
+        tex.data
+            .write()
+            .unwrap()
+            .set_pixel(1, 0, [0.0, 1.0, 0.0, 1.0]);
+        tex.data
+            .write()
+            .unwrap()
+            .set_pixel(2, 0, [0.0, 0.0, 1.0, 1.0]);
+        tex.data
+            .write()
+            .unwrap()
+            .set_pixel(3, 0, [1.0, 1.0, 0.0, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Nearest filtering: 0.125 maps to texel 0 (red)
         let color = texture_sample(&tex, &sampler, 0.125f32);
@@ -4984,12 +5023,13 @@ mod tests {
 
     #[test]
     fn test_texture_1d_sample_level() {
-        let tex: Texture1D<f32> = Texture1D::new();
-        tex.init(4);
-        tex.data.write().set_pixel(1, 0, [0.5, 0.25, 0.125, 1.0]);
+        let tex: Texture1D<f32> = Texture1D::new(4);
+        tex.data
+            .write()
+            .unwrap()
+            .set_pixel(1, 0, [0.5, 0.25, 0.125, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let color = texture_sample_level(&tex, &sampler, 0.375f32, 0.0f32);
         assert!((color.x() - 0.5).abs() < 0.001);
@@ -4997,8 +5037,7 @@ mod tests {
 
     #[test]
     fn test_texture_3d_load() {
-        let tex: Texture3D<f32> = Texture3D::new();
-        tex.init(4, 4, 2);
+        let tex: Texture3D<f32> = Texture3D::new(4, 4, 2);
         tex.set_pixel(1, 2, 0, [0.5, 0.25, 0.125, 1.0]);
         tex.set_pixel(1, 2, 1, [0.9, 0.8, 0.7, 0.6]);
 
@@ -5018,8 +5057,7 @@ mod tests {
 
     #[test]
     fn test_texture_3d_sample_nearest() {
-        let tex: Texture3D<f32> = Texture3D::new();
-        tex.init(2, 2, 2);
+        let tex: Texture3D<f32> = Texture3D::new(2, 2, 2);
         // Set distinct colors at each corner of the 2x2x2 volume
         tex.set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]); // red
         tex.set_pixel(1, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
@@ -5031,7 +5069,6 @@ mod tests {
         tex.set_pixel(1, 1, 1, [1.0, 1.0, 1.0, 1.0]); // white
 
         let sampler: Sampler = Sampler::new();
-        sampler.init(); // Nearest filtering
 
         // 0.25 maps to texel 0, 0.75 maps to texel 1
         let color = texture_sample(&tex, &sampler, vec3f(0.25, 0.25, 0.25));
@@ -5050,12 +5087,10 @@ mod tests {
 
     #[test]
     fn test_texture_3d_sample_level() {
-        let tex: Texture3D<f32> = Texture3D::new();
-        tex.init(2, 2, 2);
+        let tex: Texture3D<f32> = Texture3D::new(2, 2, 2);
         tex.set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let color = texture_sample_level(&tex, &sampler, vec3f(0.25, 0.25, 0.25), 0.0f32);
         assert!((color.x() - 0.5).abs() < 0.001);
@@ -5070,8 +5105,7 @@ mod tests {
         // 0.5   So x0=0, x1=1, fx=0.5 (similarly y, z)
         //   Only c000 = [1,0,0,1]; all other 7 corners are [0,0,0,0].
         //   Trilinear: 0.5^3 weight on c000 -> r = 0.125, w = 0.125.
-        let tex: Texture3D<f32> = Texture3D::new();
-        tex.init(2, 2, 2);
+        let tex: Texture3D<f32> = Texture3D::new(2, 2, 2);
         tex.set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]);
 
         let sampler: Sampler = Sampler::new();
@@ -5140,14 +5174,12 @@ mod tests {
             ([0.9, 0.9, -1.0], 5),  // -Z: u=0.05, v=0.05
         ];
 
-        let tex: TextureCube<f32> = TextureCube::new();
-        tex.init(4);
+        let tex: TextureCube<f32> = TextureCube::new(4);
         for (face, &color) in face_colors.iter().enumerate() {
-            tex.data.write().faces[face].set_pixel(0, 0, 0, color);
+            tex.data.write().unwrap().faces[face].set_pixel(0, 0, 0, color);
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init(); // Nearest
 
         for (dir, face) in cases {
             let color = texture_sample(&tex, &sampler, vec3f(dir[0], dir[1], dir[2]));
@@ -5174,12 +5206,10 @@ mod tests {
     fn test_texture_cube_sample_zero_direction() {
         // A zero-length direction is degenerate. The CPU implementation
         // returns a deterministic fallback (face 0, center) rather than NaN.
-        let tex: TextureCube<f32> = TextureCube::new();
-        tex.init(4);
-        tex.data.write().faces[0].set_pixel(2, 2, 0, [0.5, 0.5, 0.5, 1.0]);
+        let tex: TextureCube<f32> = TextureCube::new(4);
+        tex.data.write().unwrap().faces[0].set_pixel(2, 2, 0, [0.5, 0.5, 0.5, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let color = texture_sample(&tex, &sampler, vec3f(0.0, 0.0, 0.0));
         // Should not be NaN; should return the center texel of face 0.
@@ -5192,13 +5222,11 @@ mod tests {
 
     #[test]
     fn test_texture_cube_sample_level() {
-        let tex: TextureCube<f32> = TextureCube::new();
-        tex.init(2);
+        let tex: TextureCube<f32> = TextureCube::new(2);
         // Direction (1, 1, 1) selects +X face, u=0, v=0 -> texel (0, 0)
-        tex.data.write().faces[0].set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
+        tex.data.write().unwrap().faces[0].set_pixel(0, 0, 0, [0.5, 0.5, 0.5, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let color = texture_sample_level(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0.0f32);
         assert!((color.x() - 0.5).abs() < 0.001);
@@ -5206,16 +5234,14 @@ mod tests {
 
     #[test]
     fn test_texture_cube_array_sample() {
-        let tex: TextureCubeArray<f32> = TextureCubeArray::new();
-        tex.init(2, 2);
+        let tex: TextureCubeArray<f32> = TextureCubeArray::new(2, 2);
 
         // Layer 0, +X face, texel (0, 0) = red
-        tex.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]);
+        tex.data.write().unwrap().cubes[0].faces[0].set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]);
         // Layer 1, +X face, texel (0, 0) = green
-        tex.data.write().cubes[1].faces[0].set_pixel(0, 0, 0, [0.0, 1.0, 0.0, 1.0]);
+        tex.data.write().unwrap().cubes[1].faces[0].set_pixel(0, 0, 0, [0.0, 1.0, 0.0, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Direction (1, 1, 1) selects +X face at (0, 0)
         let color = texture_sample_array(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0u32);
@@ -5227,12 +5253,10 @@ mod tests {
 
     #[test]
     fn test_texture_cube_array_sample_level() {
-        let tex: TextureCubeArray<f32> = TextureCubeArray::new();
-        tex.init(2, 2);
-        tex.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [0.3, 0.6, 0.9, 1.0]);
+        let tex: TextureCubeArray<f32> = TextureCubeArray::new(2, 2);
+        tex.data.write().unwrap().cubes[0].faces[0].set_pixel(0, 0, 0, [0.3, 0.6, 0.9, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let color = texture_sample_level_array(&tex, &sampler, vec3f(1.0, 1.0, 1.0), 0u32, 0.0f32);
         assert!((color.x() - 0.3).abs() < 0.001);
@@ -5247,15 +5271,13 @@ mod tests {
         // gathered 2x2 block covers the whole face in WGSL order:
         // x = (u_min, v_max), y = (u_max, v_max), z = (u_max, v_min),
         // w = (u_min, v_min).
-        let tex: TextureCube<f32> = TextureCube::new();
-        tex.init(2);
-        tex.data.write().faces[0].set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]); // red
-        tex.data.write().faces[0].set_pixel(1, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
-        tex.data.write().faces[0].set_pixel(0, 1, 0, [0.0, 0.0, 1.0, 1.0]); // blue
-        tex.data.write().faces[0].set_pixel(1, 1, 0, [1.0, 1.0, 0.0, 1.0]); // yellow
+        let tex: TextureCube<f32> = TextureCube::new(2);
+        tex.data.write().unwrap().faces[0].set_pixel(0, 0, 0, [1.0, 0.0, 0.0, 1.0]); // red
+        tex.data.write().unwrap().faces[0].set_pixel(1, 0, 0, [0.0, 1.0, 0.0, 1.0]); // green
+        tex.data.write().unwrap().faces[0].set_pixel(0, 1, 0, [0.0, 0.0, 1.0, 1.0]); // blue
+        tex.data.write().unwrap().faces[0].set_pixel(1, 1, 0, [1.0, 1.0, 0.0, 1.0]); // yellow
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Direction (1, 0, 0) selects the +X face at its center.
         let g = texture_gather(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0));
@@ -5284,22 +5306,19 @@ mod tests {
     fn test_texture_cube_gather_integer_sampled_types() {
         // Per WGSL spec 17.7.2, textureGather supports texture_cube<i32> and
         // texture_cube<u32> in addition to texture_cube<f32>.
-        let tex_i: TextureCube<i32> = TextureCube::new();
-        tex_i.init(2);
-        tex_i.data.write().faces[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
-        tex_i.data.write().faces[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
-        tex_i.data.write().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
-        tex_i.data.write().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+        let tex_i: TextureCube<i32> = TextureCube::new(2);
+        tex_i.data.write().unwrap().faces[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_i.data.write().unwrap().faces[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_i.data.write().unwrap().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_i.data.write().unwrap().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
 
-        let tex_u: TextureCube<u32> = TextureCube::new();
-        tex_u.init(2);
-        tex_u.data.write().faces[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
-        tex_u.data.write().faces[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
-        tex_u.data.write().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
-        tex_u.data.write().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+        let tex_u: TextureCube<u32> = TextureCube::new(2);
+        tex_u.data.write().unwrap().faces[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_u.data.write().unwrap().faces[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_u.data.write().unwrap().faces[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_u.data.write().unwrap().faces[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let g = texture_gather(0u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0));
         assert_eq!(g, vec4i(30, 40, 20, 10));
@@ -5317,16 +5336,14 @@ mod tests {
         // A zero-length direction is degenerate (GPU behavior undefined);
         // the CPU implementation deterministically gathers from face 0 at
         // its center rather than producing NaN.
-        let tex: TextureCube<f32> = TextureCube::new();
-        tex.init(2);
+        let tex: TextureCube<f32> = TextureCube::new(2);
         for y in 0..2 {
             for x in 0..2 {
-                tex.data.write().faces[0].set_pixel(x, y, 0, [0.5, 0.0, 0.0, 1.0]);
+                tex.data.write().unwrap().faces[0].set_pixel(x, y, 0, [0.5, 0.0, 0.0, 1.0]);
             }
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let g = texture_gather(0u32, &tex, &sampler, vec3f(0.0, 0.0, 0.0));
         assert!(g.x().is_finite(), "zero direction should not produce NaN");
@@ -5338,23 +5355,31 @@ mod tests {
 
     #[test]
     fn test_texture_cube_array_gather() {
-        let tex: TextureCubeArray<f32> = TextureCubeArray::new();
-        tex.init(2, 2);
+        let tex: TextureCubeArray<f32> = TextureCubeArray::new(2, 2);
         // Layer 0, +X face: r = 0.5 everywhere.
         for y in 0..2 {
             for x in 0..2 {
-                tex.data.write().cubes[0].faces[0].set_pixel(x, y, 0, [0.5, 0.0, 0.0, 1.0]);
+                tex.data.write().unwrap().cubes[0].faces[0].set_pixel(
+                    x,
+                    y,
+                    0,
+                    [0.5, 0.0, 0.0, 1.0],
+                );
             }
         }
         // Layer 1, +X face: r = 0.75 everywhere.
         for y in 0..2 {
             for x in 0..2 {
-                tex.data.write().cubes[1].faces[0].set_pixel(x, y, 0, [0.75, 0.0, 0.0, 1.0]);
+                tex.data.write().unwrap().cubes[1].faces[0].set_pixel(
+                    x,
+                    y,
+                    0,
+                    [0.75, 0.0, 0.0, 1.0],
+                );
             }
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // u32 array index selects the layer.
         let g = texture_gather_array(0u32, &tex, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
@@ -5388,22 +5413,19 @@ mod tests {
 
     #[test]
     fn test_texture_cube_array_gather_integer_sampled_types() {
-        let tex_i: TextureCubeArray<i32> = TextureCubeArray::new();
-        tex_i.init(2, 1);
-        tex_i.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [7, 0, 0, 1]);
-        tex_i.data.write().cubes[0].faces[0].set_pixel(1, 0, 0, [8, 0, 0, 1]);
-        tex_i.data.write().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
-        tex_i.data.write().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
+        let tex_i: TextureCubeArray<i32> = TextureCubeArray::new(2, 1);
+        tex_i.data.write().unwrap().cubes[0].faces[0].set_pixel(0, 0, 0, [7, 0, 0, 1]);
+        tex_i.data.write().unwrap().cubes[0].faces[0].set_pixel(1, 0, 0, [8, 0, 0, 1]);
+        tex_i.data.write().unwrap().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
+        tex_i.data.write().unwrap().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
 
-        let tex_u: TextureCubeArray<u32> = TextureCubeArray::new();
-        tex_u.init(2, 1);
-        tex_u.data.write().cubes[0].faces[0].set_pixel(0, 0, 0, [7, 0, 0, 1]);
-        tex_u.data.write().cubes[0].faces[0].set_pixel(1, 0, 0, [8, 0, 0, 1]);
-        tex_u.data.write().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
-        tex_u.data.write().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
+        let tex_u: TextureCubeArray<u32> = TextureCubeArray::new(2, 1);
+        tex_u.data.write().unwrap().cubes[0].faces[0].set_pixel(0, 0, 0, [7, 0, 0, 1]);
+        tex_u.data.write().unwrap().cubes[0].faces[0].set_pixel(1, 0, 0, [8, 0, 0, 1]);
+        tex_u.data.write().unwrap().cubes[0].faces[0].set_pixel(0, 1, 0, [9, 0, 0, 1]);
+        tex_u.data.write().unwrap().cubes[0].faces[0].set_pixel(1, 1, 0, [11, 0, 0, 1]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let g = texture_gather_array(0u32, &tex_i, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
         assert_eq!(g, vec4i(9, 11, 8, 7));
@@ -5416,22 +5438,19 @@ mod tests {
     fn test_texture_2d_gather_integer_sampled_types() {
         // Per WGSL spec 17.7.2, textureGather supports texture_2d<i32> and
         // texture_2d<u32> in addition to texture_2d<f32>.
-        let tex_i: Texture2D<i32> = Texture2D::new();
-        tex_i.init(2, 2);
+        let tex_i: Texture2D<i32> = Texture2D::new(2, 2);
         tex_i.set_pixel(0, 0, [10, 0, 0, 100]);
         tex_i.set_pixel(1, 0, [20, 0, 0, 100]);
         tex_i.set_pixel(0, 1, [30, 0, 0, 100]);
         tex_i.set_pixel(1, 1, [40, 0, 0, 100]);
 
-        let tex_u: Texture2D<u32> = Texture2D::new();
-        tex_u.init(2, 2);
+        let tex_u: Texture2D<u32> = Texture2D::new(2, 2);
         tex_u.set_pixel(0, 0, [10, 0, 0, 100]);
         tex_u.set_pixel(1, 0, [20, 0, 0, 100]);
         tex_u.set_pixel(0, 1, [30, 0, 0, 100]);
         tex_u.set_pixel(1, 1, [40, 0, 0, 100]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Gathering at the center of a 2x2 texture covers the whole texture
         // in WGSL order: x = (u_min, v_max), y = (u_max, v_max),
@@ -5452,8 +5471,7 @@ mod tests {
 
     #[test]
     fn test_texture_2d_gather_offset_integer_sampled_types() {
-        let tex_i: Texture2D<i32> = Texture2D::new();
-        tex_i.init(4, 4);
+        let tex_i: Texture2D<i32> = Texture2D::new(4, 4);
         // A 2x2 block of values at (1,0),(2,0),(1,1),(2,1).
         tex_i.set_pixel(1, 0, [15, 0, 0, 100]);
         tex_i.set_pixel(2, 0, [25, 0, 0, 100]);
@@ -5461,7 +5479,6 @@ mod tests {
         tex_i.set_pixel(2, 1, [45, 0, 0, 100]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Gathers at (0.25, 0.25) with offset (1, 0) shift the 2x2 gather
         // window right by one texel onto the value block.
@@ -5473,8 +5490,7 @@ mod tests {
         let g = texture_gather_offset(0u32, &tex_i, &sampler, vec2f(0.5, 0.25), vec2i(-1, 0));
         assert_eq!(g, vec4i(0, 35, 15, 0));
 
-        let tex_u: Texture2D<u32> = Texture2D::new();
-        tex_u.init(4, 4);
+        let tex_u: Texture2D<u32> = Texture2D::new(4, 4);
         tex_u.set_pixel(1, 0, [15, 0, 0, 100]);
         tex_u.set_pixel(2, 0, [25, 0, 0, 100]);
         tex_u.set_pixel(1, 1, [35, 0, 0, 100]);
@@ -5486,15 +5502,14 @@ mod tests {
 
     #[test]
     fn test_texture_2d_array_gather() {
-        let tex: Texture2DArray<f32> = Texture2DArray::new();
-        tex.init(2, 2, 2);
+        let tex: Texture2DArray<f32> = Texture2DArray::new(2, 2, 2);
         // Layer 0 r channel covers 0.1..0.4, layer 1 covers 0.5..0.8, in
         // the order (0,0), (1,0), (0,1), (1,1).
         let values = [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]];
         for (layer, vals) in values.iter().enumerate() {
             for y in 0..2u32 {
                 for x in 0..2u32 {
-                    tex.data.write().layers[layer].set_pixel(
+                    tex.data.write().unwrap().layers[layer].set_pixel(
                         x,
                         y,
                         0,
@@ -5505,7 +5520,6 @@ mod tests {
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Gathering at the center of a 2x2 layer covers the whole layer in
         // WGSL order: x = (u_min, v_max), y = (u_max, v_max),
@@ -5546,22 +5560,19 @@ mod tests {
     fn test_texture_2d_array_gather_integer_sampled_types() {
         // Per WGSL spec 17.7.2, textureGather supports texture_2d_array<i32>
         // and texture_2d_array<u32> in addition to <f32>.
-        let tex_i: Texture2DArray<i32> = Texture2DArray::new();
-        tex_i.init(2, 2, 1);
-        tex_i.data.write().layers[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
-        tex_i.data.write().layers[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
-        tex_i.data.write().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
-        tex_i.data.write().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+        let tex_i: Texture2DArray<i32> = Texture2DArray::new(2, 2, 1);
+        tex_i.data.write().unwrap().layers[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_i.data.write().unwrap().layers[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_i.data.write().unwrap().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_i.data.write().unwrap().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
 
-        let tex_u: Texture2DArray<u32> = Texture2DArray::new();
-        tex_u.init(2, 2, 1);
-        tex_u.data.write().layers[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
-        tex_u.data.write().layers[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
-        tex_u.data.write().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
-        tex_u.data.write().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
+        let tex_u: Texture2DArray<u32> = Texture2DArray::new(2, 2, 1);
+        tex_u.data.write().unwrap().layers[0].set_pixel(0, 0, 0, [10, 0, 0, 100]);
+        tex_u.data.write().unwrap().layers[0].set_pixel(1, 0, 0, [20, 0, 0, 100]);
+        tex_u.data.write().unwrap().layers[0].set_pixel(0, 1, 0, [30, 0, 0, 100]);
+        tex_u.data.write().unwrap().layers[0].set_pixel(1, 1, 0, [40, 0, 0, 100]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         let g = texture_gather_array(0u32, &tex_i, &sampler, vec2f(0.5, 0.5), 0u32);
         assert_eq!(g, vec4i(30, 40, 20, 10));
@@ -5574,15 +5585,13 @@ mod tests {
     fn test_texture_2d_array_gather_offset() {
         // 4x4x2 array; layer 1 carries the value block at
         // (1,0),(2,0),(1,1),(2,1); layer 0 is left empty (zeros).
-        let tex: Texture2DArray<f32> = Texture2DArray::new();
-        tex.init(4, 4, 2);
-        tex.data.write().layers[1].set_pixel(1, 0, 0, [0.15, 0.0, 0.0, 1.0]);
-        tex.data.write().layers[1].set_pixel(2, 0, 0, [0.25, 0.0, 0.0, 1.0]);
-        tex.data.write().layers[1].set_pixel(1, 1, 0, [0.35, 0.0, 0.0, 1.0]);
-        tex.data.write().layers[1].set_pixel(2, 1, 0, [0.45, 0.0, 0.0, 1.0]);
+        let tex: Texture2DArray<f32> = Texture2DArray::new(4, 4, 2);
+        tex.data.write().unwrap().layers[1].set_pixel(1, 0, 0, [0.15, 0.0, 0.0, 1.0]);
+        tex.data.write().unwrap().layers[1].set_pixel(2, 0, 0, [0.25, 0.0, 0.0, 1.0]);
+        tex.data.write().unwrap().layers[1].set_pixel(1, 1, 0, [0.35, 0.0, 0.0, 1.0]);
+        tex.data.write().unwrap().layers[1].set_pixel(2, 1, 0, [0.45, 0.0, 0.0, 1.0]);
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Gather at (0.25, 0.25) with offset (1, 0) shifts the 2x2 gather
         // window right by one texel onto the value block.
@@ -5626,12 +5635,11 @@ mod tests {
     fn test_texture_depth_2d_array_gather_forms() {
         // Covers the depth 2D array gather family — plain, offset, and
         // compare variants — with both u32 and i32 array indices.
-        let tex: TextureDepth2DArray = TextureDepth2DArray::new();
-        tex.init(4, 4, 2);
+        let tex: TextureDepth2DArray = TextureDepth2DArray::new(4, 4, 2);
         // Layer 1 carries a 2x2 depth block at (1,0),(2,0),(1,1),(2,1);
         // layer 0 is left empty (zeros).
         {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.layers[1].mips[0][0][1] = 0.15;
             guard.layers[1].mips[0][0][2] = 0.25;
             guard.layers[1].mips[0][1][1] = 0.35;
@@ -5639,7 +5647,6 @@ mod tests {
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Gather at (0.5, 0.25) lands on the (1,0)-based window:
         // x = (1,1)=0.35, y = (2,1)=0.45, z = (2,0)=0.25, w = (1,0)=0.15.
@@ -5717,21 +5724,19 @@ mod tests {
         // Per WGSL spec 17.7.2, textureGather supports the depth cube forms
         // (no component parameter). Each face gets a distinct 2x2 depth
         // block so face selection is observable.
-        let tex: TextureDepthCube = TextureDepthCube::new();
-        tex.init(2);
+        let tex: TextureDepthCube = TextureDepthCube::new(2);
         // Face 0 (+X): depths 0.1..0.4 in (0,0),(1,0),(0,1),(1,1).
-        tex.data.write().faces[0].mips[0][0][0] = 0.1;
-        tex.data.write().faces[0].mips[0][0][1] = 0.2;
-        tex.data.write().faces[0].mips[0][1][0] = 0.3;
-        tex.data.write().faces[0].mips[0][1][1] = 0.4;
+        tex.data.write().unwrap().faces[0].mips[0][0][0] = 0.1;
+        tex.data.write().unwrap().faces[0].mips[0][0][1] = 0.2;
+        tex.data.write().unwrap().faces[0].mips[0][1][0] = 0.3;
+        tex.data.write().unwrap().faces[0].mips[0][1][1] = 0.4;
         // Face 2 (+Y): depths 0.5..0.8.
-        tex.data.write().faces[2].mips[0][0][0] = 0.5;
-        tex.data.write().faces[2].mips[0][0][1] = 0.6;
-        tex.data.write().faces[2].mips[0][1][0] = 0.7;
-        tex.data.write().faces[2].mips[0][1][1] = 0.8;
+        tex.data.write().unwrap().faces[2].mips[0][0][0] = 0.5;
+        tex.data.write().unwrap().faces[2].mips[0][0][1] = 0.6;
+        tex.data.write().unwrap().faces[2].mips[0][1][0] = 0.7;
+        tex.data.write().unwrap().faces[2].mips[0][1][1] = 0.8;
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // Direction (1, 0, 0) selects face 0 at its center; the gather
         // window covers the whole 2x2 face in WGSL order:
@@ -5758,12 +5763,11 @@ mod tests {
 
     #[test]
     fn test_texture_depth_cube_array_gather_depth() {
-        let tex: TextureDepthCubeArray = TextureDepthCubeArray::new();
-        tex.init(2, 2);
+        let tex: TextureDepthCubeArray = TextureDepthCubeArray::new(2, 2);
         // Layer 0, face 0: 0.1..0.4; layer 1, face 0: 0.5..0.8.
         let values = [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]];
         for (layer, vals) in values.iter().enumerate() {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.cubes[layer].faces[0].mips[0][0][0] = vals[0];
             guard.cubes[layer].faces[0].mips[0][0][1] = vals[1];
             guard.cubes[layer].faces[0].mips[0][1][0] = vals[2];
@@ -5771,7 +5775,6 @@ mod tests {
         }
 
         let sampler: Sampler = Sampler::new();
-        sampler.init();
 
         // u32 array index selects the cube layer.
         let g = texture_gather_depth_array(&tex, &sampler, vec3f(1.0, 0.0, 0.0), 0u32);
@@ -5805,13 +5808,12 @@ mod tests {
 
     #[test]
     fn test_texture_depth_cube_gather_compare() {
-        let tex: TextureDepthCube = TextureDepthCube::new();
-        tex.init(2);
+        let tex: TextureDepthCube = TextureDepthCube::new(2);
         // Face 0 (+X): depths 0.1..0.4 in (0,0),(1,0),(0,1),(1,1).
-        tex.data.write().faces[0].mips[0][0][0] = 0.1;
-        tex.data.write().faces[0].mips[0][0][1] = 0.2;
-        tex.data.write().faces[0].mips[0][1][0] = 0.3;
-        tex.data.write().faces[0].mips[0][1][1] = 0.4;
+        tex.data.write().unwrap().faces[0].mips[0][0][0] = 0.1;
+        tex.data.write().unwrap().faces[0].mips[0][0][1] = 0.2;
+        tex.data.write().unwrap().faces[0].mips[0][1][0] = 0.3;
+        tex.data.write().unwrap().faces[0].mips[0][1][1] = 0.4;
 
         let sampler: SamplerComparison = SamplerComparison::new();
         sampler.set(SamplerComparisonState {
@@ -5839,12 +5841,11 @@ mod tests {
 
     #[test]
     fn test_texture_depth_cube_array_gather_compare() {
-        let tex: TextureDepthCubeArray = TextureDepthCubeArray::new();
-        tex.init(2, 2);
+        let tex: TextureDepthCubeArray = TextureDepthCubeArray::new(2, 2);
         // Layer 0, face 0: 0.1..0.4; layer 1, face 0: 0.5..0.8.
         let values = [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]];
         for (layer, vals) in values.iter().enumerate() {
-            let mut guard = tex.data.write();
+            let mut guard = tex.data.write().unwrap();
             guard.cubes[layer].faces[0].mips[0][0][0] = vals[0];
             guard.cubes[layer].faces[0].mips[0][0][1] = vals[1];
             guard.cubes[layer].faces[0].mips[0][1][0] = vals[2];

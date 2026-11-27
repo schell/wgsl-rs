@@ -379,42 +379,69 @@ pub mod shadowing_consumer {
 }
 
 /// The vertex half of a composed pipeline (wgsl-rs#114): one entry
-/// plus a binding shared with the fragment stage.
+/// plus a binding paired with the composing module's fragment binding.
 ///
-/// Legacy-statics fixture: `pipeline_compose` imports this module's
-/// binding as a module VARIABLE, and pack types are not yet
-/// importable as parameters (V1 registers packs per-module only).
-/// Stays on statics until the removal bead decides the cross-module
-/// pack story.
+/// Cross-module packs: V1 registers packs per-module, so pack types are
+/// not importable as parameters and a binding cannot be declared in one
+/// module and read from another. Each module here declares its own pack;
+/// the composed-pipeline test still proves one assembled source, one
+/// linkage, one pipeline layout across the re-exported vertex entry.
+/// Stage-pair visibility OR'ing is covered by `stage_visibility`.
 #[wgsl]
 pub mod pipeline_vertex {
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(0), SHARED: u32);
+    pub struct VertexPack {
+        #[uniform(group(0), binding(0))]
+        pub shared: Uniform<u32>,
+    }
 
     #[vertex]
-    pub fn vs_main(#[builtin(vertex_index)] _vi: u32) -> Vec4f {
-        vec4f(f32(get!(SHARED)) * 0.0, 0.0, 0.0, 1.0)
+    pub fn vs_main(#[builtin(vertex_index)] _vi: u32, pack: &VertexPack) -> Vec4f {
+        vec4f(f32(load!(pack.shared)) * 0.0, 0.0, 0.0, 1.0)
     }
 }
 
 /// A complete pipeline module in ONE `#[wgsl]` module (wgsl-rs#114):
 /// the vertex entry is re-exported by name, the fragment entry is
-/// local, and the shared binding lives in the vertex module — one
-/// assembled source, one linkage, one pipeline layout, with no
-/// runtime merge.
+/// local, and each module's binding stays local — one assembled
+/// source, one linkage, one pipeline layout, with no runtime merge.
 #[wgsl]
 pub mod pipeline_compose {
-    use super::pipeline_vertex::SHARED;
     pub use super::pipeline_vertex::vs_main;
     use wgsl_rs::std::*;
 
-    uniform!(group(0), binding(1), TINT: f32);
+    pub struct TintPack {
+        #[uniform(group(0), binding(1))]
+        pub tint: Uniform<f32>,
+    }
 
     #[fragment]
-    pub fn fs_main() -> Vec4f {
-        let t: f32 = f32(get!(SHARED)) * f32(get!(TINT));
-        vec4f(t, 0.0, 0.0, 1.0)
+    pub fn fs_main(pack: &TintPack) -> Vec4f {
+        vec4f(f32(load!(pack.tint)), 0.0, 0.0, 1.0)
+    }
+}
+
+/// Stage-pair visibility OR'ing (the regression core of wgsl-rs#114,
+/// expressible with packs): one binding field read by BOTH a vertex and
+/// a fragment entry in the same module carries OR'd visibility.
+#[wgsl]
+pub mod stage_visibility {
+    use wgsl_rs::std::*;
+
+    pub struct VisPack {
+        #[uniform(group(0), binding(0))]
+        pub visible: Uniform<u32>,
+    }
+
+    #[vertex]
+    pub fn vs_read(#[builtin(vertex_index)] _vi: u32, pack: &VisPack) -> Vec4f {
+        vec4f(f32(load!(pack.visible)) * 0.0, 0.0, 0.0, 1.0)
+    }
+
+    #[fragment]
+    pub fn fs_read(pack: &VisPack) -> Vec4f {
+        vec4f(f32(load!(pack.visible)) * 0.0, 0.0, 0.0, 1.0)
     }
 }
 
@@ -458,38 +485,12 @@ pub mod generic_named_consumer {
     }
 }
 
-/// wgsl-rs#114: a named import counts as an import for `load!`
-/// validation. The consumer's only wgsl-module import is the named
-/// `BUFFER` binding; its module variables are invisible to the
-/// validator's table, so the table must fail open — not reject
-/// `load!(BUFFER)` as if the module had no imports.
-///
-/// Legacy-statics fixture: the named import brings a module VARIABLE,
-/// and pack types are not yet importable as parameters (V1 registers
-/// packs per-module only). Stays on statics until the removal bead
-/// decides the cross-module pack story.
-#[wgsl]
-pub mod load_provider {
-    // The std glob also brings the linkage macros into scope.
-    #[allow(unused_imports)]
-    use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), read_only, BUFFER: [f32; 4]);
-}
-
-#[wgsl]
-pub mod load_named_consumer {
-    use super::load_provider::BUFFER;
-    // The std glob also brings the linkage macros into scope.
-    #[allow(unused_imports)]
-    use wgsl_rs::std::*;
-
-    pub fn read_first() -> f32 {
-        let v = load!(BUFFER);
-        v[0]
-    }
-}
-
+/// wgsl-rs#114 review: the `load!` has-imports fail-open rule died with
+/// the module-static layer. Access-macro targets are pack fields only,
+/// so a named import of a binding VARIABLE no longer has a meaning and
+/// the old `load_provider`/`load_named_consumer` fixtures were removed;
+/// imports still count for instantiation candidates
+/// (`generic_named_import_resolves`).
 /// Grouped globs (wgsl-rs#250): the shape rustfmt regenerates from two
 /// sibling glob imports under `imports_granularity = "crate"` — the
 /// exact spelling the renderling port hit. One group folds both
@@ -1903,30 +1904,55 @@ fn named_reexport_composes_one_pipeline() {
     );
     assert_eq!(linkage.fragment_entries[0].name, "fs_main");
 
-    // The binding shared by the imported vertex entry and the local
-    // fragment entry carries OR'd stage visibility; the fragment-only
+    // The re-exported vertex entry's binding keeps VERTEX-only visibility
+    // (the fragment module declares its own binding); the local fragment
     // binding stays fragment-only.
     let bg = linkage.bind_group(0).expect("bind group 0");
     let shared = bg
         .entries
         .iter()
         .find(|e| e.binding == 0)
-        .expect("SHARED entry");
+        .expect("vertex shared entry");
     assert_eq!(
         shared.visibility,
-        wg::wgpu::ShaderStages::VERTEX | wg::wgpu::ShaderStages::FRAGMENT,
-        "a binding used by the imported vertex entry and the local fragment entry must carry OR'd \
-         visibility"
+        wg::wgpu::ShaderStages::VERTEX,
+        "the re-exported vertex entry's binding must stay vertex-only in this module"
     );
     let tint = bg
         .entries
         .iter()
         .find(|e| e.binding == 1)
-        .expect("TINT entry");
+        .expect("tint entry");
     assert_eq!(tint.visibility, wg::wgpu::ShaderStages::FRAGMENT);
 
     wgsl_rs::validate_wgsl_source(&linkage.wgsl_source())
         .expect("the composed pipeline source must validate in naga");
+}
+
+/// Stage-pair visibility OR'ing (pack-expressible core of wgsl-rs#114):
+/// one pack field read by both the vertex and the fragment entry carries
+/// OR'd stage visibility on the bind group entry.
+#[test]
+fn stage_pairs_or_their_visibility() {
+    let linkage = stage_visibility::instantiate().generate_linkage();
+
+    assert_eq!(linkage.vertex_entries.len(), 1);
+    assert_eq!(linkage.fragment_entries.len(), 1);
+
+    let bg = linkage.bind_group(0).expect("bind group 0");
+    let entry = bg
+        .entries
+        .iter()
+        .find(|e| e.binding == 0)
+        .expect("visible entry");
+    assert_eq!(
+        entry.visibility,
+        wg::wgpu::ShaderStages::VERTEX | wg::wgpu::ShaderStages::FRAGMENT,
+        "a binding read by both stages must carry OR'd visibility"
+    );
+
+    wgsl_rs::validate_wgsl_source(&linkage.wgsl_source())
+        .expect("the stage-visibility source must validate in naga");
 }
 
 /// The composed pipeline linkage builds ONE render pipeline end to end
@@ -1980,20 +2006,6 @@ fn generic_named_import_resolves() {
     );
     wgsl_rs::validate_wgsl_source(&source)
         .expect("the named-import instantiation must validate in naga");
-}
-
-/// wgsl-rs#114 review: a named import satisfies the `load!` validator's
-/// has-imports fail-open rule (the fixture compiles at all because of
-/// it); assert the assembled output carries the imported binding.
-#[test]
-fn load_validation_accepts_named_imports() {
-    let source = load_named_consumer::instantiate().wgsl_source();
-    assert!(
-        source.contains("BUFFER"),
-        "the named-imported binding must be folded in, got:\n{source}"
-    );
-    wgsl_rs::validate_wgsl_source(&source)
-        .expect("the named-import load module must validate in naga");
 }
 
 /// The direct module render route (`instantiate().wgsl_source()`)

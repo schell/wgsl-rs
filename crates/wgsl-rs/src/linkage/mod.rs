@@ -10,11 +10,11 @@
 //! generation from the proc-macro. `wgsl-rs` itself stays wgpu-free.
 //!
 //! ## Source instantiation
-//! When a `#[wgsl]` source contains generic linkage variables (e.g.
-//! `storage!(group(0), binding(0), BINS: impl std::any::Any)`) that are
-//! accessed via `get!(BINS, T)` or `get_mut!(BINS, T)`, the generated
-//! `instantiate` function needs to enforce that every entry point agrees on
-//! the concrete type of each linkage variable.
+//! When a `#[wgsl]` source contains generic resource packs (e.g.
+//! `pub struct BinsPack<T> { ... }`) whose fields are accessed through
+//! entry-point parameters (`&BinsPack<T>`), the generated `instantiate`
+//! function needs to enforce that every entry point agrees on the concrete
+//! type of each pack parameter.
 //!
 //! The [`Type`] trait provides a type-level equality constraint:
 //! `T: Type<Is = U>` is satisfied iff `T` and `U` are the same type.

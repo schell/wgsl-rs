@@ -302,15 +302,6 @@ impl Symbols {
                 Item::Const(c) => {
                     consts.insert(c.ident.to_string(), c.ty.clone());
                 }
-                Item::Uniform(u) => {
-                    linkage.insert(u.name.to_string(), u.ty.clone());
-                }
-                Item::Storage(st) => {
-                    linkage.insert(st.name.to_string(), st.ty.clone());
-                }
-                Item::Workgroup(wg) => {
-                    linkage.insert(wg.name.to_string(), wg.ty.clone());
-                }
                 // Pack fields lower to mangled globals before this pass
                 // runs, so comparisons on pack-derived values look up the
                 // mangled resource name here.

@@ -1288,7 +1288,10 @@ mod test {
                 pub modelview: Mat4f,
             }
 
-            uniform!(group(0), binding(0), UNIFORMS: Uniforms);
+            pub struct UniformsPack {
+                #[uniform(group(0), binding(0))]
+                pub uniforms: Uniform<Uniforms>,
+            }
 
             pub struct VertexInput {
                 #[location(0)]
@@ -1301,9 +1304,9 @@ mod test {
             }
 
             #[vertex]
-            pub fn vs_main(input: VertexInput) -> VertexOutput {
-                let projection = get!(UNIFORMS).projection;
-                let mut modelview = get!(UNIFORMS).modelview;
+            pub fn vs_main(input: VertexInput, pack: &UniformsPack) -> VertexOutput {
+                let projection = get!(pack.uniforms).projection;
+                let mut modelview = get!(pack.uniforms).modelview;
                 // Just for access sake, mess with the modelview matrix
                 modelview[0u32].y += 10.0;
                 VertexOutput {

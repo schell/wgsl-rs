@@ -1,6 +1,6 @@
 error: Parsing error: 'Encountered unsupported Rust syntax:
-       load!(PARTICLES) — runtime-sized arrays are not copyable WGSL values; index into get!(PARTICLES) or copy elements with slab_copy!.'
-  --> tests/ui/fail/load_runtime_array.rs:12:15
+       load! on a runtime-sized array field — runtime-sized arrays are not copyable WGSL values; index into get!(...) or copy elements with slab_copy!.'
+  --> tests/ui/fail/load_runtime_array.rs:15:20
    |
-12 |         load!(PARTICLES)[0]
-   |               ^^^^^^^^^
+15 |         load!(pack.particles)[0]
+   |                    ^^^^^^^^^

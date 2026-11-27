@@ -6,10 +6,13 @@ use wgsl_rs::wgsl;
 mod load_runtime_array {
     use wgsl_rs::std::*;
 
-    storage!(group(0), binding(0), read_write, PARTICLES: RuntimeArray<f32>);
+    pub struct ParticlesPack {
+        #[storage(group(0), binding(0), read_write)]
+        pub particles: Storage<RuntimeArray<f32>>,
+    }
 
-    pub fn read_particles() -> f32 {
-        load!(PARTICLES)[0]
+    pub fn read_particles(pack: &ParticlesPack) -> f32 {
+        load!(pack.particles)[0]
     }
 }
 

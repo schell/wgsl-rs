@@ -19,13 +19,6 @@
 - [Constants](./writing-shaders/constants.md)
 - [Control Flow](./writing-shaders/control-flow.md)
 - [Operators & Expressions](./writing-shaders/operators.md)
-- [Binding Macros](./writing-shaders/binding-macros.md)
-  - [`uniform!`](./writing-shaders/binding-macros/uniform.md)
-  - [`storage!`](./writing-shaders/binding-macros/storage.md)
-  - [`workgroup!`](./writing-shaders/binding-macros/workgroup.md)
-  - [`texture!` & `sampler!`](./writing-shaders/binding-macros/texture-sampler.md)
-  - [`ptr!`](./writing-shaders/binding-macros/ptr.md)
-  - [`discard!`](./writing-shaders/binding-macros/discard.md)
 - [Resource Pack Structs](./writing-shaders/resource-packs.md)
 
 # Types

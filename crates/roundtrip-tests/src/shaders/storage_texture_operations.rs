@@ -267,12 +267,11 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     use wgsl_rs::std::*;
 
     let pack = storage_texture_compute::StorageTextureComputePack {
-        input: TextureStorage2D::new(),
-        output: TextureStorage2D::new(),
+        input: TextureStorage2D::new(WIDTH, HEIGHT),
+        output: TextureStorage2D::new(WIDTH, HEIGHT),
     };
 
     // Initialize input texture.
-    pack.input.init(WIDTH, HEIGHT);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
             let idx = (y * WIDTH + x) as usize;
@@ -290,7 +289,6 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     }
 
     // Initialize output texture.
-    pack.output.init(WIDTH, HEIGHT);
 
     // Run the compute shader.
     dispatch_workgroups((WIDTH, HEIGHT, 1), (1, 1, 1), |builtins| {
@@ -298,7 +296,7 @@ fn run_cpu_compute(input_pixels: &[[f32; 4]]) -> Vec<[f32; 4]> {
     });
 
     // Read back output directly from CPU-side data (OUTPUT is write-only,
-    // so we can't use texture_load_storage — read the ModuleVar directly).
+    // so we can't use texture_load_storage — read the CPU field directly).
     let data = pack.output.get();
     let mut output = vec![[0.0f32; 4]; (WIDTH * HEIGHT) as usize];
     for y in 0..HEIGHT {

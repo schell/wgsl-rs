@@ -26,7 +26,7 @@ mod atlas {
 fn field_consts_are_parameter_independent_friendly_keys() {
     let _constructed = atlas::AtlasBindGroup::<true> {
         slab: Storage::new(RuntimeArray::new()),
-        texture: Texture2D::new(),
+        texture: Texture2D::new(1, 1),
         smp: Sampler::new(),
     };
     assert_eq!(atlas::AtlasBindGroup::<true>::SLAB, "AtlasBindGroup::slab");

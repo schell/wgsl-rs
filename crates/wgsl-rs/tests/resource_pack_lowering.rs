@@ -33,12 +33,10 @@ mod shader {
 #[test]
 fn helper_and_entry_point_run_on_cpu_with_a_constructed_pack() {
     let pack = shader::TextureBindGroup::<false> {
-        heights: Texture2D::new(),
+        heights: Texture2D::new(1, 1),
         heights_smp: Sampler::new(),
     };
-    pack.heights.init(1, 1);
     pack.heights.set_pixel(0, 0, [0.125, 0.25, 0.5, 1.0]);
-    pack.heights_smp.init();
 
     let color = shader::fragment::<false>(vec4f(0.0, 0.0, 0.0, 1.0), &pack);
     assert_eq!(color, vec4f(0.125, 0.25, 0.5, 1.0));
@@ -109,12 +107,10 @@ mod associated {
 #[test]
 fn associated_functions_accept_packs_without_receiver_lowering() {
     let pack = associated::Pack {
-        texture: Texture2D::new(),
+        texture: Texture2D::new(1, 1),
         smp: Sampler::new(),
     };
-    pack.texture.init(1, 1);
     pack.texture.set_pixel(0, 0, [1.0, 0.5, 0.25, 1.0]);
-    pack.smp.init();
     assert_eq!(
         associated::fragment(vec4f(0.0, 0.0, 0.0, 1.0), &pack),
         vec4f(1.0, 0.5, 0.25, 1.0)

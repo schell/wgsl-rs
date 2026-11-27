@@ -89,12 +89,18 @@ mod signed_entry_point {
 
     const BIAS_NEG: i32 = -4;
 
-    storage!(group(0), binding(0), read_write, OUTPUT: [i32; 1]);
+    pub struct OutPack {
+        #[storage(group(0), binding(0), read_write)]
+        pub output: Storage<[i32; 1]>,
+    }
 
     #[compute]
     #[workgroup_size(1)]
-    pub fn main<const BIAS: i32>(#[builtin(global_invocation_id)] global_id: Vec3u) {
-        get_mut!(OUTPUT)[0] = global_id.x as i32 + BIAS;
+    pub fn main<const BIAS: i32>(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &OutPack,
+    ) {
+        get_mut!(pack.output)[0] = global_id.x as i32 + BIAS;
     }
 }
 

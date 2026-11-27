@@ -1,5 +1,5 @@
 error: Parsing error: 'Encountered unsupported Rust syntax:
-       load!(MISSING) — 'MISSING' is not a uniform!, storage! or workgroup! variable declared in this module.'
+       load!(MISSING) — `MISSING` is not a resource-pack field; declare an annotated pack field (e.g. `#[uniform(group(0), binding(0))] pub frame: Uniform<u32>`) and target it as `load!(pack.field)`.'
   --> tests/ui/fail/load_undeclared.rs:10:15
    |
 10 |         load!(MISSING)

@@ -81,7 +81,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) { /* ... */ }
 fn tiled(@builtin(global_invocation_id) global_id: vec3<u32>) { /* ... */ }
 ```
 
-Compute entry points frequently take no return value (a `()` return type) and access storage or workgroup resources via the binding macros (see [Binding Macros](../writing-shaders/binding-macros.md)).
+Compute entry points frequently take no return value (a `()` return type) and access storage or workgroup resources through pack parameters (see [Resource Pack Structs](../writing-shaders/resource-packs.md)).
 
 ## Inputs
 

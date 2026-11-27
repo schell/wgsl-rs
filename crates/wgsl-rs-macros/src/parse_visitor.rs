@@ -117,11 +117,6 @@ pub(crate) fn walk_item<V: ParseVisitorMut + ?Sized>(
         Item::Impl(i) => v.visit_impl(i),
         Item::Struct(s) => v.visit_struct(s),
         Item::Const(c) => v.visit_const(c),
-        Item::Uniform(u) => v.visit_type(&mut u.ty),
-        Item::Storage(s) => v.visit_type(&mut s.ty),
-        Item::Workgroup(w) => v.visit_type(&mut w.ty),
-        Item::Sampler(s) => v.visit_type(&mut s.ty),
-        Item::Texture(t) => v.visit_type(&mut t.ty),
         // Items without traversable bodies.
         Item::Mod(_)
         | Item::Use(_)

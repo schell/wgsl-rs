@@ -2612,3 +2612,69 @@ groups. The trait lives inside `linkage.rs` (compiled per wgpu major, like
 the rest of the linkage) and creation panics on instantiation mismatch
 with the linkage's own error - the accepted gap, since nothing statically
 ties a pack instantiation to a module instantiation's linkage.
+
+### 2026-11-28: Pack-only bindings; the module-static layer is gone
+
+**Problem.** With annotated pack structs in place (fields carrying
+`@group`/`@binding` annotations, packs constructed by hand, entry points
+taking pack parameters), the five standalone declaration macros
+(`uniform!`, `storage!`, `texture!`, `sampler!`, `workgroup!`) and the
+type-erased static layer they expand to (`ModuleVar`, the `TypeMap`/
+`LazyLock` machinery, `WgslTypeVariable`, the `get_typed`/`set_typed`/
+`get_mut_typed` accessors, and the two-argument forms of `get!`/`get_mut!`/
+`load!`) had no remaining purpose - yet they remained first-class API and
+kept the "two spellings for every binding" confusion alive.
+
+**Decision.** Declarations become targeted parse errors that name the pack
+spelling; the machinery is deleted outright. Access macros accept exactly
+one target shape, a pack parameter's field (`pack.field` or `&pack.field`),
+with all kind-specific rules (handles, uniform mutability, storage access
+mode, atomics, runtime arrays) validated against the pack's fields by
+`BodyLowerer`. The old `load!` declaration-table pass (which fail-opened
+when the module had imports) shrank to a thin bare-identifier rejection:
+with packs as the only binding declaration, an unknown bare `load!(IDENT)`
+is always an error, and "could be imported from another module" no longer
+has a meaning.
+
+**What replaced the deleted machinery.**
+
+- The `impl Trait` linkage-variable feature died with the statics. Pack
+  type parameters cover the same ground: a pack field typed
+  `Storage<T>`, entry points at `&DataPack<T>` (or through their own
+  generic `T` tied by `Type<Is = ...>` constraints), instantiating the
+  pack slot like any other module parameter. Generic template tests were
+  rewritten this way; module_type_params now name pack slots
+  (`"DataPack_T"`) instead of variable names.
+- The CPU texture/sampler wrappers lost their `ModuleVar<T>` backing
+  store - and its `Option`-shaped two-phase `new()`/`init()` dance with
+  it. Textures now construct eagerly, `Texture2D::new(width, height)`
+  zero-filled under `T: WgslTextureScalar + Default + Copy` (every scalar
+  qualifies), and samplers default their state in `new()`; `init` is
+  gone. This matches the pack-world rule documented on
+  `Uniform`/`Storage`/`Workgroup`: values are constructed, never
+  defaulted, and the "texture data was never initialized" runtime panic
+  class disappears outright.
+- Cross-module workgroup uniform load: the old thread-local workgroup
+  barrier story is the same, but `WorkgroupUniformLoad` is implemented on
+  the value types only.
+
+**The cross-module binding story (explicitly decided, not accidentally
+dropped).** V1 packs register per-module: a pack type cannot be imported
+as an entry-point parameter, and a binding cannot be declared in one
+module and read from another. The old statics-based cross-module
+composition fixtures showed bindings with OR'd stage visibility through
+module VARIABLE imports; that expression is gone. What survives - one
+assembled source across re-exported entries, one linkage, one pipeline
+layout - is still tested, and the OR'd-visibility regression is preserved
+in a pack-expressible form: one pack field read by both stages of the
+same module. If cross-module packs become a goal, that is a deliberate
+future design (pack type visibility through imports), not a removal
+oversight.
+
+**A validation-ordering subtlety worth keeping.** Deref-of-value-local
+validation (`let u = get!(pack.u); *u`, wgsl-rs#153) MUST run before
+`resource::lower_module`: lowering rewrites accessor expressions into
+mangled globals, after which a value-holding local looks like a plain
+ident and the check would silently fail open. It now runs immediately
+after parsing. Pack-bindings derefs were invisible in the old ordering
+exactly because statics had no lowering step at binding sites.

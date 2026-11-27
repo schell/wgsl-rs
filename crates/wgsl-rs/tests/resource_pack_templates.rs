@@ -58,12 +58,10 @@ fn entry_points_share_pack_values_while_unrelated_consts_stay_independent() {
     assert!(!source.contains("SharedPack<"), "{source}");
 
     let pack = shared::SharedPack::<3, false> {
-        texture: Texture2D::new(),
+        texture: Texture2D::new(1, 1),
         smp: Sampler::new(),
     };
-    pack.texture.init(1, 1);
     pack.texture.set_pixel(0, 0, [1.0, 0.0, 0.0, 1.0]);
-    pack.smp.init();
     let vertex = shared::vertex::<3, false, true>(0, &pack);
     assert_eq!(vertex, vec4f(5.0, 0.0, 0.0, 1.0));
     let fragment = shared::fragment::<3, false>(vec4f(0.0, 0.0, 0.0, 1.0), &pack);
@@ -213,12 +211,10 @@ fn matching_concrete_uses_need_no_generic_slot() {
     wgsl_rs::validate_wgsl_source(&module.wgsl_source()).unwrap();
 
     let pack = fixed::FixedPack::<false> {
-        texture: Texture2D::new(),
+        texture: Texture2D::new(1, 1),
         smp: Sampler::new(),
     };
-    pack.texture.init(1, 1);
     pack.texture.set_pixel(0, 0, [0.0, 1.0, 0.0, 1.0]);
-    pack.smp.init();
     assert_eq!(
         fixed::fragment(vec4f(0.0, 0.0, 0.0, 1.0), &pack),
         vec4f(0.0, 1.0, 0.0, 1.0)

@@ -100,9 +100,9 @@ impl ParseVisitorMut for DerefVisitor {
             return Err(Error::unsupported(
                 ident.span(),
                 format!(
-                    "'*{ident}' dereferences a local that holds a module variable value. In WGSL, \
-                     module variables are values, not pointers — bind the value with load! (let \
-                     {ident} = load!({var});) or deref the accessor directly (*get!({var}))"
+                    "'*{ident}' dereferences a local that holds a pack field value. In WGSL, pack \
+                     bindings are values, not pointers — bind the value with load! (let {ident} = \
+                     load!(pack.{var});) or deref the accessor directly (*get!(pack.{var}))"
                 ),
             ));
         }

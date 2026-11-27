@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use snafu::prelude::*;
-use syn::{Ident, Token, parenthesized, parse::Parse, spanned::Spanned};
+use syn::{Ident, Token, parse::Parse, spanned::Spanned};
 use wgsl_rs_ir as ir;
 
 /// Convert a slice of `syn::Attribute` to `Vec<ir::Attribute>`.
@@ -293,21 +293,16 @@ impl ParseContext {
 /// Collect the (currently empty) set of names that should be visible to
 /// linkage variable type-parsing at module scope.
 ///
-/// In earlier versions of `wgsl-rs`, linkage variables could reference an
-/// entry point's type parameter directly by name (e.g.
-/// `uniform!(group(0), binding(0), FRAME: T)` matched against
-/// `fn frag_main<T: ...>()`). That implicit coupling is no longer
-/// supported: linkage variables that need a generic type must use
-/// [`impl Trait`] syntax (e.g. `FRAME: impl Convert<f32>`) which
-/// self-identifies via the variable's name and carries explicit trait
-/// bounds.
+/// Standalone binding declarations (which could once reference an entry
+/// point's type parameter or use `impl Trait` self-identifying types) are
+/// removed: resource packs carry their own named type parameters
+/// (`DataPack<T>`), so a bare module-scope type name never has to be
+/// resolved for a binding declaration.
 ///
-/// Returning an empty `Vec` here causes [`Type::parse`] (called via
-/// `with_context`) to treat any bare type-name in a linkage declaration
-/// as an unknown struct, which surfaces as a normal "unknown type"
-/// diagnostic rather than silently sharing names across the module.
-///
-/// [`impl Trait`]: https://doc.rust-lang.org/reference/types/impl-trait.html
+/// Returning an empty `Vec` here causes [`Type::parse`] to treat any bare
+/// type-name in a declaration as an unknown struct, which surfaces as a
+/// normal "unknown type" diagnostic rather than silently sharing names
+/// across the module.
 pub fn collect_module_type_params(_items: &[syn::Item]) -> Result<Vec<Ident>, Error> {
     Ok(Vec::new())
 }
@@ -6303,50 +6298,39 @@ pub(crate) fn binding_const_params(
     }
 
     let mut out = Vec::new();
-    for item in &module.content {
-        match item {
-            Item::Texture(texture) => {
-                if let Type::Texture { filterable, .. } = &texture.ty {
-                    push_filterability(&mut out, filterable, texture.name.span(), None);
+    // Standalone texture! and sampler! declarations are removed; only
+    // pack fields contribute binding consts, with pack filterability
+    // names arriving namespaced via `push_filterability` (see its
+    // `pack` argument).
+    for pack in module.resource_packs() {
+        for field in &pack.fields {
+            for address in [&field.group, &field.binding] {
+                if let crate::resource::AddressValue::Param(name) = address {
+                    let ty = pack
+                        .const_params
+                        .iter()
+                        .find(|(ident, _)| ident == name)
+                        .map(|(_, ty)| ty.clone())
+                        .expect("resource address parameters are validated on the pack");
+                    out.push((
+                        crate::resource::pack_slot_name(&pack.ident, name),
+                        ty,
+                        field.ident.span(),
+                        Some(pack.ident.to_string()),
+                    ));
                 }
             }
-            Item::Sampler(sampler) => {
-                if let Type::Sampler { filterable, .. } = &sampler.ty {
-                    push_filterability(&mut out, filterable, sampler.name.span(), None);
+            match &field.ty {
+                Type::Texture { filterable, .. } | Type::Sampler { filterable, .. } => {
+                    push_filterability(
+                        &mut out,
+                        filterable,
+                        field.ident.span(),
+                        Some(pack.ident.to_string()),
+                    );
                 }
+                _ => {}
             }
-            Item::ResourcePack(pack) => {
-                for field in &pack.fields {
-                    for address in [&field.group, &field.binding] {
-                        if let crate::resource::AddressValue::Param(name) = address {
-                            let ty = pack
-                                .const_params
-                                .iter()
-                                .find(|(ident, _)| ident == name)
-                                .map(|(_, ty)| ty.clone())
-                                .expect("resource address parameters are validated on the pack");
-                            out.push((
-                                crate::resource::pack_slot_name(&pack.ident, name),
-                                ty,
-                                field.ident.span(),
-                                Some(pack.ident.to_string()),
-                            ));
-                        }
-                    }
-                    match &field.ty {
-                        Type::Texture { filterable, .. } | Type::Sampler { filterable, .. } => {
-                            push_filterability(
-                                &mut out,
-                                filterable,
-                                field.ident.span(),
-                                Some(pack.ident.to_string()),
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
         }
     }
     out
@@ -6388,12 +6372,6 @@ impl TryFrom<&syn::ItemMod> for ItemMod {
         let mut content = Vec::new();
         for item in items {
             let parsed = Item::parse_with_module(item, &module_ctx)?;
-            let parsed = match parsed {
-                Item::Uniform(u) => Item::Uniform(Box::new((*u).with_context(&module_ctx)?)),
-                Item::Storage(s) => Item::Storage(Box::new((*s).with_context(&module_ctx)?)),
-                Item::Workgroup(w) => Item::Workgroup(Box::new((*w).with_context(&module_ctx)?)),
-                other => other,
-            };
             content.push(parsed);
         }
         let module = ItemMod {
@@ -6569,11 +6547,6 @@ impl ItemMod {
                 Item::Struct(s) => (&s.ident, "struct"),
                 Item::ResourcePack(p) => (&p.ident, "resource pack"),
                 Item::Enum(e) => (&e.ident, "enum"),
-                Item::Uniform(u) => (&u.name, "uniform"),
-                Item::Storage(s) => (&s.name, "storage"),
-                Item::Workgroup(w) => (&w.name, "workgroup"),
-                Item::Sampler(s) => (&s.name, "sampler"),
-                Item::Texture(t) => (&t.name, "texture"),
                 _ => continue,
             };
             if ident == "instantiate" || ident == "WGSL_SOURCE" {
@@ -6750,135 +6723,6 @@ fn parse_linkage_type(
     }
 }
 
-/// A uniform declaration.
-///
-/// ```rust,ignore
-/// uniform!(group(0), binding(0), FRAME: u32);
-/// // or
-/// uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
-/// ```
-///
-/// ```wgsl
-/// @group(0) @binding(0) var<uniform> FRAME: u32;
-/// ```
-#[derive(Clone)]
-pub(crate) struct ItemUniform {
-    pub group_ident: Ident,
-    pub group_paren_token: syn::token::Paren,
-    pub group: syn::LitInt,
-
-    pub binding_ident: Ident,
-    pub binding_paren_token: syn::token::Paren,
-    pub binding: syn::LitInt,
-
-    pub name: syn::Ident,
-    pub colon_token: Token![:],
-    pub ty: Type,
-
-    // We keep the Rust type around
-    pub rust_ty: syn::Type,
-
-    /// Trait bounds when the user wrote `impl Trait` syntax (e.g.
-    /// `FRAME: impl Convert<f32>`). `None` for concrete types and bare
-    /// type-parameter idents.
-    ///
-    /// When `Some(_)`, this linkage variable's WGSL type is treated as a
-    /// module-level type parameter named after the variable itself
-    /// (e.g. `Type::TypeParam { ident: FRAME }`). The bounds are
-    /// preserved so the typestate builder can replay them on its setter
-    /// methods.
-    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
-    /// Attributes preserved from Rust source on the macro item.
-    pub attrs: Vec<ir::Attribute>,
-}
-
-impl syn::parse::Parse for ItemUniform {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // group
-        let group_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let group_paren_token = parenthesized!(content in input);
-        let group = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        // binding
-        let binding_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let binding_paren_token = parenthesized!(content in input);
-        let binding = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        let name: syn::Ident = input.parse()?;
-        let colon_token: syn::Token![:] = input.parse()?;
-        let rust_ty: syn::Type = input.parse()?;
-
-        // If the user wrote `impl Trait` syntax (e.g. `FRAME: impl
-        // Convert<f32>`), pull the bounds out and treat the type as a
-        // module-level type parameter named after the variable.
-        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
-
-        Ok(ItemUniform {
-            group,
-            binding,
-            name,
-            colon_token,
-            ty,
-            rust_ty,
-            group_ident,
-            group_paren_token,
-            binding_ident,
-            binding_paren_token,
-            impl_bounds,
-            attrs: vec![],
-        })
-    }
-}
-
-impl ItemUniform {
-    /// Re-parse this uniform's type using the given parse context. This
-    /// upgrades any type identifiers that match a known type parameter from
-    /// `Type::Struct` to `Type::TypeParam`.
-    ///
-    /// `impl Trait` linkage types are already resolved during parsing and
-    /// are not affected by the context.
-    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
-        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
-            self.ty = Type::parse(&self.rust_ty, ctx)?;
-        }
-        Ok(self)
-    }
-}
-
-impl TryFrom<&syn::ItemMacro> for ItemUniform {
-    type Error = Error;
-
-    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
-        // Ensure it's the "uniform" macro
-        if item_macro
-            .mac
-            .path
-            .get_ident()
-            .map(|id| id != "uniform")
-            .unwrap_or(true)
-        {
-            return UnsupportedSnafu {
-                span: item_macro.span(),
-                note: "Only 'uniform!' macro is supported as a uniform declaration.",
-            }
-            .fail();
-        }
-
-        let mut item = syn::parse2::<ItemUniform>(item_macro.mac.tokens.clone()).map_err(|e| {
-            Error::Unsupported {
-                span: item_macro.span(),
-                note: format!("{e}"),
-            }
-        })?;
-        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
-        Ok(item)
-    }
-}
-
 /// Access mode for storage buffers.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum StorageAccess {
@@ -6887,551 +6731,6 @@ pub enum StorageAccess {
     Read,
     /// `var<storage, read_write>` - read-write
     ReadWrite,
-}
-
-/// A storage buffer declaration.
-///
-/// ```rust,ignore
-/// // Read-only (implicit):
-/// storage!(group(0), binding(0), DATA: [f32; 256]);
-/// // Read-only (explicit):
-/// storage!(group(0), binding(0), read_only, DATA: [f32; 256]);
-/// // Read-write (explicit):
-/// storage!(group(0), binding(0), read_write, DATA: [f32; 256]);
-/// ```
-///
-/// ```wgsl
-/// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
-/// @group(0) @binding(0) var<storage, read> DATA: array<f32, 256>;
-/// @group(0) @binding(0) var<storage, read_write> DATA: array<f32, 256>;
-/// ```
-#[derive(Clone)]
-pub(crate) struct ItemStorage {
-    pub group_ident: Ident,
-    pub group_paren_token: syn::token::Paren,
-    pub group: syn::LitInt,
-
-    pub binding_ident: Ident,
-    pub binding_paren_token: syn::token::Paren,
-    pub binding: syn::LitInt,
-
-    pub access: StorageAccess,
-
-    pub name: syn::Ident,
-    pub colon_token: Token![:],
-    pub ty: Type,
-
-    // We keep the Rust type around
-    pub rust_ty: syn::Type,
-
-    /// Trait bounds when the user wrote `impl Trait` syntax. See
-    /// [`ItemUniform::impl_bounds`] for details.
-    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
-    /// Attributes preserved from Rust source on the macro item.
-    pub attrs: Vec<ir::Attribute>,
-}
-
-impl syn::parse::Parse for ItemStorage {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // group
-        let group_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let group_paren_token = parenthesized!(content in input);
-        let group = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        // binding
-        let binding_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let binding_paren_token = parenthesized!(content in input);
-        let binding = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        // Check for optional access mode (read_only or read_write)
-        // If the next token is an ident that's "read_write" or "read_only",
-        // consume it
-        let access = if input.peek(syn::Ident) {
-            let lookahead = input.fork();
-            let ident: syn::Ident = lookahead.parse()?;
-            if ident == "read_write" {
-                // Consume from the real stream
-                let _: syn::Ident = input.parse()?;
-                input.parse::<syn::Token![,]>()?;
-                StorageAccess::ReadWrite
-            } else if ident == "read_only" {
-                // Consume from the real stream
-                let _: syn::Ident = input.parse()?;
-                input.parse::<syn::Token![,]>()?;
-                StorageAccess::Read
-            } else {
-                // Not an access mode, leave it for the name
-                StorageAccess::Read
-            }
-        } else {
-            StorageAccess::Read
-        };
-
-        let name: syn::Ident = input.parse()?;
-        let colon_token: syn::Token![:] = input.parse()?;
-        let rust_ty: syn::Type = input.parse()?;
-        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
-
-        Ok(ItemStorage {
-            group,
-            binding,
-            access,
-            name,
-            colon_token,
-            ty,
-            rust_ty,
-            group_ident,
-            group_paren_token,
-            binding_ident,
-            binding_paren_token,
-            impl_bounds,
-            attrs: vec![],
-        })
-    }
-}
-
-impl ItemStorage {
-    /// Re-parse this storage's type using the given parse context. This
-    /// upgrades any type identifiers that match a known type parameter from
-    /// `Type::Struct` to `Type::TypeParam`.
-    ///
-    /// `impl Trait` linkage types are already resolved during parsing and
-    /// are not affected by the context.
-    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
-        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
-            self.ty = Type::parse(&self.rust_ty, ctx)?;
-        }
-        Ok(self)
-    }
-}
-
-impl TryFrom<&syn::ItemMacro> for ItemStorage {
-    type Error = Error;
-
-    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
-        // Ensure it's the "storage" macro
-        if item_macro
-            .mac
-            .path
-            .get_ident()
-            .map(|id| id != "storage")
-            .unwrap_or(true)
-        {
-            return UnsupportedSnafu {
-                span: item_macro.span(),
-                note: "Only 'storage!' macro is supported as a storage declaration.",
-            }
-            .fail();
-        }
-
-        let mut item = syn::parse2::<ItemStorage>(item_macro.mac.tokens.clone()).map_err(|e| {
-            Error::Unsupported {
-                span: item_macro.span(),
-                note: format!("{e}"),
-            }
-        })?;
-        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
-        Ok(item)
-    }
-}
-
-/// A sampler declaration.
-///
-/// ```rust,ignore
-/// sampler!(group(0), binding(1), MY_SAMPLER: Sampler);
-/// sampler!(group(0), binding(2), MY_CMP_SAMPLER: SamplerComparison);
-/// ```
-///
-/// ```wgsl
-/// @group(0) @binding(1) var MY_SAMPLER: sampler;
-/// @group(0) @binding(2) var MY_CMP_SAMPLER: sampler_comparison;
-/// ```
-#[derive(Clone)]
-pub(crate) struct ItemSampler {
-    pub group_ident: Ident,
-    pub group_paren_token: syn::token::Paren,
-    pub group: syn::LitInt,
-
-    pub binding_ident: Ident,
-    pub binding_paren_token: syn::token::Paren,
-    pub binding: syn::LitInt,
-
-    pub name: syn::Ident,
-    pub colon_token: Token![:],
-    pub ty: Type,
-
-    // We keep the Rust type around for concrete const-generic code generation.
-    pub rust_ty: syn::Type,
-    /// Whether the trailing `, unfilterable` modifier was present. Only
-    /// valid on plain `Sampler` declarations; lowers to `filterable:
-    /// false` in the IR item so the generated wgpu bind group layout uses
-    /// `SamplerBindingType::NonFiltering`, which is required to sample
-    /// unfilterable texture bindings.
-    pub unfilterable: bool,
-    /// Attributes preserved from Rust source on the macro item.
-    pub attrs: Vec<ir::Attribute>,
-}
-
-impl syn::parse::Parse for ItemSampler {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // group
-        let group_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let group_paren_token = parenthesized!(content in input);
-        let group = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        // binding
-        let binding_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let binding_paren_token = parenthesized!(content in input);
-        let binding = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        let name: syn::Ident = input.parse()?;
-        let colon_token: syn::Token![:] = input.parse()?;
-        let rust_ty: syn::Type = input.parse()?;
-        let ty = Type::try_from(&rust_ty)?;
-
-        // Validate that the type is a sampler type
-        match &ty {
-            Type::Sampler { .. } | Type::SamplerComparison { .. } => {}
-            _ => {
-                return Err(syn::Error::new(
-                    rust_ty.span(),
-                    "sampler! macro requires a Sampler or SamplerComparison type",
-                ));
-            }
-        }
-
-        // Optional trailing `, unfilterable`: declares that the sampler is
-        // non-filtering, so the generated wgpu bind group layout uses
-        // `SamplerBindingType::NonFiltering` and can pair with
-        // unfilterable texture bindings. The WGSL output is unchanged.
-        let mut unfilterable = false;
-        if input.peek(syn::Token![,]) {
-            input.parse::<syn::Token![,]>()?;
-            let ident: syn::Ident = input.parse()?;
-            if ident != "unfilterable" {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "expected `unfilterable`; it is the only sampler! modifier",
-                ));
-            }
-            match &ty {
-                Type::Sampler { .. } => {}
-                Type::SamplerComparison { .. } => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        "`unfilterable` only applies to `Sampler`; `SamplerComparison` layouts \
-                         have no filtering flag",
-                    ));
-                }
-                _ => unreachable!("sampler! validated the type above"),
-            }
-            if has_explicit_filterability_arg(&rust_ty) {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "cannot combine an explicit Sampler filterability argument with `, \
-                     unfilterable`; use only `Sampler<false>`",
-                ));
-            }
-            unfilterable = true;
-        }
-
-        Ok(ItemSampler {
-            group,
-            binding,
-            name,
-            colon_token,
-            ty,
-            rust_ty,
-            unfilterable,
-            group_ident,
-            group_paren_token,
-            binding_ident,
-            binding_paren_token,
-            attrs: vec![],
-        })
-    }
-}
-
-impl TryFrom<&syn::ItemMacro> for ItemSampler {
-    type Error = Error;
-
-    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
-        // Ensure it's the "sampler" macro
-        if item_macro
-            .mac
-            .path
-            .get_ident()
-            .map(|id| id != "sampler")
-            .unwrap_or(true)
-        {
-            return UnsupportedSnafu {
-                span: item_macro.span(),
-                note: "Only 'sampler!' macro is supported as a sampler declaration.",
-            }
-            .fail();
-        }
-
-        let mut item = syn::parse2::<ItemSampler>(item_macro.mac.tokens.clone()).map_err(|e| {
-            Error::Unsupported {
-                span: item_macro.span(),
-                note: format!("{e}"),
-            }
-        })?;
-        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
-        Ok(item)
-    }
-}
-
-/// Texture variable declaration parsed from `texture!` macro.
-///
-/// Supports both sampled textures (with type parameter) and depth textures:
-///
-/// ```rust,ignore
-/// texture!(group(0), binding(0), DIFFUSE_TEX: Texture2D<f32>);
-/// texture!(group(1), binding(0), SHADOW_MAP: TextureDepth2D);
-/// ```
-///
-/// ```wgsl
-/// @group(0) @binding(0) var DIFFUSE_TEX: texture_2d<f32>;
-/// @group(1) @binding(0) var SHADOW_MAP: texture_depth_2d;
-/// ```
-#[derive(Clone)]
-pub(crate) struct ItemTexture {
-    pub group_ident: Ident,
-    pub group_paren_token: syn::token::Paren,
-    pub group: syn::LitInt,
-
-    pub binding_ident: Ident,
-    pub binding_paren_token: syn::token::Paren,
-    pub binding: syn::LitInt,
-
-    pub name: syn::Ident,
-    pub colon_token: Token![:],
-    pub ty: Type,
-
-    // We keep the Rust type around for concrete const-generic code generation.
-    pub rust_ty: syn::Type,
-    /// Whether the trailing `, unfilterable` modifier was present. Only
-    /// valid on f32-sampled textures; lowers to `filterable: false` in the
-    /// IR item so the generated wgpu bind group layout can accept
-    /// non-filterable formats (e.g. `R32Float`).
-    pub unfilterable: bool,
-    /// Attributes preserved from Rust source on the macro item.
-    pub attrs: Vec<ir::Attribute>,
-}
-
-impl syn::parse::Parse for ItemTexture {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // group
-        let group_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let group_paren_token = parenthesized!(content in input);
-        let group = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        // binding
-        let binding_ident = input.parse::<syn::Ident>()?;
-        let content;
-        let binding_paren_token = parenthesized!(content in input);
-        let binding = content.parse()?;
-        input.parse::<syn::Token![,]>()?;
-
-        let name: syn::Ident = input.parse()?;
-        let colon_token: syn::Token![:] = input.parse()?;
-        let rust_ty: syn::Type = input.parse()?;
-        let ty = Type::try_from(&rust_ty)?;
-
-        // Validate that the type is a texture type
-        match &ty {
-            Type::Texture { .. } | Type::TextureDepth { .. } | Type::TextureStorage { .. } => {}
-            _ => {
-                return Err(syn::Error::new(
-                    rust_ty.span(),
-                    "texture! macro requires a texture type (Texture2D<f32>, TextureDepth2D, \
-                     TextureStorage2D<Rgba8unorm, Write>, etc.)",
-                ));
-            }
-        }
-
-        // Optional trailing `, unfilterable`: declares that the texture is
-        // bound with a non-filterable format (e.g. `R32Float`) so the
-        // generated wgpu bind group layout uses
-        // `TextureSampleType::Float { filterable: false }`. The WGSL
-        // output is unchanged.
-        let mut unfilterable = false;
-        if input.peek(syn::Token![,]) {
-            input.parse::<syn::Token![,]>()?;
-            let ident: syn::Ident = input.parse()?;
-            if ident != "unfilterable" {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "expected `unfilterable`; it is the only texture! modifier",
-                ));
-            }
-            match &ty {
-                Type::Texture {
-                    sampled_type: ScalarType::F32,
-                    ..
-                } => {}
-                _ => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        "`unfilterable` only applies to f32-sampled textures (e.g. \
-                         Texture2D<f32>); integer-sampled, depth, and storage textures have no \
-                         filterable layout flag",
-                    ));
-                }
-            }
-            if has_explicit_filterability_arg(&rust_ty) {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "cannot combine an explicit texture filterability argument with `, \
-                     unfilterable`; use only `Texture2D<f32, false>`",
-                ));
-            }
-            unfilterable = true;
-        }
-
-        Ok(ItemTexture {
-            group,
-            binding,
-            name,
-            colon_token,
-            ty,
-            rust_ty,
-            unfilterable,
-            group_ident,
-            group_paren_token,
-            binding_ident,
-            binding_paren_token,
-            attrs: vec![],
-        })
-    }
-}
-
-impl TryFrom<&syn::ItemMacro> for ItemTexture {
-    type Error = Error;
-
-    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
-        // Ensure it's the "texture" macro
-        if item_macro
-            .mac
-            .path
-            .get_ident()
-            .map(|id| id != "texture")
-            .unwrap_or(true)
-        {
-            return UnsupportedSnafu {
-                span: item_macro.span(),
-                note: "Only 'texture!' macro is supported as a texture declaration.",
-            }
-            .fail();
-        }
-
-        let mut item = syn::parse2::<ItemTexture>(item_macro.mac.tokens.clone()).map_err(|e| {
-            Error::Unsupported {
-                span: item_macro.span(),
-                note: format!("{e}"),
-            }
-        })?;
-        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
-        Ok(item)
-    }
-}
-
-/// Workgroup variable declaration parsed from `workgroup!(NAME: TYPE)`.
-///
-/// Transpiles to:
-/// ```wgsl
-/// var<workgroup> NAME: TYPE;
-/// ```
-///
-/// Workgroup variables are shared between all invocations in a compute shader
-/// workgroup. They can only be used in compute shaders.
-#[derive(Clone)]
-pub(crate) struct ItemWorkgroup {
-    pub name: syn::Ident,
-    pub colon_token: Token![:],
-    pub ty: Type,
-    /// We keep the Rust type around for the Rust-side expansion
-    pub rust_ty: syn::Type,
-    /// Trait bounds when the user wrote `impl Trait` syntax. See
-    /// [`ItemUniform::impl_bounds`] for details.
-    pub impl_bounds: Option<syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>>,
-    /// Attributes preserved from Rust source on the macro item.
-    pub attrs: Vec<ir::Attribute>,
-}
-
-impl syn::parse::Parse for ItemWorkgroup {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let name: syn::Ident = input.parse()?;
-        let colon_token: syn::Token![:] = input.parse()?;
-        let rust_ty: syn::Type = input.parse()?;
-        let (ty, impl_bounds) = parse_linkage_type(&name, &rust_ty)?;
-
-        Ok(ItemWorkgroup {
-            name,
-            colon_token,
-            ty,
-            rust_ty,
-            impl_bounds,
-            attrs: vec![],
-        })
-    }
-}
-
-impl ItemWorkgroup {
-    /// Re-parse this workgroup variable's type using the given parse context.
-    /// This upgrades any type identifiers that match a known type parameter
-    /// from `Type::Struct` to `Type::TypeParam`.
-    ///
-    /// `impl Trait` linkage types are already resolved during parsing and
-    /// are not affected by the context.
-    pub fn with_context(mut self, ctx: &ParseContext) -> Result<Self, Error> {
-        if self.impl_bounds.is_none() && !ctx.type_params.is_empty() {
-            self.ty = Type::parse(&self.rust_ty, ctx)?;
-        }
-        Ok(self)
-    }
-}
-
-impl TryFrom<&syn::ItemMacro> for ItemWorkgroup {
-    type Error = Error;
-
-    fn try_from(item_macro: &syn::ItemMacro) -> Result<Self, Self::Error> {
-        // Ensure it's the "workgroup" macro
-        if item_macro
-            .mac
-            .path
-            .get_ident()
-            .map(|id| id != "workgroup")
-            .unwrap_or(true)
-        {
-            return UnsupportedSnafu {
-                span: item_macro.span(),
-                note: "Only 'workgroup!' macro is supported as a workgroup declaration.",
-            }
-            .fail();
-        }
-
-        let mut item =
-            syn::parse2::<ItemWorkgroup>(item_macro.mac.tokens.clone()).map_err(|e| {
-                Error::Unsupported {
-                    span: item_macro.span(),
-                    note: format!("{e}"),
-                }
-            })?;
-        item.attrs = syn_attrs_to_ir(&item_macro.attrs);
-        Ok(item)
-    }
 }
 
 #[derive(Clone)]
@@ -8309,11 +7608,6 @@ fn resolve_self_in_if(r: &SelfResolution, stmt_if: &mut StmtIf) {
 #[derive(Clone)]
 pub enum Item {
     Const(Box<ItemConst>),
-    Uniform(Box<ItemUniform>),
-    Storage(Box<ItemStorage>),
-    Workgroup(Box<ItemWorkgroup>),
-    Sampler(Box<ItemSampler>),
-    Texture(Box<ItemTexture>),
     Fn(Box<ItemFn>),
     Mod(ItemMod),
     Use(ItemUse),
@@ -8327,6 +7621,33 @@ pub enum Item {
     Trait,
     /// Skip this item, it is Rust-only
     Ignored,
+}
+
+/// Error for one of the removed standalone binding declaration macros
+/// (`uniform!`, `storage!`, `texture!`, `sampler!`, `workgroup!`),
+/// pointing at the annotated pack field that replaces it.
+///
+/// Resource packs are the only spelling for module-level bindings: fields
+/// carry the group/binding addresses, values are constructed by hand on
+/// the CPU, and entry points take the pack struct as a parameter.
+fn removed_binding_declaration(kind: &str, span: proc_macro2::Span) -> Error {
+    let spelling = match kind {
+        "uniform" => "`#[uniform(group(0), binding(0))] pub frame: Uniform<YourType>`",
+        "storage" => {
+            "`#[storage(group(0), binding(0), read_only)] pub data: Storage<YourType, Read>`"
+        }
+        "workgroup" => "`#[workgroup] pub shared: Workgroup<YourType>`",
+        "texture" => "`#[texture(group(0), binding(0))] pub diffuse: Texture2D<YourTexel>`",
+        "sampler" => "`#[sampler(group(0), binding(0))] pub smp: Sampler`",
+        _ => unreachable!("only binding declaration macro names reach here"),
+    };
+    Error::unsupported(
+        span,
+        format!(
+            "the standalone `{kind}!` declaration macro has been removed; use an annotated pack \
+             field on a pack struct instead: {spelling}"
+        ),
+    )
 }
 
 impl TryFrom<&syn::Item> for Item {
@@ -8350,20 +7671,9 @@ impl Item {
                 // Check the macro ident to key which parser to use
                 let maybe_ident = item_macro.mac.path.get_ident().map(|id| id.to_string());
                 match maybe_ident.as_deref() {
-                    Some("uniform") => {
-                        Ok(Item::Uniform(Box::new(ItemUniform::try_from(item_macro)?)))
-                    }
-                    Some("storage") => {
-                        Ok(Item::Storage(Box::new(ItemStorage::try_from(item_macro)?)))
-                    }
-                    Some("workgroup") => Ok(Item::Workgroup(Box::new(ItemWorkgroup::try_from(
-                        item_macro,
-                    )?))),
-                    Some("sampler") => {
-                        Ok(Item::Sampler(Box::new(ItemSampler::try_from(item_macro)?)))
-                    }
-                    Some("texture") => {
-                        Ok(Item::Texture(Box::new(ItemTexture::try_from(item_macro)?)))
+                    Some("uniform" | "storage" | "workgroup" | "sampler" | "texture") => {
+                        let kind = maybe_ident.expect("matched above");
+                        Err(removed_binding_declaration(&kind, item_macro.ident.span()))
                     }
                     Some("macro_rules") => Ok(Item::MacroRules),
                     other => UnsupportedSnafu {
@@ -8645,31 +7955,6 @@ mod test {
         wgsl_rs_ir::render_items(&ir_items)
     }
 
-    impl ToWgsl for ItemUniform {
-        fn to_wgsl(&self) -> String {
-            item_to_wgsl(&Item::Uniform(Box::new(self.clone())))
-        }
-    }
-    impl ToWgsl for ItemStorage {
-        fn to_wgsl(&self) -> String {
-            item_to_wgsl(&Item::Storage(Box::new(self.clone())))
-        }
-    }
-    impl ToWgsl for ItemSampler {
-        fn to_wgsl(&self) -> String {
-            item_to_wgsl(&Item::Sampler(Box::new(self.clone())))
-        }
-    }
-    impl ToWgsl for ItemTexture {
-        fn to_wgsl(&self) -> String {
-            item_to_wgsl(&Item::Texture(Box::new(self.clone())))
-        }
-    }
-    impl ToWgsl for ItemWorkgroup {
-        fn to_wgsl(&self) -> String {
-            item_to_wgsl(&Item::Workgroup(Box::new(self.clone())))
-        }
-    }
     impl ToWgsl for ItemFn {
         fn to_wgsl(&self) -> String {
             item_to_wgsl(&Item::Fn(Box::new(self.clone())))
@@ -8966,54 +8251,6 @@ mod test {
         }
     }
 
-    #[test]
-    fn parse_storage_read_only_implicit() {
-        let storage: ItemStorage =
-            syn::parse_str("group(0), binding(0), DATA: [f32; 256]").unwrap();
-        assert!(matches!(storage.access, StorageAccess::Read));
-        assert_eq!("DATA", storage.name.to_string());
-        assert_eq!("0", storage.group.to_string());
-        assert_eq!("0", storage.binding.to_string());
-    }
-
-    #[test]
-    fn parse_storage_read_only_explicit() {
-        let storage: ItemStorage =
-            syn::parse_str("group(0), binding(1), read_only, DATA: [f32; 256]").unwrap();
-        assert!(matches!(storage.access, StorageAccess::Read));
-        assert_eq!("DATA", storage.name.to_string());
-        assert_eq!("1", storage.binding.to_string());
-    }
-
-    #[test]
-    fn parse_storage_read_write() {
-        let storage: ItemStorage =
-            syn::parse_str("group(1), binding(2), read_write, OUTPUT: [u32; 128]").unwrap();
-        assert!(matches!(storage.access, StorageAccess::ReadWrite));
-        assert_eq!("OUTPUT", storage.name.to_string());
-        assert_eq!("1", storage.group.to_string());
-        assert_eq!("2", storage.binding.to_string());
-    }
-
-    #[test]
-    fn storage_to_wgsl_read() {
-        let storage: ItemStorage =
-            syn::parse_str("group(0), binding(0), DATA: [f32; 256]").unwrap();
-        let wgsl = storage.to_wgsl();
-        assert!(wgsl.contains("@group(0)"));
-        assert!(wgsl.contains("@binding(0)"));
-        assert!(wgsl.contains("var<storage, read>"));
-        assert!(wgsl.contains("DATA"));
-    }
-
-    #[test]
-    fn storage_to_wgsl_read_write() {
-        let storage: ItemStorage =
-            syn::parse_str("group(0), binding(1), read_write, OUTPUT: [f32; 256]").unwrap();
-        let wgsl = storage.to_wgsl();
-        assert!(wgsl.contains("var<storage, read_write>"));
-        assert!(wgsl.contains("OUTPUT"));
-    }
 
     #[test]
     fn parse_workgroup_size_1d() {
@@ -11553,211 +10790,6 @@ mod test {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn parse_workgroup_simple() {
-        let workgroup: ItemWorkgroup = syn::parse_str("COUNTER: u32").unwrap();
-        assert_eq!("COUNTER", workgroup.name.to_string());
-    }
-
-    #[test]
-    fn parse_workgroup_atomic() {
-        let workgroup: ItemWorkgroup = syn::parse_str("SHARED: Atomic<u32>").unwrap();
-        assert_eq!("SHARED", workgroup.name.to_string());
-        let wgsl = workgroup.to_wgsl();
-        assert!(
-            wgsl.contains("var<workgroup>"),
-            "Expected var<workgroup> in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("atomic<u32>"),
-            "Expected atomic<u32> in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn parse_workgroup_array() {
-        let workgroup: ItemWorkgroup = syn::parse_str("TEMP_DATA: [f32; 64]").unwrap();
-        assert_eq!("TEMP_DATA", workgroup.name.to_string());
-        let wgsl = workgroup.to_wgsl();
-        assert!(
-            wgsl.contains("var<workgroup>"),
-            "Expected var<workgroup>, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("array<f32, 64>"),
-            "Expected array<f32, 64>, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn workgroup_to_wgsl() {
-        let workgroup: ItemWorkgroup = syn::parse_str("FLAGS: Atomic<i32>").unwrap();
-        let wgsl = workgroup.to_wgsl();
-        assert_eq!("var<workgroup> FLAGS: atomic<i32>;", wgsl.trim());
-    }
-
-    #[test]
-    fn parse_sampler_basic() {
-        let sampler: ItemSampler =
-            syn::parse_str("group(0), binding(1), TEX_SAMPLER: Sampler").unwrap();
-        assert_eq!("TEX_SAMPLER", sampler.name.to_string());
-        assert!(matches!(sampler.ty, Type::Sampler { .. }));
-    }
-
-    #[test]
-    fn parse_sampler_type_level_filterability() {
-        for (ty, expected) in [
-            ("Sampler", true),
-            ("Sampler<true>", true),
-            ("Sampler<false>", false),
-        ] {
-            let source = format!("group(0), binding(1), SMP: {ty}");
-            let sampler: ItemSampler = syn::parse_str(&source).unwrap();
-            let Type::Sampler { filterable, .. } = &sampler.ty else {
-                unreachable!()
-            };
-            assert_eq!(filterable.concrete(), Some(expected));
-            assert!(sampler.to_wgsl().contains(": sampler;"));
-        }
-    }
-
-    #[test]
-    fn parse_sampler_comparison_rejects_filterability() {
-        let result =
-            syn::parse_str::<ItemSampler>("group(0), binding(1), CMP: SamplerComparison<false>");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_sampler_rejects_mixed_filterability_spellings() {
-        for ty in ["Sampler<true>", "Sampler<false>"] {
-            let source = format!("group(0), binding(1), SMP: {ty}, unfilterable");
-            let result = syn::parse_str::<ItemSampler>(&source);
-            assert!(result.is_err(), "mixed spellings should conflict: {source}");
-        }
-    }
-
-    #[test]
-    fn parse_sampler_comparison() {
-        let sampler: ItemSampler =
-            syn::parse_str("group(0), binding(2), SHADOW_SAMPLER: SamplerComparison").unwrap();
-        assert_eq!("SHADOW_SAMPLER", sampler.name.to_string());
-        assert!(matches!(sampler.ty, Type::SamplerComparison { .. }));
-    }
-
-    #[test]
-    fn sampler_to_wgsl() {
-        let sampler: ItemSampler =
-            syn::parse_str("group(0), binding(1), MY_SAMPLER: Sampler").unwrap();
-        let wgsl = sampler.to_wgsl();
-        assert!(
-            wgsl.contains("@group(0)"),
-            "Expected @group(0) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("@binding(1)"),
-            "Expected @binding(1) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("var MY_SAMPLER"),
-            "Expected 'var MY_SAMPLER' in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains(": sampler;"),
-            "Expected ': sampler;' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn sampler_comparison_to_wgsl() {
-        let sampler: ItemSampler =
-            syn::parse_str("group(1), binding(3), CMP_SAMPLER: SamplerComparison").unwrap();
-        let wgsl = sampler.to_wgsl();
-        assert!(
-            wgsl.contains("@group(1)"),
-            "Expected @group(1) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("@binding(3)"),
-            "Expected @binding(3) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains(": sampler_comparison;"),
-            "Expected ': sampler_comparison;' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn sampler_rejects_non_sampler_type() {
-        let result = syn::parse_str::<ItemSampler>("group(0), binding(0), BAD: u32");
-        assert!(
-            result.is_err(),
-            "Expected error when using non-sampler type, but parsing succeeded"
-        );
-    }
-
-    #[test]
-    fn parse_sampler_unfilterable() {
-        let sampler: ItemSampler =
-            syn::parse_str("group(0), binding(1), MY_SMP: Sampler, unfilterable").unwrap();
-        assert!(
-            sampler.unfilterable,
-            "expected the `, unfilterable` modifier to be recorded"
-        );
-        // The modifier is host-side only; the WGSL output is unchanged.
-        let wgsl = sampler.to_wgsl();
-        assert!(
-            wgsl.contains(": sampler;"),
-            "Expected ': sampler;' in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            !wgsl.contains("unfilterable"),
-            "Expected no 'unfilterable' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn parse_sampler_defaults_to_filterable() {
-        let sampler: ItemSampler = syn::parse_str("group(0), binding(1), MY_SMP: Sampler").unwrap();
-        assert!(
-            !sampler.unfilterable,
-            "expected no modifier recorded without `, unfilterable`"
-        );
-    }
-
-    #[test]
-    fn parse_sampler_unfilterable_rejects_comparison() {
-        let result = syn::parse_str::<ItemSampler>(
-            "group(0), binding(1), CMP: SamplerComparison, unfilterable",
-        );
-        assert!(
-            result.is_err(),
-            "Expected error for `unfilterable` on a comparison sampler"
-        );
-    }
-
-    #[test]
-    fn parse_sampler_rejects_unknown_modifier() {
-        let result =
-            syn::parse_str::<ItemSampler>("group(0), binding(1), MY_SMP: Sampler, filterable");
-        assert!(
-            result.is_err(),
-            "Expected error for an unknown sampler! modifier"
-        );
-    }
 
     #[test]
     fn parse_texture_type_texture2d_f32() {
@@ -11942,228 +10974,6 @@ mod test {
         );
     }
 
-    #[test]
-    fn texture_storage_to_wgsl() {
-        let texture: ItemTexture =
-            syn::parse_str("group(0), binding(5), OUT_TEX: TextureStorage2D<Rgba8unorm, Write>")
-                .unwrap();
-        let wgsl = texture.to_wgsl();
-        assert!(
-            wgsl.contains(": texture_storage_2d<rgba8unorm, write>;"),
-            "Expected ': texture_storage_2d<rgba8unorm, write>;' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_basic() {
-        let texture: ItemTexture =
-            syn::parse_str("group(0), binding(1), DIFFUSE_TEX: Texture2D<f32>").unwrap();
-        assert_eq!("DIFFUSE_TEX", texture.name.to_string());
-        assert!(matches!(texture.ty, Type::Texture { .. }));
-    }
-
-    #[test]
-    fn parse_texture_item_type_level_filterability() {
-        for (ty, expected) in [
-            ("Texture2D<f32>", true),
-            ("Texture2D<f32, true>", true),
-            ("Texture2D<f32, false>", false),
-        ] {
-            let source = format!("group(0), binding(0), TEX: {ty}");
-            let texture: ItemTexture = syn::parse_str(&source).unwrap();
-            let Type::Texture { filterable, .. } = &texture.ty else {
-                unreachable!()
-            };
-            assert_eq!(filterable.concrete(), Some(expected));
-            assert!(texture.to_wgsl().contains(": texture_2d<f32>;"));
-        }
-    }
-
-    #[test]
-    fn parse_all_sampled_texture_kinds_accept_unfilterable() {
-        for ty in [
-            "Texture1D",
-            "Texture2D",
-            "Texture2DArray",
-            "Texture3D",
-            "TextureCube",
-            "TextureCubeArray",
-            "TextureMultisampled2D",
-        ] {
-            let source = format!("group(0), binding(0), TEX: {ty}<f32, false>");
-            let texture: ItemTexture = syn::parse_str(&source).unwrap();
-            let Type::Texture { filterable, .. } = &texture.ty else {
-                unreachable!()
-            };
-            assert_eq!(filterable.concrete(), Some(false));
-        }
-    }
-
-    #[test]
-    fn parse_texture_item_rejects_integer_filterability() {
-        for value in ["true", "false"] {
-            let source = format!("group(0), binding(0), TEX: Texture2D<i32, {value}>");
-            assert!(syn::parse_str::<ItemTexture>(&source).is_err());
-        }
-    }
-
-    #[test]
-    fn parse_texture_item_rejects_mixed_filterability_spellings() {
-        for value in ["true", "false"] {
-            let source =
-                format!("group(0), binding(0), TEX: Texture2D<f32, {value}>, unfilterable");
-            assert!(syn::parse_str::<ItemTexture>(&source).is_err());
-        }
-    }
-
-    #[test]
-    fn parse_texture_item_depth() {
-        let texture: ItemTexture =
-            syn::parse_str("group(1), binding(0), SHADOW_MAP: TextureDepth2D").unwrap();
-        assert_eq!("SHADOW_MAP", texture.name.to_string());
-        assert!(matches!(texture.ty, Type::TextureDepth { .. }));
-    }
-
-    #[test]
-    fn texture_to_wgsl() {
-        let texture: ItemTexture =
-            syn::parse_str("group(0), binding(2), MY_TEXTURE: Texture2D<f32>").unwrap();
-        let wgsl = texture.to_wgsl();
-        assert!(
-            wgsl.contains("@group(0)"),
-            "Expected @group(0) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("@binding(2)"),
-            "Expected @binding(2) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("var MY_TEXTURE"),
-            "Expected 'var MY_TEXTURE' in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains(": texture_2d<f32>;"),
-            "Expected ': texture_2d<f32>;' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn texture_depth_to_wgsl() {
-        let texture: ItemTexture =
-            syn::parse_str("group(1), binding(3), DEPTH_TEX: TextureDepth2D").unwrap();
-        let wgsl = texture.to_wgsl();
-        assert!(
-            wgsl.contains("@group(1)"),
-            "Expected @group(1) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains("@binding(3)"),
-            "Expected @binding(3) in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            wgsl.contains(": texture_depth_2d;"),
-            "Expected ': texture_depth_2d;' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn texture_rejects_non_texture_type() {
-        let result = syn::parse_str::<ItemTexture>("group(0), binding(0), BAD: u32");
-        assert!(
-            result.is_err(),
-            "Expected error when using non-texture type, but parsing succeeded"
-        );
-    }
-
-    #[test]
-    fn texture_rejects_sampler_type() {
-        let result = syn::parse_str::<ItemTexture>("group(0), binding(0), BAD: Sampler");
-        assert!(
-            result.is_err(),
-            "Expected error when using Sampler in texture! macro, but parsing succeeded"
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_unfilterable() {
-        let texture: ItemTexture =
-            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>, unfilterable").unwrap();
-        assert!(
-            texture.unfilterable,
-            "expected the `, unfilterable` modifier to be recorded"
-        );
-        // The modifier is host-side only; the WGSL output is unchanged.
-        let wgsl = texture.to_wgsl();
-        assert!(
-            wgsl.contains(": texture_2d<f32>;"),
-            "Expected ': texture_2d<f32>;' in WGSL, got: {}",
-            wgsl
-        );
-        assert!(
-            !wgsl.contains("unfilterable"),
-            "Expected no 'unfilterable' in WGSL, got: {}",
-            wgsl
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_defaults_to_filterable() {
-        let texture: ItemTexture =
-            syn::parse_str("group(0), binding(0), MY_TEX: Texture2D<f32>").unwrap();
-        assert!(
-            !texture.unfilterable,
-            "expected no modifier recorded without `, unfilterable`"
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_unfilterable_rejects_integer_sampled() {
-        let result =
-            syn::parse_str::<ItemTexture>("group(0), binding(0), T: Texture2D<i32>, unfilterable");
-        assert!(
-            result.is_err(),
-            "Expected error for `unfilterable` on an integer-sampled texture"
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_unfilterable_rejects_depth() {
-        let result =
-            syn::parse_str::<ItemTexture>("group(0), binding(0), T: TextureDepth2D, unfilterable");
-        assert!(
-            result.is_err(),
-            "Expected error for `unfilterable` on a depth texture"
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_unfilterable_rejects_storage() {
-        let result = syn::parse_str::<ItemTexture>(
-            "group(0), binding(0), T: TextureStorage2D<Rgba8unorm, Write>, unfilterable",
-        );
-        assert!(
-            result.is_err(),
-            "Expected error for `unfilterable` on a storage texture"
-        );
-    }
-
-    #[test]
-    fn parse_texture_item_rejects_unknown_modifier() {
-        let result =
-            syn::parse_str::<ItemTexture>("group(0), binding(0), T: Texture2D<f32>, filterable");
-        assert!(
-            result.is_err(),
-            "Expected error for an unknown texture! modifier"
-        );
-    }
 
     #[test]
     fn parse_macro_rules_passthrough() {
@@ -12567,79 +11377,6 @@ mod test {
         }
     }
 
-    #[test]
-    fn parse_generic_module_resolves_uniform_impl_trait() {
-        // A uniform declared with `impl Trait` syntax should be parsed
-        // with its type set to `Type::TypeParam` named after the variable
-        // (here `FRAME`), and the trait bounds preserved on
-        // `impl_bounds`.
-        let item: syn::Item = syn::parse_quote! {
-            pub mod my_shader {
-                use wgsl_rs::std::*;
-
-                uniform!(group(0), binding(0), FRAME: impl Convert<f32>);
-
-                #[fragment]
-                pub fn frag_main<T: Convert<f32>>() -> Vec4f {
-                    Vec4f { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
-                }
-            }
-        };
-        let syn::Item::Mod(item_mod) = &item else {
-            panic!("expected Mod");
-        };
-        let parsed = ItemMod::try_from(item_mod).expect("parse");
-
-        let mut found = false;
-        for it in &parsed.content {
-            if let Item::Uniform(u) = it {
-                assert_eq!(u.name.to_string(), "FRAME");
-                match &u.ty {
-                    Type::TypeParam { ident } => {
-                        assert_eq!(ident.to_string(), "FRAME");
-                        found = true;
-                    }
-                    _ => panic!("expected Type::TypeParam"),
-                }
-                assert!(
-                    u.impl_bounds.is_some(),
-                    "expected impl_bounds to be Some for `impl Trait` linkage"
-                );
-            }
-        }
-        assert!(found, "FRAME uniform not found in parsed module");
-    }
-
-    #[test]
-    fn parse_generic_module_resolves_storage_impl_trait() {
-        let item: syn::Item = syn::parse_quote! {
-            pub mod my_shader {
-                use wgsl_rs::std::*;
-
-                storage!(group(0), binding(0), read_write, DATA: impl Wgsl + Clone);
-
-                #[compute]
-                #[workgroup_size(1)]
-                pub fn cs_main() {}
-            }
-        };
-        let syn::Item::Mod(item_mod) = &item else {
-            panic!("expected Mod");
-        };
-        let parsed = ItemMod::try_from(item_mod).expect("parse");
-        let mut found = false;
-        for it in &parsed.content {
-            if let Item::Storage(s) = it {
-                assert_eq!(s.name.to_string(), "DATA");
-                if let Type::TypeParam { ident } = &s.ty {
-                    assert_eq!(ident.to_string(), "DATA");
-                    found = true;
-                }
-                assert!(s.impl_bounds.is_some());
-            }
-        }
-        assert!(found, "DATA storage not found");
-    }
 
     #[test]
     fn parse_generic_impl_method_rejected() {

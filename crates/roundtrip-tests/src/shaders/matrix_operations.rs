@@ -14,17 +14,25 @@ const N: usize = 64;
 #[wgsl]
 pub mod mat_compound_assign_mat2x2 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 320]); // 64 * (4 components + scale)
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]); // 64 * 4 components
+    pub struct MatCompoundAssignMat2x2Pack {
+        // 64 * (4 components + scale)
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 320]>,
+        // 64 * 4 components
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256]>,
+    }
 
     /// Scales each Mat2x2f input via compound assignment.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &MatCompoundAssignMat2x2Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 5;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let mut m = mat2x2f(
             vec2f(input[base], input[base + 1]),
@@ -33,10 +41,10 @@ pub mod mat_compound_assign_mat2x2 {
         let s = input[base + 4];
 
         m *= s;
-        get_mut!(OUTPUT)[idx * 4] = m[0usize].x;
-        get_mut!(OUTPUT)[idx * 4 + 1] = m[0usize].y;
-        get_mut!(OUTPUT)[idx * 4 + 2] = m[1usize].x;
-        get_mut!(OUTPUT)[idx * 4 + 3] = m[1usize].y;
+        get_mut!(pack.output)[idx * 4] = m[0usize].x;
+        get_mut!(pack.output)[idx * 4 + 1] = m[0usize].y;
+        get_mut!(pack.output)[idx * 4 + 2] = m[1usize].x;
+        get_mut!(pack.output)[idx * 4 + 3] = m[1usize].y;
     }
 }
 
@@ -45,17 +53,25 @@ pub mod mat_compound_assign_mat2x2 {
 #[wgsl]
 pub mod mat_compound_assign_mat4x3 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 832]); // 64 * (12 components + scale)
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 768]); // 64 * 12 components
+    pub struct MatCompoundAssignMat4x3Pack {
+        // 64 * (12 components + scale)
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 832]>,
+        // 64 * 12 components
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 768]>,
+    }
 
     /// Scales each Mat4x3f input via compound assignment.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &MatCompoundAssignMat4x3Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 13;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let mut m = mat4x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -67,18 +83,18 @@ pub mod mat_compound_assign_mat4x3 {
 
         m *= s;
         let out_base = idx * 12;
-        get_mut!(OUTPUT)[out_base] = m[0usize].x;
-        get_mut!(OUTPUT)[out_base + 1] = m[0usize].y;
-        get_mut!(OUTPUT)[out_base + 2] = m[0usize].z;
-        get_mut!(OUTPUT)[out_base + 3] = m[1usize].x;
-        get_mut!(OUTPUT)[out_base + 4] = m[1usize].y;
-        get_mut!(OUTPUT)[out_base + 5] = m[1usize].z;
-        get_mut!(OUTPUT)[out_base + 6] = m[2usize].x;
-        get_mut!(OUTPUT)[out_base + 7] = m[2usize].y;
-        get_mut!(OUTPUT)[out_base + 8] = m[2usize].z;
-        get_mut!(OUTPUT)[out_base + 9] = m[3usize].x;
-        get_mut!(OUTPUT)[out_base + 10] = m[3usize].y;
-        get_mut!(OUTPUT)[out_base + 11] = m[3usize].z;
+        get_mut!(pack.output)[out_base] = m[0usize].x;
+        get_mut!(pack.output)[out_base + 1] = m[0usize].y;
+        get_mut!(pack.output)[out_base + 2] = m[0usize].z;
+        get_mut!(pack.output)[out_base + 3] = m[1usize].x;
+        get_mut!(pack.output)[out_base + 4] = m[1usize].y;
+        get_mut!(pack.output)[out_base + 5] = m[1usize].z;
+        get_mut!(pack.output)[out_base + 6] = m[2usize].x;
+        get_mut!(pack.output)[out_base + 7] = m[2usize].y;
+        get_mut!(pack.output)[out_base + 8] = m[2usize].z;
+        get_mut!(pack.output)[out_base + 9] = m[3usize].x;
+        get_mut!(pack.output)[out_base + 10] = m[3usize].y;
+        get_mut!(pack.output)[out_base + 11] = m[3usize].z;
     }
 }
 
@@ -87,17 +103,25 @@ pub mod mat_compound_assign_mat4x3 {
 #[wgsl]
 pub mod mat_compound_add_sub_mat2x2 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]); // 64 pairs of Mat2x2f
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 512]); // 64 * (2 results * 4 components)
+    pub struct MatCompoundAddSubMat2x2Pack {
+        // 64 pairs of Mat2x2f
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        // 64 * (2 results * 4 components)
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 512]>,
+    }
 
     /// Adds and subtracts matrix pairs via compound assignment.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(
+        #[builtin(global_invocation_id)] global_id: Vec3u,
+        pack: &MatCompoundAddSubMat2x2Pack,
+    ) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = mat2x2f(
             vec2f(input[base], input[base + 1]),
@@ -112,81 +136,90 @@ pub mod mat_compound_add_sub_mat2x2 {
         // cannot algebraically simplify chains like (a + b) - b.
         let mut sum = a;
         sum += b;
-        get_mut!(OUTPUT)[idx * 8] = sum[0usize].x;
-        get_mut!(OUTPUT)[idx * 8 + 1] = sum[0usize].y;
-        get_mut!(OUTPUT)[idx * 8 + 2] = sum[1usize].x;
-        get_mut!(OUTPUT)[idx * 8 + 3] = sum[1usize].y;
+        get_mut!(pack.output)[idx * 8] = sum[0usize].x;
+        get_mut!(pack.output)[idx * 8 + 1] = sum[0usize].y;
+        get_mut!(pack.output)[idx * 8 + 2] = sum[1usize].x;
+        get_mut!(pack.output)[idx * 8 + 3] = sum[1usize].y;
 
         let mut diff = a;
         diff -= b;
-        get_mut!(OUTPUT)[idx * 8 + 4] = diff[0usize].x;
-        get_mut!(OUTPUT)[idx * 8 + 5] = diff[0usize].y;
-        get_mut!(OUTPUT)[idx * 8 + 6] = diff[1usize].x;
-        get_mut!(OUTPUT)[idx * 8 + 7] = diff[1usize].y;
+        get_mut!(pack.output)[idx * 8 + 4] = diff[0usize].x;
+        get_mut!(pack.output)[idx * 8 + 5] = diff[0usize].y;
+        get_mut!(pack.output)[idx * 8 + 6] = diff[1usize].x;
+        get_mut!(pack.output)[idx * 8 + 7] = diff[1usize].y;
     }
 }
 
 #[wgsl]
 pub mod determinant_mat2 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 256]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 64]);
+    pub struct DeterminantMat2Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 256]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 64]>,
+    }
 
     /// Computes determinant for 64 Mat2x2f inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &DeterminantMat2Pack) {
         let idx = global_id.x as usize;
         let base = idx * 4;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x2f(
             vec2f(input[base], input[base + 1]),
             vec2f(input[base + 2], input[base + 3]),
         );
-        get_mut!(OUTPUT)[idx] = determinant(m);
+        get_mut!(pack.output)[idx] = determinant(m);
     }
 }
 
 #[wgsl]
 pub mod determinant_mat3 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 64]);
+    pub struct DeterminantMat3Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 64]>,
+    }
 
     /// Computes determinant for 64 Mat3x3f inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &DeterminantMat3Pack) {
         let idx = global_id.x as usize;
         let base = idx * 9;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
             vec3f(input[base + 3], input[base + 4], input[base + 5]),
             vec3f(input[base + 6], input[base + 7], input[base + 8]),
         );
-        get_mut!(OUTPUT)[idx] = determinant(m);
+        get_mut!(pack.output)[idx] = determinant(m);
     }
 }
 
 #[wgsl]
 pub mod determinant_mat4 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 1024]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 64]);
+    pub struct DeterminantMat4Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 1024]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 64]>,
+    }
 
     /// Computes determinant for 64 Mat4x4f inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &DeterminantMat4Pack) {
         let idx = global_id.x as usize;
         let base = idx * 16;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat4x4f(
             vec4f(
@@ -214,51 +247,57 @@ pub mod determinant_mat4 {
                 input[base + 15],
             ),
         );
-        get_mut!(OUTPUT)[idx] = determinant(m);
+        get_mut!(pack.output)[idx] = determinant(m);
     }
 }
 
 #[wgsl]
 pub mod transpose_mat2x2 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 256]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+    pub struct TransposeMat2x2Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 256]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256]>,
+    }
 
     /// Computes transpose(Mat2x2f) for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat2x2Pack) {
         let idx = global_id.x as usize;
         let base = idx * 4;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x2f(
             vec2f(input[base], input[base + 1]),
             vec2f(input[base + 2], input[base + 3]),
         );
         let t = mat2x2f(transpose(m)[0usize], transpose(m)[1usize]);
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 3] = t[1usize].y;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[1usize].x;
+        get_mut!(pack.output)[base + 3] = t[1usize].y;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat3x3 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 576]);
+    pub struct TransposeMat3x3Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 576]>,
+    }
 
     /// Computes transpose(Mat3x3f) for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat3x3Pack) {
         let idx = global_id.x as usize;
         let base = idx * 9;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -271,32 +310,35 @@ pub mod transpose_mat3x3 {
             transpose(m)[2usize],
         );
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[0usize].z;
-        get_mut!(OUTPUT)[base + 3] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 4] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 5] = t[1usize].z;
-        get_mut!(OUTPUT)[base + 6] = t[2usize].x;
-        get_mut!(OUTPUT)[base + 7] = t[2usize].y;
-        get_mut!(OUTPUT)[base + 8] = t[2usize].z;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[0usize].z;
+        get_mut!(pack.output)[base + 3] = t[1usize].x;
+        get_mut!(pack.output)[base + 4] = t[1usize].y;
+        get_mut!(pack.output)[base + 5] = t[1usize].z;
+        get_mut!(pack.output)[base + 6] = t[2usize].x;
+        get_mut!(pack.output)[base + 7] = t[2usize].y;
+        get_mut!(pack.output)[base + 8] = t[2usize].z;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat4x4 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 1024]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 1024]);
+    pub struct TransposeMat4x4Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 1024]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 1024]>,
+    }
 
     /// Computes transpose(Mat4x4f) for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat4x4Pack) {
         let idx = global_id.x as usize;
         let base = idx * 16;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat4x4f(
             vec4f(
@@ -331,39 +373,42 @@ pub mod transpose_mat4x4 {
             transpose(m)[3usize],
         );
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[0usize].z;
-        get_mut!(OUTPUT)[base + 3] = t[0usize].w;
-        get_mut!(OUTPUT)[base + 4] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 5] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 6] = t[1usize].z;
-        get_mut!(OUTPUT)[base + 7] = t[1usize].w;
-        get_mut!(OUTPUT)[base + 8] = t[2usize].x;
-        get_mut!(OUTPUT)[base + 9] = t[2usize].y;
-        get_mut!(OUTPUT)[base + 10] = t[2usize].z;
-        get_mut!(OUTPUT)[base + 11] = t[2usize].w;
-        get_mut!(OUTPUT)[base + 12] = t[3usize].x;
-        get_mut!(OUTPUT)[base + 13] = t[3usize].y;
-        get_mut!(OUTPUT)[base + 14] = t[3usize].z;
-        get_mut!(OUTPUT)[base + 15] = t[3usize].w;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[0usize].z;
+        get_mut!(pack.output)[base + 3] = t[0usize].w;
+        get_mut!(pack.output)[base + 4] = t[1usize].x;
+        get_mut!(pack.output)[base + 5] = t[1usize].y;
+        get_mut!(pack.output)[base + 6] = t[1usize].z;
+        get_mut!(pack.output)[base + 7] = t[1usize].w;
+        get_mut!(pack.output)[base + 8] = t[2usize].x;
+        get_mut!(pack.output)[base + 9] = t[2usize].y;
+        get_mut!(pack.output)[base + 10] = t[2usize].z;
+        get_mut!(pack.output)[base + 11] = t[2usize].w;
+        get_mut!(pack.output)[base + 12] = t[3usize].x;
+        get_mut!(pack.output)[base + 13] = t[3usize].y;
+        get_mut!(pack.output)[base + 14] = t[3usize].z;
+        get_mut!(pack.output)[base + 15] = t[3usize].w;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat2x3 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 384]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 384]);
+    pub struct TransposeMat2x3Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 384]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 384]>,
+    }
 
     /// Computes transpose(Mat2x3f) -> Mat3x2f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat2x3Pack) {
         let idx = global_id.x as usize;
         let base = idx * 6;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -375,29 +420,32 @@ pub mod transpose_mat2x3 {
             transpose(m)[2usize],
         );
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 3] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 4] = t[2usize].x;
-        get_mut!(OUTPUT)[base + 5] = t[2usize].y;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[1usize].x;
+        get_mut!(pack.output)[base + 3] = t[1usize].y;
+        get_mut!(pack.output)[base + 4] = t[2usize].x;
+        get_mut!(pack.output)[base + 5] = t[2usize].y;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat3x2 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 384]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 384]);
+    pub struct TransposeMat3x2Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 384]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 384]>,
+    }
 
     /// Computes transpose(Mat3x2f) -> Mat2x3f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat3x2Pack) {
         let idx = global_id.x as usize;
         let base = idx * 6;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x2f(
             vec2f(input[base], input[base + 1]),
@@ -406,29 +454,32 @@ pub mod transpose_mat3x2 {
         );
         let t = mat2x3f(transpose(m)[0usize], transpose(m)[1usize]);
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[0usize].z;
-        get_mut!(OUTPUT)[base + 3] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 4] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 5] = t[1usize].z;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[0usize].z;
+        get_mut!(pack.output)[base + 3] = t[1usize].x;
+        get_mut!(pack.output)[base + 4] = t[1usize].y;
+        get_mut!(pack.output)[base + 5] = t[1usize].z;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat3x4 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 768]);
+    pub struct TransposeMat3x4Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 768]>,
+    }
 
     /// Computes transpose(Mat3x4f) -> Mat4x3f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat3x4Pack) {
         let idx = global_id.x as usize;
         let base = idx * 12;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x4f(
             vec4f(
@@ -457,35 +508,38 @@ pub mod transpose_mat3x4 {
             transpose(m)[3usize],
         );
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[0usize].z;
-        get_mut!(OUTPUT)[base + 3] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 4] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 5] = t[1usize].z;
-        get_mut!(OUTPUT)[base + 6] = t[2usize].x;
-        get_mut!(OUTPUT)[base + 7] = t[2usize].y;
-        get_mut!(OUTPUT)[base + 8] = t[2usize].z;
-        get_mut!(OUTPUT)[base + 9] = t[3usize].x;
-        get_mut!(OUTPUT)[base + 10] = t[3usize].y;
-        get_mut!(OUTPUT)[base + 11] = t[3usize].z;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[0usize].z;
+        get_mut!(pack.output)[base + 3] = t[1usize].x;
+        get_mut!(pack.output)[base + 4] = t[1usize].y;
+        get_mut!(pack.output)[base + 5] = t[1usize].z;
+        get_mut!(pack.output)[base + 6] = t[2usize].x;
+        get_mut!(pack.output)[base + 7] = t[2usize].y;
+        get_mut!(pack.output)[base + 8] = t[2usize].z;
+        get_mut!(pack.output)[base + 9] = t[3usize].x;
+        get_mut!(pack.output)[base + 10] = t[3usize].y;
+        get_mut!(pack.output)[base + 11] = t[3usize].z;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat4x3 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 768]);
+    pub struct TransposeMat4x3Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 768]>,
+    }
 
     /// Computes transpose(Mat4x3f) -> Mat3x4f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat4x3Pack) {
         let idx = global_id.x as usize;
         let base = idx * 12;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat4x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -499,35 +553,38 @@ pub mod transpose_mat4x3 {
             transpose(m)[2usize],
         );
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[0usize].z;
-        get_mut!(OUTPUT)[base + 3] = t[0usize].w;
-        get_mut!(OUTPUT)[base + 4] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 5] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 6] = t[1usize].z;
-        get_mut!(OUTPUT)[base + 7] = t[1usize].w;
-        get_mut!(OUTPUT)[base + 8] = t[2usize].x;
-        get_mut!(OUTPUT)[base + 9] = t[2usize].y;
-        get_mut!(OUTPUT)[base + 10] = t[2usize].z;
-        get_mut!(OUTPUT)[base + 11] = t[2usize].w;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[0usize].z;
+        get_mut!(pack.output)[base + 3] = t[0usize].w;
+        get_mut!(pack.output)[base + 4] = t[1usize].x;
+        get_mut!(pack.output)[base + 5] = t[1usize].y;
+        get_mut!(pack.output)[base + 6] = t[1usize].z;
+        get_mut!(pack.output)[base + 7] = t[1usize].w;
+        get_mut!(pack.output)[base + 8] = t[2usize].x;
+        get_mut!(pack.output)[base + 9] = t[2usize].y;
+        get_mut!(pack.output)[base + 10] = t[2usize].z;
+        get_mut!(pack.output)[base + 11] = t[2usize].w;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat2x4 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 512]);
+    pub struct TransposeMat2x4Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 512]>,
+    }
 
     /// Computes transpose(Mat2x4f) -> Mat4x2f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat2x4Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x4f(
             vec4f(
@@ -550,31 +607,34 @@ pub mod transpose_mat2x4 {
             transpose(m)[3usize],
         );
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 3] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 4] = t[2usize].x;
-        get_mut!(OUTPUT)[base + 5] = t[2usize].y;
-        get_mut!(OUTPUT)[base + 6] = t[3usize].x;
-        get_mut!(OUTPUT)[base + 7] = t[3usize].y;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[1usize].x;
+        get_mut!(pack.output)[base + 3] = t[1usize].y;
+        get_mut!(pack.output)[base + 4] = t[2usize].x;
+        get_mut!(pack.output)[base + 5] = t[2usize].y;
+        get_mut!(pack.output)[base + 6] = t[3usize].x;
+        get_mut!(pack.output)[base + 7] = t[3usize].y;
     }
 }
 
 #[wgsl]
 pub mod transpose_mat4x2 {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 512]);
+    pub struct TransposeMat4x2Pack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 512]>,
+    }
 
     /// Computes transpose(Mat4x2f) -> Mat2x4f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &TransposeMat4x2Pack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat4x2f(
             vec2f(input[base], input[base + 1]),
@@ -584,31 +644,34 @@ pub mod transpose_mat4x2 {
         );
         let t = mat2x4f(transpose(m)[0usize], transpose(m)[1usize]);
 
-        get_mut!(OUTPUT)[base] = t[0usize].x;
-        get_mut!(OUTPUT)[base + 1] = t[0usize].y;
-        get_mut!(OUTPUT)[base + 2] = t[0usize].z;
-        get_mut!(OUTPUT)[base + 3] = t[0usize].w;
-        get_mut!(OUTPUT)[base + 4] = t[1usize].x;
-        get_mut!(OUTPUT)[base + 5] = t[1usize].y;
-        get_mut!(OUTPUT)[base + 6] = t[1usize].z;
-        get_mut!(OUTPUT)[base + 7] = t[1usize].w;
+        get_mut!(pack.output)[base] = t[0usize].x;
+        get_mut!(pack.output)[base + 1] = t[0usize].y;
+        get_mut!(pack.output)[base + 2] = t[0usize].z;
+        get_mut!(pack.output)[base + 3] = t[0usize].w;
+        get_mut!(pack.output)[base + 4] = t[1usize].x;
+        get_mut!(pack.output)[base + 5] = t[1usize].y;
+        get_mut!(pack.output)[base + 6] = t[1usize].z;
+        get_mut!(pack.output)[base + 7] = t[1usize].w;
     }
 }
 
 #[wgsl]
 pub mod mat2_vec2_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 384]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 128]);
+    pub struct Mat2Vec2MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 384]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 128]>,
+    }
 
     /// Computes Mat2x2f * Vec2f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat2Vec2MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 6;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x2f(
             vec2f(input[base], input[base + 1]),
@@ -617,25 +680,28 @@ pub mod mat2_vec2_mul {
         let v = vec2f(input[base + 4], input[base + 5]);
         let out = m * v;
 
-        get_mut!(OUTPUT)[idx * 2] = out.x;
-        get_mut!(OUTPUT)[idx * 2 + 1] = out.y;
+        get_mut!(pack.output)[idx * 2] = out.x;
+        get_mut!(pack.output)[idx * 2 + 1] = out.y;
     }
 }
 
 #[wgsl]
 pub mod mat3_vec3_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 192]);
+    pub struct Mat3Vec3MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 192]>,
+    }
 
     /// Computes Mat3x3f * Vec3f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat3Vec3MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 12;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -645,26 +711,29 @@ pub mod mat3_vec3_mul {
         let v = vec3f(input[base + 9], input[base + 10], input[base + 11]);
         let out = m * v;
 
-        get_mut!(OUTPUT)[idx * 3] = out.x;
-        get_mut!(OUTPUT)[idx * 3 + 1] = out.y;
-        get_mut!(OUTPUT)[idx * 3 + 2] = out.z;
+        get_mut!(pack.output)[idx * 3] = out.x;
+        get_mut!(pack.output)[idx * 3 + 1] = out.y;
+        get_mut!(pack.output)[idx * 3 + 2] = out.z;
     }
 }
 
 #[wgsl]
 pub mod mat4_vec4_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 1280]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+    pub struct Mat4Vec4MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 1280]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256]>,
+    }
 
     /// Computes Mat4x4f * Vec4f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat4Vec4MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 20;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat4x4f(
             vec4f(
@@ -700,10 +769,10 @@ pub mod mat4_vec4_mul {
         );
         let out = m * v;
 
-        get_mut!(OUTPUT)[idx * 4] = out.x;
-        get_mut!(OUTPUT)[idx * 4 + 1] = out.y;
-        get_mut!(OUTPUT)[idx * 4 + 2] = out.z;
-        get_mut!(OUTPUT)[idx * 4 + 3] = out.w;
+        get_mut!(pack.output)[idx * 4] = out.x;
+        get_mut!(pack.output)[idx * 4 + 1] = out.y;
+        get_mut!(pack.output)[idx * 4 + 2] = out.z;
+        get_mut!(pack.output)[idx * 4 + 3] = out.w;
     }
 }
 
@@ -712,17 +781,20 @@ pub mod mat4_vec4_mul {
 #[wgsl]
 pub mod vec3_mat2x3_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 128]);
+    pub struct Vec3Mat2x3MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 128]>,
+    }
 
     /// Computes Vec3f * Mat2x3f -> Vec2f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Vec3Mat2x3MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 9;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -731,25 +803,28 @@ pub mod vec3_mat2x3_mul {
         let v = vec3f(input[base + 6], input[base + 7], input[base + 8]);
         let out: Vec2f = v * m;
 
-        get_mut!(OUTPUT)[idx * 2] = out.x;
-        get_mut!(OUTPUT)[idx * 2 + 1] = out.y;
+        get_mut!(pack.output)[idx * 2] = out.x;
+        get_mut!(pack.output)[idx * 2 + 1] = out.y;
     }
 }
 
 #[wgsl]
 pub mod vec2_mat3x2_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 192]);
+    pub struct Vec2Mat3x2MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 192]>,
+    }
 
     /// Computes Vec2f * Mat3x2f -> Vec3f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Vec2Mat3x2MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x2f(
             vec2f(input[base], input[base + 1]),
@@ -759,9 +834,9 @@ pub mod vec2_mat3x2_mul {
         let v = vec2f(input[base + 6], input[base + 7]);
         let out: Vec3f = v * m;
 
-        get_mut!(OUTPUT)[idx * 3] = out.x;
-        get_mut!(OUTPUT)[idx * 3 + 1] = out.y;
-        get_mut!(OUTPUT)[idx * 3 + 2] = out.z;
+        get_mut!(pack.output)[idx * 3] = out.x;
+        get_mut!(pack.output)[idx * 3 + 1] = out.y;
+        get_mut!(pack.output)[idx * 3 + 2] = out.z;
     }
 }
 
@@ -770,17 +845,20 @@ pub mod vec2_mat3x2_mul {
 #[wgsl]
 pub mod mat2x3_vec2_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 192]);
+    pub struct Mat2x3Vec2MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 192]>,
+    }
 
     /// Computes Mat2x3f * Vec2f -> Vec3f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat2x3Vec2MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat2x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -789,26 +867,29 @@ pub mod mat2x3_vec2_mul {
         let v = vec2f(input[base + 6], input[base + 7]);
         let out: Vec3f = m * v;
 
-        get_mut!(OUTPUT)[idx * 3] = out.x;
-        get_mut!(OUTPUT)[idx * 3 + 1] = out.y;
-        get_mut!(OUTPUT)[idx * 3 + 2] = out.z;
+        get_mut!(pack.output)[idx * 3] = out.x;
+        get_mut!(pack.output)[idx * 3 + 1] = out.y;
+        get_mut!(pack.output)[idx * 3 + 2] = out.z;
     }
 }
 
 #[wgsl]
 pub mod mat3x2_vec3_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 576]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 128]);
+    pub struct Mat3x2Vec3MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 576]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 128]>,
+    }
 
     /// Computes Mat3x2f * Vec3f -> Vec2f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat3x2Vec3MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 9;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let m = mat3x2f(
             vec2f(input[base], input[base + 1]),
@@ -818,8 +899,8 @@ pub mod mat3x2_vec3_mul {
         let v = vec3f(input[base + 6], input[base + 7], input[base + 8]);
         let out: Vec2f = m * v;
 
-        get_mut!(OUTPUT)[idx * 2] = out.x;
-        get_mut!(OUTPUT)[idx * 2 + 1] = out.y;
+        get_mut!(pack.output)[idx * 2] = out.x;
+        get_mut!(pack.output)[idx * 2 + 1] = out.y;
     }
 }
 
@@ -828,17 +909,20 @@ pub mod mat3x2_vec3_mul {
 #[wgsl]
 pub mod mat2x3_mat3x2_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 576]);
+    pub struct Mat2x3Mat3x2MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 576]>,
+    }
 
     /// Computes Mat2x3f * Mat3x2f -> Mat3x3f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat2x3Mat3x2MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 12;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = mat2x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -852,32 +936,35 @@ pub mod mat2x3_mat3x2_mul {
         let out: Mat3x3f = a * b;
 
         let out_base = idx * 9;
-        get_mut!(OUTPUT)[out_base] = out[0usize].x;
-        get_mut!(OUTPUT)[out_base + 1] = out[0usize].y;
-        get_mut!(OUTPUT)[out_base + 2] = out[0usize].z;
-        get_mut!(OUTPUT)[out_base + 3] = out[1usize].x;
-        get_mut!(OUTPUT)[out_base + 4] = out[1usize].y;
-        get_mut!(OUTPUT)[out_base + 5] = out[1usize].z;
-        get_mut!(OUTPUT)[out_base + 6] = out[2usize].x;
-        get_mut!(OUTPUT)[out_base + 7] = out[2usize].y;
-        get_mut!(OUTPUT)[out_base + 8] = out[2usize].z;
+        get_mut!(pack.output)[out_base] = out[0usize].x;
+        get_mut!(pack.output)[out_base + 1] = out[0usize].y;
+        get_mut!(pack.output)[out_base + 2] = out[0usize].z;
+        get_mut!(pack.output)[out_base + 3] = out[1usize].x;
+        get_mut!(pack.output)[out_base + 4] = out[1usize].y;
+        get_mut!(pack.output)[out_base + 5] = out[1usize].z;
+        get_mut!(pack.output)[out_base + 6] = out[2usize].x;
+        get_mut!(pack.output)[out_base + 7] = out[2usize].y;
+        get_mut!(pack.output)[out_base + 8] = out[2usize].z;
     }
 }
 
 #[wgsl]
 pub mod mat3x2_mat2x3_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 768]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+    pub struct Mat3x2Mat2x3MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 768]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256]>,
+    }
 
     /// Computes Mat3x2f * Mat2x3f -> Mat2x2f for 64 inputs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat3x2Mat2x3MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 12;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = mat3x2f(
             vec2f(input[base], input[base + 1]),
@@ -891,27 +978,30 @@ pub mod mat3x2_mat2x3_mul {
         let out: Mat2x2f = a * b;
 
         let out_base = idx * 4;
-        get_mut!(OUTPUT)[out_base] = out[0usize].x;
-        get_mut!(OUTPUT)[out_base + 1] = out[0usize].y;
-        get_mut!(OUTPUT)[out_base + 2] = out[1usize].x;
-        get_mut!(OUTPUT)[out_base + 3] = out[1usize].y;
+        get_mut!(pack.output)[out_base] = out[0usize].x;
+        get_mut!(pack.output)[out_base + 1] = out[0usize].y;
+        get_mut!(pack.output)[out_base + 2] = out[1usize].x;
+        get_mut!(pack.output)[out_base + 3] = out[1usize].y;
     }
 }
 
 #[wgsl]
 pub mod mat2_mat2_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 512]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 256]);
+    pub struct Mat2Mat2MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 512]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 256]>,
+    }
 
     /// Computes Mat2x2f * Mat2x2f for 64 input pairs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat2Mat2MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 8;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = mat2x2f(
             vec2f(input[base], input[base + 1]),
@@ -923,27 +1013,30 @@ pub mod mat2_mat2_mul {
         );
         let out = mat2x2f((a * b)[0usize], (a * b)[1usize]);
 
-        get_mut!(OUTPUT)[idx * 4] = out[0usize].x;
-        get_mut!(OUTPUT)[idx * 4 + 1] = out[0usize].y;
-        get_mut!(OUTPUT)[idx * 4 + 2] = out[1usize].x;
-        get_mut!(OUTPUT)[idx * 4 + 3] = out[1usize].y;
+        get_mut!(pack.output)[idx * 4] = out[0usize].x;
+        get_mut!(pack.output)[idx * 4 + 1] = out[0usize].y;
+        get_mut!(pack.output)[idx * 4 + 2] = out[1usize].x;
+        get_mut!(pack.output)[idx * 4 + 3] = out[1usize].y;
     }
 }
 
 #[wgsl]
 pub mod mat3_mat3_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 1152]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 576]);
+    pub struct Mat3Mat3MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 1152]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 576]>,
+    }
 
     /// Computes Mat3x3f * Mat3x3f for 64 input pairs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat3Mat3MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 18;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = mat3x3f(
             vec3f(input[base], input[base + 1], input[base + 2]),
@@ -958,32 +1051,35 @@ pub mod mat3_mat3_mul {
         let out = mat3x3f((a * b)[0usize], (a * b)[1usize], (a * b)[2usize]);
 
         let out_base = idx * 9;
-        get_mut!(OUTPUT)[out_base] = out[0usize].x;
-        get_mut!(OUTPUT)[out_base + 1] = out[0usize].y;
-        get_mut!(OUTPUT)[out_base + 2] = out[0usize].z;
-        get_mut!(OUTPUT)[out_base + 3] = out[1usize].x;
-        get_mut!(OUTPUT)[out_base + 4] = out[1usize].y;
-        get_mut!(OUTPUT)[out_base + 5] = out[1usize].z;
-        get_mut!(OUTPUT)[out_base + 6] = out[2usize].x;
-        get_mut!(OUTPUT)[out_base + 7] = out[2usize].y;
-        get_mut!(OUTPUT)[out_base + 8] = out[2usize].z;
+        get_mut!(pack.output)[out_base] = out[0usize].x;
+        get_mut!(pack.output)[out_base + 1] = out[0usize].y;
+        get_mut!(pack.output)[out_base + 2] = out[0usize].z;
+        get_mut!(pack.output)[out_base + 3] = out[1usize].x;
+        get_mut!(pack.output)[out_base + 4] = out[1usize].y;
+        get_mut!(pack.output)[out_base + 5] = out[1usize].z;
+        get_mut!(pack.output)[out_base + 6] = out[2usize].x;
+        get_mut!(pack.output)[out_base + 7] = out[2usize].y;
+        get_mut!(pack.output)[out_base + 8] = out[2usize].z;
     }
 }
 
 #[wgsl]
 pub mod mat4_mat4_mul {
     use wgsl_rs::std::*;
-
-    storage!(group(0), binding(0), INPUT: [f32; 2048]);
-    storage!(group(0), binding(1), read_write, OUTPUT: [f32; 1024]);
+    pub struct Mat4Mat4MulPack {
+        #[storage(group(0), binding(0))]
+        pub input: Storage<[f32; 2048]>,
+        #[storage(group(0), binding(1), read_write)]
+        pub output: Storage<[f32; 1024]>,
+    }
 
     /// Computes Mat4x4f * Mat4x4f for 64 input pairs.
     #[compute]
     #[workgroup_size(64)]
-    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u) {
+    pub fn main(#[builtin(global_invocation_id)] global_id: Vec3u, pack: &Mat4Mat4MulPack) {
         let idx = global_id.x as usize;
         let base = idx * 32;
-        let input = get!(INPUT);
+        let input = get!(pack.input);
 
         let a = mat4x4f(
             vec4f(
@@ -1045,22 +1141,22 @@ pub mod mat4_mat4_mul {
         );
 
         let out_base = idx * 16;
-        get_mut!(OUTPUT)[out_base] = out[0usize].x;
-        get_mut!(OUTPUT)[out_base + 1] = out[0usize].y;
-        get_mut!(OUTPUT)[out_base + 2] = out[0usize].z;
-        get_mut!(OUTPUT)[out_base + 3] = out[0usize].w;
-        get_mut!(OUTPUT)[out_base + 4] = out[1usize].x;
-        get_mut!(OUTPUT)[out_base + 5] = out[1usize].y;
-        get_mut!(OUTPUT)[out_base + 6] = out[1usize].z;
-        get_mut!(OUTPUT)[out_base + 7] = out[1usize].w;
-        get_mut!(OUTPUT)[out_base + 8] = out[2usize].x;
-        get_mut!(OUTPUT)[out_base + 9] = out[2usize].y;
-        get_mut!(OUTPUT)[out_base + 10] = out[2usize].z;
-        get_mut!(OUTPUT)[out_base + 11] = out[2usize].w;
-        get_mut!(OUTPUT)[out_base + 12] = out[3usize].x;
-        get_mut!(OUTPUT)[out_base + 13] = out[3usize].y;
-        get_mut!(OUTPUT)[out_base + 14] = out[3usize].z;
-        get_mut!(OUTPUT)[out_base + 15] = out[3usize].w;
+        get_mut!(pack.output)[out_base] = out[0usize].x;
+        get_mut!(pack.output)[out_base + 1] = out[0usize].y;
+        get_mut!(pack.output)[out_base + 2] = out[0usize].z;
+        get_mut!(pack.output)[out_base + 3] = out[0usize].w;
+        get_mut!(pack.output)[out_base + 4] = out[1usize].x;
+        get_mut!(pack.output)[out_base + 5] = out[1usize].y;
+        get_mut!(pack.output)[out_base + 6] = out[1usize].z;
+        get_mut!(pack.output)[out_base + 7] = out[1usize].w;
+        get_mut!(pack.output)[out_base + 8] = out[2usize].x;
+        get_mut!(pack.output)[out_base + 9] = out[2usize].y;
+        get_mut!(pack.output)[out_base + 10] = out[2usize].z;
+        get_mut!(pack.output)[out_base + 11] = out[2usize].w;
+        get_mut!(pack.output)[out_base + 12] = out[3usize].x;
+        get_mut!(pack.output)[out_base + 13] = out[3usize].y;
+        get_mut!(pack.output)[out_base + 14] = out[3usize].z;
+        get_mut!(pack.output)[out_base + 15] = out[3usize].w;
     }
 }
 
@@ -1647,12 +1743,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&determinant_mat2::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 64);
-            determinant_mat2::INPUT.set(input);
-            determinant_mat2::OUTPUT.set([0.0f32; 64]);
+            let pack = determinant_mat2::DeterminantMat2Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                determinant_mat2::main(b.global_invocation_id)
+                determinant_mat2::main(b.global_invocation_id, &pack)
             });
-            let cpu = determinant_mat2::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "determinant_mat2", &gpu, &cpu, 1e-5);
         }
 
@@ -1661,12 +1759,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&determinant_mat3::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 64);
-            determinant_mat3::INPUT.set(input);
-            determinant_mat3::OUTPUT.set([0.0f32; 64]);
+            let pack = determinant_mat3::DeterminantMat3Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                determinant_mat3::main(b.global_invocation_id)
+                determinant_mat3::main(b.global_invocation_id, &pack)
             });
-            let cpu = determinant_mat3::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "determinant_mat3", &gpu, &cpu, 1e-4);
         }
 
@@ -1675,12 +1775,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&determinant_mat4::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 64);
-            determinant_mat4::INPUT.set(input);
-            determinant_mat4::OUTPUT.set([0.0f32; 64]);
+            let pack = determinant_mat4::DeterminantMat4Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 64]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                determinant_mat4::main(b.global_invocation_id)
+                determinant_mat4::main(b.global_invocation_id, &pack)
             });
-            let cpu = determinant_mat4::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "determinant_mat4", &gpu, &cpu, 1e-3);
         }
 
@@ -1689,12 +1791,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat2x2::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
-            transpose_mat2x2::INPUT.set(input);
-            transpose_mat2x2::OUTPUT.set([0.0f32; 256]);
+            let pack = transpose_mat2x2::TransposeMat2x2Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat2x2::main(b.global_invocation_id)
+                transpose_mat2x2::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat2x2::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat2x2", &gpu, &cpu, 0.0);
         }
 
@@ -1703,12 +1807,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat3x3::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 576);
-            transpose_mat3x3::INPUT.set(input);
-            transpose_mat3x3::OUTPUT.set([0.0f32; 576]);
+            let pack = transpose_mat3x3::TransposeMat3x3Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 576]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat3x3::main(b.global_invocation_id)
+                transpose_mat3x3::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat3x3::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat3x3", &gpu, &cpu, 0.0);
         }
 
@@ -1717,12 +1823,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat4x4::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 1024);
-            transpose_mat4x4::INPUT.set(input);
-            transpose_mat4x4::OUTPUT.set([0.0f32; 1024]);
+            let pack = transpose_mat4x4::TransposeMat4x4Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 1024]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat4x4::main(b.global_invocation_id)
+                transpose_mat4x4::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat4x4::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat4x4", &gpu, &cpu, 0.0);
         }
 
@@ -1731,12 +1839,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat2x3::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 384);
-            transpose_mat2x3::INPUT.set(input);
-            transpose_mat2x3::OUTPUT.set([0.0f32; 384]);
+            let pack = transpose_mat2x3::TransposeMat2x3Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 384]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat2x3::main(b.global_invocation_id)
+                transpose_mat2x3::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat2x3::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat2x3", &gpu, &cpu, 0.0);
         }
 
@@ -1745,12 +1855,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat3x2::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 384);
-            transpose_mat3x2::INPUT.set(input);
-            transpose_mat3x2::OUTPUT.set([0.0f32; 384]);
+            let pack = transpose_mat3x2::TransposeMat3x2Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 384]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat3x2::main(b.global_invocation_id)
+                transpose_mat3x2::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat3x2::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat3x2", &gpu, &cpu, 0.0);
         }
 
@@ -1759,12 +1871,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat3x4::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 768);
-            transpose_mat3x4::INPUT.set(input);
-            transpose_mat3x4::OUTPUT.set([0.0f32; 768]);
+            let pack = transpose_mat3x4::TransposeMat3x4Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 768]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat3x4::main(b.global_invocation_id)
+                transpose_mat3x4::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat3x4::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat3x4", &gpu, &cpu, 0.0);
         }
 
@@ -1773,12 +1887,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat4x3::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 768);
-            transpose_mat4x3::INPUT.set(input);
-            transpose_mat4x3::OUTPUT.set([0.0f32; 768]);
+            let pack = transpose_mat4x3::TransposeMat4x3Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 768]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat4x3::main(b.global_invocation_id)
+                transpose_mat4x3::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat4x3::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat4x3", &gpu, &cpu, 0.0);
         }
 
@@ -1787,12 +1903,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat2x4::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 512);
-            transpose_mat2x4::INPUT.set(input);
-            transpose_mat2x4::OUTPUT.set([0.0f32; 512]);
+            let pack = transpose_mat2x4::TransposeMat2x4Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat2x4::main(b.global_invocation_id)
+                transpose_mat2x4::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat2x4::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat2x4", &gpu, &cpu, 0.0);
         }
 
@@ -1801,12 +1919,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&transpose_mat4x2::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 512);
-            transpose_mat4x2::INPUT.set(input);
-            transpose_mat4x2::OUTPUT.set([0.0f32; 512]);
+            let pack = transpose_mat4x2::TransposeMat4x2Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                transpose_mat4x2::main(b.global_invocation_id)
+                transpose_mat4x2::main(b.global_invocation_id, &pack)
             });
-            let cpu = transpose_mat4x2::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "transpose_mat4x2", &gpu, &cpu, 0.0);
         }
 
@@ -1815,12 +1935,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat2_vec2_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 128);
-            mat2_vec2_mul::INPUT.set(input);
-            mat2_vec2_mul::OUTPUT.set([0.0f32; 128]);
+            let pack = mat2_vec2_mul::Mat2Vec2MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 128]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat2_vec2_mul::main(b.global_invocation_id)
+                mat2_vec2_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat2_vec2_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat2_vec2_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1829,12 +1951,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat3_vec3_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 192);
-            mat3_vec3_mul::INPUT.set(input);
-            mat3_vec3_mul::OUTPUT.set([0.0f32; 192]);
+            let pack = mat3_vec3_mul::Mat3Vec3MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 192]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat3_vec3_mul::main(b.global_invocation_id)
+                mat3_vec3_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat3_vec3_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat3_vec3_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1843,12 +1967,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat4_vec4_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
-            mat4_vec4_mul::INPUT.set(input);
-            mat4_vec4_mul::OUTPUT.set([0.0f32; 256]);
+            let pack = mat4_vec4_mul::Mat4Vec4MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat4_vec4_mul::main(b.global_invocation_id)
+                mat4_vec4_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat4_vec4_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat4_vec4_mul", &gpu, &cpu, 1e-4);
         }
 
@@ -1857,12 +1983,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat2_mat2_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
-            mat2_mat2_mul::INPUT.set(input);
-            mat2_mat2_mul::OUTPUT.set([0.0f32; 256]);
+            let pack = mat2_mat2_mul::Mat2Mat2MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat2_mat2_mul::main(b.global_invocation_id)
+                mat2_mat2_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat2_mat2_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat2_mat2_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1871,12 +1999,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat3_mat3_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 576);
-            mat3_mat3_mul::INPUT.set(input);
-            mat3_mat3_mul::OUTPUT.set([0.0f32; 576]);
+            let pack = mat3_mat3_mul::Mat3Mat3MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 576]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat3_mat3_mul::main(b.global_invocation_id)
+                mat3_mat3_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat3_mat3_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat3_mat3_mul", &gpu, &cpu, 1e-4);
         }
 
@@ -1885,12 +2015,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat4_mat4_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 1024);
-            mat4_mat4_mul::INPUT.set(input);
-            mat4_mat4_mul::OUTPUT.set([0.0f32; 1024]);
+            let pack = mat4_mat4_mul::Mat4Mat4MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 1024]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat4_mat4_mul::main(b.global_invocation_id)
+                mat4_mat4_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat4_mat4_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat4_mat4_mul", &gpu, &cpu, 1e-4);
         }
 
@@ -1901,12 +2033,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&vec3_mat2x3_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 128);
-            vec3_mat2x3_mul::INPUT.set(input);
-            vec3_mat2x3_mul::OUTPUT.set([0.0f32; 128]);
+            let pack = vec3_mat2x3_mul::Vec3Mat2x3MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 128]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                vec3_mat2x3_mul::main(b.global_invocation_id)
+                vec3_mat2x3_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = vec3_mat2x3_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "vec3_mat2x3_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1915,12 +2049,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&vec2_mat3x2_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 192);
-            vec2_mat3x2_mul::INPUT.set(input);
-            vec2_mat3x2_mul::OUTPUT.set([0.0f32; 192]);
+            let pack = vec2_mat3x2_mul::Vec2Mat3x2MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 192]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                vec2_mat3x2_mul::main(b.global_invocation_id)
+                vec2_mat3x2_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = vec2_mat3x2_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "vec2_mat3x2_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1931,12 +2067,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat2x3_vec2_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 192);
-            mat2x3_vec2_mul::INPUT.set(input);
-            mat2x3_vec2_mul::OUTPUT.set([0.0f32; 192]);
+            let pack = mat2x3_vec2_mul::Mat2x3Vec2MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 192]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat2x3_vec2_mul::main(b.global_invocation_id)
+                mat2x3_vec2_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat2x3_vec2_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat2x3_vec2_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1945,12 +2083,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat3x2_vec3_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 128);
-            mat3x2_vec3_mul::INPUT.set(input);
-            mat3x2_vec3_mul::OUTPUT.set([0.0f32; 128]);
+            let pack = mat3x2_vec3_mul::Mat3x2Vec3MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 128]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat3x2_vec3_mul::main(b.global_invocation_id)
+                mat3x2_vec3_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat3x2_vec3_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat3x2_vec3_mul", &gpu, &cpu, 1e-5);
         }
 
@@ -1961,12 +2101,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat2x3_mat3x2_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 576);
-            mat2x3_mat3x2_mul::INPUT.set(input);
-            mat2x3_mat3x2_mul::OUTPUT.set([0.0f32; 576]);
+            let pack = mat2x3_mat3x2_mul::Mat2x3Mat3x2MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 576]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat2x3_mat3x2_mul::main(b.global_invocation_id)
+                mat2x3_mat3x2_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat2x3_mat3x2_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat2x3_mat3x2_mul", &gpu, &cpu, 1e-4);
         }
 
@@ -1975,12 +2117,14 @@ impl RoundtripTest for MatrixOperationsTest {
             let mut linkage =
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat3x2_mat2x3_mul::WGSL_SOURCE).unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
-            mat3x2_mat2x3_mul::INPUT.set(input);
-            mat3x2_mat2x3_mul::OUTPUT.set([0.0f32; 256]);
+            let pack = mat3x2_mat2x3_mul::Mat3x2Mat2x3MulPack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat3x2_mat2x3_mul::main(b.global_invocation_id)
+                mat3x2_mat2x3_mul::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat3x2_mat2x3_mul::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat3x2_mat2x3_mul", &gpu, &cpu, 1e-4);
         }
 
@@ -1990,12 +2134,14 @@ impl RoundtripTest for MatrixOperationsTest {
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat_compound_assign_mat2x2::WGSL_SOURCE)
                     .unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 256);
-            mat_compound_assign_mat2x2::INPUT.set(input);
-            mat_compound_assign_mat2x2::OUTPUT.set([0.0f32; 256]);
+            let pack = mat_compound_assign_mat2x2::MatCompoundAssignMat2x2Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 256]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat_compound_assign_mat2x2::main(b.global_invocation_id)
+                mat_compound_assign_mat2x2::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat_compound_assign_mat2x2::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat_compound_assign_mat2x2", &gpu, &cpu, 1e-5);
         }
 
@@ -2005,12 +2151,14 @@ impl RoundtripTest for MatrixOperationsTest {
                 wgsl_rs_linkage_wgpu::analyze_wgsl_module(&mat_compound_assign_mat4x3::WGSL_SOURCE)
                     .unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 768);
-            mat_compound_assign_mat4x3::INPUT.set(input);
-            mat_compound_assign_mat4x3::OUTPUT.set([0.0f32; 768]);
+            let pack = mat_compound_assign_mat4x3::MatCompoundAssignMat4x3Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 768]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat_compound_assign_mat4x3::main(b.global_invocation_id)
+                mat_compound_assign_mat4x3::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat_compound_assign_mat4x3::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(&mut results, "mat_compound_assign_mat4x3", &gpu, &cpu, 1e-5);
         }
 
@@ -2021,12 +2169,14 @@ impl RoundtripTest for MatrixOperationsTest {
             )
             .unwrap();
             let gpu = run_gpu_f32_shader(device, queue, &mut linkage, &input, 512);
-            mat_compound_add_sub_mat2x2::INPUT.set(input);
-            mat_compound_add_sub_mat2x2::OUTPUT.set([0.0f32; 512]);
+            let pack = mat_compound_add_sub_mat2x2::MatCompoundAddSubMat2x2Pack {
+                input: Storage::new(input),
+                output: Storage::new([0.0f32; 512]),
+            };
             dispatch_workgroups((1, 1, 1), (N as u32, 1, 1), |b| {
-                mat_compound_add_sub_mat2x2::main(b.global_invocation_id)
+                mat_compound_add_sub_mat2x2::main(b.global_invocation_id, &pack)
             });
-            let cpu = mat_compound_add_sub_mat2x2::OUTPUT.get().to_vec();
+            let cpu = pack.output.get().to_vec();
             push_f32_result(
                 &mut results,
                 "mat_compound_add_sub_mat2x2",
